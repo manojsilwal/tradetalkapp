@@ -5,7 +5,7 @@ from .schemas import MarketState, FactorResult, MarketRegime, SwarmConsensus, Ma
 from .agents import ShortInterestAgentPair, SocialSentimentAgentPair, MacroHealthAgentPair, PolymarketAgentPair, FundamentalHealthAgentPair
 from .connectors import ShortsConnector, SocialSentimentConnector, MacroHealthConnector, PolymarketConnector, FundamentalsConnector, InvestorMetricsConnector, NewsScannerConnector
 from .notification_agents import NotificationPipeline
-import asyncio, json, time
+import asyncio, json, time, os
 
 app = FastAPI(
     title="K2-Optimus Observer API",
@@ -13,9 +13,14 @@ app = FastAPI(
     version="0.1.0"
 )
 
+# Allow origins from CORS_ORIGINS env var (comma-separated) plus localhost fallback
+_cors_env = os.environ.get("CORS_ORIGINS", "")
+_extra_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+_allowed_origins = ["http://localhost:5173", "http://127.0.0.1:5173"] + _extra_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
