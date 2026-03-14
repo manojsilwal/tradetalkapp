@@ -1,0 +1,235 @@
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from .schemas import MarketState, FactorResult, MarketRegime, SwarmConsensus, MacroDataResponse, InvestorMetricsResponse, MacroAlert, AlertResponse
+from .agents import ShortInterestAgentPair, SocialSentimentAgentPair, MacroHealthAgentPair, PolymarketAgentPair, FundamentalHealthAgentPair
+from .connectors import ShortsConnector, SocialSentimentConnector, MacroHealthConnector, PolymarketConnector, FundamentalsConnector, InvestorMetricsConnector, NewsScannerConnector
+from .notification_agents import NotificationPipeline
+import asyncio, json, time
+
+app = FastAPI(
+    title="K2-Optimus Observer API",
+    description="Observer trace API for the K2-Optimus Financial Swarm.",
+    version="0.1.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mock and Live data connectors representing the ingestion layer
+shorts_connector = ShortsConnector()
+social_connector = SocialSentimentConnector()
+macro_connector = MacroHealthConnector()
+poly_connector = PolymarketConnector()
+fund_connector = FundamentalsConnector()
+investor_metrics_connector = InvestorMetricsConnector()
+news_scanner = NewsScannerConnector()
+notification_pipeline = NotificationPipeline()
+sse_clients: list = []
+
+# Initialize persistent SQLite store
+from . import alert_store as db
+db.init_db()
+
+# Cache for last trace data (populated by background loop)
+last_trace_data: dict = {}
+
+def _sync_scan_and_process():
+    """Run the entire scan+process cycle synchronously (called from thread)."""
+    import requests  # noqa — ensure requests is available in thread
+    data = news_scanner._sync_fetch()
+    new_headlines = data.get("new_headlines", [])
+    trace = notification_pipeline.process_with_trace(new_headlines)
+    trace["stored_alerts"] = db.get_all_alerts(limit=10)
+    if new_headlines:
+        for alert in trace.get("alerts", []):
+            db.insert_alert(alert)
+    return trace, new_headlines
+
+async def news_scan_loop():
+    global last_trace_data
+    await asyncio.sleep(5)
+    while True:
+        try:
+            trace, new_headlines = await asyncio.get_event_loop().run_in_executor(None, _sync_scan_and_process)
+            last_trace_data = trace
+            if new_headlines:
+                for alert in trace.get("alerts", []):
+                    event_data = json.dumps(alert)
+                    for queue in sse_clients:
+                        await queue.put(event_data)
+                print(f"[K2-Notifier] {trace['alerts_produced']} new alerts saved to DB")
+            else:
+                print("[K2-Notifier] No new macro headlines")
+        except Exception as e:
+            print(f"[K2-Notifier] Error: {e}")
+        await asyncio.sleep(60)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(news_scan_loop())
+
+@app.get("/notifications/stream")
+async def notification_stream():
+    queue = asyncio.Queue()
+    sse_clients.append(queue)
+    async def event_generator():
+        try:
+            yield f"data: {json.dumps({'type': 'connected', 'timestamp': time.time()})}\n\n"
+            while True:
+                data = await queue.get()
+                yield f"data: {data}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            sse_clients.remove(queue)
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+@app.get("/notifications/history", response_model=AlertResponse)
+async def get_notification_history():
+    """Returns all unseen alerts from persistent store."""
+    alerts = db.get_all_alerts(limit=30)
+    unread = db.count_unread()
+    return AlertResponse(alerts=[MacroAlert(**a) for a in alerts], total=len(alerts), unread=unread)
+
+@app.post("/notifications/dismiss/{alert_id}")
+async def dismiss_notification(alert_id: str):
+    """Mark a single alert as seen."""
+    db.mark_seen(alert_id)
+    return {"status": "dismissed"}
+
+@app.post("/notifications/mark-seen")
+async def mark_all_seen():
+    """Mark all alerts as seen (user opened the bell). Seen alerts are then deleted."""
+    db.mark_all_seen()
+    db.delete_seen()
+    return {"status": "all_seen_and_cleared", "remaining": db.count_unread()}
+
+@app.post("/notifications/scan")
+async def manual_scan():
+    data = await news_scanner.fetch_data()
+    alerts = notification_pipeline.process(data.get("new_headlines", []))
+    for alert in alerts:
+        db.insert_alert(alert)
+        for queue in sse_clients:
+            await queue.put(json.dumps(alert))
+    return {"scanned": data["total_scanned"], "new_alerts": len(alerts)}
+
+@app.get("/notifications/trace")
+async def notification_trace():
+    """Return cached trace data from last background scan (instant, no network)."""
+    if last_trace_data:
+        # Refresh stored_alerts to show current DB state
+        last_trace_data["stored_alerts"] = db.get_all_alerts(limit=10)
+        return last_trace_data
+    # If no scan happened yet, return minimal data
+    return {
+        "total_scanned": 0, "passed_filter": 0, "rejected": 0, "alerts_produced": 0,
+        "headlines": [], "stored_alerts": db.get_all_alerts(limit=10), "alerts": [],
+    }
+
+@app.get("/macro", response_model=MacroDataResponse)
+async def get_macro_data():
+    """
+    K2-Optimus Phase 9: Dedicated Global Macro Analysis Endpoint.
+    """
+    data = await macro_connector.fetch_data()
+    return MacroDataResponse(
+        vix_level=data["indicators"]["vix_level"],
+        credit_stress_index=data["indicators"]["credit_stress_index"],
+        market_regime="BULL_NORMAL" if data["indicators"]["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
+        sectors=data["sectors"],
+        consumer_spending=data["consumer_spending"],
+        capital_flows=data["capital_flows"],
+        cash_reserves=data["cash_reserves"]
+    )
+
+@app.get("/metrics/{ticker}", response_model=InvestorMetricsResponse)
+async def get_investor_metrics(ticker: str):
+    """
+    Fetches live and proxy fundamental metrics used by elite value/distressed investors.
+    """
+    data = await investor_metrics_connector.fetch_data(ticker=ticker)
+    
+    if "error" in data:
+        return InvestorMetricsResponse(ticker=ticker.upper(), metrics={})
+        
+    return InvestorMetricsResponse(
+        ticker=ticker.upper(),
+        metrics=data["metrics"]
+    )
+
+@app.get("/trace", response_model=SwarmConsensus)
+async def get_agent_trace(
+    ticker: str = Query("GME", description="The stock ticker to analyze."),
+    credit_stress: float = Query(None, description="Optional override for Credit stress index.")
+):
+    """
+    K2-Optimus Phase 6: Live Swarm execution across Short Interest, Social, and Macro dimensions.
+    """
+    import asyncio
+    
+    # 1. Evaluate context using live Macro Health (VIX)
+    macro_data = await macro_connector.fetch_data()
+    live_credit_stress = macro_data["indicators"]["credit_stress_index"]
+    
+    # Allow override for testing purposes via the UI, otherwise use live
+    actual_stress = credit_stress if credit_stress is not None else live_credit_stress
+    
+    regime = MarketRegime.BULL_NORMAL if actual_stress <= 1.1 else MarketRegime.BEAR_STRESS
+    
+    market_state = MarketState(
+        credit_stress_index=actual_stress,
+        market_regime=regime
+    )
+    
+    # 2. Instantiate 3 AgentPairs (Macro exists via context only now)
+    short_pair = ShortInterestAgentPair(connector=shorts_connector)
+    social_pair = SocialSentimentAgentPair(connector=social_connector)
+    poly_pair = PolymarketAgentPair(connector=poly_connector)
+    fund_pair = FundamentalHealthAgentPair(connector=fund_connector)
+    
+    # 3. Execute Swarm concurrently
+    results = await asyncio.gather(
+        short_pair.run(market_state=market_state, ticker=ticker),
+        social_pair.run(market_state=market_state, ticker=ticker),
+        poly_pair.run(market_state=market_state, ticker=ticker),
+        fund_pair.run(market_state=market_state, ticker=ticker)
+    )
+    
+    short_res, social_res, poly_res, fund_res = results
+    
+    # 4. Aggregated Swarm Logic (Basic Consensus mechanism)
+    bull_votes = sum(1 for r in results if r.status == "VERIFIED" and r.trading_signal == 1)
+    reject_votes = sum(1 for r in results if r.status == "REJECTED")
+    
+    global_verdict = "NEUTRAL"
+    if reject_votes > 0:
+        global_verdict = "REJECTED (MACRO/RISK STRESS)"
+    elif bull_votes >= 3:
+        global_verdict = "STRONG BUY / SQUEEZE ALIGNMENT"
+        
+    avg_confidence = sum(r.confidence for r in results) / len(results)
+
+    return SwarmConsensus(
+        ticker=ticker.upper(),
+        macro_state=market_state,
+        global_signal=bull_votes,
+        global_verdict=global_verdict,
+        confidence=avg_confidence,
+        factors={
+            "short_interest": short_res,
+            "social_sentiment": social_res,
+            "polymarket": poly_res,
+            "fundamentals": fund_res
+        }
+    )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

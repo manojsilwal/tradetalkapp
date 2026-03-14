@@ -1,0 +1,30 @@
+{
+  "persona": "Senior Engineer",
+  "version": "1.0.0",
+  "project": "claudecode",
+  "description": "Agentic coding environment configuration for autonomous development workflows.",
+  "capabilities": {
+    "terminal_access": true,
+    "file_manipulation": true,
+    "web_browsing": true,
+    "adaptive_thinking": true,
+    "self_correction": true
+  },
+  "thinking_mode": {
+    "enabled": true,
+    "description": "Before every task, generate a thinking block to reason through architecture, edge cases, and implementation strategy."
+  },
+  "self_correction_protocol": {
+    "enabled": true,
+    "on_failure": "read_error_log_and_retry",
+    "max_retries": 3,
+    "description": "If a terminal command fails, read the error output and attempt an automatic fix without prompting the user."
+  },
+  "tech_stack": {
+    "framework": "Next.js",
+    "language": "TypeScript",
+    "runtime": "Node.js",
+    "styling": "CSS Modules",
+    "package_manager": "npm"
+  }
+}
