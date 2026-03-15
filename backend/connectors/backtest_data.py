@@ -42,43 +42,79 @@ SP500_UNIVERSE = [
 
 # ── SEC EDGAR helpers ─────────────────────────────────────────────────────────
 # Public API, no key required.
-# Rate limit: 10 req/sec — we stay well under with 0.15s sleeps.
-# User-Agent is required by SEC fair-use policy.
+# Fair-use rules: max 10 req/sec; User-Agent header required.
+# We target 8 req/sec (20% headroom) using a GLOBAL sliding-window rate limiter
+# shared across ALL threads — a simple per-thread sleep is NOT sufficient when
+# multiple tickers are fetched concurrently.
 
-_EDGAR_USER_AGENT = "TradeTalk Backtest contact@tradetalk.app"
+import os
+_EDGAR_USER_AGENT = os.environ.get(
+    "EDGAR_USER_AGENT",
+    "TradeTalk Backtest contact@tradetalk.app",
+)
+
+# ── Global rate limiter (max 8 EDGAR HTTP requests per second) ───────────────
+# Uses a serialising lock + minimum inter-request interval so that parallel
+# threads collectively never exceed the SEC limit.
+_EDGAR_RATE_LOCK         = threading.Lock()
+_EDGAR_LAST_REQUEST_AT   = 0.0          # epoch seconds of most recent request
+_EDGAR_MIN_INTERVAL      = 1.0 / 8     # 8 req/sec → 0.125 s between requests
+
+
+def _edgar_get(url: str, timeout: int = 30):
+    """
+    Make a rate-limited GET request to SEC EDGAR.
+
+    Acquires _EDGAR_RATE_LOCK, waits if needed so at most 8 requests/sec are
+    sent across all threads, then releases the lock BEFORE the actual network
+    call so other threads can queue while this one is in-flight.
+    """
+    import requests as _req
+
+    global _EDGAR_LAST_REQUEST_AT
+
+    with _EDGAR_RATE_LOCK:
+        now  = time.monotonic()
+        wait = _EDGAR_MIN_INTERVAL - (now - _EDGAR_LAST_REQUEST_AT)
+        if wait > 0:
+            time.sleep(wait)
+        _EDGAR_LAST_REQUEST_AT = time.monotonic()
+        # Lock released here — HTTP call happens outside the critical section
+
+    return _req.get(url, headers={"User-Agent": _EDGAR_USER_AGENT}, timeout=timeout)
+
 
 # In-memory caches — persist for the lifetime of the process
-_CIK_MAP: dict   = {}   # ticker.upper() → zero-padded 10-digit CIK string  (or None)
-_CIK_MAP_LOADED  = threading.Event()
-_EDGAR_EPS_CACHE: dict = {}   # ticker.upper() → list[{date, eps}]
-_EDGAR_CACHE_LOCK = threading.Lock()
+_CIK_MAP: dict        = {}   # ticker.upper() → zero-padded 10-digit CIK  (or None)
+_CIK_MAP_LOADED       = threading.Event()
+_CIK_MAP_INIT_LOCK    = threading.Lock()   # ensures _load_cik_map runs only once
+_EDGAR_EPS_CACHE: dict = {}  # ticker.upper() → list[{date, eps}]
+_EDGAR_CACHE_LOCK      = threading.Lock()
 
 
 def _load_cik_map() -> None:
     """
-    Lazy-load the full SEC company_tickers.json (once per process).
+    Lazy-load the full SEC company_tickers.json (exactly once per process).
     Maps every known US-listed ticker to its 10-digit CIK string.
     """
     if _CIK_MAP_LOADED.is_set():
         return
-    try:
-        import requests
-        r = requests.get(
-            "https://www.sec.gov/files/company_tickers.json",
-            headers={"User-Agent": _EDGAR_USER_AGENT},
-            timeout=20,
-        )
-        r.raise_for_status()
-        for entry in r.json().values():
-            ticker = str(entry.get("ticker", "")).upper()
-            cik    = str(entry.get("cik_str", "")).zfill(10)
-            if ticker and cik:
-                _CIK_MAP[ticker] = cik
-        logger.info(f"[EDGAR] CIK map loaded: {len(_CIK_MAP)} tickers")
-    except Exception as e:
-        logger.warning(f"[EDGAR] CIK map load failed: {e}")
-    finally:
-        _CIK_MAP_LOADED.set()
+    with _CIK_MAP_INIT_LOCK:
+        if _CIK_MAP_LOADED.is_set():   # double-checked locking
+            return
+        try:
+            r = _edgar_get("https://www.sec.gov/files/company_tickers.json", timeout=20)
+            r.raise_for_status()
+            for entry in r.json().values():
+                ticker = str(entry.get("ticker", "")).upper()
+                cik    = str(entry.get("cik_str", "")).zfill(10)
+                if ticker and cik:
+                    _CIK_MAP[ticker] = cik
+            logger.info(f"[EDGAR] CIK map loaded: {len(_CIK_MAP)} tickers")
+        except Exception as e:
+            logger.warning(f"[EDGAR] CIK map load failed: {e}")
+        finally:
+            _CIK_MAP_LOADED.set()
 
 
 def _ticker_to_cik(ticker: str) -> Optional[str]:
@@ -90,23 +126,21 @@ def _fetch_edgar_quarterly_eps(ticker: str) -> list:
     """
     Fetch all quarterly EPS filings for `ticker` from SEC EDGAR XBRL API.
 
-    Returns a list of {date: str, eps: float} sorted ascending by date.
+    Returns list[{date: str, eps: float}] sorted ascending by date.
     Data typically goes back to 2009–2010 for large-cap US stocks.
 
-    Results are cached in-memory for the lifetime of the process — each
-    ticker is only fetched once regardless of how many backtests run.
+    Results are cached in-memory (per process) — each ticker fetched once only.
+    Rate-limited to ≤8 req/sec across all concurrent threads via _edgar_get().
     """
     t = ticker.upper()
 
-    # Return cached result immediately (even if empty)
+    # Fast path — already cached (hit or miss)
     with _EDGAR_CACHE_LOCK:
         if t in _EDGAR_EPS_CACHE:
             return _EDGAR_EPS_CACHE[t]
 
     result: list = []
     try:
-        import requests
-
         cik = _ticker_to_cik(t)
         if not cik:
             logger.debug(f"[EDGAR] No CIK found for {t}")
@@ -114,11 +148,8 @@ def _fetch_edgar_quarterly_eps(ticker: str) -> list:
                 _EDGAR_EPS_CACHE[t] = result
             return result
 
-        # Polite rate-limiting — stay well under SEC's 10 req/sec cap
-        time.sleep(0.15)
-
         url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-        r = requests.get(url, headers={"User-Agent": _EDGAR_USER_AGENT}, timeout=30)
+        r = _edgar_get(url)          # rate-limited; raises on HTTP error
         r.raise_for_status()
 
         facts   = r.json().get("facts", {})
