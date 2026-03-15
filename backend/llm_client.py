@@ -290,10 +290,22 @@ class LLMClient:
             f"Explain in 2-3 paragraphs why this strategy performed the way it did. "
             f"Be educational, honest about risks, and reference specific statistics."
         )
-        result = await self.generate("backtest_explainer", prompt)
-        if isinstance(result, dict):
-            return result.get("explanation", result.get("summary", str(result)))
-        return str(result)
+        try:
+            result = await self.generate("backtest_explainer", prompt)
+            if isinstance(result, dict):
+                return result.get("explanation", result.get("summary", str(result)))
+            return str(result)
+        except Exception as e:
+            # LLM unavailable (e.g. tunnel down) — return a statistical summary instead
+            logger.warning(f"[LLMClient] generate_backtest_explanation unavailable: {e}")
+            cagr = stats.get("cagr", 0)
+            ret  = stats.get("total_return_pct", 0)
+            spy  = stats.get("benchmark_cagr", 0)
+            return (
+                f"{strategy_name} achieved a {cagr:+.1f}% CAGR over the backtest period, "
+                f"returning {ret:+.1f}% total vs SPY's {spy:+.1f}% CAGR. "
+                f"AI explanation unavailable — LLM backend unreachable."
+            )
 
     @property
     def backend(self) -> str:
