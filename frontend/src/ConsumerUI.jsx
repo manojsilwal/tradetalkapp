@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TrendingUp, TrendingDown, Users, Globe, Activity, Loader2, DollarSign, ShieldAlert, BarChart3, Target, CheckCircle2, XCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from 'recharts';
+import { API_BASE_URL } from './api';
 
 export default function ConsumerUI() {
     const [ticker, setTicker] = useState("GME");
@@ -15,8 +16,9 @@ export default function ConsumerUI() {
         try {
             // Fetch Swarm Agents and Investor Metrics concurrently
             const [traceRes, metricsRes] = await Promise.all([
-                fetch(`http://localhost:8000/trace?ticker=${ticker}`),
-                fetch(`http://localhost:8000/metrics/${ticker}`)
+                fetch(`${API_BASE_URL}/trace?ticker=${ticker}`),
+                fetch(`${API_BASE_URL}/metrics/${ticker}`)
+
             ]);
 
             if (!traceRes.ok || !metricsRes.ok) {

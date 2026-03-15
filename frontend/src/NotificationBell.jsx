@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bell, X, AlertTriangle, ShieldCheck, Clock } from 'lucide-react';
+import { API_BASE_URL } from './api';
 
 export default function NotificationBell() {
     const [alerts, setAlerts] = useState([]);
@@ -10,7 +11,7 @@ export default function NotificationBell() {
 
     // Fetch initial history
     useEffect(() => {
-        fetch('http://localhost:8000/notifications/history')
+        fetch(`${API_BASE_URL}/notifications/history`)
             .then(r => r.json())
             .then(data => {
                 setAlerts(data.alerts || []);
@@ -21,7 +22,7 @@ export default function NotificationBell() {
 
     // SSE for real-time push
     useEffect(() => {
-        const sse = new EventSource('http://localhost:8000/notifications/stream');
+        const sse = new EventSource(`${API_BASE_URL}/notifications/stream`);
         sse.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
@@ -48,7 +49,7 @@ export default function NotificationBell() {
     }, [showRecent]);
 
     const dismissAlert = async (id) => {
-        await fetch(`http://localhost:8000/notifications/dismiss/${id}`, { method: 'POST' });
+        await fetch(`${API_BASE_URL}/notifications/dismiss/${id}`, { method: 'POST' });
         setAlerts(prev => prev.map(a => a.id === id ? { ...a, is_read: true } : a));
         setUnread(prev => Math.max(0, prev - 1));
     };
@@ -75,13 +76,13 @@ export default function NotificationBell() {
                             // User is viewing alerts — after 3s mark them as seen and clear from DB
                             setTimeout(async () => {
                                 if (alerts.length > 0) {
-                                    await fetch('http://localhost:8000/notifications/mark-seen', { method: 'POST' });
+                                    await fetch(`${API_BASE_URL}/notifications/mark-seen`, { method: 'POST' });
                                     setUnread(0);
                                 }
                             }, 3000);
                         } else {
                             // Closing the panel — refetch fresh state from DB
-                            fetch('http://localhost:8000/notifications/history')
+                            fetch(`${API_BASE_URL}/notifications/history`)
                                 .then(r => r.json())
                                 .then(data => {
                                     setAlerts(data.alerts || []);
