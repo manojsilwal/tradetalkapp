@@ -365,6 +365,23 @@ async def trigger_pipeline():
     return {"status": "complete", "summary": summary}
 
 
+@app.get("/llm/status")
+async def llm_status():
+    """Show which LLM backend and model all agents are currently using."""
+    from .llm_client import OLLAMA_BASE_URL, OLLAMA_MODEL, GEMINI_MODEL
+    backend = llm_client.backend
+    return {
+        "backend": backend,
+        "model": OLLAMA_MODEL if backend == "ollama" else (GEMINI_MODEL if backend == "gemini" else "rule-based"),
+        "endpoint": OLLAMA_BASE_URL if backend == "ollama" else ("https://generativelanguage.googleapis.com" if backend == "gemini" else None),
+        "agents_using_this_model": [
+            "bull", "bear", "macro", "value", "momentum",
+            "moderator", "strategy_parser", "backtest_explainer"
+        ],
+        "note": "All 8 agent roles share one LLMClient singleton — changing the backend affects every agent.",
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
