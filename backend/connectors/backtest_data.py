@@ -207,158 +207,187 @@ async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
     Fetch historical price data and fundamentals for all tickers.
     Returns: {ticker: {prices, annual_financials, info, quarterly_eps}}
 
-    Batches in groups of 10 (reduced from 20) to stay below Yahoo Finance's
-    cloud-IP rate limits. 1.5s pause between batches for the same reason.
+    Architecture (optimised for cloud IPs with strict Yahoo Finance rate limits):
+      1. yf.download() — one bulk HTTP call for ALL ticker price histories
+      2. Per-ticker quarterly_income_stmt — only for EPS (PE computation)
+      3. SEC EDGAR — deep quarterly EPS history back to 2010
+
+    yf.download() is far cheaper than N individual t.history() calls.
     """
-    batch_size = 10   # conservative for cloud IPs
-    results = {}
-    for i in range(0, len(tickers), batch_size):
-        batch = tickers[i: i + batch_size]
-        tasks = [asyncio.to_thread(_fetch_one, t, start, end) for t in batch]
-        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-        for ticker, result in zip(batch, batch_results):
-            if isinstance(result, Exception):
-                logger.warning(f"[BacktestData] Failed for {ticker}: {result}")
-                results[ticker] = {"prices": [], "annual_financials": {}, "info": {}, "quarterly_eps": []}
-            else:
-                results[ticker] = result
-        if i + batch_size < len(tickers):
-            await asyncio.sleep(1.5)   # longer pause — cloud IPs get throttled faster
-    return results
+    import yfinance as yf
+    import pandas as pd
 
+    results: dict = {}
 
-def _fetch_one(ticker: str, start: str, end: str) -> dict:
+    # ── Step 1: Bulk price download (1 HTTP call for all tickers) ─────────────
+    all_tickers = list(set(tickers))
+    logger.info(f"[BacktestData] Bulk download {len(all_tickers)} tickers {start}→{end}")
     try:
-        import yfinance as yf
+        raw = await asyncio.to_thread(
+            yf.download,
+            all_tickers,
+            start=start,
+            end=end,
+            auto_adjust=True,
+            progress=False,
+            group_by="ticker",
+        )
+    except Exception as e:
+        logger.warning(f"[BacktestData] Bulk download failed: {e}")
+        raw = pd.DataFrame()
 
-        # DO NOT pass a custom session — yFinance 1.x uses curl_cffi internally
-        # for cookie/crumb management. Passing a requests.Session breaks it.
-        t = yf.Ticker(ticker.upper())
-        hist = t.history(start=start, end=end, auto_adjust=True)
-
-        prices = []
-        if hist is not None and not hist.empty:
-            for date_idx, row in hist.iterrows():
+    # Build per-ticker price list from bulk download result
+    prices_by_ticker: dict = {t: [] for t in all_tickers}
+    if not raw.empty:
+        if len(all_tickers) == 1:
+            # Single-ticker result has flat columns (Open, High, Low, Close, Volume)
+            t = all_tickers[0]
+            for date_idx, row in raw.iterrows():
                 try:
-                    prices.append({
+                    prices_by_ticker[t].append({
                         "date":   str(date_idx.date()),
-                        "open":   round(float(row["Open"]),   4),
-                        "high":   round(float(row["High"]),   4),
-                        "low":    round(float(row["Low"]),    4),
-                        "close":  round(float(row["Close"]),  4),
+                        "open":   round(float(row["Open"]),  4),
+                        "high":   round(float(row["High"]),  4),
+                        "low":    round(float(row["Low"]),   4),
+                        "close":  round(float(row["Close"]), 4),
                         "volume": int(row.get("Volume", 0) or 0),
                     })
                 except Exception:
                     continue
+        else:
+            # Multi-ticker result has (ticker, field) MultiIndex columns
+            for t in all_tickers:
+                if t not in raw.columns.get_level_values(0):
+                    continue
+                sub = raw[t]
+                for date_idx, row in sub.iterrows():
+                    try:
+                        if pd.isna(row.get("Close", float("nan"))):
+                            continue
+                        prices_by_ticker[t].append({
+                            "date":   str(date_idx.date()),
+                            "open":   round(float(row["Open"]),  4),
+                            "high":   round(float(row["High"]),  4),
+                            "low":    round(float(row["Low"]),   4),
+                            "close":  round(float(row["Close"]), 4),
+                            "volume": int(row.get("Volume", 0) or 0),
+                        })
+                    except Exception:
+                        continue
 
-        info = {}
-        try:
-            raw_info = t.info
-            info = raw_info if isinstance(raw_info, dict) else {}
-        except Exception:
-            pass
+    # ── Step 2: Per-ticker EPS (quarterly_income_stmt + EDGAR) ───────────────
+    # Stagger requests: 3 tickers at a time with a 1s gap to avoid Yahoo limits
+    eps_batch = 3
+    eps_by_ticker: dict = {t: [] for t in all_tickers}
+    for i in range(0, len(all_tickers), eps_batch):
+        batch = all_tickers[i: i + eps_batch]
+        tasks = [asyncio.to_thread(_fetch_eps_only, t) for t in batch]
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for ticker, result in zip(batch, batch_results):
+            if not isinstance(result, Exception):
+                eps_by_ticker[ticker] = result
+        if i + eps_batch < len(all_tickers):
+            await asyncio.sleep(1.0)
 
-        # ── Annual financials (last 4 years from yFinance) ────────────────
-        annual_financials: dict = {}
-        try:
-            fin = t.income_stmt   # yFinance 1.x — t.financials is deprecated
-            if fin is None or fin.empty:
-                fin = t.financials  # fallback for older versions
-            if fin is not None and not fin.empty:
-                for col in fin.columns[:4]:
-                    year_str = str(col.year) if hasattr(col, "year") else str(col)[:4]
-                    annual_financials[year_str] = {
-                        "total_revenue": _safe_float(_df_get(fin, "Total Revenue", col)),
-                        "net_income":    _safe_float(_df_get(fin, "Net Income",     col)),
-                        "gross_profit":  _safe_float(_df_get(fin, "Gross Profit",   col)),
-                    }
-        except Exception:
-            pass
+    # ── Assemble final results ────────────────────────────────────────────────
+    for t in all_tickers:
+        results[t] = {
+            "prices":            prices_by_ticker.get(t, []),
+            "annual_financials": {},
+            "info":              {},
+            "quarterly_eps":     eps_by_ticker.get(t, []),
+        }
+        logger.info(f"[BacktestData] {t}: {len(results[t]['prices'])} price pts, "
+                    f"{len(results[t]['quarterly_eps'])} EPS pts")
 
-        try:
-            bs = t.balance_sheet
-            if bs is not None and not bs.empty:
-                for col in bs.columns[:4]:
-                    year_str = str(col.year) if hasattr(col, "year") else str(col)[:4]
-                    if year_str not in annual_financials:
-                        annual_financials[year_str] = {}
-                    # Use _df_get to safely look up rows by label (index) not column
-                    debt = _df_get(bs, "Total Debt", col) or _df_get(bs, "Long Term Debt", col)
-                    annual_financials[year_str]["total_debt"] = _safe_float(debt)
-                    annual_financials[year_str]["cash"] = _safe_float(
-                        _df_get(bs, "Cash And Cash Equivalents", col)
-                    )
-        except Exception:
-            pass
+    return results
 
-        # ── Quarterly EPS: yFinance primary (~5-8 yr), SEC EDGAR fallback (15 yr) ──
-        quarterly_eps: list = []
-        try:
-            qis = t.quarterly_income_stmt
-            if qis is not None and not qis.empty:
-                eps_row = None
-                for row_name in ("Diluted EPS", "Basic EPS"):
-                    if row_name in qis.index:
-                        eps_row = qis.loc[row_name]
-                        break
-                if eps_row is not None:
-                    for col in qis.columns:
-                        v = _safe_float(eps_row.get(col))
-                        if v is not None:
-                            d = col.date() if hasattr(col, "date") else col
-                            quarterly_eps.append({"date": str(d)[:10], "eps": v})
-                else:
-                    shares = _safe_float((info or {}).get("sharesOutstanding"))
-                    if shares and shares > 0 and "Net Income" in qis.index:
+
+def _fetch_eps_only(ticker: str) -> list:
+    """
+    Fetch quarterly EPS for a single ticker.
+    Uses yFinance quarterly_income_stmt (recent ~5-8 years) augmented by
+    SEC EDGAR (historical back to 2010).  Much faster than _fetch_one because
+    we skip price history (already obtained via yf.download bulk call) and
+    balance sheet / annual income statement.
+    """
+    quarterly_eps: list = []
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker.upper())
+
+        qis = t.quarterly_income_stmt
+        if qis is not None and not qis.empty:
+            eps_row = None
+            for row_name in ("Diluted EPS", "Basic EPS"):
+                if row_name in qis.index:
+                    eps_row = qis.loc[row_name]
+                    break
+            if eps_row is not None:
+                for col in qis.columns:
+                    v = _safe_float(eps_row.get(col))
+                    if v is not None:
+                        d = col.date() if hasattr(col, "date") else col
+                        quarterly_eps.append({"date": str(d)[:10], "eps": v})
+            elif "Net Income" in qis.index:
+                # Derive per-share from Net Income + shares if EPS row absent
+                try:
+                    info       = t.info or {}
+                    shares     = _safe_float(info.get("sharesOutstanding"))
+                    if shares and shares > 0:
                         ni_row = qis.loc["Net Income"]
                         for col in qis.columns:
                             ni = _safe_float(ni_row.get(col))
                             if ni is not None:
                                 d = col.date() if hasattr(col, "date") else col
                                 quarterly_eps.append({"date": str(d)[:10], "eps": ni / shares})
-        except Exception:
-            pass
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"[BacktestData] yFinance EPS failed for {ticker}: {e}")
 
-        if not quarterly_eps:
-            try:
-                qe = t.quarterly_earnings
-                if qe is not None and not qe.empty:
-                    col_name = next(
-                        (c for c in ("Earnings", "EPS") if c in qe.columns),
-                        qe.columns[0] if len(qe.columns) else None
-                    )
-                    if col_name:
-                        for date_idx, row in qe.iterrows():
-                            v = _safe_float(row.get(col_name))
-                            if v is not None:
-                                d = date_idx.date() if hasattr(date_idx, "date") else date_idx
-                                quarterly_eps.append({"date": str(d)[:10], "eps": v})
-            except Exception:
-                pass
+    # ── Augment with SEC EDGAR historical EPS (fills in pre-2018 quarters) ──
+    try:
+        edgar_eps = _fetch_edgar_quarterly_eps(ticker)
+        if edgar_eps:
+            yf_dates = {q["date"] for q in quarterly_eps}
+            older = [q for q in edgar_eps if q["date"] not in yf_dates]
+            if older:
+                quarterly_eps = sorted(older + quarterly_eps, key=lambda x: x["date"])
+                logger.debug(f"[BacktestData] {ticker}: merged {len(older)} EDGAR EPS pts "
+                             f"(total: {len(quarterly_eps)})")
+    except Exception as e:
+        logger.debug(f"[BacktestData] EDGAR merge skipped for {ticker}: {e}")
 
-        # ── Augment with SEC EDGAR historical EPS (fills in pre-2018 quarters) ──
-        try:
-            edgar_eps = _fetch_edgar_quarterly_eps(ticker)
-            if edgar_eps:
-                yf_dates = {q["date"] for q in quarterly_eps}
-                older = [q for q in edgar_eps if q["date"] not in yf_dates]
-                if older:
-                    quarterly_eps = sorted(older + quarterly_eps, key=lambda x: x["date"])
-                    logger.debug(f"[BacktestData] {ticker}: merged {len(older)} older EDGAR EPS pts "
-                                 f"(total: {len(quarterly_eps)})")
-        except Exception as e:
-            logger.debug(f"[BacktestData] EDGAR merge skipped for {ticker}: {e}")
+    quarterly_eps.sort(key=lambda x: x["date"])
+    return quarterly_eps
 
-        quarterly_eps.sort(key=lambda x: x["date"])
-        logger.debug(f"[BacktestData] {ticker}: {len(quarterly_eps)} total EPS pts | "
-                     f"range: {quarterly_eps[0]['date'][:7] if quarterly_eps else 'N/A'} – "
-                     f"{quarterly_eps[-1]['date'][:7] if quarterly_eps else 'N/A'}")
 
+def _fetch_one(ticker: str, start: str, end: str) -> dict:
+    """Legacy single-ticker fetcher — kept for compatibility but not used by fetch_backtest_data."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker.upper())
+        hist = t.history(start=start, end=end, auto_adjust=True)
+        prices = []
+        if hist is not None and not hist.empty:
+            for date_idx, row in hist.iterrows():
+                try:
+                    prices.append({
+                        "date":   str(date_idx.date()),
+                        "open":   round(float(row["Open"]),  4),
+                        "high":   round(float(row["High"]),  4),
+                        "low":    round(float(row["Low"]),   4),
+                        "close":  round(float(row["Close"]), 4),
+                        "volume": int(row.get("Volume", 0) or 0),
+                    })
+                except Exception:
+                    continue
         return {
-            "prices":             prices,
-            "annual_financials":  annual_financials,
-            "info":               info,
-            "quarterly_eps":      quarterly_eps,
+            "prices":            prices,
+            "annual_financials": {},
+            "info":              {},
+            "quarterly_eps":     _fetch_eps_only(ticker),
         }
     except Exception as e:
         logger.warning(f"[BacktestData] Error fetching {ticker}: {e}")
