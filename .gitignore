@@ -26,3 +26,4 @@ frontend/dist/
 
 # Logs
 *.log
+.env.deploy

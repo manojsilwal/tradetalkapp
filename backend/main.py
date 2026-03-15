@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from .schemas import (
     MarketState, FactorResult, MarketRegime, SwarmConsensus,
@@ -44,9 +45,38 @@ news_scanner = NewsScannerConnector()
 notification_pipeline = NotificationPipeline()
 sse_clients: list = []
 
-# Initialize persistent SQLite store
+# Initialize persistent SQLite stores
 from . import alert_store as db
 db.init_db()
+
+from . import user_progress as up
+up.init_db()
+
+from . import daily_challenge as dc
+dc.init_challenges_db()
+
+from . import paper_portfolio as pp
+pp.init_portfolio_db()
+
+from . import learning_path as lp
+lp.init_learning_db()
+
+from . import video_academy as va
+va.init_academy_db()
+
+# Register routers
+from .routers import progress, challenges, portfolio, learning, academy
+app.include_router(progress.router)
+app.include_router(challenges.router)
+app.include_router(portfolio.router)
+app.include_router(learning.router)
+app.include_router(academy.router)
+
+# Serve generated video files
+import os as _os
+_static_videos = _os.path.join(_os.path.dirname(__file__), "static", "videos")
+_os.makedirs(_static_videos, exist_ok=True)
+app.mount("/static/videos", StaticFiles(directory=_static_videos), name="videos")
 
 # Initialize Knowledge Store and LLM Client (singletons)
 knowledge_store = get_knowledge_store()
@@ -240,6 +270,12 @@ async def get_agent_trace(
         
     avg_confidence = sum(r.confidence for r in results) / len(results)
 
+    # XP hook — award for running a valuation
+    try:
+        up.award_xp("valuation", note=ticker)
+    except Exception:
+        pass
+
     consensus = SwarmConsensus(
         ticker=ticker.upper(),
         macro_state=market_state,
@@ -293,6 +329,12 @@ async def debate_ticker(ticker: str = Query("GME", description="Stock ticker to 
     except Exception as e:
         print(f"[KnowledgeHook] add_debate failed: {e}")
 
+    # XP hook
+    try:
+        up.award_xp("debate", note=ticker)
+    except Exception:
+        pass
+
     return result
 
 
@@ -324,6 +366,12 @@ async def run_backtest_endpoint(req: BacktestRequest):
         knowledge_store.add_backtest(result)
     except Exception as e:
         print(f"[KnowledgeHook] add_backtest failed: {e}")
+
+    # XP hook
+    try:
+        up.award_xp("backtest", note=req.strategy[:40])
+    except Exception:
+        pass
 
     return result
 
