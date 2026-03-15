@@ -21,23 +21,14 @@ logger = logging.getLogger(__name__)
 # Magnificent 7 — explicit small universe for PE-based strategies
 MAG7_UNIVERSE = ["AAPL", "MSFT", "GOOGL", "META", "AMZN", "NVDA", "TSLA"]
 
-# Curated liquid S&P 500 universe — large enough to be meaningful,
-# small enough to avoid yFinance rate limits
+# Curated 40-stock liquid universe — covers all major sectors, keeps cloud
+# requests low enough to avoid Yahoo Finance rate limits on server IPs.
+# (The full 100+ ticker list caused too many 401/429 errors on Render.)
 SP500_UNIVERSE = [
     "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA", "JPM", "JNJ", "V",
-    "PG", "UNH", "HD", "MA", "BAC", "ABBV", "PFE", "AVGO", "KO", "PEP",
-    "COST", "MRK", "TMO", "WMT", "CSCO", "ABT", "ACN", "CVX", "LLY", "MCD",
-    "DHR", "NEE", "NKE", "TXN", "AMD", "PM", "ORCL", "IBM", "CRM", "QCOM",
-    "HON", "AMGN", "LIN", "SBUX", "INTU", "GS", "BLK", "SPGI", "CAT", "BA",
-    "AXP", "MS", "RTX", "ISRG", "ADI", "MDLZ", "GILD", "TJX", "BKNG", "NOW",
-    "DE", "MMM", "SYK", "ZTS", "CI", "USB", "MO", "REGN", "VRTX", "HCA",
-    "EOG", "SLB", "PSA", "WELL", "DUK", "SO", "EXC", "D", "AEP", "XEL",
-    "APD", "SHW", "PPG", "ECL", "EMR", "ITW", "GE", "ETN", "PH", "ROK",
-    "F", "GM", "UBER", "LYFT", "ABNB", "DASH", "SNAP", "PINS", "TWTR", "ZM",
-    "PYPL", "SQ", "SHOP", "ROKU", "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS",
-    "AMT", "PLD", "CCI", "EQIX", "SPG", "O", "AVB", "EQR", "MAA", "UDR",
-    "XOM", "CVX", "COP", "MPC", "PSX", "VLO", "OXY", "HES", "DVN", "FANG",
-    "WFC", "C", "PNC", "TFC", "STT", "BK", "COF", "AIG", "MET", "PRU",
+    "PG",   "HD",   "MA",   "KO",   "PEP",  "AVGO", "WMT",  "MCD", "ABBV", "TMO",
+    "UNH",  "CVX",  "XOM",  "LLY",  "NFLX", "COST", "CSCO", "TXN", "MRK",  "NKE",
+    "BAC",  "SBUX", "AMGN", "GS",   "QCOM", "AMD",  "INTU", "SPGI","BLK",  "DIS",
 ]
 
 # ── SEC EDGAR helpers ─────────────────────────────────────────────────────────
@@ -216,10 +207,10 @@ async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
     Fetch historical price data and fundamentals for all tickers.
     Returns: {ticker: {prices, annual_financials, info, quarterly_eps}}
 
-    Batches in groups of 20 to avoid yFinance rate limits.
-    SEC EDGAR EPS is fetched per-ticker inside _fetch_one and cached.
+    Batches in groups of 10 (reduced from 20) to stay below Yahoo Finance's
+    cloud-IP rate limits. 1.5s pause between batches for the same reason.
     """
-    batch_size = 20
+    batch_size = 10   # conservative for cloud IPs
     results = {}
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i: i + batch_size]
@@ -232,43 +223,66 @@ async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
             else:
                 results[ticker] = result
         if i + batch_size < len(tickers):
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.5)   # longer pause — cloud IPs get throttled faster
     return results
 
 
 def _fetch_one(ticker: str, start: str, end: str) -> dict:
     try:
         import yfinance as yf
-        import pandas as pd
+        import requests as _req
 
-        t = yf.Ticker(ticker.upper())
+        # Use a browser-like User-Agent so Yahoo Finance treats us like a browser.
+        # This reduces 401 "Invalid Crumb" errors on cloud/server IPs.
+        session = _req.Session()
+        session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+
+        t = yf.Ticker(ticker.upper(), session=session)
         hist = t.history(start=start, end=end, auto_adjust=True)
 
         prices = []
-        if not hist.empty:
+        if hist is not None and not hist.empty:
             for date_idx, row in hist.iterrows():
-                prices.append({
-                    "date":   str(date_idx.date()),
-                    "open":   round(float(row["Open"]),   4),
-                    "high":   round(float(row["High"]),   4),
-                    "low":    round(float(row["Low"]),    4),
-                    "close":  round(float(row["Close"]),  4),
-                    "volume": int(row["Volume"]),
-                })
+                try:
+                    prices.append({
+                        "date":   str(date_idx.date()),
+                        "open":   round(float(row["Open"]),   4),
+                        "high":   round(float(row["High"]),   4),
+                        "low":    round(float(row["Low"]),    4),
+                        "close":  round(float(row["Close"]),  4),
+                        "volume": int(row.get("Volume", 0) or 0),
+                    })
+                except Exception:
+                    continue
 
-        info = t.info or {}
+        info = {}
+        try:
+            raw_info = t.info
+            info = raw_info if isinstance(raw_info, dict) else {}
+        except Exception:
+            pass
 
         # ── Annual financials (last 4 years from yFinance) ────────────────
         annual_financials: dict = {}
         try:
-            fin = t.financials
+            fin = t.income_stmt   # yFinance 1.x — t.financials is deprecated
+            if fin is None or fin.empty:
+                fin = t.financials  # fallback for older versions
             if fin is not None and not fin.empty:
                 for col in fin.columns[:4]:
                     year_str = str(col.year) if hasattr(col, "year") else str(col)[:4]
                     annual_financials[year_str] = {
-                        "total_revenue": _safe_float(fin.get("Total Revenue", {}).get(col)),
-                        "net_income":    _safe_float(fin.get("Net Income",     {}).get(col)),
-                        "gross_profit":  _safe_float(fin.get("Gross Profit",   {}).get(col)),
+                        "total_revenue": _safe_float(_df_get(fin, "Total Revenue", col)),
+                        "net_income":    _safe_float(_df_get(fin, "Net Income",     col)),
+                        "gross_profit":  _safe_float(_df_get(fin, "Gross Profit",   col)),
                     }
         except Exception:
             pass
@@ -280,11 +294,11 @@ def _fetch_one(ticker: str, start: str, end: str) -> dict:
                     year_str = str(col.year) if hasattr(col, "year") else str(col)[:4]
                     if year_str not in annual_financials:
                         annual_financials[year_str] = {}
-                    annual_financials[year_str]["total_debt"] = _safe_float(
-                        bs.get("Total Debt", bs.get("Long Term Debt", {})).get(col)
-                    )
+                    # Use _df_get to safely look up rows by label (index) not column
+                    debt = _df_get(bs, "Total Debt", col) or _df_get(bs, "Long Term Debt", col)
+                    annual_financials[year_str]["total_debt"] = _safe_float(debt)
                     annual_financials[year_str]["cash"] = _safe_float(
-                        bs.get("Cash And Cash Equivalents", {}).get(col)
+                        _df_get(bs, "Cash And Cash Equivalents", col)
                     )
         except Exception:
             pass
@@ -370,6 +384,24 @@ def _safe_float(val) -> Optional[float]:
         import math
         f = float(val)
         return None if math.isnan(f) else round(f, 2)
+    except Exception:
+        return None
+
+
+def _df_get(df, row_label: str, col):
+    """
+    Safely retrieve df.loc[row_label, col] from a yFinance DataFrame.
+    yFinance DataFrames have financial metrics as the ROW index and dates
+    as COLUMNS — so we must use .loc[], not .get() (which searches columns).
+    Returns None on any error.
+    """
+    try:
+        if df is None or df.empty:
+            return None
+        if row_label not in df.index:
+            return None
+        val = df.loc[row_label, col]
+        return None if val is None else val
     except Exception:
         return None
 
