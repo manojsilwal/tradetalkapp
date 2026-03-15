@@ -260,12 +260,24 @@ class LLMClient:
 
     async def generate_strategy_rules(self, strategy_text: str, historical_context: str) -> dict:
         prompt = (
-            f"Convert this investing strategy into structured JSON rules:\n\n"
+            f"Convert this plain-English investing strategy into structured JSON rules.\n\n"
             f"Strategy: {strategy_text}\n\n"
             f"Similar strategies from knowledge base:\n{historical_context}\n\n"
-            f"Return JSON with keys: name (string), filters (list of objects with metric/op/value), "
-            f"holding_period_months (int), rebalance_months (int), strategy_type (fundamental|momentum|mixed), "
-            f"universe_hint (string describing what stocks to screen)."
+            f"Return JSON with these keys:\n"
+            f"  name (string): short descriptive strategy name\n"
+            f"  filters (list): BUY entry conditions — each is {{metric, op, value}}\n"
+            f"  sell_filters (list): SELL exit conditions — each is {{metric, op, value}}. "
+            f"    IMPORTANT: if the strategy has explicit sell conditions (e.g. 'sell when PE > 35'), "
+            f"    put them here. Leave empty [] if no explicit sell trigger (periodic rebalance).\n"
+            f"  holding_period_months (int): how long to hold (12 if unspecified)\n"
+            f"  rebalance_months (int): 1 if sell_filters present (monthly check), else 12\n"
+            f"  strategy_type (string): 'fundamental', 'momentum', or 'mixed'\n"
+            f"  universe_hint (string): e.g. 'mag7', 'S&P 500', 'dividend stocks'\n\n"
+            f"Supported metrics: forward_pe, pe_ratio, revenue_growth_yoy, net_income_growth_yoy, "
+            f"debt_to_equity, pb_ratio, roe, roa, dividend_yield, gross_margins, "
+            f"price_return_1m, price_return_3m, price_return_6m, price_return_1y, "
+            f"above_ma_200, above_ma_50\n\n"
+            f"Note: forward_pe and pe_ratio are computed from trailing-12-month EPS history."
         )
         return await self.generate("strategy_parser", prompt)
 

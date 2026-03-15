@@ -146,7 +146,7 @@ class DebateResult(BaseModel):
 # ── Strategy Backtesting Models ───────────────────────────────────────────────
 
 class FilterRule(BaseModel):
-    metric: str                     # e.g. "revenue_growth_yoy"
+    metric: str                     # e.g. "forward_pe", "revenue_growth_yoy"
     op: str                         # ">", "<", ">=", "<="
     value: float
 
@@ -154,7 +154,8 @@ class FilterRule(BaseModel):
 class StrategyRules(BaseModel):
     name: str
     description: str
-    filters: List[FilterRule]
+    filters: List[FilterRule]                                         # BUY conditions
+    sell_filters: List[FilterRule] = Field(default_factory=list)     # SELL conditions (event-driven)
     holding_period_months: int = 12
     rebalance_months: int = 12
     universe: List[str] = Field(default_factory=list)
@@ -164,17 +165,25 @@ class StrategyRules(BaseModel):
 
 
 class BacktestAction(BaseModel):
-    action: str                  # "BUY" | "SELL" | "REBALANCE" | "HOLD_CASH"
+    action: str                      # "BUY" | "SELL" | "HOLD_CASH"
     ticker: str
     date: str
     price: float
+    shares: float = 0.0              # number of shares bought/sold
+    position_value: float = 0.0      # shares × price
+    profit_loss_dollars: float = 0.0 # realised P&L in dollars (SELL only)
     reason: str
-    return_pct: float = 0.0
+    return_pct: float = 0.0          # % return on the position (SELL only)
+    portfolio_value_after: float = 0.0  # total portfolio value after this action
 
 
 class BacktestResult(BaseModel):
     strategy: StrategyRules
     actions: List[BacktestAction]
+    initial_investment: float = 10000.0
+    final_value: float = 0.0
+    total_return_pct: float = 0.0
+    total_return_dollars: float = 0.0
     cagr: float
     sharpe_ratio: float
     max_drawdown: float

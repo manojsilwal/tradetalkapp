@@ -149,24 +149,37 @@ class KnowledgeStore:
         if not col:
             return
         try:
+            buy_desc  = "; ".join(f"{f.metric} {f.op} {f.value}" for f in result.strategy.filters)
+            sell_desc = "; ".join(f"{f.metric} {f.op} {f.value}" for f in (result.strategy.sell_filters or []))
             doc = (
                 f"Backtest: {result.strategy.name}. "
                 f"Period: {result.strategy.start_date} to {result.strategy.end_date}. "
+                f"Universe: {len(result.strategy.universe)} stocks. "
+                f"Buy when: {buy_desc}. "
+                + (f"Sell when: {sell_desc}. " if sell_desc else "")
+                + f"$10,000 → ${result.final_value:,.0f} ({result.total_return_pct:+.1f}%). "
                 f"CAGR: {result.cagr:.1f}% vs SPY {result.benchmark_cagr:.1f}%. "
                 f"Sharpe: {result.sharpe_ratio:.2f}. Max Drawdown: {result.max_drawdown:.1f}%. "
                 f"Win Rate: {result.win_rate:.1f}%. Total trades: {result.total_trades}. "
-                f"Explanation: {result.gemini_explanation[:500]}"
+                f"Explanation: {result.gemini_explanation[:400]}"
             )
             entry_id = f"backtest_{int(time.time())}"
             col.add(
                 documents=[doc],
                 metadatas=[{
-                    "strategy_name": result.strategy.name,
-                    "strategy_type": result.strategy.strategy_type,
-                    "cagr": result.cagr,
-                    "sharpe": result.sharpe_ratio,
-                    "outperformed": str(result.outperformed),
-                    "date": str(datetime.now(timezone.utc).date()),
+                    "strategy_name":   result.strategy.name,
+                    "strategy_type":   result.strategy.strategy_type,
+                    "start_date":      result.strategy.start_date,
+                    "end_date":        result.strategy.end_date,
+                    "cagr":            result.cagr,
+                    "sharpe":          result.sharpe_ratio,
+                    "win_rate":        result.win_rate,
+                    "max_drawdown":    result.max_drawdown,
+                    "total_return_pct": result.total_return_pct,
+                    "final_value":     result.final_value,
+                    "total_trades":    result.total_trades,
+                    "outperformed":    str(result.outperformed),
+                    "date":            str(datetime.now(timezone.utc).date()),
                 }],
                 ids=[entry_id],
             )
@@ -234,6 +247,42 @@ class KnowledgeStore:
             logger.warning(f"[KnowledgeStore] add_youtube_insight failed: {e}")
 
     # ── QUERY METHODS ─────────────────────────────────────────────────────────
+
+    def get_strategy_leaderboard(self, n: int = 20) -> list:
+        """Return top N backtested strategies sorted by CAGR (best first)."""
+        col = self._safe_col("strategy_backtests")
+        if not col or col.count() == 0:
+            return []
+        try:
+            results = col.get(include=["documents", "metadatas", "ids"])
+            entries = []
+            for doc, meta, entry_id in zip(
+                results.get("documents", []),
+                results.get("metadatas", []),
+                results.get("ids", []),
+            ):
+                entries.append({
+                    "id":               entry_id,
+                    "strategy_name":    meta.get("strategy_name", "Unknown"),
+                    "strategy_type":    meta.get("strategy_type", "unknown"),
+                    "start_date":       meta.get("start_date", ""),
+                    "end_date":         meta.get("end_date", ""),
+                    "cagr":             float(meta.get("cagr", 0.0)),
+                    "sharpe":           float(meta.get("sharpe", 0.0)),
+                    "win_rate":         float(meta.get("win_rate", 0.0)),
+                    "max_drawdown":     float(meta.get("max_drawdown", 0.0)),
+                    "total_return_pct": float(meta.get("total_return_pct", 0.0)),
+                    "final_value":      float(meta.get("final_value", 0.0)),
+                    "total_trades":     int(meta.get("total_trades", 0)),
+                    "outperformed":     meta.get("outperformed") == "True",
+                    "date_run":         meta.get("date", ""),
+                    "summary":          (doc or "")[:250],
+                })
+            entries.sort(key=lambda x: x["cagr"], reverse=True)
+            return entries[:n]
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] get_strategy_leaderboard failed: {e}")
+            return []
 
     def query(self, collection: str, query_text: str, n_results: int = 3) -> list[str]:
         """Semantic similarity search. Returns list of document strings."""

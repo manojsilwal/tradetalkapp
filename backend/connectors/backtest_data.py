@@ -1,13 +1,22 @@
 """
-Backtest Data Connector — fetches historical OHLC price data and available
-fundamental snapshots for a list of tickers over a date range using yFinance.
-Batches requests with asyncio.to_thread to avoid blocking the event loop.
+Backtest Data Connector — fetches historical OHLC price data, fundamentals, and
+quarterly EPS for PE computation over a date range using yFinance.
+
+Data depth:
+  - Price history: up to 20+ years (yFinance full OHLC)
+  - Quarterly EPS (for PE):  ~4-8 years depending on the stock
+  - Annual financials: last 4 reported years
+
+PE-based strategies therefore work best over 5-8 year windows.
 """
 import asyncio
 import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Magnificent 7 — explicit small universe for PE-based strategies
+MAG7_UNIVERSE = ["AAPL", "MSFT", "GOOGL", "META", "AMZN", "NVDA", "TSLA"]
 
 # Curated liquid S&P 500 universe — large enough to be meaningful,
 # small enough to avoid yFinance rate limits
@@ -107,10 +116,63 @@ def _fetch_one(ticker: str, start: str, end: str) -> dict:
         except Exception:
             pass
 
-        return {"prices": prices, "annual_financials": annual_financials, "info": info}
+        # ── Quarterly EPS — used for historical PE computation ───────────────
+        # PE = price / trailing-12-month EPS (sum of last 4 quarters)
+        # yFinance typically provides ~4-8 years of quarterly data.
+        quarterly_eps = []
+        try:
+            qis = t.quarterly_income_stmt
+            if qis is not None and not qis.empty:
+                eps_row = None
+                for row_name in ("Diluted EPS", "Basic EPS"):
+                    if row_name in qis.index:
+                        eps_row = qis.loc[row_name]
+                        break
+                if eps_row is not None:
+                    for col in qis.columns:
+                        v = _safe_float(eps_row.get(col))
+                        if v is not None:
+                            d = col.date() if hasattr(col, "date") else col
+                            quarterly_eps.append({"date": str(d)[:10], "eps": v})
+                else:
+                    # Compute EPS from net income / shares outstanding
+                    shares = _safe_float((info or {}).get("sharesOutstanding"))
+                    if shares and shares > 0 and "Net Income" in qis.index:
+                        ni_row = qis.loc["Net Income"]
+                        for col in qis.columns:
+                            ni = _safe_float(ni_row.get(col))
+                            if ni is not None:
+                                d = col.date() if hasattr(col, "date") else col
+                                quarterly_eps.append({"date": str(d)[:10], "eps": ni / shares})
+        except Exception:
+            pass
+
+        # Older yFinance fallback: t.quarterly_earnings
+        if not quarterly_eps:
+            try:
+                qe = t.quarterly_earnings
+                if qe is not None and not qe.empty:
+                    col_name = next(
+                        (c for c in ("Earnings", "EPS") if c in qe.columns),
+                        qe.columns[0] if len(qe.columns) else None
+                    )
+                    if col_name:
+                        for date_idx, row in qe.iterrows():
+                            v = _safe_float(row.get(col_name))
+                            if v is not None:
+                                d = date_idx.date() if hasattr(date_idx, "date") else date_idx
+                                quarterly_eps.append({"date": str(d)[:10], "eps": v})
+            except Exception:
+                pass
+
+        # Sort ascending by date
+        quarterly_eps.sort(key=lambda x: x["date"])
+        logger.debug(f"[BacktestData] {ticker}: {len(quarterly_eps)} quarterly EPS points")
+
+        return {"prices": prices, "annual_financials": annual_financials, "info": info, "quarterly_eps": quarterly_eps}
     except Exception as e:
         logger.warning(f"[BacktestData] Error fetching {ticker}: {e}")
-        return {"prices": [], "annual_financials": {}, "info": {}}
+        return {"prices": [], "annual_financials": {}, "info": {}, "quarterly_eps": []}
 
 
 def _safe_float(val) -> Optional[float]:
@@ -127,9 +189,11 @@ def _safe_float(val) -> Optional[float]:
 def resolve_universe(universe_hint: str, tickers: list = None) -> list:
     """
     Resolve universe hint to a list of tickers.
-    If specific tickers provided (e.g. ["TSLA", "AAPL"]) use those.
-    Otherwise return the curated S&P 500 universe.
+    Recognises named universes: mag7, sp500. Falls back to provided tickers or full S&P500.
     """
     if tickers and len(tickers) > 0:
         return [t.upper() for t in tickers]
+    hint = (universe_hint or "").lower()
+    if any(k in hint for k in ("mag7", "magnificent 7", "magnificent seven", "mag 7")):
+        return MAG7_UNIVERSE
     return SP500_UNIVERSE

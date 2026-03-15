@@ -1,31 +1,29 @@
 """
-Backtest Engine — simulates a StrategyRules over a user-defined date range.
-Uses yFinance historical data. Annual rebalancing. Computes CAGR, Sharpe,
-Max Drawdown, Win Rate vs SPY. Calls Gemini for plain-English explanation.
+Backtest Engine v2 — condition-based buy/sell triggers with share-level P&L tracking.
+
+Key improvements over v1:
+  - forward_pe / pe_ratio computed from quarterly EPS history (trailing 12-month)
+  - Separate sell_filters: sell when condition is met, not just at rebalance
+  - Share-level tracking: exact shares bought, position value, dollar P&L per trade
+  - Monthly checks when sell_filters present (event-driven exits)
+  - Returns initial_investment, final_value, total_return_pct, total_return_dollars
+  - Supports up to 20-year price history; PE accuracy limited to available EPS data (~5-8yr)
 """
 import asyncio
 import logging
 import math
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 from .schemas import StrategyRules, BacktestAction, BacktestResult, FilterRule
 
 logger = logging.getLogger(__name__)
 
-INITIAL_VALUE = 10_000.0   # $10,000 starting portfolio
+INITIAL_VALUE = 10_000.0
 SPY_TICKER    = "SPY"
+MAX_POSITIONS = 30   # cap to avoid over-concentration
 
 
 async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
-    """
-    Full backtest pipeline:
-    1. Fetch historical data for universe
-    2. Simulate rebalancing loop
-    3. Compute statistics
-    4. Fetch SPY benchmark
-    5. Generate Gemini explanation
-    6. Return BacktestResult
-    """
     from .connectors.backtest_data import fetch_backtest_data
 
     tickers = rules.universe if rules.universe else []
@@ -33,35 +31,37 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
         from .connectors.backtest_data import SP500_UNIVERSE
         tickers = SP500_UNIVERSE
 
-    logger.info(f"[BacktestEngine] Fetching data for {len(tickers)} tickers ({rules.start_date} → {rules.end_date})")
+    logger.info(f"[BacktestEngine] {rules.name}: {len(tickers)} tickers | "
+                f"{rules.start_date} → {rules.end_date} | "
+                f"buy_filters={len(rules.filters)} sell_filters={len(rules.sell_filters)}")
 
-    # Fetch universe data + SPY benchmark concurrently
     universe_task = fetch_backtest_data(tickers, rules.start_date, rules.end_date)
     spy_task      = fetch_backtest_data([SPY_TICKER], rules.start_date, rules.end_date)
     universe_data, spy_data = await asyncio.gather(universe_task, spy_task)
 
-    # Run simulation
-    actions, portfolio_series = await asyncio.to_thread(
+    actions, portfolio_series, final_value = await asyncio.to_thread(
         _simulate, rules, universe_data
     )
 
-    # Build benchmark series
-    benchmark_series = _build_series(spy_data.get(SPY_TICKER, {}).get("prices", []))
-
-    # Compute stats
+    benchmark_series = _build_benchmark_series(spy_data.get(SPY_TICKER, {}).get("prices", []))
     stats = _compute_stats(portfolio_series, benchmark_series, actions)
 
-    # RAG context for explanation
-    context_docs = ks.query("strategy_backtests", rules.description, n_results=2)
+    total_return_pct     = round(((final_value / INITIAL_VALUE) - 1) * 100, 2)
+    total_return_dollars = round(final_value - INITIAL_VALUE, 2)
+
+    context_docs  = ks.query("strategy_backtests", rules.description, n_results=2)
     context_docs += ks.query("macro_snapshots", f"macro conditions {rules.start_date[:4]}", n_results=1)
     context = ks.format_context(context_docs)
 
-    # Gemini explanation
-    explanation = await llm.generate_backtest_explanation(rules.name, stats, context)
+    explanation = await llm.generate_backtest_explanation(rules.name, {**stats, "total_return_pct": total_return_pct, "final_value": final_value}, context)
 
     return BacktestResult(
         strategy=rules,
         actions=actions,
+        initial_investment=INITIAL_VALUE,
+        final_value=round(final_value, 2),
+        total_return_pct=total_return_pct,
+        total_return_dollars=total_return_dollars,
         cagr=stats["cagr"],
         sharpe_ratio=stats["sharpe"],
         max_drawdown=stats["max_drawdown"],
@@ -78,233 +78,351 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
     )
 
 
+# ── Core simulation ───────────────────────────────────────────────────────────
+
 def _simulate(rules: StrategyRules, universe_data: dict) -> tuple:
     """
-    Core simulation loop — runs synchronously (called via asyncio.to_thread).
-    Returns (actions, portfolio_value_series).
+    Condition-based simulation loop — runs synchronously (called via asyncio.to_thread).
+
+    Logic:
+      - Check interval = 1 month if sell_filters present, else rebalance_months
+      - At rebalance dates: sell all (if no sell_filters), then re-screen for buys
+      - At every check: evaluate sell_filters for current holdings → sell if triggered
+      - Track exact shares, entry value, dollar P&L per trade
+
+    Returns: (actions, portfolio_value_series, final_value)
     """
     start = _parse_date(rules.start_date)
     end   = _parse_date(rules.end_date)
-    actions = []
-    current_holdings: dict[str, float] = {}   # ticker → entry_price
-    cash = INITIAL_VALUE
-    portfolio_value = INITIAL_VALUE
+
+    has_sell_filters = bool(rules.sell_filters)
+    # Monthly checks for event-driven strategies; interval-based for periodic ones
+    check_interval   = 1 if has_sell_filters else rules.rebalance_months
+    check_dates      = _generate_dates(start, end, check_interval)
+    rebalance_set    = {str(d) for d in _generate_dates(start, end, rules.rebalance_months)}
+
+    # holdings: {ticker: {shares, entry_price, entry_value}}
+    holdings: dict = {}
+    cash     = INITIAL_VALUE
+    actions  = []
     portfolio_series = []
 
-    # Generate rebalance dates
-    rebalance_dates = _generate_rebalance_dates(start, end, rules.rebalance_months)
+    for check_date in check_dates:
+        date_str = str(check_date)
+        pv_start = _portfolio_value(holdings, cash, universe_data, check_date)
 
-    for i, rebalance_date in enumerate(rebalance_dates):
-        date_str = str(rebalance_date)
-        next_date = rebalance_dates[i + 1] if i + 1 < len(rebalance_dates) else end
+        # ── 1. Sell triggers (event-driven) ───────────────────────────────
+        if has_sell_filters:
+            for ticker in list(holdings.keys()):
+                data = universe_data.get(ticker, {})
+                if _passes_filters(rules.sell_filters, data, check_date):
+                    sell_price = _price_on(data, check_date)
+                    if sell_price and sell_price > 0:
+                        h = holdings.pop(ticker)
+                        shares     = h["shares"]
+                        sell_value = shares * sell_price
+                        pnl_dol    = sell_value - h["entry_value"]
+                        pnl_pct    = (sell_price - h["entry_price"]) / h["entry_price"] * 100
+                        cash      += sell_value
+                        pv_after   = _portfolio_value(holdings, cash, universe_data, check_date)
+                        reason     = _build_filter_reason(rules.sell_filters, data, check_date, prefix="Sell: ")
+                        actions.append(BacktestAction(
+                            action="SELL", ticker=ticker, date=date_str,
+                            price=round(sell_price, 2), shares=round(shares, 4),
+                            position_value=round(sell_value, 2),
+                            profit_loss_dollars=round(pnl_dol, 2),
+                            reason=reason, return_pct=round(pnl_pct, 2),
+                            portfolio_value_after=round(pv_after, 2),
+                        ))
 
-        # Close existing positions at this rebalance date
-        sell_proceeds = 0.0
-        for ticker, entry_price in list(current_holdings.items()):
-            sell_price = _get_price_on_date(universe_data.get(ticker, {}), rebalance_date)
-            if sell_price and sell_price > 0:
-                ret = ((sell_price - entry_price) / entry_price) * 100
-                actions.append(BacktestAction(
-                    action="SELL",
-                    ticker=ticker,
-                    date=date_str,
-                    price=round(sell_price, 2),
-                    reason=f"Rebalance — held from previous period",
-                    return_pct=round(ret, 2),
-                ))
-                sell_proceeds += sell_price * (portfolio_value / len(current_holdings) / entry_price)
-        if current_holdings:
-            cash = sell_proceeds if sell_proceeds > 0 else cash
-        current_holdings = {}
-
-        # Screen universe using filters as of rebalance_date
-        selected = _screen_universe(rules.filters, universe_data, rebalance_date)
-
-        if not selected:
-            actions.append(BacktestAction(
-                action="HOLD_CASH",
-                ticker="CASH",
-                date=date_str,
-                price=1.0,
-                reason="No stocks passed the screening filters",
-                return_pct=0.0,
-            ))
-        else:
-            # Equal-weight allocation
-            alloc_per_stock = cash / len(selected)
-            for ticker in selected:
-                buy_price = _get_price_on_date(universe_data.get(ticker, {}), rebalance_date)
-                if buy_price and buy_price > 0:
-                    reason = _build_reason(ticker, rules.filters, universe_data.get(ticker, {}), rebalance_date)
+        # ── 2. Periodic full rebalance sell (only when no sell_filters) ───
+        if not has_sell_filters and date_str in rebalance_set and holdings:
+            for ticker, h in list(holdings.items()):
+                sell_price = _price_on(universe_data.get(ticker, {}), check_date)
+                if sell_price and sell_price > 0:
+                    shares     = h["shares"]
+                    sell_value = shares * sell_price
+                    pnl_dol    = sell_value - h["entry_value"]
+                    pnl_pct    = (sell_price - h["entry_price"]) / h["entry_price"] * 100
+                    cash      += sell_value
                     actions.append(BacktestAction(
-                        action="BUY",
-                        ticker=ticker,
-                        date=date_str,
-                        price=round(buy_price, 2),
-                        reason=reason,
-                        return_pct=0.0,
+                        action="SELL", ticker=ticker, date=date_str,
+                        price=round(sell_price, 2), shares=round(shares, 4),
+                        position_value=round(sell_value, 2),
+                        profit_loss_dollars=round(pnl_dol, 2),
+                        reason="Periodic rebalance",
+                        return_pct=round(pnl_pct, 2),
+                        portfolio_value_after=round(cash, 2),
                     ))
-                    current_holdings[ticker] = buy_price
+            holdings = {}
 
-        # Track portfolio value at end of period
-        portfolio_value = _compute_portfolio_value(current_holdings, cash, universe_data, next_date)
-        portfolio_series.append({
-            "date": str(next_date),
-            "value": round(portfolio_value, 2),
-        })
+        # ── 3. Buy screen at rebalance dates ──────────────────────────────
+        if date_str in rebalance_set and cash > 50:
+            already_held = set(holdings.keys())
+            candidates   = _screen(rules.filters, universe_data, check_date)
+            new_buys     = [t for t in candidates if t not in already_held]
 
-    return actions, portfolio_series
+            if new_buys:
+                alloc_per = cash / len(new_buys)
+                for ticker in new_buys:
+                    data      = universe_data.get(ticker, {})
+                    buy_price = _price_on(data, check_date)
+                    if buy_price and buy_price > 0:
+                        shares = alloc_per / buy_price
+                        holdings[ticker] = {
+                            "shares":      shares,
+                            "entry_price": buy_price,
+                            "entry_value": alloc_per,
+                        }
+                        cash -= alloc_per
+                        pv_after = _portfolio_value(holdings, cash, universe_data, check_date)
+                        reason   = _build_filter_reason(rules.filters, data, check_date, prefix="Buy: ")
+                        actions.append(BacktestAction(
+                            action="BUY", ticker=ticker, date=date_str,
+                            price=round(buy_price, 2), shares=round(shares, 4),
+                            position_value=round(alloc_per, 2),
+                            profit_loss_dollars=0.0, reason=reason,
+                            return_pct=0.0,
+                            portfolio_value_after=round(pv_after, 2),
+                        ))
+            elif not holdings:
+                pv_after = _portfolio_value(holdings, cash, universe_data, check_date)
+                actions.append(BacktestAction(
+                    action="HOLD_CASH", ticker="CASH", date=date_str,
+                    price=1.0, shares=round(cash, 2),
+                    position_value=round(cash, 2),
+                    profit_loss_dollars=0.0, reason="No stocks passed screening filters",
+                    return_pct=0.0, portfolio_value_after=round(pv_after, 2),
+                ))
+
+        # ── 4. Monthly portfolio value snapshot ───────────────────────────
+        pv = _portfolio_value(holdings, cash, universe_data, check_date)
+        portfolio_series.append({"date": date_str, "value": round(pv, 2)})
+
+    # Close-out: mark to market on end date
+    final_value = _portfolio_value(holdings, cash, universe_data, end)
+    return actions, portfolio_series, final_value
 
 
-def _screen_universe(filters: list, universe_data: dict, as_of: date) -> list:
-    """Apply all filters to universe data and return passing tickers."""
-    selected = []
-    for ticker, data in universe_data.items():
-        if _ticker_passes_filters(ticker, filters, data, as_of):
-            selected.append(ticker)
-    return selected[:30]  # cap at 30 per rebalance to avoid over-concentration
+# ── Screening & filtering ──────────────────────────────────────────────────────
+
+def _screen(filters: list, universe_data: dict, as_of: date) -> list:
+    selected = [
+        ticker for ticker, data in universe_data.items()
+        if _passes_filters(filters, data, as_of)
+    ]
+    return selected[:MAX_POSITIONS]
 
 
-def _ticker_passes_filters(ticker: str, filters: list, data: dict, as_of: date) -> bool:
+def _passes_filters(filters: list, data: dict, as_of: date) -> bool:
     if not data.get("prices"):
         return False
-    info = data.get("info", {})
-    fundamentals = _get_fundamentals_as_of(data.get("annual_financials", {}), as_of)
-
     for f in filters:
-        val = _get_metric_value(f.metric, info, fundamentals, data.get("prices", []), as_of)
+        val = _metric(f.metric, data, as_of)
         if val is None:
             return False
-        if not _apply_op(val, f.op, f.value):
+        if not _op(val, f.op, f.value):
             return False
     return True
 
 
-def _get_fundamentals_as_of(annual_financials: dict, as_of: date) -> dict:
-    """Get the most recent annual financials available as of a given date."""
-    available_years = [y for y in annual_financials.keys() if int(y) <= as_of.year]
-    if not available_years:
-        return {}
-    latest_year = max(available_years)
-    current = annual_financials.get(latest_year, {})
-    prev_year = str(int(latest_year) - 1)
-    prev = annual_financials.get(prev_year, {})
-    return {"current": current, "prev": prev, "year": latest_year}
+def _metric(metric: str, data: dict, as_of: date) -> Optional[float]:
+    """Compute a single metric value as of a specific date."""
+    info         = data.get("info", {})
+    prices       = data.get("prices", [])
+    q_eps        = data.get("quarterly_eps", [])
+    ann_fin      = data.get("annual_financials", {})
+    fundamentals = _fundamentals_as_of(ann_fin, as_of)
+    current      = fundamentals.get("current", {})
+    prev         = fundamentals.get("prev", {})
 
+    # ── PE (trailing 12-month from quarterly EPS) ─────────────────────────
+    if metric in ("forward_pe", "pe_ratio", "trailing_pe", "pe"):
+        return _trailing_pe(prices, q_eps, as_of, info)
 
-def _get_metric_value(metric: str, info: dict, fundamentals: dict, prices: list, as_of: date):
-    current = fundamentals.get("current", {})
-    prev    = fundamentals.get("prev", {})
-
+    # ── Income statement metrics ──────────────────────────────────────────
     if metric == "revenue_growth_yoy":
-        cur_rev  = current.get("total_revenue")
-        prev_rev = prev.get("total_revenue")
-        if cur_rev and prev_rev and prev_rev != 0:
-            return (cur_rev - prev_rev) / abs(prev_rev)
+        cur_r, prv_r = current.get("total_revenue"), prev.get("total_revenue")
+        if cur_r and prv_r and prv_r != 0:
+            return (cur_r - prv_r) / abs(prv_r)
         return None
 
     if metric == "net_income_growth_yoy":
-        cur  = current.get("net_income")
-        prv  = prev.get("net_income")
-        if cur is not None and prv and prv != 0:
-            return (cur - prv) / abs(prv)
+        cur_n, prv_n = current.get("net_income"), prev.get("net_income")
+        if cur_n is not None and prv_n and prv_n != 0:
+            return (cur_n - prv_n) / abs(prv_n)
         return None
 
+    # ── Balance sheet / ratio metrics ────────────────────────────────────
     if metric == "debt_to_equity":
-        val = info.get("debtToEquity")
-        return float(val) / 100 if val else None  # yFinance returns as percentage
-
-    if metric == "pe_ratio":
-        val = info.get("trailingPE")
-        return float(val) if val else None
+        v = info.get("debtToEquity")
+        return float(v) / 100 if v else None
 
     if metric == "pb_ratio":
-        val = info.get("priceToBook")
-        return float(val) if val else None
+        v = info.get("priceToBook")
+        return float(v) if v else None
 
     if metric == "roe":
-        val = info.get("returnOnEquity")
-        return float(val) * 100 if val else None
+        v = info.get("returnOnEquity")
+        return float(v) * 100 if v else None
 
     if metric == "roa":
-        val = info.get("returnOnAssets")
-        return float(val) * 100 if val else None
+        v = info.get("returnOnAssets")
+        return float(v) * 100 if v else None
 
     if metric == "dividend_yield":
-        val = info.get("dividendYield")
-        return float(val) * 100 if val else None
+        v = info.get("dividendYield")
+        return float(v) * 100 if v else None
 
     if metric == "gross_margins":
-        val = info.get("grossMargins")
-        return float(val) * 100 if val else None
+        v = info.get("grossMargins")
+        return float(v) * 100 if v else None
 
-    if metric in ("price_return_1m", "price_return_3m", "price_return_6m", "price_return_1y"):
-        period_map = {"price_return_1m": 21, "price_return_3m": 63, "price_return_6m": 126, "price_return_1y": 252}
+    # ── Price return metrics ──────────────────────────────────────────────
+    period_map = {
+        "price_return_1m":  21,
+        "price_return_3m":  63,
+        "price_return_6m":  126,
+        "price_return_1y":  252,
+    }
+    if metric in period_map:
         periods = period_map[metric]
-        prices_before = [p for p in prices if _parse_date(p["date"]) <= as_of]
-        if len(prices_before) < periods + 1:
+        before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+        if len(before) < periods + 1:
             return None
-        end_price = prices_before[-1]["close"]
-        start_price = prices_before[-(periods + 1)]["close"]
-        return ((end_price / start_price) - 1) * 100 if start_price else None
+        end_p   = before[-1]["close"]
+        start_p = before[-(periods + 1)]["close"]
+        return ((end_p / start_p) - 1) * 100 if start_p else None
 
-    if metric == "above_ma_200":
-        prices_before = [p for p in prices if _parse_date(p["date"]) <= as_of]
-        if len(prices_before) < 200:
+    # ── Moving average metrics ────────────────────────────────────────────
+    if metric in ("above_ma_200", "above_ma_50"):
+        window = 200 if "200" in metric else 50
+        before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+        if len(before) < window:
             return None
-        ma200 = sum(p["close"] for p in prices_before[-200:]) / 200
-        current_price = prices_before[-1]["close"]
-        return current_price - ma200  # > 0 means above MA
-
-    if metric == "above_ma_50":
-        prices_before = [p for p in prices if _parse_date(p["date"]) <= as_of]
-        if len(prices_before) < 50:
-            return None
-        ma50 = sum(p["close"] for p in prices_before[-50:]) / 50
-        current_price = prices_before[-1]["close"]
-        return current_price - ma50
+        ma = sum(p["close"] for p in before[-window:]) / window
+        return before[-1]["close"] - ma
 
     return None
 
 
-def _apply_op(value: float, op: str, threshold: float) -> bool:
-    if op == ">":
-        return value > threshold
-    if op == ">=":
-        return value >= threshold
-    if op == "<":
-        return value < threshold
-    if op == "<=":
-        return value <= threshold
+def _trailing_pe(prices: list, quarterly_eps: list, as_of: date, info: dict) -> Optional[float]:
+    """
+    Compute trailing 12-month P/E ratio as of `as_of`.
+
+    Uses the sum of the 4 most recent quarters of EPS available before `as_of`.
+    yFinance quarterly data covers roughly the last 4-8 years, so PE signals
+    are reliable for check dates within that window.
+
+    For very recent check dates (within 1 year of today) we also fall back
+    to the static forwardPE / trailingPE from yFinance info as a last resort.
+    We deliberately avoid using static info for old historical dates because
+    current-day PE is a poor proxy for PE 5+ years ago.
+    """
+    from datetime import date as date_cls
+    price = _price_from_list(prices, as_of)
+    if not price or price <= 0:
+        return None
+
+    # Get 4 most recent quarters of EPS reported before or on as_of
+    available = sorted(
+        [q for q in quarterly_eps if _parse_date(q["date"]) <= as_of],
+        key=lambda q: q["date"]
+    )[-4:]
+
+    if len(available) >= 4:
+        ttm_eps = sum(q["eps"] for q in available)
+        if ttm_eps > 0:
+            return round(price / ttm_eps, 2)
+        # Negative or zero EPS → no meaningful PE
+
+    # Only use static info PE for recent dates (within 1 year of today)
+    # Using today's PE for 2019 data would give wrong signals.
+    one_year_ago = date_cls(date_cls.today().year - 1, date_cls.today().month, 1)
+    if as_of >= one_year_ago:
+        for key in ("forwardPE", "trailingPE"):
+            v = info.get(key)
+            if v and float(v) > 0:
+                return round(float(v), 2)
+    return None
+
+
+def _op(value: float, op: str, threshold: float) -> bool:
+    if op == ">":  return value > threshold
+    if op == ">=": return value >= threshold
+    if op == "<":  return value < threshold
+    if op == "<=": return value <= threshold
     return False
 
 
-def _get_price_on_date(data: dict, target_date: date) -> Optional[float]:
-    prices = data.get("prices", [])
-    if not prices:
-        return None
-    # Get closest price on or before target date
-    candidates = [p for p in prices if _parse_date(p["date"]) <= target_date]
+# ── Portfolio helpers ─────────────────────────────────────────────────────────
+
+def _portfolio_value(holdings: dict, cash: float, universe_data: dict, as_of: date) -> float:
+    total = cash
+    for ticker, h in holdings.items():
+        p = _price_on(universe_data.get(ticker, {}), as_of)
+        if p and p > 0:
+            total += h["shares"] * p
+    return max(total, cash)
+
+
+def _price_on(data: dict, target: date) -> Optional[float]:
+    return _price_from_list(data.get("prices", []), target)
+
+
+def _price_from_list(prices: list, target: date) -> Optional[float]:
+    candidates = [p for p in prices if _parse_date(p["date"]) <= target]
     if not candidates:
         return None
     return candidates[-1]["close"]
 
 
-def _compute_portfolio_value(holdings: dict, cash: float, universe_data: dict, as_of: date) -> float:
-    if not holdings:
-        return cash
-    total = 0.0
-    alloc_per = cash / len(holdings) if holdings else 0
-    for ticker, entry_price in holdings.items():
-        current_price = _get_price_on_date(universe_data.get(ticker, {}), as_of)
-        if current_price and entry_price:
-            shares = alloc_per / entry_price
-            total += shares * current_price
-    return total if total > 0 else cash
+# ── Utility ───────────────────────────────────────────────────────────────────
+
+def _fundamentals_as_of(annual_financials: dict, as_of: date) -> dict:
+    available = [y for y in annual_financials.keys() if int(y) <= as_of.year]
+    if not available:
+        return {}
+    latest = max(available)
+    prev   = str(int(latest) - 1)
+    return {
+        "current": annual_financials.get(latest, {}),
+        "prev":    annual_financials.get(prev, {}),
+        "year":    latest,
+    }
 
 
-def _build_series(prices: list) -> list:
-    """Convert a ticker's price list into a value series starting at $10,000."""
+def _build_filter_reason(filters: list, data: dict, as_of: date, prefix: str = "") -> str:
+    parts = []
+    for f in filters:
+        val = _metric(f.metric, data, as_of)
+        if val is not None:
+            label = f.metric.replace("_", " ").title()
+            parts.append(f"{label} {f.op} {f.value} (actual: {val:.2f})")
+    return prefix + ("; ".join(parts) or "condition met")
+
+
+def _generate_dates(start: date, end: date, interval_months: int) -> list:
+    dates, current = [], start
+    while current < end:
+        dates.append(current)
+        month = current.month + interval_months
+        year  = current.year + (month - 1) // 12
+        month = (month - 1) % 12 + 1
+        try:
+            current = date(year, month, 1)
+        except ValueError:
+            break
+    return dates
+
+
+def _parse_date(date_str: str) -> date:
+    return datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
+
+
+# ── Statistics ────────────────────────────────────────────────────────────────
+
+def _build_benchmark_series(prices: list) -> list:
     if not prices:
         return []
     start_price = prices[0]["close"]
@@ -312,32 +430,28 @@ def _build_series(prices: list) -> list:
         return []
     return [
         {"date": p["date"], "value": round(INITIAL_VALUE * (p["close"] / start_price), 2)}
-        for p in prices[::21]  # monthly approximation
+        for p in prices[::21]
         if p["close"]
     ]
 
 
 def _compute_stats(portfolio_series: list, benchmark_series: list, actions: list) -> dict:
-    """Compute CAGR, Sharpe, Max Drawdown, Win Rate."""
     stats = {
-        "cagr": 0.0,
-        "sharpe": 0.0,
-        "max_drawdown": 0.0,
-        "win_rate": 0.0,
-        "total_trades": 0,
-        "benchmark_cagr": 0.0,
-        "best_period": "N/A",
-        "worst_period": "N/A",
+        "cagr": 0.0, "sharpe": 0.0, "max_drawdown": 0.0,
+        "win_rate": 0.0, "total_trades": 0,
+        "benchmark_cagr": 0.0, "best_period": "N/A", "worst_period": "N/A",
     }
 
     if len(portfolio_series) >= 2:
         start_val = portfolio_series[0]["value"]
         end_val   = portfolio_series[-1]["value"]
-        n_years   = len(portfolio_series) / 12.0
-        if start_val > 0 and n_years > 0:
+        # Use actual date range so CAGR is correct regardless of check interval
+        start_dt  = _parse_date(portfolio_series[0]["date"])
+        end_dt    = _parse_date(portfolio_series[-1]["date"])
+        n_years   = max((end_dt - start_dt).days / 365.25, 0.01)
+        if start_val > 0:
             stats["cagr"] = round((((end_val / start_val) ** (1 / n_years)) - 1) * 100, 2)
 
-        # Monthly returns for Sharpe
         returns = []
         for i in range(1, len(portfolio_series)):
             prev = portfolio_series[i - 1]["value"]
@@ -350,81 +464,40 @@ def _compute_stats(portfolio_series: list, benchmark_series: list, actions: list
             std_r = math.sqrt(sum((r - avg_r) ** 2 for r in returns) / len(returns))
             stats["sharpe"] = round((avg_r / std_r * math.sqrt(12)) if std_r > 0 else 0.0, 2)
 
-        # Max drawdown
         peak = portfolio_series[0]["value"]
-        max_dd = 0.0
-        best_pct = float("-inf")
-        worst_pct = float("inf")
-        best_label = ""
-        worst_label = ""
+        max_dd, best_pct, worst_pct = 0.0, float("-inf"), float("inf")
+        best_label = worst_label = ""
         for i in range(len(portfolio_series)):
-            v = portfolio_series[i]["value"]
+            v    = portfolio_series[i]["value"]
             peak = max(peak, v)
-            dd = (v - peak) / peak * 100
+            dd   = (v - peak) / peak * 100
             max_dd = min(max_dd, dd)
             if i > 0:
                 prev_v = portfolio_series[i - 1]["value"]
-                pct = (v - prev_v) / prev_v * 100
-                period_label = portfolio_series[i]["date"][:7]
+                pct    = (v - prev_v) / prev_v * 100
+                label  = portfolio_series[i]["date"][:7]
                 if pct > best_pct:
-                    best_pct = pct
-                    best_label = f"{period_label}: +{pct:.1f}%"
+                    best_pct   = pct
+                    best_label = f"{label}: +{pct:.1f}%"
                 if pct < worst_pct:
-                    worst_pct = pct
-                    worst_label = f"{period_label}: {pct:.1f}%"
+                    worst_pct   = pct
+                    worst_label = f"{label}: {pct:.1f}%"
         stats["max_drawdown"] = round(max_dd, 2)
         stats["best_period"]  = best_label or "N/A"
         stats["worst_period"] = worst_label or "N/A"
 
-    # Win rate from SELL actions
     sells = [a for a in actions if a.action == "SELL"]
     stats["total_trades"] = len(sells)
     if sells:
-        winners = sum(1 for a in sells if a.return_pct > 0)
-        stats["win_rate"] = round(winners / len(sells) * 100, 1)
+        stats["win_rate"] = round(sum(1 for a in sells if a.return_pct > 0) / len(sells) * 100, 1)
 
-    # Benchmark CAGR
     if len(benchmark_series) >= 2:
-        bstart = benchmark_series[0]["value"]
-        bend   = benchmark_series[-1]["value"]
-        n_years = len(benchmark_series) / 12.0
-        if bstart > 0 and n_years > 0:
+        bstart   = benchmark_series[0]["value"]
+        bend     = benchmark_series[-1]["value"]
+        bstart_dt = _parse_date(benchmark_series[0]["date"])
+        bend_dt   = _parse_date(benchmark_series[-1]["date"])
+        n_years   = max((bend_dt - bstart_dt).days / 365.25, 0.01)
+        if bstart > 0:
             stats["benchmark_cagr"] = round((((bend / bstart) ** (1 / n_years)) - 1) * 100, 2)
 
     return stats
-
-
-def _build_reason(ticker: str, filters: list, data: dict, as_of: date) -> str:
-    """Build human-readable reason why a ticker passed the filters."""
-    parts = []
-    info = data.get("info", {})
-    fundamentals = _get_fundamentals_as_of(data.get("annual_financials", {}), as_of)
-    for f in filters:
-        val = _get_metric_value(f.metric, info, fundamentals, data.get("prices", []), as_of)
-        if val is not None:
-            label = f.metric.replace("_", " ").title()
-            parts.append(f"{label} {f.op} {f.value} (actual: {val:.2f})")
-    return "; ".join(parts) if parts else "Passed all screening filters"
-
-
-def _generate_rebalance_dates(start: date, end: date, interval_months: int) -> list:
-    """Generate rebalance dates spaced interval_months apart."""
-    dates = []
-    current = start
-    from datetime import timedelta
-    while current < end:
-        dates.append(current)
-        # Advance by interval_months
-        month = current.month + interval_months
-        year  = current.year + (month - 1) // 12
-        month = (month - 1) % 12 + 1
-        try:
-            current = date(year, month, 1)
-        except ValueError:
-            break
-    return dates
-
-
-def _parse_date(date_str: str) -> date:
-    """Parse YYYY-MM-DD string to date object."""
-    return datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()

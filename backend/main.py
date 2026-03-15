@@ -365,6 +365,16 @@ async def trigger_pipeline():
     return {"status": "complete", "summary": summary}
 
 
+@app.get("/strategies/leaderboard")
+async def strategy_leaderboard(n: int = 20):
+    """
+    Return top N backtested strategies from the knowledge base, sorted by CAGR.
+    Each entry includes key performance stats so the frontend can display a ranked list.
+    """
+    entries = knowledge_store.get_strategy_leaderboard(n=n)
+    return {"strategies": entries, "total": len(entries)}
+
+
 @app.get("/llm/status")
 async def llm_status():
     """Show which LLM backend and model all agents are currently using."""
