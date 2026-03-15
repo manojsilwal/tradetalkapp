@@ -49,6 +49,14 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
     total_return_pct     = round(((final_value / INITIAL_VALUE) - 1) * 100, 2)
     total_return_dollars = round(final_value - INITIAL_VALUE, 2)
 
+    # Override CAGR with the most accurate calculation: initial→final over the full declared range.
+    # The series-based CAGR in stats may be slightly off if the last check date ≠ end date.
+    start_dt = _parse_date(rules.start_date)
+    end_dt   = _parse_date(rules.end_date)
+    n_years  = max((end_dt - start_dt).days / 365.25, 0.01)
+    accurate_cagr = round(((final_value / INITIAL_VALUE) ** (1 / n_years) - 1) * 100, 2)
+    stats["cagr"] = accurate_cagr
+
     context_docs  = ks.query("strategy_backtests", rules.description, n_results=2)
     context_docs += ks.query("macro_snapshots", f"macro conditions {rules.start_date[:4]}", n_results=1)
     context = ks.format_context(context_docs)
@@ -199,8 +207,16 @@ def _simulate(rules: StrategyRules, universe_data: dict) -> tuple:
         pv = _portfolio_value(holdings, cash, universe_data, check_date)
         portfolio_series.append({"date": date_str, "value": round(pv, 2)})
 
-    # Close-out: mark to market on end date
+    # ── Close-out: mark to market on the strategy end date ────────────
+    # Always append the terminal value so the chart and CAGR cover the full period.
     final_value = _portfolio_value(holdings, cash, universe_data, end)
+    last_date   = str(portfolio_series[-1]["date"]) if portfolio_series else str(end)
+    if last_date != str(end):
+        portfolio_series.append({"date": str(end), "value": round(final_value, 2)})
+    else:
+        # Last check date == end date: update to mark-to-market price
+        portfolio_series[-1]["value"] = round(final_value, 2)
+
     return actions, portfolio_series, final_value
 
 

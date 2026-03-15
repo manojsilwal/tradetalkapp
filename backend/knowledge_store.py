@@ -254,15 +254,15 @@ class KnowledgeStore:
         if not col or col.count() == 0:
             return []
         try:
-            results = col.get(include=["documents", "metadatas", "ids"])
+            results = col.get(include=["documents", "metadatas"])
+            ids = results.get("ids", [])
             entries = []
-            for doc, meta, entry_id in zip(
+            for i, (doc, meta) in enumerate(zip(
                 results.get("documents", []),
                 results.get("metadatas", []),
-                results.get("ids", []),
-            ):
+            )):
                 entries.append({
-                    "id":               entry_id,
+                    "id":               ids[i] if i < len(ids) else f"entry_{i}",
                     "strategy_name":    meta.get("strategy_name", "Unknown"),
                     "strategy_type":    meta.get("strategy_type", "unknown"),
                     "start_date":       meta.get("start_date", ""),
