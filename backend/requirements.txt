@@ -5,3 +5,6 @@ chromadb==0.4.24
 numpy<2.0.0
 yfinance
 requests
+google-generativeai
+pandas
+apscheduler

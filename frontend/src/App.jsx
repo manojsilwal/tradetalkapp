@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import { Activity, LayoutDashboard, Terminal, Globe } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical } from 'lucide-react'
 import ObserverUI from './ObserverUI'
 import ConsumerUI from './ConsumerUI'
 import MacroUI from './MacroUI'
+import DebateUI from './DebateUI'
+import BacktestUI from './BacktestUI'
 import NotificationBell from './NotificationBell'
 
 function App() {
@@ -38,6 +40,22 @@ function App() {
                     </button>
 
                     <button
+                        className={`nav-btn ${activeTab === 'debate' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('debate')}
+                    >
+                        <Swords size={20} />
+                        <span>AI Debate</span>
+                    </button>
+
+                    <button
+                        className={`nav-btn ${activeTab === 'backtest' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('backtest')}
+                    >
+                        <FlaskConical size={20} />
+                        <span>Strategy Lab</span>
+                    </button>
+
+                    <button
                         className={`nav-btn ${activeTab === 'observer' ? 'active' : ''}`}
                         onClick={() => setActiveTab('observer')}
                     >
@@ -53,6 +71,8 @@ function App() {
                 <div className="content-wrapper fade-in">
                     {activeTab === 'consumer' && <ConsumerUI />}
                     {activeTab === 'macro' && <MacroUI />}
+                    {activeTab === 'debate' && <DebateUI />}
+                    {activeTab === 'backtest' && <BacktestUI />}
                     {activeTab === 'observer' && <ObserverUI />}
                 </div>
             </main>

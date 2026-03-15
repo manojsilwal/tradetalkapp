@@ -1,10 +1,17 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from .schemas import MarketState, FactorResult, MarketRegime, SwarmConsensus, MacroDataResponse, InvestorMetricsResponse, MacroAlert, AlertResponse
+from fastapi.responses import StreamingResponse, Response
+from pydantic import BaseModel
+from .schemas import (
+    MarketState, FactorResult, MarketRegime, SwarmConsensus,
+    MacroDataResponse, InvestorMetricsResponse, MacroAlert, AlertResponse,
+    DebateResult, StrategyRules, BacktestResult,
+)
 from .agents import ShortInterestAgentPair, SocialSentimentAgentPair, MacroHealthAgentPair, PolymarketAgentPair, FundamentalHealthAgentPair
 from .connectors import ShortsConnector, SocialSentimentConnector, MacroHealthConnector, PolymarketConnector, FundamentalsConnector, InvestorMetricsConnector, NewsScannerConnector
 from .notification_agents import NotificationPipeline
+from .knowledge_store import get_knowledge_store
+from .llm_client import get_llm_client
 import asyncio, json, time, os
 
 app = FastAPI(
@@ -41,6 +48,10 @@ sse_clients: list = []
 from . import alert_store as db
 db.init_db()
 
+# Initialize Knowledge Store and LLM Client (singletons)
+knowledge_store = get_knowledge_store()
+llm_client = get_llm_client()
+
 # Cache for last trace data (populated by background loop)
 last_trace_data: dict = {}
 
@@ -68,6 +79,11 @@ async def news_scan_loop():
                     event_data = json.dumps(alert)
                     for queue in sse_clients:
                         await queue.put(event_data)
+                    # Knowledge hook — persist each alert for RAG
+                    try:
+                        knowledge_store.add_macro_alert(MacroAlert(**alert))
+                    except Exception:
+                        pass
                 print(f"[K2-Notifier] {trace['alerts_produced']} new alerts saved to DB")
             else:
                 print("[K2-Notifier] No new macro headlines")
@@ -78,6 +94,9 @@ async def news_scan_loop():
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(news_scan_loop())
+    # Start daily knowledge pipeline scheduler
+    from .daily_pipeline import start_scheduler
+    start_scheduler(knowledge_store)
 
 @app.get("/notifications/stream")
 async def notification_stream():
@@ -221,7 +240,7 @@ async def get_agent_trace(
         
     avg_confidence = sum(r.confidence for r in results) / len(results)
 
-    return SwarmConsensus(
+    consensus = SwarmConsensus(
         ticker=ticker.upper(),
         macro_state=market_state,
         global_signal=bull_votes,
@@ -234,6 +253,117 @@ async def get_agent_trace(
             "fundamentals": fund_res
         }
     )
+
+    # Knowledge hook — persist this analysis for future RAG queries
+    try:
+        knowledge_store.add_swarm_analysis(consensus)
+    except Exception as e:
+        print(f"[KnowledgeHook] add_swarm_analysis failed: {e}")
+
+    return consensus
+
+
+# ── AI Debate Endpoint ────────────────────────────────────────────────────────
+
+@app.get("/debate", response_model=DebateResult)
+async def debate_ticker(ticker: str = Query("GME", description="Stock ticker to debate.")):
+    """
+    Run a full 5-agent AI investment debate on a ticker.
+    All agents use RAG from ChromaDB for historical context.
+    """
+    from .connectors.debate_data import fetch_debate_data
+    from .debate_agents import run_full_debate
+
+    # Fetch live market data for the ticker
+    debate_data = await fetch_debate_data(ticker)
+
+    # Build macro state for agents
+    macro_data = await macro_connector.fetch_data()
+    macro_state = {
+        "credit_stress_index": macro_data["indicators"]["credit_stress_index"],
+        "vix_level":           macro_data["indicators"]["vix_level"],
+        "market_regime":       "BULL_NORMAL" if macro_data["indicators"]["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
+    }
+
+    result = await run_full_debate(ticker, debate_data, macro_state, knowledge_store, llm_client)
+
+    # Knowledge hook — save debate result
+    try:
+        knowledge_store.add_debate(result)
+    except Exception as e:
+        print(f"[KnowledgeHook] add_debate failed: {e}")
+
+    return result
+
+
+# ── Strategy Backtest Endpoint ────────────────────────────────────────────────
+
+class BacktestRequest(BaseModel):
+    strategy: str
+    start_date: str = "2020-01-01"
+    end_date: str = "2024-01-01"
+
+
+@app.post("/backtest", response_model=BacktestResult)
+async def run_backtest_endpoint(req: BacktestRequest):
+    """
+    Parse a plain-English investing strategy, run a backtest, and return results.
+    Uses Gemini to parse strategy and explain results.
+    """
+    from .strategy_parser import parse_strategy
+    from .backtest_engine import run_backtest
+
+    # Parse strategy text into rules
+    rules = await parse_strategy(req.strategy, req.start_date, req.end_date, llm_client, knowledge_store)
+
+    # Run backtest simulation
+    result = await run_backtest(rules, llm_client, knowledge_store)
+
+    # Knowledge hook — save backtest result
+    try:
+        knowledge_store.add_backtest(result)
+    except Exception as e:
+        print(f"[KnowledgeHook] add_backtest failed: {e}")
+
+    return result
+
+
+# ── Knowledge Endpoints ───────────────────────────────────────────────────────
+
+@app.get("/knowledge/stats")
+async def knowledge_stats():
+    """Returns entry counts per ChromaDB collection and pipeline status."""
+    return knowledge_store.stats()
+
+
+@app.get("/knowledge/export")
+async def export_knowledge():
+    """Download all debate + backtest history as a JSONL fine-tuning file."""
+    jsonl_content = knowledge_store.export_jsonl()
+    return Response(
+        content=jsonl_content,
+        media_type="application/jsonl",
+        headers={"Content-Disposition": "attachment; filename=tradetalk_training_data.jsonl"},
+    )
+
+
+@app.get("/knowledge/pipeline-status")
+async def pipeline_status():
+    """Returns status of the last daily knowledge pipeline run."""
+    stats = knowledge_store.stats()
+    return {
+        "pipeline_status": stats.get("pipeline_status", {}),
+        "collection_sizes": stats.get("collections", {}),
+    }
+
+
+@app.post("/knowledge/pipeline-run")
+async def trigger_pipeline():
+    """Manually trigger the daily knowledge pipeline (for testing)."""
+    from .daily_pipeline import run_daily_pipeline
+    summary = await run_daily_pipeline(knowledge_store)
+    return {"status": "complete", "summary": summary}
+
 
 if __name__ == "__main__":
     import uvicorn

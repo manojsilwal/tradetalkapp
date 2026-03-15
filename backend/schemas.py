@@ -113,3 +113,79 @@ class AlertResponse(BaseModel):
     total: int
     unread: int
 
+
+# ── AI Debate Models ──────────────────────────────────────────────────────────
+
+class AgentStance(str, Enum):
+    BULLISH = "BULLISH"
+    BEARISH = "BEARISH"
+    NEUTRAL = "NEUTRAL"
+
+
+class DebateArgument(BaseModel):
+    agent_role: str
+    agent_icon: str
+    stance: AgentStance
+    headline: str
+    key_points: List[str]
+    supporting_data: Dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class DebateResult(BaseModel):
+    ticker: str
+    arguments: List[DebateArgument]
+    verdict: str
+    consensus_confidence: float
+    moderator_summary: str
+    bull_score: int
+    bear_score: int
+    neutral_score: int
+
+
+# ── Strategy Backtesting Models ───────────────────────────────────────────────
+
+class FilterRule(BaseModel):
+    metric: str                     # e.g. "revenue_growth_yoy"
+    op: str                         # ">", "<", ">=", "<="
+    value: float
+
+
+class StrategyRules(BaseModel):
+    name: str
+    description: str
+    filters: List[FilterRule]
+    holding_period_months: int = 12
+    rebalance_months: int = 12
+    universe: List[str] = Field(default_factory=list)
+    start_date: str
+    end_date: str
+    strategy_type: str = "fundamental"   # "fundamental" | "momentum" | "mixed"
+
+
+class BacktestAction(BaseModel):
+    action: str                  # "BUY" | "SELL" | "REBALANCE" | "HOLD_CASH"
+    ticker: str
+    date: str
+    price: float
+    reason: str
+    return_pct: float = 0.0
+
+
+class BacktestResult(BaseModel):
+    strategy: StrategyRules
+    actions: List[BacktestAction]
+    cagr: float
+    sharpe_ratio: float
+    max_drawdown: float
+    win_rate: float
+    total_trades: int
+    benchmark_cagr: float
+    outperformed: bool
+    best_period: str
+    worst_period: str
+    portfolio_value_series: List[Dict[str, Any]]  # [{date, value}, ...]
+    benchmark_value_series: List[Dict[str, Any]]  # [{date, value}, ...]
+    gemini_explanation: str
+    knowledge_context: str
+

@@ -6,6 +6,11 @@ from .polymarket import PolymarketConnector
 from .fundamentals import FundamentalsConnector
 from .investor_metrics import InvestorMetricsConnector
 from .news_scanner import NewsScannerConnector
+from .debate_data import fetch_debate_data
+from .backtest_data import fetch_backtest_data, resolve_universe, SP500_UNIVERSE
+from .youtube import fetch_finance_videos
+from .fred import fetch_macro_snapshot
+from .price_movements import fetch_top_movers
 
 __all__ = [
     "DataConnector",
@@ -15,6 +20,13 @@ __all__ = [
     "PolymarketConnector",
     "FundamentalsConnector",
     "InvestorMetricsConnector",
-    "NewsScannerConnector"
+    "NewsScannerConnector",
+    "fetch_debate_data",
+    "fetch_backtest_data",
+    "resolve_universe",
+    "SP500_UNIVERSE",
+    "fetch_finance_videos",
+    "fetch_macro_snapshot",
+    "fetch_top_movers",
 ]
 
