@@ -3,11 +3,12 @@ Backtest Engine v2 — condition-based buy/sell triggers with share-level P&L tr
 
 Key improvements over v1:
   - forward_pe / pe_ratio computed from quarterly EPS history (trailing 12-month)
+  - SEC EDGAR EPS augments yFinance data → PE strategies work from 2010 onward
   - Separate sell_filters: sell when condition is met, not just at rebalance
   - Share-level tracking: exact shares bought, position value, dollar P&L per trade
   - Monthly checks when sell_filters present (event-driven exits)
   - Returns initial_investment, final_value, total_return_pct, total_return_dollars
-  - Supports up to 20-year price history; PE accuracy limited to available EPS data (~5-8yr)
+  - start_date clamped to MIN_BACKTEST_DATE (2010-01-01) — no data before that
 """
 import asyncio
 import logging
@@ -18,9 +19,10 @@ from .schemas import StrategyRules, BacktestAction, BacktestResult, FilterRule
 
 logger = logging.getLogger(__name__)
 
-INITIAL_VALUE = 10_000.0
-SPY_TICKER    = "SPY"
-MAX_POSITIONS = 30   # cap to avoid over-concentration
+INITIAL_VALUE     = 10_000.0
+SPY_TICKER        = "SPY"
+MAX_POSITIONS     = 30        # cap to avoid over-concentration
+MIN_BACKTEST_DATE = date(2010, 1, 1)   # SEC EDGAR XBRL data starts ~2009-2010
 
 
 async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
@@ -30,6 +32,20 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
     if not tickers:
         from .connectors.backtest_data import SP500_UNIVERSE
         tickers = SP500_UNIVERSE
+
+    # ── Enforce minimum start date (SEC EDGAR data starts ~2010) ──────────
+    start_dt = max(_parse_date(rules.start_date), MIN_BACKTEST_DATE)
+    end_dt   = min(_parse_date(rules.end_date),   date.today())
+    if start_dt >= end_dt:
+        start_dt = date(end_dt.year - 1, end_dt.month, end_dt.day)
+
+    if str(start_dt) != rules.start_date:
+        logger.info(f"[BacktestEngine] start_date clamped {rules.start_date} → {start_dt} (MIN_BACKTEST_DATE)")
+    if str(end_dt) != rules.end_date:
+        logger.info(f"[BacktestEngine] end_date clamped {rules.end_date} → {end_dt} (today)")
+
+    # Rebuild rules with validated dates (Pydantic v1 copy)
+    rules = rules.copy(update={"start_date": str(start_dt), "end_date": str(end_dt)})
 
     logger.info(f"[BacktestEngine] {rules.name}: {len(tickers)} tickers | "
                 f"{rules.start_date} → {rules.end_date} | "

@@ -1,16 +1,19 @@
 """
 Backtest Data Connector — fetches historical OHLC price data, fundamentals, and
-quarterly EPS for PE computation over a date range using yFinance.
+quarterly EPS for PE computation over a date range.
 
-Data depth:
-  - Price history: up to 20+ years (yFinance full OHLC)
-  - Quarterly EPS (for PE):  ~4-8 years depending on the stock
-  - Annual financials: last 4 reported years
+Data sources and depth:
+  - Price history  : yFinance  — 20+ years of OHLC
+  - Quarterly EPS  : yFinance  ~5–8 years (primary)
+                     SEC EDGAR ~15 years going back to 2010 (augment/fallback)
+  - Annual fins    : yFinance  — last 4 reported years
 
-PE-based strategies therefore work best over 5-8 year windows.
+Combined, PE-based strategies now work reliably from 2010 onward.
 """
 import asyncio
 import logging
+import threading
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -37,13 +40,153 @@ SP500_UNIVERSE = [
     "WFC", "C", "PNC", "TFC", "STT", "BK", "COF", "AIG", "MET", "PRU",
 ]
 
+# ── SEC EDGAR helpers ─────────────────────────────────────────────────────────
+# Public API, no key required.
+# Rate limit: 10 req/sec — we stay well under with 0.15s sleeps.
+# User-Agent is required by SEC fair-use policy.
+
+_EDGAR_USER_AGENT = "TradeTalk Backtest contact@tradetalk.app"
+
+# In-memory caches — persist for the lifetime of the process
+_CIK_MAP: dict   = {}   # ticker.upper() → zero-padded 10-digit CIK string  (or None)
+_CIK_MAP_LOADED  = threading.Event()
+_EDGAR_EPS_CACHE: dict = {}   # ticker.upper() → list[{date, eps}]
+_EDGAR_CACHE_LOCK = threading.Lock()
+
+
+def _load_cik_map() -> None:
+    """
+    Lazy-load the full SEC company_tickers.json (once per process).
+    Maps every known US-listed ticker to its 10-digit CIK string.
+    """
+    if _CIK_MAP_LOADED.is_set():
+        return
+    try:
+        import requests
+        r = requests.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers={"User-Agent": _EDGAR_USER_AGENT},
+            timeout=20,
+        )
+        r.raise_for_status()
+        for entry in r.json().values():
+            ticker = str(entry.get("ticker", "")).upper()
+            cik    = str(entry.get("cik_str", "")).zfill(10)
+            if ticker and cik:
+                _CIK_MAP[ticker] = cik
+        logger.info(f"[EDGAR] CIK map loaded: {len(_CIK_MAP)} tickers")
+    except Exception as e:
+        logger.warning(f"[EDGAR] CIK map load failed: {e}")
+    finally:
+        _CIK_MAP_LOADED.set()
+
+
+def _ticker_to_cik(ticker: str) -> Optional[str]:
+    _load_cik_map()
+    return _CIK_MAP.get(ticker.upper())
+
+
+def _fetch_edgar_quarterly_eps(ticker: str) -> list:
+    """
+    Fetch all quarterly EPS filings for `ticker` from SEC EDGAR XBRL API.
+
+    Returns a list of {date: str, eps: float} sorted ascending by date.
+    Data typically goes back to 2009–2010 for large-cap US stocks.
+
+    Results are cached in-memory for the lifetime of the process — each
+    ticker is only fetched once regardless of how many backtests run.
+    """
+    t = ticker.upper()
+
+    # Return cached result immediately (even if empty)
+    with _EDGAR_CACHE_LOCK:
+        if t in _EDGAR_EPS_CACHE:
+            return _EDGAR_EPS_CACHE[t]
+
+    result: list = []
+    try:
+        import requests
+
+        cik = _ticker_to_cik(t)
+        if not cik:
+            logger.debug(f"[EDGAR] No CIK found for {t}")
+            with _EDGAR_CACHE_LOCK:
+                _EDGAR_EPS_CACHE[t] = result
+            return result
+
+        # Polite rate-limiting — stay well under SEC's 10 req/sec cap
+        time.sleep(0.15)
+
+        url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+        r = requests.get(url, headers={"User-Agent": _EDGAR_USER_AGENT}, timeout=30)
+        r.raise_for_status()
+
+        facts   = r.json().get("facts", {})
+        us_gaap = facts.get("us-gaap", {})
+
+        # Try diluted EPS first, then basic
+        eps_entries: Optional[list] = None
+        for concept in ("EarningsPerShareDiluted", "EarningsPerShareBasic"):
+            node = us_gaap.get(concept, {}).get("units", {})
+            # Unit key is "USD/shares" in most filings, occasionally "USD"
+            for unit_key in ("USD/shares", "USD"):
+                if unit_key in node:
+                    eps_entries = node[unit_key]
+                    break
+            if eps_entries:
+                break
+
+        if not eps_entries:
+            logger.debug(f"[EDGAR] No EPS concept found for {t}")
+            with _EDGAR_CACHE_LOCK:
+                _EDGAR_EPS_CACHE[t] = result
+            return result
+
+        # Keep only individual-quarter entries (fp = Q1/Q2/Q3/Q4).
+        # Annual (fp=FY) and trailing-twelve-month frames are excluded
+        # because we do our own TTM aggregation in the engine.
+        seen: set = set()
+        for entry in eps_entries:
+            fp   = entry.get("fp", "")
+            form = entry.get("form", "")
+            end  = entry.get("end", "")
+            val  = entry.get("val")
+
+            if val is None or not end or len(end) < 10:
+                continue
+            if fp not in ("Q1", "Q2", "Q3", "Q4"):
+                continue
+            if form not in ("10-Q", "10-K"):
+                continue
+
+            date_key = end[:10]
+            if date_key in seen:
+                continue
+            seen.add(date_key)
+            result.append({"date": date_key, "eps": float(val)})
+
+        result.sort(key=lambda x: x["date"])
+        logger.info(f"[EDGAR] {t}: {len(result)} quarterly EPS points from SEC EDGAR "
+                    f"({result[0]['date'][:4] if result else 'N/A'} – "
+                    f"{result[-1]['date'][:4] if result else 'N/A'})")
+
+    except Exception as e:
+        logger.warning(f"[EDGAR] Failed to fetch EPS for {t}: {e}")
+
+    with _EDGAR_CACHE_LOCK:
+        _EDGAR_EPS_CACHE[t] = result
+    return result
+
+
+# ── Main data fetching ────────────────────────────────────────────────────────
 
 async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
     """
     Fetch historical price data and fundamentals for all tickers.
-    Returns: {ticker: {prices: list of {date, open, high, low, close, volume},
-                       annual_financials: dict, info: dict}}
-    Batches in groups of 20 to avoid rate limits.
+    Returns: {ticker: {prices, annual_financials, info, quarterly_eps}}
+
+    Batches in groups of 20 to avoid yFinance rate limits.
+    SEC EDGAR EPS is fetched per-ticker inside _fetch_one and cached.
     """
     batch_size = 20
     results = {}
@@ -54,11 +197,11 @@ async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
         for ticker, result in zip(batch, batch_results):
             if isinstance(result, Exception):
                 logger.warning(f"[BacktestData] Failed for {ticker}: {result}")
-                results[ticker] = {"prices": [], "annual_financials": {}, "info": {}}
+                results[ticker] = {"prices": [], "annual_financials": {}, "info": {}, "quarterly_eps": []}
             else:
                 results[ticker] = result
         if i + batch_size < len(tickers):
-            await asyncio.sleep(0.5)  # gentle rate-limit pause
+            await asyncio.sleep(0.5)
     return results
 
 
@@ -74,32 +217,31 @@ def _fetch_one(ticker: str, start: str, end: str) -> dict:
         if not hist.empty:
             for date_idx, row in hist.iterrows():
                 prices.append({
-                    "date": str(date_idx.date()),
-                    "open": round(float(row["Open"]), 4),
-                    "high": round(float(row["High"]), 4),
-                    "low": round(float(row["Low"]), 4),
-                    "close": round(float(row["Close"]), 4),
+                    "date":   str(date_idx.date()),
+                    "open":   round(float(row["Open"]),   4),
+                    "high":   round(float(row["High"]),   4),
+                    "low":    round(float(row["Low"]),    4),
+                    "close":  round(float(row["Close"]),  4),
                     "volume": int(row["Volume"]),
                 })
 
         info = t.info or {}
 
-        # Annual financials — only what yFinance reliably provides
-        annual_financials = {}
+        # ── Annual financials (last 4 years from yFinance) ────────────────
+        annual_financials: dict = {}
         try:
-            fin = t.financials  # income statement (columns = years)
+            fin = t.financials
             if fin is not None and not fin.empty:
-                for col in fin.columns[:4]:  # last 4 years
+                for col in fin.columns[:4]:
                     year_str = str(col.year) if hasattr(col, "year") else str(col)[:4]
                     annual_financials[year_str] = {
                         "total_revenue": _safe_float(fin.get("Total Revenue", {}).get(col)),
-                        "net_income": _safe_float(fin.get("Net Income", {}).get(col)),
-                        "gross_profit": _safe_float(fin.get("Gross Profit", {}).get(col)),
+                        "net_income":    _safe_float(fin.get("Net Income",     {}).get(col)),
+                        "gross_profit":  _safe_float(fin.get("Gross Profit",   {}).get(col)),
                     }
         except Exception:
             pass
 
-        # Balance sheet for debt data
         try:
             bs = t.balance_sheet
             if bs is not None and not bs.empty:
@@ -116,10 +258,8 @@ def _fetch_one(ticker: str, start: str, end: str) -> dict:
         except Exception:
             pass
 
-        # ── Quarterly EPS — used for historical PE computation ───────────────
-        # PE = price / trailing-12-month EPS (sum of last 4 quarters)
-        # yFinance typically provides ~4-8 years of quarterly data.
-        quarterly_eps = []
+        # ── Quarterly EPS: yFinance primary (~5-8 yr), SEC EDGAR fallback (15 yr) ──
+        quarterly_eps: list = []
         try:
             qis = t.quarterly_income_stmt
             if qis is not None and not qis.empty:
@@ -135,7 +275,6 @@ def _fetch_one(ticker: str, start: str, end: str) -> dict:
                             d = col.date() if hasattr(col, "date") else col
                             quarterly_eps.append({"date": str(d)[:10], "eps": v})
                 else:
-                    # Compute EPS from net income / shares outstanding
                     shares = _safe_float((info or {}).get("sharesOutstanding"))
                     if shares and shares > 0 and "Net Income" in qis.index:
                         ni_row = qis.loc["Net Income"]
@@ -147,7 +286,6 @@ def _fetch_one(ticker: str, start: str, end: str) -> dict:
         except Exception:
             pass
 
-        # Older yFinance fallback: t.quarterly_earnings
         if not quarterly_eps:
             try:
                 qe = t.quarterly_earnings
@@ -165,11 +303,30 @@ def _fetch_one(ticker: str, start: str, end: str) -> dict:
             except Exception:
                 pass
 
-        # Sort ascending by date
-        quarterly_eps.sort(key=lambda x: x["date"])
-        logger.debug(f"[BacktestData] {ticker}: {len(quarterly_eps)} quarterly EPS points")
+        # ── Augment with SEC EDGAR historical EPS (fills in pre-2018 quarters) ──
+        try:
+            edgar_eps = _fetch_edgar_quarterly_eps(ticker)
+            if edgar_eps:
+                yf_dates = {q["date"] for q in quarterly_eps}
+                older = [q for q in edgar_eps if q["date"] not in yf_dates]
+                if older:
+                    quarterly_eps = sorted(older + quarterly_eps, key=lambda x: x["date"])
+                    logger.debug(f"[BacktestData] {ticker}: merged {len(older)} older EDGAR EPS pts "
+                                 f"(total: {len(quarterly_eps)})")
+        except Exception as e:
+            logger.debug(f"[BacktestData] EDGAR merge skipped for {ticker}: {e}")
 
-        return {"prices": prices, "annual_financials": annual_financials, "info": info, "quarterly_eps": quarterly_eps}
+        quarterly_eps.sort(key=lambda x: x["date"])
+        logger.debug(f"[BacktestData] {ticker}: {len(quarterly_eps)} total EPS pts | "
+                     f"range: {quarterly_eps[0]['date'][:7] if quarterly_eps else 'N/A'} – "
+                     f"{quarterly_eps[-1]['date'][:7] if quarterly_eps else 'N/A'}")
+
+        return {
+            "prices":             prices,
+            "annual_financials":  annual_financials,
+            "info":               info,
+            "quarterly_eps":      quarterly_eps,
+        }
     except Exception as e:
         logger.warning(f"[BacktestData] Error fetching {ticker}: {e}")
         return {"prices": [], "annual_financials": {}, "info": {}, "quarterly_eps": []}
@@ -187,10 +344,7 @@ def _safe_float(val) -> Optional[float]:
 
 
 def resolve_universe(universe_hint: str, tickers: list = None) -> list:
-    """
-    Resolve universe hint to a list of tickers.
-    Recognises named universes: mag7, sp500. Falls back to provided tickers or full S&P500.
-    """
+    """Resolve a universe hint to a concrete list of tickers."""
     if tickers and len(tickers) > 0:
         return [t.upper() for t in tickers]
     hint = (universe_hint or "").lower()

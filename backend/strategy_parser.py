@@ -31,6 +31,9 @@ METRIC_ALIASES = {
 }
 
 
+MIN_START_DATE = "2010-01-01"   # Matches MIN_BACKTEST_DATE in the engine
+
+
 async def parse_strategy(
     strategy_text: str,
     start_date: str,
@@ -46,6 +49,11 @@ async def parse_strategy(
       3. Validate and sanitise the output
       4. Fall back to heuristic extraction on failure
     """
+    # Clamp dates — no data before 2010 (SEC EDGAR XBRL coverage start)
+    if start_date < MIN_START_DATE:
+        logger.info(f"[StrategyParser] start_date clamped {start_date} → {MIN_START_DATE}")
+        start_date = MIN_START_DATE
+
     # RAG: look for similar past strategies
     context_docs = ks.query("strategy_backtests", strategy_text, n_results=2)
     context = ks.format_context(context_docs)

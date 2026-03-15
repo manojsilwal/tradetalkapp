@@ -15,6 +15,8 @@ const EXAMPLE_STRATEGIES = [
   "Buy high dividend yield stocks above 3% with debt-to-equity below 1.0",
 ];
 
+const MIN_BACKTEST_DATE = "2010-01-01";
+
 const ACTION_COLORS = {
   BUY:       { bg: 'rgba(16,185,129,0.12)',  color: '#10b981', border: 'rgba(16,185,129,0.3)' },
   SELL:      { bg: 'rgba(59,130,246,0.12)',  color: '#60a5fa', border: 'rgba(59,130,246,0.3)' },
@@ -304,7 +306,7 @@ function Leaderboard() {
 export default function BacktestUI() {
   const [activeTab, setActiveTab]   = useState('backtest');
   const [strategyText, setStrategyText] = useState('');
-  const [startDate, setStartDate]   = useState('2019-01-01');
+  const [startDate, setStartDate]   = useState('2010-01-01');
   const [endDate, setEndDate]       = useState('2024-01-01');
   const [loading, setLoading]       = useState(false);
   const [result, setResult]         = useState(null);
@@ -403,11 +405,12 @@ export default function BacktestUI() {
         background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
         borderRadius: 9, padding: '10px 14px', marginBottom: 18, fontSize: '0.77rem', color: '#64748b',
       }}>
-        <Info size={13} style={{ color: '#818cf8', flexShrink: 0, marginTop: 1 }} />
+        <Info size={13} style={{ color: '#10b981', flexShrink: 0, marginTop: 1 }} />
         <span>
-          <strong style={{ color: '#818cf8' }}>PE-based strategies</strong> use trailing 12-month EPS
-          from quarterly earnings data (~5-8 years available per stock). Price-based strategies support
-          full 20-year history. For best results, keep PE strategies within a 5-year window.
+          <strong style={{ color: '#10b981' }}>Historical data available from 2010.</strong>{' '}
+          PE-based strategies now use SEC EDGAR filings (15 years of quarterly EPS) combined with
+          yFinance — giving full PE signal coverage back to 2010. Price &amp; momentum strategies
+          support 20+ years. Earliest allowed start date: <strong style={{ color: '#94a3b8' }}>2010-01-01</strong>.
         </span>
       </div>
 
@@ -444,11 +447,11 @@ export default function BacktestUI() {
             <div style={{ display: 'flex', gap: 12, marginTop: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
               <div style={{ flex: '1 1 130px' }}>
                 <label style={{ color: '#475569', fontSize: '0.72rem', display: 'block', marginBottom: 4 }}>FROM</label>
-                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inputStyle} />
+                <input type="date" value={startDate} min={MIN_BACKTEST_DATE} onChange={e => setStartDate(e.target.value)} style={inputStyle} />
               </div>
               <div style={{ flex: '1 1 130px' }}>
                 <label style={{ color: '#475569', fontSize: '0.72rem', display: 'block', marginBottom: 4 }}>TO</label>
-                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={inputStyle} />
+                <input type="date" value={endDate} min={MIN_BACKTEST_DATE} onChange={e => setEndDate(e.target.value)} style={inputStyle} />
               </div>
               <button
                 onClick={runBacktest}
