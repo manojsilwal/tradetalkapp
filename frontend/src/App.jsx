@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut } from 'lucide-react'
+import { useState, useCallback } from 'react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn } from 'lucide-react'
 import ObserverUI from './ObserverUI'
 import ConsumerUI from './ConsumerUI'
 import MacroUI from './MacroUI'
@@ -12,23 +12,23 @@ import VideoAcademyUI from './VideoAcademyUI'
 import PaperPortfolioUI from './PaperPortfolioUI'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
-import LoginScreen from './LoginScreen'
+import AuthGate from './components/AuthGate'
 import { useAuth } from './AuthContext'
-import { API_BASE_URL } from './api'
+
+/**
+ * Wraps gamification tabs — shows AuthGate when user is not signed in.
+ * Keeps the real component unmounted (so no hook violations).
+ */
+function GamificationTab({ user, featureName, featureIcon, children }) {
+    if (!user) return <AuthGate featureName={featureName} featureIcon={featureIcon} />
+    return children
+}
 
 function App() {
-    const { user, loading, logout } = useAuth()
+    const { user, login, logout } = useAuth()
     const [activeTab, setActiveTab] = useState('consumer')
     const [newBadges, setNewBadges] = useState([])
     const [xpFlash, setXpFlash]    = useState(null)
-
-    // Show login screen if not authenticated
-    if (loading) return (
-        <div style={{ minHeight: '100vh', background: '#0f0f1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#a78bfa', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        </div>
-    )
-    if (!user) return <LoginScreen />
 
     const handleXpGained = useCallback((progress) => {
         if (!progress) return
@@ -71,21 +71,36 @@ function App() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <NotificationBell />
-                        <button
-                            onClick={logout}
-                            title={`Logged in as ${user.name || user.email}\nClick to sign out`}
-                            style={{
-                                width: 30, height: 30, borderRadius: '50%', border: 'none',
-                                background: user.avatar ? 'transparent' : 'rgba(124,58,237,0.3)',
-                                cursor: 'pointer', padding: 0, overflow: 'hidden',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            }}
-                        >
-                            {user.avatar
-                                ? <img src={user.avatar} alt={user.name} style={{ width: 30, height: 30, borderRadius: '50%' }} />
-                                : <LogOut size={14} color="#a78bfa" />
-                            }
-                        </button>
+                        {user ? (
+                            <button
+                                onClick={logout}
+                                title={`${user.name || user.email} — click to sign out`}
+                                style={{
+                                    width: 30, height: 30, borderRadius: '50%', border: 'none',
+                                    background: user.avatar ? 'transparent' : 'rgba(124,58,237,0.3)',
+                                    cursor: 'pointer', padding: 0, overflow: 'hidden',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}
+                            >
+                                {user.avatar
+                                    ? <img src={user.avatar} alt={user.name} style={{ width: 30, height: 30, borderRadius: '50%' }} />
+                                    : <LogOut size={14} color="#a78bfa" />
+                                }
+                            </button>
+                        ) : (
+                            <button
+                                onClick={() => setActiveTab('challenge')}
+                                title="Sign in to track XP, streaks & portfolio"
+                                style={{
+                                    width: 30, height: 30, borderRadius: '50%', border: '1px solid rgba(167,139,250,0.4)',
+                                    background: 'rgba(124,58,237,0.15)',
+                                    cursor: 'pointer', padding: 0,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}
+                            >
+                                <LogIn size={14} color="#a78bfa" />
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -189,15 +204,31 @@ function App() {
             {/* Main Content Area */}
             <main className="main-content">
                 <div className="content-wrapper fade-in">
-                    {activeTab === 'consumer'   && <ConsumerUI />}
-                    {activeTab === 'macro'       && <MacroUI />}
-                    {activeTab === 'debate'      && <DebateUI />}
-                    {activeTab === 'backtest'    && <BacktestUI />}
-                    {activeTab === 'challenge'   && <DailyChallengeUI onXpGained={handleXpGained} />}
-                    {activeTab === 'portfolio'   && <PaperPortfolioUI onXpGained={handleXpGained} />}
-                    {activeTab === 'learning'    && <LearningPathUI onXpGained={handleXpGained} />}
-                    {activeTab === 'academy'     && <VideoAcademyUI onXpGained={handleXpGained} />}
-                    {activeTab === 'observer'    && <ObserverUI />}
+                    {activeTab === 'consumer'  && <ConsumerUI />}
+                    {activeTab === 'macro'     && <MacroUI />}
+                    {activeTab === 'debate'    && <DebateUI />}
+                    {activeTab === 'backtest'  && <BacktestUI />}
+                    {activeTab === 'observer'  && <ObserverUI />}
+                    {activeTab === 'challenge' && (
+                        <GamificationTab user={user} featureName="Daily Challenges" featureIcon="⚡">
+                            <DailyChallengeUI onXpGained={handleXpGained} />
+                        </GamificationTab>
+                    )}
+                    {activeTab === 'portfolio' && (
+                        <GamificationTab user={user} featureName="Paper Portfolio" featureIcon="📈">
+                            <PaperPortfolioUI onXpGained={handleXpGained} />
+                        </GamificationTab>
+                    )}
+                    {activeTab === 'learning' && (
+                        <GamificationTab user={user} featureName="Learning Path" featureIcon="📚">
+                            <LearningPathUI onXpGained={handleXpGained} />
+                        </GamificationTab>
+                    )}
+                    {activeTab === 'academy' && (
+                        <GamificationTab user={user} featureName="Video Academy" featureIcon="🎬">
+                            <VideoAcademyUI onXpGained={handleXpGained} />
+                        </GamificationTab>
+                    )}
                 </div>
             </main>
         </div>

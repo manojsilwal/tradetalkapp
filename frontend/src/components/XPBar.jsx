@@ -1,25 +1,30 @@
 import React, { useEffect, useState } from 'react';
+import { Zap } from 'lucide-react';
 import { API_BASE_URL, apiFetch } from '../api';
+import { useAuth } from '../AuthContext';
 
 export default function XPBar() {
-    const [prog, setProg] = useState(null);
+    const { user } = useAuth();
+    const [prog, setProg]   = useState(null);
     const [flash, setFlash] = useState(false);
 
     const fetchProgress = async () => {
+        if (!user) return;
         try {
             const data = await apiFetch(`${API_BASE_URL}/progress`);
             setProg(prev => {
                 if (prev && data.xp > prev.xp) setFlash(true);
                 return data;
             });
-        } catch { /* not logged in yet or backend loading */ }
+        } catch { /* token expired or backend loading */ }
     };
 
     useEffect(() => {
         fetchProgress();
         const interval = setInterval(fetchProgress, 30000);
         return () => clearInterval(interval);
-    }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user]);
 
     useEffect(() => {
         if (flash) {
@@ -27,6 +32,19 @@ export default function XPBar() {
             return () => clearTimeout(t);
         }
     }, [flash]);
+
+    // Not logged in — show a subtle nudge
+    if (!user) return (
+        <div style={{
+            margin: '8px 0 4px', padding: '8px 14px',
+            background: 'rgba(124,58,237,0.06)',
+            borderRadius: 10, border: '1px dashed rgba(124,58,237,0.2)',
+            display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+            <Zap size={12} color="#7c3aed" />
+            <span style={{ fontSize: 11, color: '#64748b' }}>Sign in to track XP & streaks</span>
+        </div>
+    );
 
     if (!prog) return null;
 
