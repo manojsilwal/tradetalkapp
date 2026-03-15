@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, Trophy } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut } from 'lucide-react'
 import ObserverUI from './ObserverUI'
 import ConsumerUI from './ConsumerUI'
 import MacroUI from './MacroUI'
@@ -12,12 +12,23 @@ import VideoAcademyUI from './VideoAcademyUI'
 import PaperPortfolioUI from './PaperPortfolioUI'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
+import LoginScreen from './LoginScreen'
+import { useAuth } from './AuthContext'
 import { API_BASE_URL } from './api'
 
 function App() {
+    const { user, loading, logout } = useAuth()
     const [activeTab, setActiveTab] = useState('consumer')
     const [newBadges, setNewBadges] = useState([])
     const [xpFlash, setXpFlash]    = useState(null)
+
+    // Show login screen if not authenticated
+    if (loading) return (
+        <div style={{ minHeight: '100vh', background: '#0f0f1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#a78bfa', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        </div>
+    )
+    if (!user) return <LoginScreen />
 
     const handleXpGained = useCallback((progress) => {
         if (!progress) return
@@ -58,7 +69,24 @@ function App() {
                         <Activity className="brand-icon" size={28} />
                         <h1>K2-Optimus</h1>
                     </div>
-                    <NotificationBell />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <NotificationBell />
+                        <button
+                            onClick={logout}
+                            title={`Logged in as ${user.name || user.email}\nClick to sign out`}
+                            style={{
+                                width: 30, height: 30, borderRadius: '50%', border: 'none',
+                                background: user.avatar ? 'transparent' : 'rgba(124,58,237,0.3)',
+                                cursor: 'pointer', padding: 0, overflow: 'hidden',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            }}
+                        >
+                            {user.avatar
+                                ? <img src={user.avatar} alt={user.name} style={{ width: 30, height: 30, borderRadius: '50%' }} />
+                                : <LogOut size={14} color="#a78bfa" />
+                            }
+                        </button>
+                    </div>
                 </div>
 
                 {/* XP bar */}

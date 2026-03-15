@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Query, BackgroundTasks
+from fastapi import FastAPI, Query, BackgroundTasks, Depends
+from typing import Optional as _Optional
+from .auth import get_optional_user as _get_optional_user
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -49,6 +51,9 @@ sse_clients: list = []
 from . import alert_store as db
 db.init_db()
 
+from .auth import init_users_db
+init_users_db()
+
 from . import user_progress as up
 up.init_db()
 
@@ -66,6 +71,8 @@ va.init_academy_db()
 
 # Register routers
 from .routers import progress, challenges, portfolio, learning, academy
+from .routers import auth as auth_router
+app.include_router(auth_router.router)
 app.include_router(progress.router)
 app.include_router(challenges.router)
 app.include_router(portfolio.router)
@@ -221,7 +228,8 @@ async def get_investor_metrics(ticker: str):
 @app.get("/trace", response_model=SwarmConsensus)
 async def get_agent_trace(
     ticker: str = Query("GME", description="The stock ticker to analyze."),
-    credit_stress: float = Query(None, description="Optional override for Credit stress index.")
+    credit_stress: float = Query(None, description="Optional override for Credit stress index."),
+    _auth_user=Depends(_get_optional_user),
 ):
     """
     K2-Optimus Phase 6: Live Swarm execution across Short Interest, Social, and Macro dimensions.
@@ -270,11 +278,12 @@ async def get_agent_trace(
         
     avg_confidence = sum(r.confidence for r in results) / len(results)
 
-    # XP hook — award for running a valuation
-    try:
-        up.award_xp("valuation", note=ticker)
-    except Exception:
-        pass
+    # XP hook — award for running a valuation (only when logged in)
+    if _auth_user:
+        try:
+            up.award_xp(_auth_user.id, "valuation", note=ticker)
+        except Exception:
+            pass
 
     consensus = SwarmConsensus(
         ticker=ticker.upper(),
@@ -302,7 +311,8 @@ async def get_agent_trace(
 # ── AI Debate Endpoint ────────────────────────────────────────────────────────
 
 @app.get("/debate", response_model=DebateResult)
-async def debate_ticker(ticker: str = Query("GME", description="Stock ticker to debate.")):
+async def debate_ticker(ticker: str = Query("GME", description="Stock ticker to debate."),
+                        _auth_user=Depends(_get_optional_user)):
     """
     Run a full 5-agent AI investment debate on a ticker.
     All agents use RAG from ChromaDB for historical context.
@@ -330,10 +340,11 @@ async def debate_ticker(ticker: str = Query("GME", description="Stock ticker to 
         print(f"[KnowledgeHook] add_debate failed: {e}")
 
     # XP hook
-    try:
-        up.award_xp("debate", note=ticker)
-    except Exception:
-        pass
+    if _auth_user:
+        try:
+            up.award_xp(_auth_user.id, "debate", note=ticker)
+        except Exception:
+            pass
 
     return result
 
@@ -347,7 +358,7 @@ class BacktestRequest(BaseModel):
 
 
 @app.post("/backtest", response_model=BacktestResult)
-async def run_backtest_endpoint(req: BacktestRequest):
+async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(_get_optional_user)):
     """
     Parse a plain-English investing strategy, run a backtest, and return results.
     Uses Gemini to parse strategy and explain results.
@@ -368,10 +379,11 @@ async def run_backtest_endpoint(req: BacktestRequest):
         print(f"[KnowledgeHook] add_backtest failed: {e}")
 
     # XP hook
-    try:
-        up.award_xp("backtest", note=req.strategy[:40])
-    except Exception:
-        pass
+    if _auth_user:
+        try:
+            up.award_xp(_auth_user.id, "backtest", note=req.strategy[:40])
+        except Exception:
+            pass
 
     return result
 

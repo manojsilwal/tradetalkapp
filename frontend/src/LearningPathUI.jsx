@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, CheckCircle2, Lock, ChevronRight, Star, Zap, Award } from 'lucide-react';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, apiFetch } from './api';
 
 export default function LearningPathUI({ onXpGained }) {
     const [curriculum, setCurriculum] = useState(null);
@@ -11,17 +11,16 @@ export default function LearningPathUI({ onXpGained }) {
     const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
-        fetch(`${API_BASE_URL}/learning/curriculum`)
-            .then(r => r.json())
+        apiFetch(`${API_BASE_URL}/learning/curriculum`)
             .then(data => setCurriculum(data))
+            .catch(() => {})
             .finally(() => setLoading(false));
     }, []);
 
     const openModule = async (modId) => {
         setActiveModule(modId);
         setQuizState({ answers: {}, submitted: false, score: 0 });
-        const res = await fetch(`${API_BASE_URL}/learning/module/${modId}`);
-        const data = await res.json();
+        const data = await apiFetch(`${API_BASE_URL}/learning/module/${modId}`);
         setModuleDetail(data);
     };
 
@@ -37,16 +36,14 @@ export default function LearningPathUI({ onXpGained }) {
             quizState.answers[i] === q.a ? acc + 1 : acc, 0);
         setSubmitting(true);
         try {
-            const res = await fetch(`${API_BASE_URL}/learning/module/${activeModule}/complete`, {
+            const data = await apiFetch(`${API_BASE_URL}/learning/module/${activeModule}/complete`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ score }),
             });
-            const data = await res.json();
             setQuizState(s => ({ ...s, submitted: true, score, result: data }));
             if (data.progress && onXpGained) onXpGained(data.progress);
             // Refresh curriculum
-            const updated = await fetch(`${API_BASE_URL}/learning/curriculum`).then(r => r.json());
+            const updated = await apiFetch(`${API_BASE_URL}/learning/curriculum`);
             setCurriculum(updated);
         } finally {
             setSubmitting(false);

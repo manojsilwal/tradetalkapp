@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, CheckCircle2, XCircle, Clock, Trophy, Star } from 'lucide-react';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, apiFetch } from './api';
 
 const TYPE_LABELS = { A: '📊 Market Call', B: '⚔️ Debate Duel', C: '🎓 Strategy Quiz' };
 const TYPE_DESC   = {
@@ -19,8 +19,8 @@ export default function DailyChallengeUI({ onXpGained }) {
 
     useEffect(() => {
         Promise.all([
-            fetch(`${API_BASE_URL}/challenge/today`).then(r => r.json()),
-            fetch(`${API_BASE_URL}/challenge/yesterday`).then(r => r.json()).catch(() => null),
+            apiFetch(`${API_BASE_URL}/challenge/today`),
+            apiFetch(`${API_BASE_URL}/challenge/yesterday`).catch(() => null),
         ]).then(([today, yest]) => {
             setChallenge(today);
             setYesterday(yest);
@@ -37,18 +37,16 @@ export default function DailyChallengeUI({ onXpGained }) {
         if (selected === null || submitting) return;
         setSubmitting(true);
         try {
-            const res = await fetch(`${API_BASE_URL}/challenge/answer`, {
+            const data = await apiFetch(`${API_BASE_URL}/challenge/answer`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ answer: String(selected) }),
             });
-            const data = await res.json();
             setResult(data);
             if (data.progress && onXpGained) {
                 onXpGained(data.progress);
             }
             // Refresh challenge state
-            const updated = await fetch(`${API_BASE_URL}/challenge/today`).then(r => r.json());
+            const updated = await apiFetch(`${API_BASE_URL}/challenge/today`);
             setChallenge(updated);
         } finally {
             setSubmitting(false);

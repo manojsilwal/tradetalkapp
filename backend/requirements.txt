@@ -6,6 +6,8 @@ numpy<2.0.0
 yfinance
 requests
 google-generativeai
+google-auth
+PyJWT
 pandas
 apscheduler
 aiofiles

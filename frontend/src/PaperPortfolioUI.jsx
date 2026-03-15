@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Plus, X, DollarSign, BarChart3, Target } from 'lucide-react';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, apiFetch } from './api';
 
 const fmt = (n, dec = 2) => (n >= 0 ? '+' : '') + n.toFixed(dec);
 const fmtUSD = n => (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(2);
@@ -18,8 +18,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
     const fetchPerf = async () => {
         try {
             setLoading(true);
-            const res  = await fetch(`${API_BASE_URL}/portfolio/performance`);
-            const data = await res.json();
+            const data = await apiFetch(`${API_BASE_URL}/portfolio/performance`);
             setPerf(data);
             if (data.beating_spy && onXpGained) {
                 // Silently poll — don't spam awards
@@ -38,12 +37,10 @@ export default function PaperPortfolioUI({ onXpGained }) {
         setAdding(true);
         setAddError('');
         try {
-            const res  = await fetch(`${API_BASE_URL}/portfolio/position`, {
+            const data = await apiFetch(`${API_BASE_URL}/portfolio/position`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(addForm),
             });
-            const data = await res.json();
             if (data.error) { setAddError(data.error); return; }
             if (onXpGained) onXpGained({ xp_awarded: 10, new_badges: [] });
             setShowAdd(false);
@@ -59,8 +56,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
     const handleClose = async (posId) => {
         setClosing(posId);
         try {
-            const res  = await fetch(`${API_BASE_URL}/portfolio/close/${posId}`, { method: 'POST' });
-            const data = await res.json();
+            await apiFetch(`${API_BASE_URL}/portfolio/close/${posId}`, { method: 'POST' });
             await fetchPerf();
         } finally {
             setClosing(null);

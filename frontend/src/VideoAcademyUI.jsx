@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Eye, Zap, Film, ChevronRight, RefreshCw, CheckCircle2, Lock } from 'lucide-react';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, apiFetch } from './api';
 
 const TRACK_COLORS = {
     'Value Investing':  { bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.3)', color: '#10b981' },
@@ -19,8 +19,7 @@ export default function VideoAcademyUI({ onXpGained }) {
     const [loading, setLoading]         = useState(true);
 
     const fetchCatalogue = async () => {
-        const res  = await fetch(`${API_BASE_URL}/academy/catalogue`);
-        const data = await res.json();
+        const data = await apiFetch(`${API_BASE_URL}/academy/catalogue`);
         setLessons(data.lessons || []);
         const trackSet = ['All', ...new Set((data.lessons || []).map(l => l.track))];
         setTracks(trackSet);
@@ -35,8 +34,7 @@ export default function VideoAcademyUI({ onXpGained }) {
         genIds.forEach(id => {
             if (!pollMap[id]) {
                 const interval = setInterval(async () => {
-                    const res  = await fetch(`${API_BASE_URL}/academy/lesson/${id}`);
-                    const data = await res.json();
+                    const data = await apiFetch(`${API_BASE_URL}/academy/lesson/${id}`);
                     if (data.status !== 'generating') {
                         clearInterval(interval);
                         setPollMap(m => { const n = { ...m }; delete n[id]; return n; });
@@ -51,7 +49,7 @@ export default function VideoAcademyUI({ onXpGained }) {
     const handleGenerate = async (lessonId) => {
         setGenerating(g => ({ ...g, [lessonId]: true }));
         try {
-            await fetch(`${API_BASE_URL}/academy/lesson/${lessonId}/generate`, { method: 'POST' });
+            await apiFetch(`${API_BASE_URL}/academy/lesson/${lessonId}/generate`, { method: 'POST' });
             await fetchCatalogue();
         } finally {
             setGenerating(g => { const n = { ...n, ...g }; delete n[lessonId]; return n; });
@@ -61,8 +59,7 @@ export default function VideoAcademyUI({ onXpGained }) {
     const handleWatch = async (lesson) => {
         setSelected(lesson);
         if (!lesson.watched) {
-            const res = await fetch(`${API_BASE_URL}/academy/lesson/${lesson.id}/watch`, { method: 'POST' });
-            const data = await res.json();
+        const data = await apiFetch(`${API_BASE_URL}/academy/lesson/${lesson.id}/watch`, { method: 'POST' });
             if (data.progress && onXpGained) onXpGained(data.progress);
             await fetchCatalogue();
         }

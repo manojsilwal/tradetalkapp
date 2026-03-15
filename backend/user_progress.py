@@ -1,6 +1,5 @@
 """
-User Progress — XP, Streak, Level, and Badges.
-Stored in SQLite alongside alerts.db.
+User Progress — XP, Streak, Level, and Badges (per-user via user_id).
 """
 import sqlite3
 import json
@@ -21,7 +20,6 @@ def _get_conn():
     return _local.conn
 
 
-# ── XP awards per action ──────────────────────────────────────────────────────
 XP_TABLE = {
     "valuation":        10,
     "debate":           15,
@@ -36,7 +34,6 @@ XP_TABLE = {
     "streak_100":       500,
 }
 
-# ── Level thresholds (cumulative XP to reach each level) ─────────────────────
 LEVELS = [
     (1,   "Novice",             0),
     (5,   "Analyst",            500),
@@ -46,22 +43,21 @@ LEVELS = [
     (50,  "Quant Legend",       20000),
 ]
 
-# ── Badge definitions ─────────────────────────────────────────────────────────
 BADGES = {
-    "first_blood":         {"name": "First Blood",         "desc": "Ran your first valuation",           "icon": "🩸"},
-    "debate_starter":      {"name": "Debate Starter",      "desc": "Completed your first AI Debate",     "icon": "⚔️"},
-    "strategy_architect":  {"name": "Strategy Architect",  "desc": "Ran 10 unique backtests",            "icon": "🏗️"},
-    "contrarian":          {"name": "Contrarian",          "desc": "Picked 5 losing debate sides",       "icon": "🔄"},
-    "data_nerd":           {"name": "Data Nerd",           "desc": "Used Developer Trace 10 times",      "icon": "🔬"},
-    "macro_master":        {"name": "Macro Master",        "desc": "Opened Macro Dashboard 30 times",    "icon": "🌍"},
-    "warren_mode":         {"name": "Warren Mode",         "desc": "5 value strategies beat SPY",        "icon": "🎩"},
-    "streak_week":         {"name": "Streak: 7 Days",      "desc": "7-day login streak",                 "icon": "🔥"},
-    "streak_month":        {"name": "Streak Legend",       "desc": "30-day login streak",                "icon": "⚡"},
-    "streak_century":      {"name": "Century Streak",      "desc": "100-day login streak",               "icon": "💯"},
-    "cinephile":           {"name": "Cinephile",           "desc": "Watched 20 Academy lessons",         "icon": "🎬"},
-    "market_wizard_badge": {"name": "Market Wizard",       "desc": "Reached Level 20",                   "icon": "🧙"},
+    "first_blood":         {"name": "First Blood",         "desc": "Ran your first valuation",            "icon": "🩸"},
+    "debate_starter":      {"name": "Debate Starter",      "desc": "Completed your first AI Debate",      "icon": "⚔️"},
+    "strategy_architect":  {"name": "Strategy Architect",  "desc": "Ran 10 unique backtests",             "icon": "🏗️"},
+    "contrarian":          {"name": "Contrarian",          "desc": "Picked 5 losing debate sides",        "icon": "🔄"},
+    "data_nerd":           {"name": "Data Nerd",           "desc": "Used Developer Trace 10 times",       "icon": "🔬"},
+    "macro_master":        {"name": "Macro Master",        "desc": "Opened Macro Dashboard 30 times",     "icon": "🌍"},
+    "warren_mode":         {"name": "Warren Mode",         "desc": "5 value strategies beat SPY",         "icon": "🎩"},
+    "streak_week":         {"name": "Streak: 7 Days",      "desc": "7-day login streak",                  "icon": "🔥"},
+    "streak_month":        {"name": "Streak Legend",       "desc": "30-day login streak",                 "icon": "⚡"},
+    "streak_century":      {"name": "Century Streak",      "desc": "100-day login streak",                "icon": "💯"},
+    "cinephile":           {"name": "Cinephile",           "desc": "Watched 20 Academy lessons",          "icon": "🎬"},
+    "market_wizard_badge": {"name": "Market Wizard",       "desc": "Reached Level 20",                    "icon": "🧙"},
     "portfolio_pro":       {"name": "Portfolio Pro",       "desc": "Paper portfolio beat SPY for 30 days","icon": "📈"},
-    "challenge_master":    {"name": "Challenge Master",    "desc": "Completed 30 daily challenges",      "icon": "🏆"},
+    "challenge_master":    {"name": "Challenge Master",    "desc": "Completed 30 daily challenges",       "icon": "🏆"},
 }
 
 
@@ -69,7 +65,7 @@ def init_db():
     conn = _get_conn()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS user_progress (
-            id             INTEGER PRIMARY KEY DEFAULT 1,
+            user_id        TEXT PRIMARY KEY,
             xp             INTEGER DEFAULT 0,
             level          INTEGER DEFAULT 1,
             level_title    TEXT    DEFAULT 'Novice',
@@ -81,18 +77,26 @@ def init_db():
         );
         CREATE TABLE IF NOT EXISTS xp_history (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            action      TEXT NOT NULL,
+            user_id     TEXT    NOT NULL,
+            action      TEXT    NOT NULL,
             xp_awarded  INTEGER NOT NULL,
-            note        TEXT DEFAULT '',
-            timestamp   REAL NOT NULL
+            note        TEXT    DEFAULT '',
+            timestamp   REAL    NOT NULL
         );
-        INSERT OR IGNORE INTO user_progress (id, created_at)
-        VALUES (1, unixepoch());
     """)
     conn.commit()
 
 
-def _compute_level(xp: int) -> tuple[int, str]:
+def _ensure_user(user_id: str):
+    conn = _get_conn()
+    conn.execute("""
+        INSERT OR IGNORE INTO user_progress (user_id, created_at)
+        VALUES (?, ?)
+    """, (user_id, time.time()))
+    conn.commit()
+
+
+def _compute_level(xp: int):
     level, title = 1, "Novice"
     for lvl, name, threshold in LEVELS:
         if xp >= threshold:
@@ -102,13 +106,13 @@ def _compute_level(xp: int) -> tuple[int, str]:
     return level, title
 
 
-def get_progress() -> Dict[str, Any]:
+def get_progress(user_id: str) -> Dict[str, Any]:
+    _ensure_user(user_id)
     conn = _get_conn()
-    row = conn.execute("SELECT * FROM user_progress WHERE id = 1").fetchone()
+    row  = conn.execute("SELECT * FROM user_progress WHERE user_id=?", (user_id,)).fetchone()
     if not row:
         return {}
     level, title = _compute_level(row["xp"])
-    # XP needed for next level
     next_threshold = None
     for lvl, name, threshold in LEVELS:
         if threshold > row["xp"]:
@@ -118,8 +122,8 @@ def get_progress() -> Dict[str, Any]:
     for lvl, name, threshold in LEVELS:
         if threshold <= row["xp"]:
             prev_threshold = threshold
-    xp_in_level   = row["xp"] - prev_threshold
-    xp_for_level  = (next_threshold - prev_threshold) if next_threshold else 1
+    xp_in_level  = row["xp"] - prev_threshold
+    xp_for_level = (next_threshold - prev_threshold) if next_threshold else 1
     return {
         "xp":             row["xp"],
         "level":          level,
@@ -136,13 +140,10 @@ def get_progress() -> Dict[str, Any]:
     }
 
 
-def award_xp(action: str, note: str = "") -> Dict[str, Any]:
-    """
-    Award XP for an action. Also updates streak and checks for new badges.
-    Returns {xp_awarded, new_total_xp, leveled_up, new_badges, streak_days}.
-    """
+def award_xp(user_id: str, action: str, note: str = "") -> Dict[str, Any]:
+    _ensure_user(user_id)
     conn = _get_conn()
-    row = conn.execute("SELECT * FROM user_progress WHERE id = 1").fetchone()
+    row  = conn.execute("SELECT * FROM user_progress WHERE user_id=?", (user_id,)).fetchone()
     if not row:
         return {}
 
@@ -153,30 +154,26 @@ def award_xp(action: str, note: str = "") -> Dict[str, Any]:
     new_level, new_title = _compute_level(new_xp)
     leveled_up = new_level > old_level
 
-    # Update streak
-    today      = date.today().isoformat()
-    last       = row["last_active"]
-    streak     = row["streak_days"]
-    yesterday  = (date.today() - timedelta(days=1)).isoformat()
+    today     = date.today().isoformat()
+    last      = row["last_active"]
+    streak    = row["streak_days"]
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
     if last == today:
-        pass                          # already active today
+        pass
     elif last == yesterday:
-        streak += 1                   # consecutive day
+        streak += 1
     elif last == "":
-        streak = 1                    # first time
+        streak = 1
     else:
-        streak = 1                    # streak broken
+        streak = 1
 
-    # Update action counter
     actions = json.loads(row["total_actions"])
     actions[action] = actions.get(action, 0) + 1
 
-    # Check for new badges
     badges     = json.loads(row["badges"])
     new_badges = _check_badges(actions, streak, new_level, badges, note)
     badges_all = list(set(badges + new_badges))
 
-    # Streak milestone XP bonus
     bonus_xp = 0
     if streak == 7   and "streak_7"   not in badges: bonus_xp = XP_TABLE["streak_7"]
     if streak == 30  and "streak_30"  not in badges: bonus_xp = XP_TABLE["streak_30"]
@@ -187,13 +184,13 @@ def award_xp(action: str, note: str = "") -> Dict[str, Any]:
         UPDATE user_progress
         SET xp=?, level=?, level_title=?, streak_days=?, last_active=?,
             total_actions=?, badges=?
-        WHERE id=1
+        WHERE user_id=?
     """, (new_xp, new_level, new_title, streak, today,
-          json.dumps(actions), json.dumps(badges_all)))
+          json.dumps(actions), json.dumps(badges_all), user_id))
     conn.execute("""
-        INSERT INTO xp_history (action, xp_awarded, note, timestamp)
-        VALUES (?, ?, ?, ?)
-    """, (action, xp_award + bonus_xp, note, time.time()))
+        INSERT INTO xp_history (user_id, action, xp_awarded, note, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    """, (user_id, action, xp_award + bonus_xp, note, time.time()))
     conn.commit()
 
     return {
@@ -210,11 +207,9 @@ def award_xp(action: str, note: str = "") -> Dict[str, Any]:
 def _check_badges(actions: dict, streak: int, level: int,
                   existing: List[str], note: str) -> List[str]:
     new_badges = []
-
     def _earn(bid):
         if bid not in existing and bid not in new_badges:
             new_badges.append(bid)
-
     if actions.get("valuation", 0) >= 1:         _earn("first_blood")
     if actions.get("debate", 0) >= 1:             _earn("debate_starter")
     if actions.get("backtest", 0) >= 10:          _earn("strategy_architect")
@@ -225,15 +220,14 @@ def _check_badges(actions: dict, streak: int, level: int,
     if streak >= 30:                               _earn("streak_month")
     if streak >= 100:                              _earn("streak_century")
     if level >= 20:                                _earn("market_wizard_badge")
-    # warren_mode and contrarian require extra context passed in note
     if note == "beat_spy":                         _earn("warren_mode")
-
     return new_badges
 
 
-def get_xp_history(limit: int = 20) -> List[Dict]:
+def get_xp_history(user_id: str, limit: int = 20) -> List[Dict]:
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT * FROM xp_history ORDER BY timestamp DESC LIMIT ?", (limit,)
+        "SELECT * FROM xp_history WHERE user_id=? ORDER BY timestamp DESC LIMIT ?",
+        (user_id, limit)
     ).fetchall()
     return [dict(r) for r in rows]

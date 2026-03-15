@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { API_BASE_URL } from '../api';
+import { API_BASE_URL, apiFetch } from '../api';
 
 export default function XPBar() {
     const [prog, setProg] = useState(null);
@@ -7,14 +7,12 @@ export default function XPBar() {
 
     const fetchProgress = async () => {
         try {
-            const res = await fetch(`${API_BASE_URL}/progress`);
-            if (!res.ok) return;
-            const data = await res.json();
+            const data = await apiFetch(`${API_BASE_URL}/progress`);
             setProg(prev => {
                 if (prev && data.xp > prev.xp) setFlash(true);
                 return data;
             });
-        } catch { /* backend might be loading */ }
+        } catch { /* not logged in yet or backend loading */ }
     };
 
     useEffect(() => {
@@ -42,25 +40,15 @@ export default function XPBar() {
             borderRadius: '10px',
             border: '1px solid rgba(255,255,255,0.07)',
         }}>
-            {/* Level + XP total */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', letterSpacing: 1 }}>
                     LVL {prog.level} · {prog.level_title}
                 </span>
-                <span style={{
-                    fontSize: 10, color: streakColor, fontWeight: 600,
-                    transition: 'color 0.3s',
-                }}>
+                <span style={{ fontSize: 10, color: streakColor, fontWeight: 600 }}>
                     🔥 {prog.streak_days}d streak
                 </span>
             </div>
-
-            {/* XP progress bar */}
-            <div style={{
-                height: 5, borderRadius: 4,
-                background: 'rgba(255,255,255,0.08)',
-                overflow: 'hidden',
-            }}>
+            <div style={{ height: 5, borderRadius: 4, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
                 <div style={{
                     height: '100%',
                     width: `${prog.xp_pct}%`,
@@ -71,14 +59,9 @@ export default function XPBar() {
                     transition: 'width 0.6s cubic-bezier(.4,0,.2,1), background 0.3s',
                 }} />
             </div>
-
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                <span style={{ fontSize: 9, color: '#64748b' }}>
-                    {prog.xp_in_level} XP
-                </span>
-                <span style={{ fontSize: 9, color: '#64748b' }}>
-                    {prog.xp_for_level} to next level
-                </span>
+                <span style={{ fontSize: 9, color: '#64748b' }}>{prog.xp_in_level} XP</span>
+                <span style={{ fontSize: 9, color: '#64748b' }}>{prog.xp_for_level} to next level</span>
             </div>
         </div>
     );

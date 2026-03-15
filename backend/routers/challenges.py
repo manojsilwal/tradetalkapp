@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from ..auth import get_current_user, UserInfo
 from .. import daily_challenge as dc
 from .. import user_progress as up
 
@@ -11,22 +12,19 @@ class AnswerRequest(BaseModel):
 
 
 @router.get("/today")
-def get_today():
-    """Return today's challenge (without the correct answer)."""
-    return dc.get_today_challenge()
+def get_today(user: UserInfo = Depends(get_current_user)):
+    return dc.get_today_challenge(user.id)
 
 
 @router.post("/answer")
-def submit_answer(req: AnswerRequest):
-    """Submit the user's answer. Awards XP immediately for quiz; pending for others."""
-    result = dc.submit_answer(req.answer)
+def submit_answer(req: AnswerRequest, user: UserInfo = Depends(get_current_user)):
+    result = dc.submit_answer(user.id, req.answer)
     if result.get("resolved"):
-        xp_result = up.award_xp("daily_challenge")
+        xp_result = up.award_xp(user.id, "daily_challenge")
         result["progress"] = xp_result
     return result
 
 
 @router.get("/yesterday")
-def yesterday_result():
-    """Return yesterday's challenge resolution (for Type A/B challenges)."""
-    return dc.get_yesterday_result()
+def yesterday_result(user: UserInfo = Depends(get_current_user)):
+    return dc.get_yesterday_result(user.id)
