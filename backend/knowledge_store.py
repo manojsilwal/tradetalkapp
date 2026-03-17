@@ -1,5 +1,5 @@
 """
-Knowledge Store — ChromaDB singleton with 7 collections.
+Knowledge Store — vector-memory singleton with 8 collections.
 Every agent run, debate, backtest, and daily pipeline job writes here.
 Agents query this store before every LLM call (RAG).
 All data is cumulative — semantic search spans the full history.
@@ -10,11 +10,15 @@ import time
 import logging
 from datetime import datetime, timezone
 from typing import Optional
+from .vector_backends import ChromaVectorBackend, SupabaseVectorBackend
 
 logger = logging.getLogger(__name__)
 
 # Persist to disk so knowledge survives restarts
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "./chroma_db")
+VECTOR_BACKEND = os.environ.get("VECTOR_BACKEND", "chroma").lower()
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
 COLLECTIONS = [
     "swarm_history",       # every /trace call
@@ -24,7 +28,40 @@ COLLECTIONS = [
     "price_movements",     # daily pipeline — top movers
     "macro_snapshots",     # daily pipeline — FRED indicators
     "youtube_insights",    # daily pipeline — finance channel videos
+    "strategy_reflections", # post-backtest lessons learned memory
 ]
+
+class _CollectionProxy:
+    """Uniform collection interface over selected vector backend."""
+
+    def __init__(self, backend, name: str):
+        self._backend = backend
+        self._name = name
+
+    def add(self, documents, metadatas, ids):
+        self._backend.add(self._name, documents=documents, metadatas=metadatas, ids=ids)
+
+    def query(self, query_texts, n_results, where=None):
+        rows = self._backend.query(
+            self._name,
+            query_text=query_texts[0],
+            n_results=n_results,
+            where=where,
+        )
+        # Match Chroma shape for existing callsites.
+        return {
+            "documents": [rows.get("documents", [])],
+            "metadatas": [rows.get("metadatas", [])],
+            "ids": [rows.get("ids", [])],
+            "distances": [rows.get("distances", [])],
+        }
+
+    def get(self, include=None):
+        rows = self._backend.get(self._name)
+        return rows
+
+    def count(self):
+        return self._backend.count(self._name)
 
 
 class KnowledgeStore:
@@ -35,7 +72,11 @@ class KnowledgeStore:
 
     def __init__(self):
         self._client = None
+        self._vector_backend = None
+        self._active_vector_backend = "chroma"
         self._cols: dict = {}
+        self._retrieval_default_top_k = int(os.environ.get("RAG_TOP_K", "5"))
+        self._retrieval_max_top_k = int(os.environ.get("RAG_TOP_K_MAX", "12"))
         self._pipeline_status: dict = {
             "last_run": None,
             "price_movements_added": 0,
@@ -43,17 +84,33 @@ class KnowledgeStore:
             "macro_snapshot_added": False,
             "total_collection_sizes": {},
         }
-        self._init_chroma()
+        self._init_vector_backend()
 
-    def _init_chroma(self):
+    def _init_vector_backend(self):
         try:
-            import chromadb
-            self._client = chromadb.PersistentClient(path=CHROMA_PATH)
+            if VECTOR_BACKEND == "supabase":
+                if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
+                    raise RuntimeError("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY missing for VECTOR_BACKEND=supabase")
+                self._vector_backend = SupabaseVectorBackend(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+                backend_name = "Supabase"
+                self._active_vector_backend = "supabase"
+            else:
+                self._vector_backend = ChromaVectorBackend(chroma_path=CHROMA_PATH)
+                backend_name = "ChromaDB"
+                self._active_vector_backend = "chroma"
             for name in COLLECTIONS:
-                self._cols[name] = self._client.get_or_create_collection(name=name)
-            logger.info(f"[KnowledgeStore] ChromaDB ready at {CHROMA_PATH} — {len(COLLECTIONS)} collections")
+                self._vector_backend.ensure_collection(name)
+                self._cols[name] = _CollectionProxy(self._vector_backend, name)
+            logger.info(f"[KnowledgeStore] {backend_name} vector backend ready — {len(COLLECTIONS)} collections")
         except Exception as e:
-            logger.error(f"[KnowledgeStore] ChromaDB init failed: {e}")
+            logger.error(f"[KnowledgeStore] Vector backend init failed ({VECTOR_BACKEND}): {e}")
+            if VECTOR_BACKEND != "chroma":
+                logger.warning("[KnowledgeStore] Falling back to Chroma backend")
+                self._vector_backend = ChromaVectorBackend(chroma_path=CHROMA_PATH)
+                self._active_vector_backend = "chroma"
+                for name in COLLECTIONS:
+                    self._vector_backend.ensure_collection(name)
+                    self._cols[name] = _CollectionProxy(self._vector_backend, name)
 
     def _safe_col(self, name: str):
         return self._cols.get(name)
@@ -161,7 +218,7 @@ class KnowledgeStore:
                 f"CAGR: {result.cagr:.1f}% vs SPY {result.benchmark_cagr:.1f}%. "
                 f"Sharpe: {result.sharpe_ratio:.2f}. Max Drawdown: {result.max_drawdown:.1f}%. "
                 f"Win Rate: {result.win_rate:.1f}%. Total trades: {result.total_trades}. "
-                f"Explanation: {result.gemini_explanation[:400]}"
+                f"Explanation: {result.ai_explanation[:400]}"
             )
             entry_id = f"backtest_{int(time.time())}"
             col.add(
@@ -169,6 +226,8 @@ class KnowledgeStore:
                 metadatas=[{
                     "strategy_name":   result.strategy.name,
                     "strategy_type":   result.strategy.strategy_type,
+                    "market_regime":   getattr(result.reflection, "market_regime", "unknown"),
+                    "drawdown_bucket": getattr(result.reflection, "drawdown_bucket", "unknown"),
                     "start_date":      result.strategy.start_date,
                     "end_date":        result.strategy.end_date,
                     "cagr":            result.cagr,
@@ -185,6 +244,41 @@ class KnowledgeStore:
             )
         except Exception as e:
             logger.warning(f"[KnowledgeStore] add_backtest failed: {e}")
+
+    def add_reflection(self, result) -> None:
+        """Store compact lesson-learned reflection for retrieval."""
+        col = self._safe_col("strategy_reflections")
+        if not col:
+            return
+        try:
+            reflection = result.reflection
+            strategy = result.strategy
+            doc = (
+                f"Lesson learned from strategy '{strategy.name}' ({strategy.strategy_type}). "
+                f"Hypothesis: {reflection.hypothesis} "
+                f"Outcome: {reflection.outcome}. "
+                f"Regime: {reflection.market_regime}. "
+                f"Drawdown bucket: {reflection.drawdown_bucket}. "
+                f"Adjustment: {reflection.adjustment}. "
+                f"CAGR {result.cagr:.1f}% vs benchmark {result.benchmark_cagr:.1f}%. "
+                f"Win rate {result.win_rate:.1f}%."
+            )
+            entry_id = f"reflection_{int(time.time())}"
+            col.add(
+                documents=[doc],
+                metadatas=[{
+                    "strategy_name": strategy.name,
+                    "strategy_type": strategy.strategy_type,
+                    "market_regime": reflection.market_regime,
+                    "drawdown_bucket": reflection.drawdown_bucket,
+                    "outcome": reflection.outcome,
+                    "confidence": reflection.confidence,
+                    "date": str(datetime.now(timezone.utc).date()),
+                }],
+                ids=[entry_id],
+            )
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] add_reflection failed: {e}")
 
     def add_price_movement(self, ticker: str, change_pct: float, volume_ratio: float, sector: str, context: str) -> None:
         col = self._safe_col("price_movements")
@@ -300,6 +394,61 @@ class KnowledgeStore:
             logger.warning(f"[KnowledgeStore] query({collection}) failed: {e}")
             return []
 
+    def query_reflections(self, query_text: str, n_results: int = 5, filters: Optional[dict] = None):
+        """Reflection retrieval with metadata filtering + simple recency weighting."""
+        col = self._safe_col("strategy_reflections")
+        if not col:
+            return [], [], {"retrieved_docs_count": 0, "reflection_hits": 0}
+        try:
+            count = col.count()
+            if count == 0:
+                return [], [], {"retrieved_docs_count": 0, "reflection_hits": 0}
+
+            top_k = max(1, min(n_results or self._retrieval_default_top_k, self._retrieval_max_top_k, count))
+            oversample = min(max(top_k * 3, top_k), count)
+            where = filters if filters else None
+            rows = col.query(query_texts=[query_text], n_results=oversample, where=where)
+            docs = rows.get("documents", [[]])[0]
+            metas = rows.get("metadatas", [[]])[0]
+
+            ranked = list(zip(docs, metas))
+            ranked.sort(key=lambda x: x[1].get("date", ""), reverse=True)
+            ranked = ranked[:top_k]
+            out_docs = [d for d, _ in ranked]
+            out_meta = [m for _, m in ranked]
+            telemetry = {
+                "retrieved_docs_count": len(out_docs),
+                "reflection_hits": len(out_meta),
+            }
+            return out_docs, out_meta, telemetry
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_reflections failed: {e}")
+            return [], [], {"retrieved_docs_count": 0, "reflection_hits": 0}
+
+    def get_recent_reflections(self, n: int = 20) -> list[dict]:
+        """Return recent reflection entries for debugging and observability."""
+        col = self._safe_col("strategy_reflections")
+        if not col:
+            return []
+        try:
+            rows = col.get(include=["documents", "metadatas", "ids"])
+            docs = rows.get("documents", []) or []
+            metas = rows.get("metadatas", []) or []
+            ids = rows.get("ids", []) or []
+
+            entries = []
+            for i, (doc, meta) in enumerate(zip(docs, metas)):
+                entries.append({
+                    "id": ids[i] if i < len(ids) else f"reflection_{i}",
+                    "document": doc,
+                    "metadata": meta or {},
+                })
+            entries.sort(key=lambda x: x["metadata"].get("date", ""), reverse=True)
+            return entries[: max(1, n)]
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] get_recent_reflections failed: {e}")
+            return []
+
     def format_context(self, docs: list[str]) -> str:
         """Format a list of retrieved docs into a prompt-ready string."""
         if not docs:
@@ -319,6 +468,7 @@ class KnowledgeStore:
         return {
             "collections": sizes,
             "total_entries": sum(sizes.values()),
+            "vector_backend": self._active_vector_backend,
             "pipeline_status": self._pipeline_status,
         }
 

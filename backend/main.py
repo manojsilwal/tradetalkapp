@@ -364,7 +364,7 @@ class BacktestRequest(BaseModel):
 async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(_get_optional_user)):
     """
     Parse a plain-English investing strategy, run a backtest, and return results.
-    Uses Gemini to parse strategy and explain results.
+    Uses the configured LLM backend to parse strategy and explain results.
     """
     from .strategy_parser import parse_strategy
     from .backtest_engine import run_backtest
@@ -374,10 +374,15 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(_get_op
 
     # Run backtest simulation
     result = await run_backtest(rules, llm_client, knowledge_store)
+    print(
+        f"[BacktestRAG] retrieved_docs_count={result.retrieval_telemetry.retrieved_docs_count} "
+        f"reflection_hits={result.retrieval_telemetry.reflection_hits}"
+    )
 
     # Knowledge hook — save backtest result
     try:
         knowledge_store.add_backtest(result)
+        knowledge_store.add_reflection(result)
     except Exception as e:
         print(f"[KnowledgeHook] add_backtest failed: {e}")
 
@@ -420,6 +425,14 @@ async def pipeline_status():
     }
 
 
+@app.get("/knowledge/reflections")
+async def knowledge_reflections(n: int = 20):
+    """Debug endpoint to inspect recently stored reflection memories."""
+    n = max(1, min(n, 100))
+    reflections = knowledge_store.get_recent_reflections(n=n)
+    return {"reflections": reflections, "total": len(reflections)}
+
+
 @app.post("/knowledge/pipeline-run")
 async def trigger_pipeline():
     """Manually trigger the daily knowledge pipeline (for testing)."""
@@ -441,12 +454,15 @@ async def strategy_leaderboard(n: int = 20):
 @app.get("/llm/status")
 async def llm_status():
     """Show which LLM backend and model all agents are currently using."""
-    from .llm_client import OLLAMA_BASE_URL, OLLAMA_MODEL, GEMINI_MODEL
+    from .llm_client import OPENROUTER_BASE_URL, OPENROUTER_MODEL, RAG_TOP_K_DEFAULT
     backend = llm_client.backend
+    ks_stats = knowledge_store.stats()
     return {
         "backend": backend,
-        "model": OLLAMA_MODEL if backend == "ollama" else (GEMINI_MODEL if backend == "gemini" else "rule-based"),
-        "endpoint": OLLAMA_BASE_URL if backend == "ollama" else ("https://generativelanguage.googleapis.com" if backend == "gemini" else None),
+        "model": OPENROUTER_MODEL if backend == "openrouter" else "rule-based",
+        "endpoint": OPENROUTER_BASE_URL if backend == "openrouter" else None,
+        "vector_backend": ks_stats.get("vector_backend", "chroma"),
+        "rag_top_k_default": RAG_TOP_K_DEFAULT,
         "agents_using_this_model": [
             "bull", "bear", "macro", "value", "momentum",
             "moderator", "strategy_parser", "backtest_explainer"

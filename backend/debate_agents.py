@@ -99,6 +99,26 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm) -> Debate
 
     # Build historical context from RAG
     context_docs = []
+    market_regime = str(live_data.get("market_regime", "")).lower()
+    reflection_filters = {}
+    if market_regime:
+        if "bear" in market_regime:
+            reflection_filters["market_regime"] = "risk_off"
+        else:
+            reflection_filters["market_regime"] = "risk_on_or_mixed"
+
+    if hasattr(ks, "query_reflections"):
+        reflection_docs, _, telemetry = ks.query_reflections(
+            query_text=f"{ticker} {role} setup",
+            n_results=2,
+            filters=reflection_filters or None,
+        )
+        context_docs.extend(reflection_docs)
+        logger.info(
+            f"[DebateRAG] role={role} ticker={ticker} docs={telemetry.get('retrieved_docs_count', 0)} "
+            f"reflection_hits={telemetry.get('reflection_hits', 0)}"
+        )
+
     for collection in query_map.get(role, ["debate_history"]):
         docs = ks.query(collection, f"{ticker} {role} investment analysis", n_results=2)
         context_docs.extend(docs)
@@ -157,6 +177,17 @@ async def run_moderator(ticker: str, arguments: list[DebateArgument], ks, llm) -
     Returns: (verdict_str, confidence_float, summary_str)
     """
     context_docs = ks.query("debate_history", f"{ticker} debate verdict", n_results=3)
+    if hasattr(ks, "query_reflections"):
+        reflection_docs, _, telemetry = ks.query_reflections(
+            query_text=f"{ticker} final verdict",
+            n_results=2,
+            filters=None,
+        )
+        context_docs.extend(reflection_docs)
+        logger.info(
+            f"[DebateRAG] role=moderator ticker={ticker} docs={telemetry.get('retrieved_docs_count', 0)} "
+            f"reflection_hits={telemetry.get('reflection_hits', 0)}"
+        )
     context = ks.format_context(context_docs)
 
     args_dicts = [a.model_dump() for a in arguments]

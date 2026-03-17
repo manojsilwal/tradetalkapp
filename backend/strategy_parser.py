@@ -1,7 +1,7 @@
 """
 Strategy Parser — converts plain-English investing strategies into structured
-StrategyRules using Gemini. Falls back to simple heuristic extraction if
-no LLM is available.
+StrategyRules using the configured LLM backend. Falls back to simple heuristic
+extraction if no LLM is available.
 """
 import logging
 import re
@@ -45,7 +45,7 @@ async def parse_strategy(
     Parse plain-English strategy into StrategyRules.
     Steps:
       1. Query knowledge base for similar strategies
-      2. Ask Gemini to extract rules
+      2. Ask LLM to extract rules
       3. Validate and sanitise the output
       4. Fall back to heuristic extraction on failure
     """
@@ -54,8 +54,18 @@ async def parse_strategy(
         logger.info(f"[StrategyParser] start_date clamped {start_date} → {MIN_START_DATE}")
         start_date = MIN_START_DATE
 
-    # RAG: look for similar past strategies
-    context_docs = ks.query("strategy_backtests", strategy_text, n_results=2)
+    inferred_type = _infer_strategy_type_from_text(strategy_text)
+    reflection_docs = []
+    if hasattr(ks, "query_reflections"):
+        reflection_docs, _, _ = ks.query_reflections(
+            query_text=strategy_text,
+            n_results=3,
+            filters={"strategy_type": inferred_type},
+        )
+
+    # RAG: look for similar past strategies + prior lessons
+    context_docs = reflection_docs
+    context_docs += ks.query("strategy_backtests", strategy_text, n_results=2)
     context = ks.format_context(context_docs)
 
     # Ask LLM to extract structured rules
@@ -247,3 +257,14 @@ def _infer_name(text: str) -> str:
     # Use first sentence or first 60 chars
     first = text.split(".")[0]
     return (first[:57] + "...") if len(first) > 60 else first.capitalize()
+
+
+def _infer_strategy_type_from_text(strategy_text: str) -> str:
+    text = strategy_text.lower()
+    has_fundamental = any(k in text for k in ["pe", "p/e", "revenue", "roe", "debt", "dividend", "cash flow"])
+    has_momentum = any(k in text for k in ["momentum", "moving average", "ma", "price return", "breakout", "trend"])
+    if has_fundamental and has_momentum:
+        return "mixed"
+    if has_momentum:
+        return "momentum"
+    return "fundamental"

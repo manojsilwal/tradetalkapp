@@ -15,7 +15,14 @@ import logging
 import math
 from datetime import datetime, date, timedelta
 from typing import Optional
-from .schemas import StrategyRules, BacktestAction, BacktestResult, FilterRule
+from .schemas import (
+    StrategyRules,
+    BacktestAction,
+    BacktestResult,
+    BacktestReflection,
+    RetrievalTelemetry,
+    FilterRule,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +80,27 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
     accurate_cagr = round(((final_value / INITIAL_VALUE) ** (1 / n_years) - 1) * 100, 2)
     stats["cagr"] = accurate_cagr
 
-    context_docs  = ks.query("strategy_backtests", rules.description, n_results=2)
+    reflection_docs = []
+    reflection_hits = 0
+    if hasattr(ks, "query_reflections"):
+        reflection_docs, reflection_meta, _telemetry = ks.query_reflections(
+            query_text=rules.description,
+            n_results=3,
+            filters={"strategy_type": rules.strategy_type},
+        )
+        reflection_hits = len(reflection_meta)
+
+    context_docs  = reflection_docs
+    context_docs += ks.query("strategy_backtests", rules.description, n_results=2)
     context_docs += ks.query("macro_snapshots", f"macro conditions {rules.start_date[:4]}", n_results=1)
     context = ks.format_context(context_docs)
 
     explanation = await llm.generate_backtest_explanation(rules.name, {**stats, "total_return_pct": total_return_pct, "final_value": final_value}, context)
+    reflection = _build_backtest_reflection(
+        strategy_name=rules.name,
+        strategy_type=rules.strategy_type,
+        stats={**stats, "total_return_pct": total_return_pct},
+    )
 
     return BacktestResult(
         strategy=rules,
@@ -97,7 +120,12 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
         worst_period=stats["worst_period"],
         portfolio_value_series=portfolio_series,
         benchmark_value_series=benchmark_series,
-        gemini_explanation=explanation,
+        ai_explanation=explanation,
+        reflection=reflection,
+        retrieval_telemetry=RetrievalTelemetry(
+            retrieved_docs_count=len(context_docs),
+            reflection_hits=reflection_hits,
+        ),
         knowledge_context=context[:500] if context else "",
     )
 
@@ -533,3 +561,54 @@ def _compute_stats(portfolio_series: list, benchmark_series: list, actions: list
             stats["benchmark_cagr"] = round((((bend / bstart) ** (1 / n_years)) - 1) * 100, 2)
 
     return stats
+
+
+def _build_backtest_reflection(strategy_name: str, strategy_type: str, stats: dict) -> BacktestReflection:
+    cagr = float(stats.get("cagr", 0.0))
+    benchmark_cagr = float(stats.get("benchmark_cagr", 0.0))
+    drawdown = float(stats.get("max_drawdown", 0.0))
+    win_rate = float(stats.get("win_rate", 0.0))
+    outperformed = cagr > benchmark_cagr
+
+    if drawdown <= -35:
+        drawdown_bucket = "high_drawdown"
+    elif drawdown <= -20:
+        drawdown_bucket = "medium_drawdown"
+    else:
+        drawdown_bucket = "low_drawdown"
+
+    if cagr >= 12 and outperformed:
+        outcome = "strong_outperformance"
+        adjustment = (
+            f"Keep the core {strategy_type} signal stack, but add a volatility guard to reduce peak-to-trough losses."
+        )
+    elif outperformed:
+        outcome = "mild_outperformance"
+        adjustment = (
+            "Retain entry logic and improve exits with tighter drawdown controls or regime-aware position sizing."
+        )
+    else:
+        outcome = "underperformance"
+        adjustment = (
+            "Require trend/regime confirmation before entry and reduce concentration during stressed macro periods."
+        )
+
+    if win_rate >= 60:
+        confidence = 0.75
+    elif win_rate >= 45:
+        confidence = 0.6
+    else:
+        confidence = 0.45
+
+    regime = "risk_off" if drawdown <= -20 else "risk_on_or_mixed"
+    hypothesis = (
+        f"{strategy_name} ({strategy_type}) should outperform by applying disciplined rule-based entries and exits."
+    )
+    return BacktestReflection(
+        hypothesis=hypothesis,
+        outcome=outcome,
+        market_regime=regime,
+        drawdown_bucket=drawdown_bucket,
+        adjustment=adjustment,
+        confidence=confidence,
+    )

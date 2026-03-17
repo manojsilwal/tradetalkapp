@@ -2,7 +2,7 @@
 VideoGenerationAgent — uses Google Veo 3.1 to generate animated lesson videos.
 
 Pipeline:
-  1. LLM (Gemini) breaks the lesson topic into 8 visual scenes (8 seconds each)
+  1. LLM (OpenRouter Nemotron) breaks the lesson topic into 8 visual scenes (8 seconds each)
   2. Veo generates each scene as a 9:16 720p .mp4
   3. Files saved to static/videos/lesson_{id}/scene_{n:02d}.mp4
   4. Playlist manifest returned to the frontend
@@ -50,22 +50,41 @@ Return 8 scenes as JSON:
 
 
 async def _generate_scene_script(topic: str, track: str, level: str) -> List[Dict]:
-    """Use Gemini to break the lesson into 8 Veo-ready scenes."""
-    import os
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        logger.warning("[VideoAgent] No GEMINI_API_KEY — using fallback scenes")
+    """Use OpenRouter Nemotron to break the lesson into 8 Veo-ready scenes."""
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not openrouter_key:
+        logger.warning("[VideoAgent] No OPENROUTER_API_KEY — using fallback scenes")
         return _fallback_scenes(topic)
 
     try:
-        from google import genai as gai
-        client = gai.Client(api_key=gemini_key)
-        prompt = SCENE_USER_TEMPLATE.format(topic=topic, track=track, level=level)
-        resp   = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"{SCENE_SYSTEM_PROMPT}\n\n{prompt}",
+        from openai import OpenAI
+
+        headers = {}
+        openrouter_referer = os.environ.get("OPENROUTER_HTTP_REFERER", "")
+        openrouter_title = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")
+        if openrouter_referer:
+            headers["HTTP-Referer"] = openrouter_referer
+        if openrouter_title:
+            headers["X-Title"] = openrouter_title
+
+        client = OpenAI(
+            base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            api_key=openrouter_key,
+            default_headers=headers,
         )
-        raw = resp.text.strip()
+        prompt = SCENE_USER_TEMPLATE.format(topic=topic, track=track, level=level)
+        completion = client.chat.completions.create(
+            model=os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free"),
+            messages=[
+                {"role": "system", "content": SCENE_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=1500,
+        )
+        raw = (completion.choices[0].message.content or "").strip()
+        if not raw:
+            raise ValueError("OpenRouter returned empty scene script")
         # Strip markdown fences if present
         if raw.startswith("```"):
             raw = "\n".join(raw.split("\n")[1:])
@@ -80,7 +99,7 @@ async def _generate_scene_script(topic: str, track: str, level: str) -> List[Dic
 
 
 def _fallback_scenes(topic: str) -> List[Dict]:
-    """Deterministic fallback when Gemini is unavailable."""
+    """Deterministic fallback when OpenRouter is unavailable."""
     prompts = [
         f"Animated title card with text '{topic}', bold modern typography, dark gradient background, glowing accent",
         f"2D bar chart animating from zero to full height, finance data visualization style, clean white background",
@@ -111,9 +130,9 @@ async def generate_lesson_video(lesson_id: str, topic: str, track: str,
     Full pipeline: script → Veo → save → return playlist manifest.
     db_update_fn(lesson_id, scene_idx, status) is called after each scene completes.
     """
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        logger.error("[VideoAgent] GEMINI_API_KEY not set — cannot call Veo")
+    google_api_key = os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
+    if not google_api_key:
+        logger.error("[VideoAgent] GOOGLE_API_KEY not set — cannot call Veo")
         return []
 
     scenes = await _generate_scene_script(topic, track, level)
@@ -122,7 +141,7 @@ async def generate_lesson_video(lesson_id: str, topic: str, track: str,
     try:
         from google import genai as gai
         from google.genai import types as gtypes
-        client = gai.Client(api_key=gemini_key)
+        client = gai.Client(api_key=google_api_key)
     except ImportError:
         logger.error("[VideoAgent] google-generativeai not installed")
         return []

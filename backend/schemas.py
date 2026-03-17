@@ -177,6 +177,20 @@ class BacktestAction(BaseModel):
     portfolio_value_after: float = 0.0  # total portfolio value after this action
 
 
+class BacktestReflection(BaseModel):
+    hypothesis: str
+    outcome: str
+    market_regime: str
+    drawdown_bucket: str
+    adjustment: str
+    confidence: float = Field(ge=0.0, le=1.0, default=0.5)
+
+
+class RetrievalTelemetry(BaseModel):
+    retrieved_docs_count: int = 0
+    reflection_hits: int = 0
+
+
 class BacktestResult(BaseModel):
     strategy: StrategyRules
     actions: List[BacktestAction]
@@ -195,6 +209,8 @@ class BacktestResult(BaseModel):
     worst_period: str
     portfolio_value_series: List[Dict[str, Any]]  # [{date, value}, ...]
     benchmark_value_series: List[Dict[str, Any]]  # [{date, value}, ...]
-    gemini_explanation: str
+    ai_explanation: str
+    reflection: BacktestReflection
+    retrieval_telemetry: RetrievalTelemetry = Field(default_factory=RetrievalTelemetry)
     knowledge_context: str
 

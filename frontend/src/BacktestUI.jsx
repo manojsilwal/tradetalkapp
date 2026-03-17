@@ -652,7 +652,7 @@ export default function BacktestUI() {
                   </div>
                 </div>
                 <p style={{ color: '#94a3b8', fontSize: '0.86rem', lineHeight: 1.7, margin: '0 0 12px' }}>
-                  {result.gemini_explanation}
+                  {result.ai_explanation}
                 </p>
                 {result.knowledge_context && result.knowledge_context !== 'No relevant historical context found.' && (
                   <div style={{ color: '#334155', fontSize: '0.72rem', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: 10 }}>

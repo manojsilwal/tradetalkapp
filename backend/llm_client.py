@@ -1,34 +1,35 @@
 """
-LLM Client — supports two backends, selected by environment variables:
+LLM Client — supports OpenRouter Nemotron and a rule-based fallback.
 
-  1. Ollama (primary)  — set OLLAMA_BASE_URL to use a local/tunnelled model
-     e.g. OLLAMA_BASE_URL=https://learning-mills-sake-times.trycloudflare.com
-          OLLAMA_MODEL=qwen3.5:9b
-     Uses Ollama's /api/chat endpoint (native REST, no extra packages).
+  1. OpenRouter (primary) — set OPENROUTER_API_KEY
+     Optional:
+       OPENROUTER_MODEL (default: nvidia/nemotron-3-super-120b-a12b:free)
+       OPENROUTER_BASE_URL (default: https://openrouter.ai/api/v1)
+       OPENROUTER_HTTP_REFERER
+       OPENROUTER_X_TITLE
 
-  2. Google Gemini (fallback) — set GEMINI_API_KEY
-     Uses the google-genai SDK (google.genai).
-
-  3. Rule-based templates — if neither is configured.
+  2. Rule-based templates — if OPENROUTER_API_KEY is not configured.
 
 Each agent role has a locked finance-domain system prompt so agents behave as
 investment specialists rather than generic assistants.
 """
-import os
 import asyncio
 import json
 import logging
+import os
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # ── Env config ────────────────────────────────────────────────────────────────
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "").rstrip("/")
-OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
-
-GEMINI_API_KEY  = os.environ.get("GEMINI_API_KEY", "")
-_raw_model      = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_MODEL    = _raw_model if _raw_model.startswith("models/") else f"models/{_raw_model}"
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+OPENROUTER_HTTP_REFERER = os.environ.get("OPENROUTER_HTTP_REFERER", "")
+OPENROUTER_X_TITLE = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")
+LLM_MAX_CONCURRENCY = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "2")))
+LLM_MAX_TOKENS = max(256, int(os.environ.get("LLM_MAX_TOKENS", "1500")))
+RAG_TOP_K_DEFAULT = max(1, int(os.environ.get("RAG_TOP_K", "5")))
 
 # ── Finance-domain system prompts locked per agent role ──────────────────────
 AGENT_SYSTEM_PROMPTS = {
@@ -105,98 +106,68 @@ FALLBACK_TEMPLATES = {
 
 class LLMClient:
     """
-    Async LLM wrapper supporting Ollama (primary) and Gemini (fallback).
+    Async LLM wrapper supporting OpenRouter Nemotron (primary).
     Backend selected at startup based on environment variables.
     Uses asyncio.to_thread for all blocking HTTP calls.
     """
 
     def __init__(self):
         self._backend = "fallback"
-        self._gemini_client = None
-        # Ollama processes one request at a time — semaphore prevents pileup
-        self._ollama_sem = asyncio.Semaphore(1)
+        self._openrouter_client = None
+        # Guard concurrent upstream calls to avoid rate-limit bursts.
+        self._openrouter_sem = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
 
-        if OLLAMA_BASE_URL:
-            self._backend = "ollama"
-            logger.info(f"[LLMClient] Backend: Ollama — {OLLAMA_BASE_URL} | model: {OLLAMA_MODEL}")
-        elif GEMINI_API_KEY:
+        if OPENROUTER_API_KEY:
             try:
-                from google import genai
-                self._gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-                self._backend = "gemini"
-                logger.info(f"[LLMClient] Backend: Gemini — model: {GEMINI_MODEL}")
+                from openai import OpenAI
+
+                headers = {}
+                if OPENROUTER_HTTP_REFERER:
+                    headers["HTTP-Referer"] = OPENROUTER_HTTP_REFERER
+                if OPENROUTER_X_TITLE:
+                    headers["X-Title"] = OPENROUTER_X_TITLE
+
+                self._openrouter_client = OpenAI(
+                    base_url=OPENROUTER_BASE_URL,
+                    api_key=OPENROUTER_API_KEY,
+                    default_headers=headers,
+                )
+                self._backend = "openrouter"
+                logger.info(f"[LLMClient] Backend: OpenRouter — model: {OPENROUTER_MODEL}")
             except Exception as e:
-                logger.warning(f"[LLMClient] Gemini init failed: {e}. Using fallback.")
+                logger.warning(f"[LLMClient] OpenRouter init failed: {e}. Using fallback.")
         else:
-            logger.warning("[LLMClient] No LLM configured (set OLLAMA_BASE_URL or GEMINI_API_KEY). Using rule-based fallback.")
+            logger.warning("[LLMClient] No LLM configured (set OPENROUTER_API_KEY). Using rule-based fallback.")
 
-    # ── Ollama ──────────────────────────────────────────────────────────────
+    # ── OpenRouter Nemotron ────────────────────────────────────────────────
 
-    def _ollama_generate(self, role: str, prompt: str) -> dict:
-        """Call Ollama /api/chat synchronously — run in a thread.
-        Uses /no_think to disable Qwen3 chain-of-thought (faster, avoids token waste).
-        """
-        import requests as req
+    def _openrouter_generate(self, role: str, prompt: str) -> dict:
+        """Call OpenRouter Chat Completions synchronously — run in a thread."""
         system = AGENT_SYSTEM_PROMPTS.get(role, "You are a finance analyst. Respond only in valid JSON.")
-        payload = {
-            "model": OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                # /no_think disables Qwen3's thinking mode — returns JSON directly
-                {"role": "user", "content": f"/no_think\n\n{prompt}"},
-            ],
-            "stream": False,
-            "options": {
-                "temperature": 0.3,
-                "num_predict": 1500,  # enough for JSON without thinking tokens
-            },
-            "think": False,          # Ollama >=0.7.1 flag to disable thinking
-        }
         try:
-            resp = req.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json=payload,
-                timeout=300,
-                headers={"Content-Type": "application/json"},
+            completion = self._openrouter_client.chat.completions.create(
+                model=OPENROUTER_MODEL,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                max_tokens=LLM_MAX_TOKENS,
             )
-            resp.raise_for_status()
-            msg = resp.json()["message"]
-            # Qwen3 puts chain-of-thought in 'thinking', actual response in 'content'
-            content = (msg.get("content") or "").strip()
+            content = (completion.choices[0].message.content or "").strip()
             if not content:
-                # thinking mode was active and ate all tokens — try thinking field
-                content = (msg.get("thinking") or "").strip()
-                logger.warning(f"[LLMClient] Ollama role={role}: content empty, falling back to thinking field")
-            if not content:
-                logger.warning(f"[LLMClient] Ollama role={role}: both content and thinking empty")
+                logger.warning(f"[LLMClient] OpenRouter role={role}: empty response content")
                 return FALLBACK_TEMPLATES.get(role, {})
             return self._parse_json_response(content, role)
         except Exception as e:
-            logger.warning(f"[LLMClient] Ollama call failed for role={role}: {e}")
-            return FALLBACK_TEMPLATES.get(role, {})
-
-    # ── Gemini ──────────────────────────────────────────────────────────────
-
-    def _gemini_generate(self, role: str, prompt: str) -> dict:
-        """Call Gemini synchronously — run in a thread."""
-        system = AGENT_SYSTEM_PROMPTS.get(role, "You are a finance analyst.")
-        full_prompt = f"{system}\n\n{prompt}"
-        try:
-            response = self._gemini_client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=full_prompt,
-            )
-            content = response.text.strip()
-            return self._parse_json_response(content, role)
-        except Exception as e:
-            logger.warning(f"[LLMClient] Gemini call failed for role={role}: {e}")
+            logger.warning(f"[LLMClient] OpenRouter call failed for role={role}: {e}")
             return FALLBACK_TEMPLATES.get(role, {})
 
     # ── Shared ──────────────────────────────────────────────────────────────
 
     def _parse_json_response(self, content: str, role: str) -> dict:
         """Strip markdown fences and parse JSON. Return fallback on failure."""
-        # Remove <think>...</think> blocks (Qwen3 chain-of-thought)
+        # Remove <think>...</think> blocks if the model includes reasoning tags.
         import re
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
         # Strip markdown code fences
@@ -224,14 +195,10 @@ class LLMClient:
         return FALLBACK_TEMPLATES.get(role, {})
 
     async def generate(self, role: str, prompt: str) -> dict:
-        """Async entry point — dispatches to the configured backend in a thread.
-        Ollama calls are serialised via semaphore (one at a time) since Ollama
-        queues requests internally anyway — concurrent calls just cause timeouts."""
-        if self._backend == "ollama":
-            async with self._ollama_sem:
-                return await asyncio.to_thread(self._ollama_generate, role, prompt)
-        if self._backend == "gemini":
-            return await asyncio.to_thread(self._gemini_generate, role, prompt)
+        """Async entry point — dispatches to the configured backend in a thread."""
+        if self._backend == "openrouter":
+            async with self._openrouter_sem:
+                return await asyncio.to_thread(self._openrouter_generate, role, prompt)
         return FALLBACK_TEMPLATES.get(role, {})
 
     async def generate_argument(self, role: str, ticker: str, live_data: dict, historical_context: str) -> dict:

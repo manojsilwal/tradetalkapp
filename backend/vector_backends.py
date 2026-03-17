@@ -1,0 +1,230 @@
+import logging
+import os
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+class VectorBackendBase:
+    def ensure_collection(self, name: str) -> None:
+        raise NotImplementedError
+
+    def add(self, collection: str, documents: List[str], metadatas: List[dict], ids: List[str]) -> None:
+        raise NotImplementedError
+
+    def query(
+        self,
+        collection: str,
+        query_text: str,
+        n_results: int = 3,
+        where: Optional[dict] = None,
+    ) -> Dict[str, List[Any]]:
+        raise NotImplementedError
+
+    def get(self, collection: str) -> Dict[str, List[Any]]:
+        raise NotImplementedError
+
+    def count(self, collection: str) -> int:
+        raise NotImplementedError
+
+
+class ChromaVectorBackend(VectorBackendBase):
+    def __init__(self, chroma_path: str):
+        import chromadb
+
+        self._client = chromadb.PersistentClient(path=chroma_path)
+        self._cols: Dict[str, Any] = {}
+
+    def ensure_collection(self, name: str) -> None:
+        self._cols[name] = self._client.get_or_create_collection(name=name)
+
+    def _col(self, name: str):
+        return self._cols.get(name)
+
+    def add(self, collection: str, documents: List[str], metadatas: List[dict], ids: List[str]) -> None:
+        col = self._col(collection)
+        if not col:
+            return
+        col.add(documents=documents, metadatas=metadatas, ids=ids)
+
+    def query(
+        self,
+        collection: str,
+        query_text: str,
+        n_results: int = 3,
+        where: Optional[dict] = None,
+    ) -> Dict[str, List[Any]]:
+        col = self._col(collection)
+        if not col:
+            return {"documents": [], "metadatas": [], "ids": [], "distances": []}
+        normalized_where = where
+        if isinstance(where, dict) and len(where) > 1:
+            # Chroma requires one top-level operator for multi-condition filters.
+            normalized_where = {"$and": [{k: v} for k, v in where.items()]}
+        params = {"query_texts": [query_text], "n_results": n_results}
+        if normalized_where:
+            params["where"] = normalized_where
+        result = col.query(**params)
+        return {
+            "documents": result.get("documents", [[]])[0],
+            "metadatas": result.get("metadatas", [[]])[0],
+            "ids": result.get("ids", [[]])[0],
+            "distances": result.get("distances", [[]])[0],
+        }
+
+    def get(self, collection: str) -> Dict[str, List[Any]]:
+        col = self._col(collection)
+        if not col:
+            return {"documents": [], "metadatas": [], "ids": []}
+        result = col.get(include=["documents", "metadatas"])
+        return {
+            "documents": result.get("documents", []),
+            "metadatas": result.get("metadatas", []),
+            "ids": result.get("ids", []),
+        }
+
+    def count(self, collection: str) -> int:
+        col = self._col(collection)
+        return col.count() if col else 0
+
+
+class SupabaseVectorBackend(VectorBackendBase):
+    def __init__(self, url: str, key: str):
+        from supabase import create_client
+
+        self._client = create_client(url, key)
+        self._embedding_client = None
+        self._embedding_model = os.environ.get("OPENROUTER_EMBEDDING_MODEL", "").strip()
+
+        if self._embedding_model and os.environ.get("OPENROUTER_API_KEY", ""):
+            try:
+                from openai import OpenAI
+
+                self._embedding_client = OpenAI(
+                    base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+                    api_key=os.environ.get("OPENROUTER_API_KEY", ""),
+                )
+            except Exception as e:
+                logger.warning(f"[SupabaseVectorBackend] Embedding client init failed: {e}")
+
+        # Fail fast if SQL bootstrap has not been applied yet.
+        try:
+            self._client.table("vector_memory").select("id").limit(1).execute()
+        except Exception as e:
+            raise RuntimeError(
+                "Supabase vector schema missing. Run backend/supabase_pgvector_bootstrap.sql "
+                "in Supabase SQL editor before enabling VECTOR_BACKEND=supabase."
+            ) from e
+
+    def ensure_collection(self, name: str) -> None:
+        # No-op: collection is represented by a table field.
+        return
+
+    def _embed(self, text: str) -> Optional[List[float]]:
+        if not self._embedding_client or not self._embedding_model:
+            return None
+        try:
+            emb = self._embedding_client.embeddings.create(
+                model=self._embedding_model,
+                input=text,
+            )
+            return emb.data[0].embedding
+        except Exception as e:
+            logger.warning(f"[SupabaseVectorBackend] Embedding generation failed: {e}")
+            return None
+
+    def add(self, collection: str, documents: List[str], metadatas: List[dict], ids: List[str]) -> None:
+        rows = []
+        for doc, meta, row_id in zip(documents, metadatas, ids):
+            row = {
+                "id": row_id,
+                "collection": collection,
+                "document": doc,
+                "metadata": meta,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            embedding = self._embed(doc)
+            if embedding is not None:
+                row["embedding"] = embedding
+            rows.append(row)
+        self._client.table("vector_memory").upsert(rows).execute()
+
+    def query(
+        self,
+        collection: str,
+        query_text: str,
+        n_results: int = 3,
+        where: Optional[dict] = None,
+    ) -> Dict[str, List[Any]]:
+        metadata_filter = where or {}
+
+        # Prefer pgvector RPC if embeddings are available and SQL bootstrap is installed.
+        query_embedding = self._embed(query_text)
+        if query_embedding is not None:
+            try:
+                response = self._client.rpc(
+                    "match_vector_memory",
+                    {
+                        "query_embedding": query_embedding,
+                        "match_count": n_results,
+                        "in_collection": collection,
+                        "metadata_filter": metadata_filter,
+                    },
+                ).execute()
+                rows = response.data or []
+                return {
+                    "documents": [r.get("document", "") for r in rows],
+                    "metadatas": [r.get("metadata", {}) for r in rows],
+                    "ids": [r.get("id", "") for r in rows],
+                    "distances": [r.get("distance", 0.0) for r in rows],
+                }
+            except Exception:
+                # Fall back to lexical path if RPC/function is not set up.
+                pass
+
+        query = self._client.table("vector_memory").select("id,document,metadata").eq("collection", collection)
+        for k, v in metadata_filter.items():
+            query = query.contains("metadata", {k: v})
+        response = query.order("created_at", desc=True).limit(max(n_results * 3, 10)).execute()
+        rows = response.data or []
+
+        tokens = [t for t in query_text.lower().split() if t]
+        scored = []
+        for row in rows:
+            doc = (row.get("document") or "").lower()
+            score = sum(1 for t in tokens if t in doc)
+            scored.append((score, row))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top = [row for _, row in scored[:n_results]]
+        return {
+            "documents": [r.get("document", "") for r in top],
+            "metadatas": [r.get("metadata", {}) for r in top],
+            "ids": [r.get("id", "") for r in top],
+            "distances": [0.0 for _ in top],
+        }
+
+    def get(self, collection: str) -> Dict[str, List[Any]]:
+        response = (
+            self._client.table("vector_memory")
+            .select("id,document,metadata")
+            .eq("collection", collection)
+            .limit(5000)
+            .execute()
+        )
+        rows = response.data or []
+        return {
+            "documents": [r.get("document", "") for r in rows],
+            "metadatas": [r.get("metadata", {}) for r in rows],
+            "ids": [r.get("id", "") for r in rows],
+        }
+
+    def count(self, collection: str) -> int:
+        response = (
+            self._client.table("vector_memory")
+            .select("id", count="exact")
+            .eq("collection", collection)
+            .limit(1)
+            .execute()
+        )
+        return int(response.count or 0)
