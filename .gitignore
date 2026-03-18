@@ -18,8 +18,12 @@ output.json
 .env.*.local
 
 # Node / Frontend
+node_modules/
 frontend/node_modules/
 frontend/dist/
+test-results/
+playwright-report/
+.playwright/
 
 # macOS
 .DS_Store
