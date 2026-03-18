@@ -23,6 +23,7 @@ from .schemas import (
     RetrievalTelemetry,
     FilterRule,
 )
+from .agent_policy_guardrails import ensure_capability, workload_scope
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +81,10 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
     accurate_cagr = round(((final_value / INITIAL_VALUE) ** (1 / n_years) - 1) * 100, 2)
     stats["cagr"] = accurate_cagr
 
+    ensure_capability("backtest", "knowledge_read")
     reflection_docs = []
     reflection_hits = 0
+    retrieved_reflection_ids: list[str] = []
     if hasattr(ks, "query_reflections"):
         reflection_docs, reflection_meta, _telemetry = ks.query_reflections(
             query_text=rules.description,
@@ -89,18 +92,32 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
             filters={"strategy_type": rules.strategy_type},
         )
         reflection_hits = len(reflection_meta)
+        retrieved_reflection_ids = _telemetry.get("retrieved_reflection_ids", [])
 
     context_docs  = reflection_docs
     context_docs += ks.query("strategy_backtests", rules.description, n_results=2)
     context_docs += ks.query("macro_snapshots", f"macro conditions {rules.start_date[:4]}", n_results=1)
     context = ks.format_context(context_docs)
 
-    explanation = await llm.generate_backtest_explanation(rules.name, {**stats, "total_return_pct": total_return_pct, "final_value": final_value}, context)
+    with workload_scope("backtest", "llm_inference"):
+        explanation = await llm.generate_backtest_explanation(
+            rules.name,
+            {**stats, "total_return_pct": total_return_pct, "final_value": final_value},
+            context,
+        )
+
+    outperformed = stats["cagr"] > stats["benchmark_cagr"]
     reflection = _build_backtest_reflection(
         strategy_name=rules.name,
         strategy_type=rules.strategy_type,
         stats={**stats, "total_return_pct": total_return_pct},
     )
+
+    if retrieved_reflection_ids and hasattr(ks, "update_reflection_effectiveness"):
+        try:
+            ks.update_reflection_effectiveness(retrieved_reflection_ids, outperformed)
+        except Exception as e:
+            logger.warning("[BacktestEngine] effectiveness update failed: %s", e)
 
     return BacktestResult(
         strategy=rules,
@@ -115,7 +132,7 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
         win_rate=stats["win_rate"],
         total_trades=stats["total_trades"],
         benchmark_cagr=stats["benchmark_cagr"],
-        outperformed=stats["cagr"] > stats["benchmark_cagr"],
+        outperformed=outperformed,
         best_period=stats["best_period"],
         worst_period=stats["worst_period"],
         portfolio_value_series=portfolio_series,
@@ -125,6 +142,7 @@ async def run_backtest(rules: StrategyRules, llm, ks) -> BacktestResult:
         retrieval_telemetry=RetrievalTelemetry(
             retrieved_docs_count=len(context_docs),
             reflection_hits=reflection_hits,
+            retrieved_reflection_ids=retrieved_reflection_ids,
         ),
         knowledge_context=context[:500] if context else "",
     )
@@ -568,6 +586,7 @@ def _build_backtest_reflection(strategy_name: str, strategy_type: str, stats: di
     benchmark_cagr = float(stats.get("benchmark_cagr", 0.0))
     drawdown = float(stats.get("max_drawdown", 0.0))
     win_rate = float(stats.get("win_rate", 0.0))
+    total_return = float(stats.get("total_return_pct", 0.0))
     outperformed = cagr > benchmark_cagr
 
     if drawdown <= -35:
@@ -582,16 +601,42 @@ def _build_backtest_reflection(strategy_name: str, strategy_type: str, stats: di
         adjustment = (
             f"Keep the core {strategy_type} signal stack, but add a volatility guard to reduce peak-to-trough losses."
         )
+        effectiveness = 0.8
     elif outperformed:
         outcome = "mild_outperformance"
         adjustment = (
             "Retain entry logic and improve exits with tighter drawdown controls or regime-aware position sizing."
         )
+        effectiveness = 0.65
+    elif cagr < 0 and drawdown <= -30:
+        outcome = "severe_failure"
+        adjustment = (
+            f"FAILURE POST-MORTEM: {strategy_type} strategy lost money with {drawdown:.1f}% drawdown. "
+            f"Avoid this entry signal combination in similar macro regimes. "
+            f"Add mandatory stop-loss and regime filter before entry."
+        )
+        effectiveness = 0.15
+    elif total_return < -10:
+        outcome = "capital_destruction"
+        adjustment = (
+            f"FAILURE POST-MORTEM: Strategy returned {total_return:+.1f}% — significant capital loss. "
+            f"Root cause likely poor entry timing or missing risk controls. "
+            f"Never run this signal stack without a drawdown circuit breaker."
+        )
+        effectiveness = 0.2
+    elif not outperformed and win_rate < 40:
+        outcome = "low_quality_underperformance"
+        adjustment = (
+            f"FAILURE POST-MORTEM: Win rate {win_rate:.0f}% with benchmark underperformance. "
+            f"Signal quality is insufficient — add confirmation filters or switch to a momentum overlay."
+        )
+        effectiveness = 0.25
     else:
         outcome = "underperformance"
         adjustment = (
             "Require trend/regime confirmation before entry and reduce concentration during stressed macro periods."
         )
+        effectiveness = 0.35
 
     if win_rate >= 60:
         confidence = 0.75
@@ -611,4 +656,5 @@ def _build_backtest_reflection(strategy_name: str, strategy_type: str, stats: di
         drawdown_bucket=drawdown_bucket,
         adjustment=adjustment,
         confidence=confidence,
+        effectiveness_score=effectiveness,
     )

@@ -6,6 +6,7 @@ Each run adds new records to ChromaDB; all historical data remains searchable.
 import asyncio
 import logging
 from datetime import datetime, timezone
+from .agent_policy_guardrails import ensure_capability
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ async def run_daily_pipeline(knowledge_store) -> dict:
     Returns a summary dict logged and stored in knowledge_store.pipeline_status.
     """
     logger.info("[DailyPipeline] Starting daily knowledge ingestion...")
+    ensure_capability("scheduler", "knowledge_write")
     today = str(datetime.now(timezone.utc).date())
     summary = {
         "last_run": datetime.now(timezone.utc).isoformat(),
@@ -48,6 +50,7 @@ async def run_daily_pipeline(knowledge_store) -> dict:
 
 async def _ingest_price_movements(knowledge_store) -> dict:
     """Fetch top S&P 500 movers and store in price_movements collection."""
+    ensure_capability("scheduler", "market_data_read")
     from .connectors.price_movements import fetch_top_movers
     movers = await fetch_top_movers()
     count = 0
@@ -65,6 +68,7 @@ async def _ingest_price_movements(knowledge_store) -> dict:
 
 async def _ingest_macro_snapshot(knowledge_store) -> dict:
     """Fetch FRED macro indicators and store in macro_snapshots collection."""
+    ensure_capability("scheduler", "market_data_read")
     from .connectors.fred import fetch_macro_snapshot
     snapshot = await fetch_macro_snapshot()
     if snapshot:
@@ -75,6 +79,7 @@ async def _ingest_macro_snapshot(knowledge_store) -> dict:
 
 async def _ingest_youtube(knowledge_store) -> dict:
     """Fetch latest finance videos and store in youtube_insights collection."""
+    ensure_capability("scheduler", "news_ingest")
     from .connectors.youtube import fetch_finance_videos
     videos = await fetch_finance_videos(hours_back=24)
     count = 0

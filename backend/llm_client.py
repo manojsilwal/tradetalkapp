@@ -2,6 +2,7 @@
 LLM Client — supports OpenRouter Nemotron and a rule-based fallback.
 
   1. OpenRouter (primary) — set OPENROUTER_API_KEY
+     Inference goes DIRECT to OpenRouter, never proxied through HF Space.
      Optional:
        OPENROUTER_MODEL (default: nvidia/nemotron-3-super-120b-a12b:free)
        OPENROUTER_BASE_URL (default: https://openrouter.ai/api/v1)
@@ -9,6 +10,10 @@ LLM Client — supports OpenRouter Nemotron and a rule-based fallback.
        OPENROUTER_X_TITLE
 
   2. Rule-based templates — if OPENROUTER_API_KEY is not configured.
+
+Agent policy guardrails (defense-in-depth) are enforced via
+agent_policy_guardrails when enabled.  These are in-process checks and
+do NOT replace OS/container-level isolation.
 
 Each agent role has a locked finance-domain system prompt so agents behave as
 investment specialists rather than generic assistants.
@@ -18,6 +23,12 @@ import json
 import logging
 import os
 from typing import Optional
+from .agent_policy_guardrails import (
+    guard_host,
+    is_enabled as policy_guardrails_enabled,
+    redact_secrets_in_text,
+    workload_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +36,32 @@ logger = logging.getLogger(__name__)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+OPENROUTER_MODEL_LIGHT = os.environ.get("OPENROUTER_MODEL_LIGHT", OPENROUTER_MODEL)
 OPENROUTER_HTTP_REFERER = os.environ.get("OPENROUTER_HTTP_REFERER", "")
 OPENROUTER_X_TITLE = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")
+GUARDRAILS_ENABLE = os.environ.get("GUARDRAILS_ENABLE", "1").strip() != "0"
 LLM_MAX_CONCURRENCY = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "2")))
 LLM_MAX_TOKENS = max(256, int(os.environ.get("LLM_MAX_TOKENS", "1500")))
 RAG_TOP_K_DEFAULT = max(1, int(os.environ.get("RAG_TOP_K", "5")))
+
+# ── Role-to-model tier mapping ────────────────────────────────────────────────
+# High-reasoning roles need frontier-class models; lightweight roles can use
+# cheaper/faster models when OPENROUTER_MODEL_LIGHT is set to a different model.
+MODEL_TIER = {
+    "bull":               "heavy",
+    "bear":               "heavy",
+    "macro":              "heavy",
+    "value":              "heavy",
+    "momentum":           "heavy",
+    "moderator":          "heavy",
+    "strategy_parser":    "heavy",
+    "backtest_explainer": "heavy",
+    "video_scene_director": "light",
+}
+
+def _model_for_role(role: str) -> str:
+    tier = MODEL_TIER.get(role, "heavy")
+    return OPENROUTER_MODEL_LIGHT if tier == "light" else OPENROUTER_MODEL
 
 # ── Finance-domain system prompts locked per agent role ──────────────────────
 AGENT_SYSTEM_PROMPTS = {
@@ -91,6 +123,12 @@ AGENT_SYSTEM_PROMPTS = {
         "ONLY discuss investment and financial topics. "
         "Respond ONLY with valid JSON: {\"explanation\": \"2-3 paragraph explanation\"}"
     ),
+    "video_scene_director": (
+        "You are a visual director creating short educational finance scene plans. "
+        "Return ONLY valid JSON in this shape: "
+        "{\"scenes\":[{\"scene\":1,\"visual_prompt\":\"...\",\"caption\":\"...\",\"duration\":8}]}. "
+        "No markdown fences."
+    ),
 }
 
 # ── Rule-based fallback templates ─────────────────────────────────────────────
@@ -101,66 +139,102 @@ FALLBACK_TEMPLATES = {
     "value":    {"headline": "Fundamental quality is the primary long-term determinant.", "key_points": ["ROIC and ROE signal capital allocation efficiency.", "Free cash flow yield relative to price matters most.", "Balance sheet strength provides downside protection."], "confidence": 0.5},
     "momentum": {"headline": "Price action provides directional context for timing.", "key_points": ["52-week high/low positioning indicates trend strength.", "Recent price returns signal momentum continuation or reversal.", "Volume confirms or diverges from price moves."], "confidence": 0.5},
     "moderator": {"verdict": "NEUTRAL", "summary": "The panel presents mixed signals. A high-conviction directional call requires more data."},
+    "video_scene_director": {"scenes": []},
 }
 
 
 class LLMClient:
     """
-    Async LLM wrapper supporting OpenRouter Nemotron (primary).
-    Backend selected at startup based on environment variables.
+    Async LLM wrapper — sends inference DIRECT to OpenRouter.
+    The HF Space is an agent runtime, NOT an inference proxy.
+    Policy guardrails (in-process, defense-in-depth) are enforced when enabled.
     Uses asyncio.to_thread for all blocking HTTP calls.
     """
 
     def __init__(self):
         self._backend = "fallback"
-        self._openrouter_client = None
-        # Guard concurrent upstream calls to avoid rate-limit bursts.
-        self._openrouter_sem = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
+        self._provider = "fallback"
+        self._model = ""
+        self._endpoint = ""
+        self._client = None
+        self._sem = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
+        self._init_client()
+
+    def _init_client(self):
+        try:
+            from openai import OpenAI
+        except Exception as e:
+            logger.warning("[LLMClient] openai sdk unavailable: %s", redact_secrets_in_text(str(e)))
+            return
+
+        headers = {}
+        if OPENROUTER_HTTP_REFERER:
+            headers["HTTP-Referer"] = OPENROUTER_HTTP_REFERER
+        if OPENROUTER_X_TITLE:
+            headers["X-Title"] = OPENROUTER_X_TITLE
 
         if OPENROUTER_API_KEY:
             try:
-                from openai import OpenAI
-
-                headers = {}
-                if OPENROUTER_HTTP_REFERER:
-                    headers["HTTP-Referer"] = OPENROUTER_HTTP_REFERER
-                if OPENROUTER_X_TITLE:
-                    headers["X-Title"] = OPENROUTER_X_TITLE
-
-                self._openrouter_client = OpenAI(
+                if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                    guard_host("llm", OPENROUTER_BASE_URL)
+                self._client = OpenAI(
                     base_url=OPENROUTER_BASE_URL,
                     api_key=OPENROUTER_API_KEY,
                     default_headers=headers,
                 )
+                self._provider = "openrouter"
                 self._backend = "openrouter"
-                logger.info(f"[LLMClient] Backend: OpenRouter — model: {OPENROUTER_MODEL}")
+                self._model = OPENROUTER_MODEL
+                self._endpoint = OPENROUTER_BASE_URL
+                logger.info("[LLMClient] Backend: OpenRouter direct — model: %s", OPENROUTER_MODEL)
+                return
             except Exception as e:
-                logger.warning(f"[LLMClient] OpenRouter init failed: {e}. Using fallback.")
-        else:
-            logger.warning("[LLMClient] No LLM configured (set OPENROUTER_API_KEY). Using rule-based fallback.")
+                logger.warning("[LLMClient] OpenRouter init failed: %s", redact_secrets_in_text(str(e)))
 
-    # ── OpenRouter Nemotron ────────────────────────────────────────────────
+        logger.warning("[LLMClient] No OPENROUTER_API_KEY configured. Using rule-based fallback.")
 
-    def _openrouter_generate(self, role: str, prompt: str) -> dict:
-        """Call OpenRouter Chat Completions synchronously — run in a thread."""
+    # ── Inference ──────────────────────────────────────────────────────────
+
+    def _provider_generate(self, role: str, prompt: str) -> dict:
+        """Call OpenRouter synchronously — run in a thread."""
         system = AGENT_SYSTEM_PROMPTS.get(role, "You are a finance analyst. Respond only in valid JSON.")
+        model = _model_for_role(role)
         try:
-            completion = self._openrouter_client.chat.completions.create(
-                model=OPENROUTER_MODEL,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.3,
-                max_tokens=LLM_MAX_TOKENS,
-            )
+            if self._client is None:
+                return FALLBACK_TEMPLATES.get(role, {})
+            if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                with workload_scope("llm", "llm_inference"):
+                    completion = self._client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.3,
+                        max_tokens=LLM_MAX_TOKENS,
+                    )
+            else:
+                completion = self._client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.3,
+                    max_tokens=LLM_MAX_TOKENS,
+                )
             content = (completion.choices[0].message.content or "").strip()
             if not content:
-                logger.warning(f"[LLMClient] OpenRouter role={role}: empty response content")
+                logger.warning("[LLMClient] role=%s model=%s empty response", role, model)
                 return FALLBACK_TEMPLATES.get(role, {})
             return self._parse_json_response(content, role)
         except Exception as e:
-            logger.warning(f"[LLMClient] OpenRouter call failed for role={role}: {e}")
+            logger.warning(
+                "[LLMClient] call failed role=%s model=%s err=%s",
+                role,
+                model,
+                redact_secrets_in_text(str(e)),
+            )
             return FALLBACK_TEMPLATES.get(role, {})
 
     # ── Shared ──────────────────────────────────────────────────────────────
@@ -195,10 +269,10 @@ class LLMClient:
         return FALLBACK_TEMPLATES.get(role, {})
 
     async def generate(self, role: str, prompt: str) -> dict:
-        """Async entry point — dispatches to the configured backend in a thread."""
-        if self._backend == "openrouter":
-            async with self._openrouter_sem:
-                return await asyncio.to_thread(self._openrouter_generate, role, prompt)
+        """Async entry point — dispatches to OpenRouter in a thread."""
+        if self._provider == "openrouter":
+            async with self._sem:
+                return await asyncio.to_thread(self._provider_generate, role, prompt)
         return FALLBACK_TEMPLATES.get(role, {})
 
     async def generate_argument(self, role: str, ticker: str, live_data: dict, historical_context: str) -> dict:
@@ -277,6 +351,18 @@ class LLMClient:
     @property
     def backend(self) -> str:
         return self._backend
+
+    @property
+    def provider(self) -> str:
+        return self._provider
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def endpoint(self) -> str:
+        return self._endpoint
 
 
 # Module-level singleton

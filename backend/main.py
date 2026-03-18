@@ -15,6 +15,13 @@ from .connectors import ShortsConnector, SocialSentimentConnector, MacroHealthCo
 from .notification_agents import NotificationPipeline
 from .knowledge_store import get_knowledge_store
 from .llm_client import get_llm_client
+from .agent_policy_guardrails import (
+    PolicyBlockedError,
+    ensure_capability,
+    is_enabled as guardrails_enabled,
+    redact_secrets_in_text,
+    validate_startup_secrets,
+)
 import asyncio, json, time, os
 
 app = FastAPI(
@@ -121,6 +128,7 @@ async def news_scan_loop():
                         await queue.put(event_data)
                     # Knowledge hook — persist each alert for RAG
                     try:
+                        ensure_capability("notifications", "knowledge_write")
                         knowledge_store.add_macro_alert(MacroAlert(**alert))
                     except Exception:
                         pass
@@ -133,6 +141,13 @@ async def news_scan_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    issues = validate_startup_secrets()
+    if issues:
+        for issue in issues:
+            print(f"[PolicyGuardrail][startup] {issue}")
+        if os.environ.get("GUARDRAILS_STRICT_STARTUP", "0").strip() == "1":
+            raise RuntimeError("Agent policy guardrails startup validation failed. See logs.")
+
     asyncio.create_task(news_scan_loop())
     # Start daily knowledge pipeline scheduler
     from .daily_pipeline import start_scheduler
@@ -338,9 +353,10 @@ async def debate_ticker(ticker: str = Query("GME", description="Stock ticker to 
 
     # Knowledge hook — save debate result
     try:
+        ensure_capability("debate", "knowledge_write")
         knowledge_store.add_debate(result)
     except Exception as e:
-        print(f"[KnowledgeHook] add_debate failed: {e}")
+        print(f"[KnowledgeHook] add_debate failed: {redact_secrets_in_text(str(e))}")
 
     # XP hook
     if _auth_user:
@@ -381,10 +397,11 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(_get_op
 
     # Knowledge hook — save backtest result
     try:
+        ensure_capability("backtest", "knowledge_write")
         knowledge_store.add_backtest(result)
         knowledge_store.add_reflection(result)
     except Exception as e:
-        print(f"[KnowledgeHook] add_backtest failed: {e}")
+        print(f"[KnowledgeHook] add_backtest failed: {redact_secrets_in_text(str(e))}")
 
     # XP hook
     if _auth_user:
@@ -453,21 +470,41 @@ async def strategy_leaderboard(n: int = 20):
 
 @app.get("/llm/status")
 async def llm_status():
-    """Show which LLM backend and model all agents are currently using."""
-    from .llm_client import OPENROUTER_BASE_URL, OPENROUTER_MODEL, RAG_TOP_K_DEFAULT
+    """Show which LLM backend, model tiers, and routing all agents use."""
+    from .llm_client import RAG_TOP_K_DEFAULT, MODEL_TIER, OPENROUTER_MODEL_LIGHT, _model_for_role
     backend = llm_client.backend
     ks_stats = knowledge_store.stats()
+    role_models = {role: _model_for_role(role) for role in MODEL_TIER}
     return {
         "backend": backend,
-        "model": OPENROUTER_MODEL if backend == "openrouter" else "rule-based",
-        "endpoint": OPENROUTER_BASE_URL if backend == "openrouter" else None,
+        "provider": getattr(llm_client, "provider", backend),
+        "model_heavy": llm_client.model if backend == "openrouter" else "rule-based",
+        "model_light": OPENROUTER_MODEL_LIGHT if backend == "openrouter" else "rule-based",
+        "endpoint": llm_client.endpoint if backend == "openrouter" else None,
+        "guardrails_enabled": guardrails_enabled(),
         "vector_backend": ks_stats.get("vector_backend", "chroma"),
         "rag_top_k_default": RAG_TOP_K_DEFAULT,
-        "agents_using_this_model": [
-            "bull", "bear", "macro", "value", "momentum",
-            "moderator", "strategy_parser", "backtest_explainer"
-        ],
-        "note": "All 8 agent roles share one LLMClient singleton — changing the backend affects every agent.",
+        "role_model_mapping": role_models,
+        "note": "Roles use heavy or light model tier based on reasoning complexity.",
+    }
+
+
+@app.get("/runtime/policy-check")
+async def runtime_policy_check():
+    """Agent policy guardrails self-test: verifies capability blocking and secret validation."""
+    issues = validate_startup_secrets()
+    blocked = False
+    blocked_reason = ""
+    try:
+        ensure_capability("debate", "notifications_emit")
+    except PolicyBlockedError as e:
+        blocked = True
+        blocked_reason = str(e)
+    return {
+        "guardrails_enabled": guardrails_enabled(),
+        "policy_block_check": "pass" if blocked else "fail",
+        "policy_block_reason": blocked_reason,
+        "startup_secret_issues": issues,
     }
 
 

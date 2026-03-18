@@ -50,47 +50,16 @@ Return 8 scenes as JSON:
 
 
 async def _generate_scene_script(topic: str, track: str, level: str) -> List[Dict]:
-    """Use OpenRouter Nemotron to break the lesson into 8 Veo-ready scenes."""
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
-    if not openrouter_key:
-        logger.warning("[VideoAgent] No OPENROUTER_API_KEY — using fallback scenes")
-        return _fallback_scenes(topic)
-
+    """Use the shared LLM client (Nemo/OpenRouter) to create 8 Veo-ready scenes."""
     try:
-        from openai import OpenAI
+        from .llm_client import get_llm_client
 
-        headers = {}
-        openrouter_referer = os.environ.get("OPENROUTER_HTTP_REFERER", "")
-        openrouter_title = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")
-        if openrouter_referer:
-            headers["HTTP-Referer"] = openrouter_referer
-        if openrouter_title:
-            headers["X-Title"] = openrouter_title
-
-        client = OpenAI(
-            base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-            api_key=openrouter_key,
-            default_headers=headers,
-        )
+        llm = get_llm_client()
         prompt = SCENE_USER_TEMPLATE.format(topic=topic, track=track, level=level)
-        completion = client.chat.completions.create(
-            model=os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free"),
-            messages=[
-                {"role": "system", "content": SCENE_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=1500,
-        )
-        raw = (completion.choices[0].message.content or "").strip()
-        if not raw:
-            raise ValueError("OpenRouter returned empty scene script")
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = "\n".join(raw.split("\n")[1:])
-        if raw.endswith("```"):
-            raw = "\n".join(raw.split("\n")[:-1])
-        scenes = json.loads(raw)
+        payload = await llm.generate("video_scene_director", f"{SCENE_SYSTEM_PROMPT}\n\n{prompt}")
+        scenes = payload.get("scenes", []) if isinstance(payload, dict) else []
+        if not isinstance(scenes, list) or not scenes:
+            raise ValueError("LLM did not return scenes payload")
         logger.info(f"[VideoAgent] Generated {len(scenes)} scenes for '{topic}'")
         return scenes
     except Exception as e:

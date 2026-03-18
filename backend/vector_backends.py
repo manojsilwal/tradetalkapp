@@ -28,6 +28,9 @@ class VectorBackendBase:
     def count(self, collection: str) -> int:
         raise NotImplementedError
 
+    def update_metadata(self, collection: str, doc_id: str, metadata_updates: dict) -> None:
+        raise NotImplementedError
+
 
 class ChromaVectorBackend(VectorBackendBase):
     def __init__(self, chroma_path: str):
@@ -87,6 +90,17 @@ class ChromaVectorBackend(VectorBackendBase):
     def count(self, collection: str) -> int:
         col = self._col(collection)
         return col.count() if col else 0
+
+    def update_metadata(self, collection: str, doc_id: str, metadata_updates: dict) -> None:
+        col = self._col(collection)
+        if not col:
+            return
+        existing = col.get(ids=[doc_id], include=["metadatas"])
+        metas = existing.get("metadatas", [])
+        if not metas:
+            return
+        merged = {**(metas[0] or {}), **metadata_updates}
+        col.update(ids=[doc_id], metadatas=[merged])
 
 
 class SupabaseVectorBackend(VectorBackendBase):
@@ -228,3 +242,18 @@ class SupabaseVectorBackend(VectorBackendBase):
             .execute()
         )
         return int(response.count or 0)
+
+    def update_metadata(self, collection: str, doc_id: str, metadata_updates: dict) -> None:
+        response = (
+            self._client.table("vector_memory")
+            .select("metadata")
+            .eq("id", doc_id)
+            .eq("collection", collection)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        if not rows:
+            return
+        merged = {**(rows[0].get("metadata") or {}), **metadata_updates}
+        self._client.table("vector_memory").update({"metadata": merged}).eq("id", doc_id).execute()

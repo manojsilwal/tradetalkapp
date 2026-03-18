@@ -10,6 +10,16 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: GUARDRAILS_ENABLE
+        value: "1"
+      - key: GUARDRAILS_STRICT_STARTUP
+        value: "0"
+      # Vector storage: Supabase survives Render restarts (Chroma on free tier is ephemeral).
+      # Set SUPABASE_SERVICE_ROLE_KEY in Render Dashboard → Environment (secret).
+      - key: VECTOR_BACKEND
+        value: supabase
+      - key: SUPABASE_URL
+        value: https://bvhdrwyxzjcoyqzmtean.supabase.co
       # Comma-separated list of allowed CORS origins (your Vercel URL goes here)
       - key: CORS_ORIGINS
         value: https://frontend-manojsilwals-projects.vercel.app

@@ -7,6 +7,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+ENV GUARDRAILS_ENABLE=1 \
+    GUARDRAILS_STRICT_STARTUP=0
+
 # Copy package into a backend sub-directory so relative imports work
 COPY . ./backend
 

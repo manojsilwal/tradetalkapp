@@ -11,6 +11,7 @@ Moderator synthesises all 5 arguments into a final DebateResult.
 import asyncio
 import logging
 from .schemas import DebateArgument, DebateResult, AgentStance
+from .agent_policy_guardrails import ensure_capability, workload_scope
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ def _determine_stance(role: str, data: dict, llm_result: dict) -> AgentStance:
 
 async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm) -> DebateArgument:
     """Generic agent runner used by all 5 specialists."""
+    ensure_capability("debate", "knowledge_read")
     # Collections each role queries
     query_map = {
         "bull":     ["price_movements", "youtube_insights", "debate_history"],
@@ -125,7 +127,8 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm) -> Debate
     context = ks.format_context(context_docs)
 
     # Call LLM
-    result = await llm.generate_argument(role, ticker, live_data, context)
+    with workload_scope("debate", "llm_inference"):
+        result = await llm.generate_argument(role, ticker, live_data, context)
 
     # Extract fields safely
     headline    = result.get("headline", f"{role.capitalize()} perspective on {ticker}")
@@ -176,7 +179,8 @@ async def run_moderator(ticker: str, arguments: list[DebateArgument], ks, llm) -
     Synthesise 5 agent arguments into (verdict, confidence, summary).
     Returns: (verdict_str, confidence_float, summary_str)
     """
-    context_docs = ks.query("debate_history", f"{ticker} debate verdict", n_results=3)
+    with workload_scope("debate", "knowledge_read"):
+        context_docs = ks.query("debate_history", f"{ticker} debate verdict", n_results=3)
     if hasattr(ks, "query_reflections"):
         reflection_docs, _, telemetry = ks.query_reflections(
             query_text=f"{ticker} final verdict",
@@ -191,7 +195,8 @@ async def run_moderator(ticker: str, arguments: list[DebateArgument], ks, llm) -
     context = ks.format_context(context_docs)
 
     args_dicts = [a.model_dump() for a in arguments]
-    result = await llm.generate_moderator_verdict(ticker, args_dicts, context)
+    with workload_scope("debate", "llm_inference"):
+        result = await llm.generate_moderator_verdict(ticker, args_dicts, context)
 
     verdict = result.get("verdict", "NEUTRAL").upper()
     summary = result.get("summary", "Mixed signals across specialist agents.")

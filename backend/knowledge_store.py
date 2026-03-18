@@ -246,15 +246,20 @@ class KnowledgeStore:
             logger.warning(f"[KnowledgeStore] add_backtest failed: {e}")
 
     def add_reflection(self, result) -> None:
-        """Store compact lesson-learned reflection for retrieval."""
+        """Store compact lesson-learned reflection with effectiveness score for retrieval."""
         col = self._safe_col("strategy_reflections")
         if not col:
             return
         try:
             reflection = result.reflection
             strategy = result.strategy
+            effectiveness = getattr(reflection, "effectiveness_score", 0.5)
+            is_failure = reflection.outcome in (
+                "severe_failure", "capital_destruction", "low_quality_underperformance",
+            )
+            label = "FAILURE POST-MORTEM" if is_failure else "Lesson learned"
             doc = (
-                f"Lesson learned from strategy '{strategy.name}' ({strategy.strategy_type}). "
+                f"{label} from strategy '{strategy.name}' ({strategy.strategy_type}). "
                 f"Hypothesis: {reflection.hypothesis} "
                 f"Outcome: {reflection.outcome}. "
                 f"Regime: {reflection.market_regime}. "
@@ -272,13 +277,48 @@ class KnowledgeStore:
                     "market_regime": reflection.market_regime,
                     "drawdown_bucket": reflection.drawdown_bucket,
                     "outcome": reflection.outcome,
+                    "is_failure": str(is_failure),
                     "confidence": reflection.confidence,
+                    "effectiveness_score": effectiveness,
                     "date": str(datetime.now(timezone.utc).date()),
                 }],
                 ids=[entry_id],
             )
         except Exception as e:
             logger.warning(f"[KnowledgeStore] add_reflection failed: {e}")
+
+    def update_reflection_effectiveness(self, reflection_ids: list[str], new_backtest_outperformed: bool) -> None:
+        """
+        Memory voting: update effectiveness scores of reflections that were
+        retrieved and used to inform a new backtest.  If the new backtest
+        outperformed, boost the retrieved reflections; otherwise decay them.
+        """
+        col = self._safe_col("strategy_reflections")
+        if not col or not reflection_ids:
+            return
+        try:
+            rows = col.get(include=["metadatas"])
+            all_ids = rows.get("ids", [])
+            all_metas = rows.get("metadatas", [])
+            id_to_meta = dict(zip(all_ids, all_metas))
+
+            boost = 0.05 if new_backtest_outperformed else -0.03
+            for rid in reflection_ids:
+                meta = id_to_meta.get(rid)
+                if not meta:
+                    continue
+                old_score = float(meta.get("effectiveness_score", 0.5))
+                new_score = max(0.0, min(1.0, old_score + boost))
+                if hasattr(self._vector_backend, "update_metadata"):
+                    self._vector_backend.update_metadata(
+                        "strategy_reflections", rid, {"effectiveness_score": new_score}
+                    )
+            logger.info(
+                "[KnowledgeStore] updated effectiveness for %d reflections (outperformed=%s)",
+                len(reflection_ids), new_backtest_outperformed,
+            )
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] update_reflection_effectiveness failed: {e}")
 
     def add_price_movement(self, ticker: str, change_pct: float, volume_ratio: float, sector: str, context: str) -> None:
         col = self._safe_col("price_movements")
@@ -395,14 +435,14 @@ class KnowledgeStore:
             return []
 
     def query_reflections(self, query_text: str, n_results: int = 5, filters: Optional[dict] = None):
-        """Reflection retrieval with metadata filtering + simple recency weighting."""
+        """Reflection retrieval with metadata filtering, effectiveness weighting, and recency."""
         col = self._safe_col("strategy_reflections")
         if not col:
-            return [], [], {"retrieved_docs_count": 0, "reflection_hits": 0}
+            return [], [], {"retrieved_docs_count": 0, "reflection_hits": 0, "retrieved_reflection_ids": []}
         try:
             count = col.count()
             if count == 0:
-                return [], [], {"retrieved_docs_count": 0, "reflection_hits": 0}
+                return [], [], {"retrieved_docs_count": 0, "reflection_hits": 0, "retrieved_reflection_ids": []}
 
             top_k = max(1, min(n_results or self._retrieval_default_top_k, self._retrieval_max_top_k, count))
             oversample = min(max(top_k * 3, top_k), count)
@@ -410,20 +450,29 @@ class KnowledgeStore:
             rows = col.query(query_texts=[query_text], n_results=oversample, where=where)
             docs = rows.get("documents", [[]])[0]
             metas = rows.get("metadatas", [[]])[0]
+            ids = rows.get("ids", [[]])[0]
 
-            ranked = list(zip(docs, metas))
-            ranked.sort(key=lambda x: x[1].get("date", ""), reverse=True)
+            ranked = list(zip(docs, metas, ids))
+            ranked.sort(
+                key=lambda x: (
+                    float(x[1].get("effectiveness_score", 0.5)),
+                    x[1].get("date", ""),
+                ),
+                reverse=True,
+            )
             ranked = ranked[:top_k]
-            out_docs = [d for d, _ in ranked]
-            out_meta = [m for _, m in ranked]
+            out_docs = [d for d, _, _ in ranked]
+            out_meta = [m for _, m, _ in ranked]
+            out_ids = [i for _, _, i in ranked]
             telemetry = {
                 "retrieved_docs_count": len(out_docs),
                 "reflection_hits": len(out_meta),
+                "retrieved_reflection_ids": out_ids,
             }
             return out_docs, out_meta, telemetry
         except Exception as e:
             logger.warning(f"[KnowledgeStore] query_reflections failed: {e}")
-            return [], [], {"retrieved_docs_count": 0, "reflection_hits": 0}
+            return [], [], {"retrieved_docs_count": 0, "reflection_hits": 0, "retrieved_reflection_ids": []}
 
     def get_recent_reflections(self, n: int = 20) -> list[dict]:
         """Return recent reflection entries for debugging and observability."""

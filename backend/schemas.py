@@ -184,11 +184,13 @@ class BacktestReflection(BaseModel):
     drawdown_bucket: str
     adjustment: str
     confidence: float = Field(ge=0.0, le=1.0, default=0.5)
+    effectiveness_score: float = Field(ge=0.0, le=1.0, default=0.5)
 
 
 class RetrievalTelemetry(BaseModel):
     retrieved_docs_count: int = 0
     reflection_hits: int = 0
+    retrieved_reflection_ids: List[str] = Field(default_factory=list)
 
 
 class BacktestResult(BaseModel):

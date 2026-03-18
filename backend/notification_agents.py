@@ -5,6 +5,7 @@ Macro News Notification Agent Pipeline — Two-stage validation:
 """
 import time, uuid, re
 from typing import Dict, Any, List, Optional
+from .agent_policy_guardrails import ensure_capability
 
 HIGH_TRUST_SOURCES = {
     "reuters", "bloomberg", "cnbc", "associated press", "ap news",
@@ -88,6 +89,7 @@ class NotificationPipeline:
         self.notification_agent = NotificationAgent()
         self.analyst_agent = AnalystAgent()
     def process(self, raw_headlines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        ensure_capability("notifications", "notifications_emit")
         alerts = []
         for headline in raw_headlines:
             filtered = self.notification_agent.evaluate(headline)
@@ -98,6 +100,7 @@ class NotificationPipeline:
 
     def process_with_trace(self, raw_headlines: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Process headlines and return full trace for developer debugging."""
+        ensure_capability("notifications", "notifications_emit")
         trace = {
             "total_scanned": len(raw_headlines),
             "passed_filter": 0,
