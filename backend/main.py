@@ -151,7 +151,7 @@ async def startup_event():
     asyncio.create_task(news_scan_loop())
     # Start daily knowledge pipeline scheduler
     from .daily_pipeline import start_scheduler
-    start_scheduler(knowledge_store)
+    start_scheduler(knowledge_store, llm_client=llm_client)
 
 @app.get("/notifications/stream")
 async def notification_stream():
@@ -268,11 +268,15 @@ async def get_agent_trace(
         market_regime=regime
     )
     
-    # 2. Instantiate 3 AgentPairs (Macro exists via context only now)
-    short_pair = ShortInterestAgentPair(connector=shorts_connector)
-    social_pair = SocialSentimentAgentPair(connector=social_connector)
-    poly_pair = PolymarketAgentPair(connector=poly_connector)
-    fund_pair = FundamentalHealthAgentPair(connector=fund_connector)
+    # 2. Instantiate AgentPairs with knowledge_store for reflection-aware analysis
+    short_pair = ShortInterestAgentPair(connector=shorts_connector,
+                                        knowledge_store=knowledge_store, llm_client=llm_client)
+    social_pair = SocialSentimentAgentPair(connector=social_connector,
+                                           knowledge_store=knowledge_store, llm_client=llm_client)
+    poly_pair = PolymarketAgentPair(connector=poly_connector,
+                                     knowledge_store=knowledge_store, llm_client=llm_client)
+    fund_pair = FundamentalHealthAgentPair(connector=fund_connector,
+                                           knowledge_store=knowledge_store, llm_client=llm_client)
     
     # 3. Execute Swarm concurrently
     results = await asyncio.gather(
@@ -283,18 +287,55 @@ async def get_agent_trace(
     )
     
     short_res, social_res, poly_res, fund_res = results
-    
-    # 4. Aggregated Swarm Logic (Basic Consensus mechanism)
-    bull_votes = sum(1 for r in results if r.status == "VERIFIED" and r.trading_signal == 1)
-    reject_votes = sum(1 for r in results if r.status == "REJECTED")
-    
-    global_verdict = "NEUTRAL"
-    if reject_votes > 0:
+
+    # 4. Confidence-weighted consensus
+    verified = [r for r in results if r.status == "VERIFIED"]
+    rejected = [r for r in results if r.status == "REJECTED"]
+
+    if verified:
+        total_conf = sum(r.confidence for r in verified)
+        weighted_signal = sum(r.confidence * r.trading_signal for r in verified) / total_conf
+    else:
+        weighted_signal = 0.0
+        total_conf = 0.0
+
+    if rejected:
         global_verdict = "REJECTED (MACRO/RISK STRESS)"
-    elif bull_votes >= 3:
-        global_verdict = "STRONG BUY / SQUEEZE ALIGNMENT"
-        
+        global_signal = 0
+    elif weighted_signal > 0.7:
+        global_verdict = "STRONG BUY"
+        global_signal = 1
+    elif weighted_signal > 0.4:
+        global_verdict = "BUY"
+        global_signal = 1
+    elif weighted_signal < -0.7:
+        global_verdict = "STRONG SELL"
+        global_signal = -1
+    elif weighted_signal < -0.4:
+        global_verdict = "SELL"
+        global_signal = -1
+    else:
+        global_verdict = "NEUTRAL"
+        global_signal = 0
+
     avg_confidence = sum(r.confidence for r in results) / len(results)
+
+    # 5. LLM conflict synthesis when factors disagree
+    consensus_rationale = ""
+    signals = [r.trading_signal for r in verified]
+    has_conflict = len(set(signals)) > 1 and len(verified) >= 2
+    if has_conflict:
+        try:
+            factor_dicts = [r.model_dump() for r in results]
+            synthesis = await llm_client.generate_swarm_synthesis(ticker, factor_dicts)
+            consensus_rationale = synthesis.get("consensus_rationale", "")
+            synth_verdict = synthesis.get("verdict", "").upper()
+            synth_confidence = float(synthesis.get("confidence", avg_confidence))
+            if synth_verdict in ("STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"):
+                global_verdict = synth_verdict
+                avg_confidence = synth_confidence
+        except Exception as e:
+            consensus_rationale = f"Synthesis unavailable: {e}"
 
     # XP hook — award for running a valuation (only when logged in)
     if _auth_user:
@@ -306,9 +347,10 @@ async def get_agent_trace(
     consensus = SwarmConsensus(
         ticker=ticker.upper(),
         macro_state=market_state,
-        global_signal=bull_votes,
+        global_signal=global_signal,
         global_verdict=global_verdict,
         confidence=avg_confidence,
+        consensus_rationale=consensus_rationale,
         factors={
             "short_interest": short_res,
             "social_sentiment": social_res,
@@ -366,6 +408,72 @@ async def debate_ticker(ticker: str = Query("GME", description="Stock ticker to 
             pass
 
     return result
+
+
+# ── Sequential Analyze Endpoint (Swarm then Debate) ──────────────────────────
+
+class AnalyzeResponse(BaseModel):
+    swarm: SwarmConsensus
+    debate: DebateResult
+
+
+@app.get("/analyze", response_model=AnalyzeResponse)
+async def analyze_ticker(
+    ticker: str = Query("GME", description="Stock ticker for deep analysis."),
+    credit_stress: float = Query(None, description="Optional override for credit stress index."),
+    _auth_user=Depends(_get_optional_user),
+):
+    """
+    Sequential pipeline: run Swarm first, then feed SwarmConsensus into the
+    Debate as grounding context so LLM agents reason over quantitative data.
+    """
+    import asyncio
+
+    # Phase 1 — Swarm
+    swarm_result = await get_agent_trace(ticker=ticker, credit_stress=credit_stress, _auth_user=_auth_user)
+
+    # Build swarm context string for debate agents
+    factor_summary = "; ".join(
+        f"{name}: signal={fr.trading_signal}, conf={fr.confidence:.2f}"
+        for name, fr in swarm_result.factors.items()
+    )
+    swarm_context = (
+        f"[Swarm pre-analysis for {ticker.upper()}] "
+        f"Verdict: {swarm_result.global_verdict}, confidence: {swarm_result.confidence:.2f}. "
+        f"Factors: {factor_summary}. "
+        f"{swarm_result.consensus_rationale}"
+    )
+
+    # Phase 2 — Debate with swarm context injected
+    from .connectors.debate_data import fetch_debate_data
+    from .debate_agents import run_full_debate
+
+    debate_data = await fetch_debate_data(ticker)
+    macro_data = await macro_connector.fetch_data()
+    macro_state = {
+        "credit_stress_index": macro_data["indicators"]["credit_stress_index"],
+        "vix_level":           macro_data["indicators"]["vix_level"],
+        "market_regime":       "BULL_NORMAL" if macro_data["indicators"]["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
+    }
+
+    debate_result = await run_full_debate(
+        ticker, debate_data, macro_state, knowledge_store, llm_client,
+        swarm_context=swarm_context,
+    )
+
+    try:
+        ensure_capability("debate", "knowledge_write")
+        knowledge_store.add_debate(debate_result)
+    except Exception:
+        pass
+
+    if _auth_user:
+        try:
+            up.award_xp(_auth_user.id, "deep_analysis", note=ticker)
+        except Exception:
+            pass
+
+    return AnalyzeResponse(swarm=swarm_result, debate=debate_result)
 
 
 # ── Strategy Backtest Endpoint ────────────────────────────────────────────────

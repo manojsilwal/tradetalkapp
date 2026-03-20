@@ -87,10 +87,10 @@ def _determine_stance(role: str, data: dict, llm_result: dict) -> AgentStance:
     return AgentStance.NEUTRAL
 
 
-async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm) -> DebateArgument:
+async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
+                     swarm_context: str = "") -> DebateArgument:
     """Generic agent runner used by all 5 specialists."""
     ensure_capability("debate", "knowledge_read")
-    # Collections each role queries
     query_map = {
         "bull":     ["price_movements", "youtube_insights", "debate_history"],
         "bear":     ["macro_snapshots", "macro_alerts", "swarm_history"],
@@ -99,8 +99,11 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm) -> Debate
         "momentum": ["price_movements", "youtube_insights"],
     }
 
-    # Build historical context from RAG
     context_docs = []
+
+    if swarm_context:
+        context_docs.append(swarm_context)
+
     market_regime = str(live_data.get("market_regime", "")).lower()
     reflection_filters = {}
     if market_regime:
@@ -126,7 +129,6 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm) -> Debate
         context_docs.extend(docs)
     context = ks.format_context(context_docs)
 
-    # Call LLM
     with workload_scope("debate", "llm_inference"):
         result = await llm.generate_argument(role, ticker, live_data, context)
 
@@ -152,32 +154,41 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm) -> Debate
     )
 
 
-async def run_bull_agent(ticker: str, debate_data: dict, macro_state: dict, ks, llm) -> DebateArgument:
+async def run_bull_agent(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
+                         swarm_context: str = "") -> DebateArgument:
     live = {**debate_data, **macro_state}
-    return await _run_agent("bull", ticker, live, ks, llm)
+    return await _run_agent("bull", ticker, live, ks, llm, swarm_context=swarm_context)
 
 
-async def run_bear_agent(ticker: str, debate_data: dict, macro_state: dict, ks, llm) -> DebateArgument:
+async def run_bear_agent(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
+                         swarm_context: str = "") -> DebateArgument:
     live = {**debate_data, **macro_state}
-    return await _run_agent("bear", ticker, live, ks, llm)
+    return await _run_agent("bear", ticker, live, ks, llm, swarm_context=swarm_context)
 
 
-async def run_macro_agent(ticker: str, macro_state: dict, ks, llm) -> DebateArgument:
-    return await _run_agent("macro", ticker, macro_state, ks, llm)
+async def run_macro_agent(ticker: str, macro_state: dict, ks, llm,
+                          swarm_context: str = "") -> DebateArgument:
+    return await _run_agent("macro", ticker, macro_state, ks, llm, swarm_context=swarm_context)
 
 
-async def run_value_agent(ticker: str, debate_data: dict, ks, llm) -> DebateArgument:
-    return await _run_agent("value", ticker, debate_data, ks, llm)
+async def run_value_agent(ticker: str, debate_data: dict, ks, llm,
+                          swarm_context: str = "") -> DebateArgument:
+    return await _run_agent("value", ticker, debate_data, ks, llm, swarm_context=swarm_context)
 
 
-async def run_momentum_agent(ticker: str, debate_data: dict, ks, llm) -> DebateArgument:
-    return await _run_agent("momentum", ticker, debate_data, ks, llm)
+async def run_momentum_agent(ticker: str, debate_data: dict, ks, llm,
+                             swarm_context: str = "") -> DebateArgument:
+    return await _run_agent("momentum", ticker, debate_data, ks, llm, swarm_context=swarm_context)
+
+
+VALID_VERDICTS = {"STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"}
 
 
 async def run_moderator(ticker: str, arguments: list[DebateArgument], ks, llm) -> tuple:
     """
-    Synthesise 5 agent arguments into (verdict, confidence, summary).
-    Returns: (verdict_str, confidence_float, summary_str)
+    Synthesise 5 agent arguments into (verdict, confidence, summary, quality_warning).
+    Validates the LLM verdict against an allowed enum. Retries once on failure.
+    Returns: (verdict_str, confidence_float, summary_str, quality_warning_or_None)
     """
     with workload_scope("debate", "knowledge_read"):
         context_docs = ks.query("debate_history", f"{ticker} debate verdict", n_results=3)
@@ -195,16 +206,31 @@ async def run_moderator(ticker: str, arguments: list[DebateArgument], ks, llm) -
     context = ks.format_context(context_docs)
 
     args_dicts = [a.model_dump() for a in arguments]
-    with workload_scope("debate", "llm_inference"):
-        result = await llm.generate_moderator_verdict(ticker, args_dicts, context)
+    avg_confidence = sum(a.confidence for a in arguments) / len(arguments) if arguments else 0.5
 
-    verdict = result.get("verdict", "NEUTRAL").upper()
-    summary = result.get("summary", "Mixed signals across specialist agents.")
+    quality_warning = None
+    max_attempts = 2
+    for attempt in range(max_attempts):
+        with workload_scope("debate", "llm_inference"):
+            result = await llm.generate_moderator_verdict(ticker, args_dicts, context)
 
-    # Compute confidence from agent confidence average
-    confidence = sum(a.confidence for a in arguments) / len(arguments) if arguments else 0.5
+        verdict = result.get("verdict", "").upper().strip()
+        summary = result.get("summary", "Mixed signals across specialist agents.")
+        confidence = float(result.get("confidence", avg_confidence))
 
-    return verdict, round(confidence, 3), summary
+        if verdict in VALID_VERDICTS and confidence >= 0.3:
+            return verdict, round(confidence, 3), summary, quality_warning
+
+        if attempt == 0:
+            logger.warning(
+                "[Moderator] Invalid verdict '%s' (conf=%.2f) on attempt %d, retrying...",
+                verdict, confidence, attempt + 1,
+            )
+
+    # All attempts exhausted — fall back to heuristic
+    quality_warning = f"LLM moderator returned invalid verdict '{verdict}'; using heuristic."
+    logger.warning("[Moderator] %s", quality_warning)
+    return "NEUTRAL", round(avg_confidence, 3), summary, quality_warning
 
 
 def _score_arguments(arguments: list[DebateArgument]) -> tuple[int, int, int]:
@@ -215,23 +241,23 @@ def _score_arguments(arguments: list[DebateArgument]) -> tuple[int, int, int]:
     return bull, bear, neut
 
 
-async def run_full_debate(ticker: str, debate_data: dict, macro_state: dict, ks, llm) -> DebateResult:
+async def run_full_debate(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
+                          swarm_context: str = "") -> DebateResult:
     """
     Execute all 5 agents concurrently, then run the moderator.
     Returns a complete DebateResult.
     """
     bull_arg, bear_arg, macro_arg, value_arg, momentum_arg = await asyncio.gather(
-        run_bull_agent(ticker, debate_data, macro_state, ks, llm),
-        run_bear_agent(ticker, debate_data, macro_state, ks, llm),
-        run_macro_agent(ticker, macro_state, ks, llm),
-        run_value_agent(ticker, debate_data, ks, llm),
-        run_momentum_agent(ticker, debate_data, ks, llm),
+        run_bull_agent(ticker, debate_data, macro_state, ks, llm, swarm_context=swarm_context),
+        run_bear_agent(ticker, debate_data, macro_state, ks, llm, swarm_context=swarm_context),
+        run_macro_agent(ticker, macro_state, ks, llm, swarm_context=swarm_context),
+        run_value_agent(ticker, debate_data, ks, llm, swarm_context=swarm_context),
+        run_momentum_agent(ticker, debate_data, ks, llm, swarm_context=swarm_context),
     )
 
     arguments = [bull_arg, bear_arg, macro_arg, value_arg, momentum_arg]
     bull_score, bear_score, neutral_score = _score_arguments(arguments)
 
-    # Heuristic verdict based on score before moderator LLM call
     if bull_score >= 4:
         heuristic_verdict = "STRONG BUY"
     elif bull_score == 3:
@@ -243,9 +269,8 @@ async def run_full_debate(ticker: str, debate_data: dict, macro_state: dict, ks,
     else:
         heuristic_verdict = "NEUTRAL"
 
-    verdict, confidence, summary = await run_moderator(ticker, arguments, ks, llm)
+    verdict, confidence, summary, quality_warning = await run_moderator(ticker, arguments, ks, llm)
 
-    # If LLM moderator returned empty, use heuristic
     if not verdict or verdict == "NEUTRAL" and heuristic_verdict != "NEUTRAL":
         verdict = heuristic_verdict
 
@@ -258,4 +283,5 @@ async def run_full_debate(ticker: str, debate_data: dict, macro_state: dict, ks,
         bull_score=bull_score,
         bear_score=bear_score,
         neutral_score=neutral_score,
+        quality_warning=quality_warning,
     )

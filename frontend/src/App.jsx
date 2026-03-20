@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network } from 'lucide-react'
 import ObserverUI from './ObserverUI'
 import ConsumerUI from './ConsumerUI'
 import MacroUI from './MacroUI'
@@ -10,6 +10,7 @@ import DailyChallengeUI from './DailyChallengeUI'
 import LearningPathUI from './LearningPathUI'
 import VideoAcademyUI from './VideoAcademyUI'
 import PaperPortfolioUI from './PaperPortfolioUI'
+import SystemMapUI from './SystemMapUI'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
 import AuthGate from './components/AuthGate'
@@ -198,6 +199,14 @@ function App() {
                         <Terminal size={20} />
                         <span>Developer Trace</span>
                     </button>
+
+                    <button
+                        className={`nav-btn ${activeTab === 'systemmap' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('systemmap')}
+                    >
+                        <Network size={20} />
+                        <span>System Map</span>
+                    </button>
                 </nav>
             </aside>
 
@@ -209,6 +218,7 @@ function App() {
                     {activeTab === 'debate'    && <DebateUI />}
                     {activeTab === 'backtest'  && <BacktestUI />}
                     {activeTab === 'observer'  && <ObserverUI />}
+                    {activeTab === 'systemmap' && <SystemMapUI />}
                     {activeTab === 'challenge' && (
                         <GamificationTab user={user} featureName="Daily Challenges" featureIcon="⚡">
                             <DailyChallengeUI onXpGained={handleXpGained} />

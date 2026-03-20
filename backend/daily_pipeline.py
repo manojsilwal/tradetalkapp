@@ -11,9 +11,9 @@ from .agent_policy_guardrails import ensure_capability
 logger = logging.getLogger(__name__)
 
 
-async def run_daily_pipeline(knowledge_store) -> dict:
+async def run_daily_pipeline(knowledge_store, llm_client=None) -> dict:
     """
-    Run all 4 ingestion jobs concurrently.
+    Run all ingestion jobs concurrently, then run swarm outcome tracking.
     Returns a summary dict logged and stored in knowledge_store.pipeline_status.
     """
     logger.info("[DailyPipeline] Starting daily knowledge ingestion...")
@@ -25,6 +25,7 @@ async def run_daily_pipeline(knowledge_store) -> dict:
         "price_movements_added": 0,
         "youtube_videos_added": 0,
         "macro_snapshot_added": False,
+        "swarm_outcomes_tracked": 0,
         "errors": [],
     }
 
@@ -42,6 +43,14 @@ async def run_daily_pipeline(knowledge_store) -> dict:
             logger.warning(f"[DailyPipeline] {job_name} failed: {result}")
         elif isinstance(result, dict):
             summary.update(result)
+
+    # Outcome tracking runs after ingestion so price data is fresh
+    try:
+        outcome_result = await _track_swarm_outcomes(knowledge_store, llm_client)
+        summary.update(outcome_result)
+    except Exception as e:
+        summary["errors"].append(f"swarm_outcomes: {e}")
+        logger.warning(f"[DailyPipeline] swarm outcome tracking failed: {e}")
 
     knowledge_store.update_pipeline_status(**summary)
     logger.info(f"[DailyPipeline] Complete — {summary}")
@@ -95,7 +104,76 @@ async def _ingest_youtube(knowledge_store) -> dict:
     return {"youtube_videos_added": count}
 
 
-def start_scheduler(knowledge_store) -> None:
+async def _track_swarm_outcomes(knowledge_store, llm_client=None) -> dict:
+    """
+    Fetch yesterday's swarm analyses, compare signals to T+1 price change,
+    and write LLM-generated reflections for future learning.
+    """
+    ensure_capability("scheduler", "market_data_read")
+    import yfinance as yf
+    from datetime import timedelta
+
+    col = knowledge_store._safe_col("swarm_history")
+    if not col or col.count() == 0:
+        return {"swarm_outcomes_tracked": 0}
+
+    yesterday = str((datetime.now(timezone.utc) - timedelta(days=1)).date())
+    rows = col.get(include=["documents", "metadatas"])
+    all_metas = rows.get("metadatas", [])
+
+    yesterday_analyses = [m for m in all_metas if m and m.get("date") == yesterday]
+    if not yesterday_analyses:
+        return {"swarm_outcomes_tracked": 0}
+
+    tracked = 0
+    for meta in yesterday_analyses:
+        ticker = meta.get("ticker", "")
+        if not ticker:
+            continue
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period="5d")
+            if hist.empty or len(hist) < 2:
+                continue
+            price_yesterday = hist["Close"].iloc[-2]
+            price_today = hist["Close"].iloc[-1]
+            price_change_pct = ((price_today - price_yesterday) / price_yesterday) * 100
+
+            signal = int(meta.get("confidence", 0.5) > 0.5)  # simplified
+            verdict = meta.get("verdict", "NEUTRAL")
+            confidence = float(meta.get("confidence", 0.5))
+            regime = meta.get("market_regime", "BULL_NORMAL") if "market_regime" in meta else "BULL_NORMAL"
+
+            was_bullish = "BUY" in verdict.upper() or "STRONG" in verdict.upper()
+            correct = (was_bullish and price_change_pct > 0) or (not was_bullish and price_change_pct <= 0)
+
+            lesson = f"Signal was {'correct' if correct else 'incorrect'} — verdict {verdict} vs {price_change_pct:+.1f}% move."
+            if llm_client:
+                try:
+                    llm_result = await llm_client.generate_swarm_reflection(
+                        ticker, 1 if was_bullish else 0, verdict,
+                        confidence, price_change_pct, regime,
+                    )
+                    lesson = llm_result.get("lesson", lesson)
+                except Exception:
+                    pass
+
+            knowledge_store.add_swarm_reflection(
+                ticker=ticker, signal=1 if was_bullish else 0,
+                verdict=verdict, confidence=confidence,
+                price_change_pct=price_change_pct,
+                lesson=lesson, regime=regime, correct=correct,
+            )
+            tracked += 1
+        except Exception as e:
+            logger.warning(f"[DailyPipeline] outcome tracking for {ticker} failed: {e}")
+            continue
+
+    logger.info(f"[DailyPipeline] Tracked outcomes for {tracked} swarm analyses")
+    return {"swarm_outcomes_tracked": tracked}
+
+
+def start_scheduler(knowledge_store, llm_client=None) -> None:
     """
     Start the APScheduler background scheduler.
     Schedules daily_pipeline to run at midnight UTC.
@@ -109,7 +187,7 @@ def start_scheduler(knowledge_store) -> None:
             trigger="cron",
             hour=0,
             minute=0,
-            args=[knowledge_store],
+            args=[knowledge_store, llm_client],
             id="daily_knowledge_pipeline",
             replace_existing=True,
         )
@@ -119,6 +197,6 @@ def start_scheduler(knowledge_store) -> None:
         logger.warning(f"[DailyPipeline] Scheduler start failed: {e}")
 
 
-async def _pipeline_job(knowledge_store) -> None:
+async def _pipeline_job(knowledge_store, llm_client=None) -> None:
     """Async wrapper for the scheduler to call run_daily_pipeline."""
-    await run_daily_pipeline(knowledge_store)
+    await run_daily_pipeline(knowledge_store, llm_client=llm_client)

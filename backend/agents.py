@@ -1,34 +1,62 @@
 import json
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Optional
 from .schemas import MarketState, FactorResult, VerificationStatus
 from .connectors import ShortsConnector, SocialSentimentConnector, MacroHealthConnector
+
+logger = logging.getLogger(__name__)
+
 
 class AgentPair:
     """
     Core implementation of the Nested Loop architecture.
     Every factor goes through an Analyst and a QA_Verifier.
     They must reach a 'VERIFIED' state before proceeding.
+
+    If a KnowledgeStore is provided, the pair queries swarm_reflections
+    before the first analyst step so agents learn from past outcomes.
     """
-    def __init__(self, factor_name: str, max_iterations: int = 3):
+    def __init__(self, factor_name: str, max_iterations: int = 3, knowledge_store=None, llm_client=None):
         self.factor_name = factor_name
         self.max_iterations = max_iterations
+        self._ks = knowledge_store
+        self._llm = llm_client
+
+    def _fetch_prior_lessons(self, ticker: str, market_state: MarketState) -> str:
+        """Retrieve up to 2 swarm reflections relevant to this factor + ticker."""
+        if not self._ks or not hasattr(self._ks, "query_swarm_reflections"):
+            return ""
+        try:
+            regime = market_state.market_regime.value if market_state.market_regime else "BULL_NORMAL"
+            query = f"{self.factor_name} {ticker} {regime}"
+            lessons = self._ks.query_swarm_reflections(query, n_results=2)
+            if not lessons:
+                return ""
+            formatted = "\n".join(f"  - {l}" for l in lessons)
+            logger.info("[AgentPair:%s] injected %d prior lessons for %s", self.factor_name, len(lessons), ticker)
+            return f"\n[Prior lessons from swarm reflections]:\n{formatted}\n"
+        except Exception as e:
+            logger.warning("[AgentPair:%s] lesson retrieval failed: %s", self.factor_name, e)
+            return ""
 
     async def run(self, market_state: MarketState, ticker: str = "GME") -> FactorResult:
         iteration = 0
         history: List[Dict[str, str]] = []
         status = VerificationStatus.PENDING
-        
+
+        prior_lessons = self._fetch_prior_lessons(ticker, market_state)
+        if prior_lessons:
+            history.append({"role": "Memory", "content": prior_lessons})
+
         while status != VerificationStatus.VERIFIED and iteration < self.max_iterations:
             iteration += 1
-            
-            # 1. Analyst Phase
+
             analyst_report = await self._analyst_step(market_state, ticker, history)
             history.append({"role": f"{self.factor_name} Analyst", "content": analyst_report["rationale"]})
-            
-            # 2. QA Verifier Phase
+
             qa_review = await self._qa_verifier_step(analyst_report, market_state, history)
             history.append({"role": f"{self.factor_name} QA_Verifier", "content": qa_review["rationale"]})
-            
+
             status = qa_review["status"]
             if status == VerificationStatus.VERIFIED:
                 return FactorResult(
@@ -39,9 +67,7 @@ class AgentPair:
                     trading_signal=analyst_report.get("trading_signal", 0),
                     history=history
                 )
-            
-            # Loop continues if rejected, giving Analyst chance to incorporate feedback from history
-            
+
         return FactorResult(
             factor_name=self.factor_name,
             status=VerificationStatus.REJECTED,
@@ -63,24 +89,40 @@ class AgentPair:
 # Factor 1: Short Interest Squeeze
 # ---------------------------------------------------------
 class ShortInterestAgentPair(AgentPair):
-    def __init__(self, connector: ShortsConnector):
-        super().__init__(factor_name="Short Interest", max_iterations=3)
+    def __init__(self, connector: ShortsConnector, knowledge_store=None, llm_client=None):
+        super().__init__(factor_name="Short Interest", max_iterations=3,
+                         knowledge_store=knowledge_store, llm_client=llm_client)
         self.connector = connector
         
     async def _analyst_step(self, market_state: MarketState, ticker: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
         data = await self.connector.fetch_data(ticker=ticker)
         sir = data["short_interest_ratio"]
         dtc = data["days_to_cover"]
-        
-        if not history:
-            rationale = f"Initial Analysis: Real-time yfinance scan shows SIR at {sir}% of float. Potential short squeeze brewing."
-            signal = 1 if sir > 15.0 else 0
+
+        is_ambiguous = 10.0 <= sir <= 20.0
+        non_memory = [h for h in history if h.get("role") != "Memory"]
+
+        if not non_memory:
+            if sir > 15.0:
+                signal = 1
+                rationale = f"Initial Analysis: Real-time yfinance scan shows SIR at {sir}% of float. Potential short squeeze brewing."
+            elif is_ambiguous and self._llm:
+                llm_result = await self._llm.generate_swarm_analyst_call(
+                    "Short Interest", ticker,
+                    {"short_interest_ratio": sir, "days_to_cover": dtc},
+                    [h["content"] for h in history if h.get("role") == "Memory"],
+                )
+                signal = int(llm_result.get("signal", 0))
+                rationale = f"LLM-assisted analysis (ambiguous SIR={sir}%): {llm_result.get('rationale', 'No reasoning provided.')}"
+            else:
+                signal = 0
+                rationale = f"Initial Analysis: SIR at {sir}% is below squeeze threshold."
         else:
             rationale = f"Revised Analysis: High SIR confirmed ({sir}%). Additionally, days to cover sits at {dtc}, confirming squeeze pressure and difficulty to exit."
             signal = 1 if (sir > 15.0 and dtc > 5.0) else 0
-            
+
         return {"rationale": rationale, "trading_signal": signal}
-        
+
     async def _qa_verifier_step(self, analyst_report: Dict[str, Any], market_state: MarketState, history: List[Dict[str, str]]) -> Dict[str, Any]:
         if analyst_report.get("trading_signal", 0) > 0 and market_state.is_bearish():
             return {
@@ -88,7 +130,7 @@ class ShortInterestAgentPair(AgentPair):
                 "rationale": f"Analyst signal is bullish, but MarketState indicates Credit Stress ({market_state.credit_stress_index}) > 1.1. Strategy rejected by macro grounding.",
                 "confidence": 0.95
             }
-        if "days to cover" not in analyst_report["rationale"].lower():
+        if "days to cover" not in analyst_report["rationale"].lower() and "llm-assisted" not in analyst_report["rationale"].lower():
              return {
                  "status": VerificationStatus.REJECTED,
                  "rationale": "Analysis incomplete. The report mentions SIR but fails to document current days to cover. Please revise.",
@@ -106,8 +148,9 @@ class ShortInterestAgentPair(AgentPair):
 from .connectors import SocialSentimentConnector
 
 class SocialSentimentAgentPair(AgentPair):
-    def __init__(self, connector: SocialSentimentConnector):
-        super().__init__(factor_name="Social Sentiment", max_iterations=2)
+    def __init__(self, connector: SocialSentimentConnector, knowledge_store=None, llm_client=None):
+        super().__init__(factor_name="Social Sentiment", max_iterations=2,
+                         knowledge_store=knowledge_store, llm_client=llm_client)
         self.connector = connector
         
     async def _analyst_step(self, market_state: MarketState, ticker: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -157,8 +200,9 @@ class SocialSentimentAgentPair(AgentPair):
 # Factor 3: Macro Health & Structure
 # ---------------------------------------------------------
 class MacroHealthAgentPair(AgentPair):
-    def __init__(self, connector: MacroHealthConnector):
-        super().__init__(factor_name="Macro Environment", max_iterations=2)
+    def __init__(self, connector: MacroHealthConnector, knowledge_store=None, llm_client=None):
+        super().__init__(factor_name="Macro Environment", max_iterations=2,
+                         knowledge_store=knowledge_store, llm_client=llm_client)
         self.connector = connector
         
     async def _analyst_step(self, market_state: MarketState, ticker: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -189,8 +233,9 @@ class MacroHealthAgentPair(AgentPair):
 from .connectors import PolymarketConnector
 
 class PolymarketAgentPair(AgentPair):
-    def __init__(self, connector: PolymarketConnector):
-        super().__init__(factor_name="Crowd Predictions", max_iterations=2)
+    def __init__(self, connector: PolymarketConnector, knowledge_store=None, llm_client=None):
+        super().__init__(factor_name="Crowd Predictions", max_iterations=2,
+                         knowledge_store=knowledge_store, llm_client=llm_client)
         self.connector = connector
         
     async def _analyst_step(self, market_state: MarketState, ticker: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -230,8 +275,9 @@ class PolymarketAgentPair(AgentPair):
 from .connectors import FundamentalsConnector
 
 class FundamentalHealthAgentPair(AgentPair):
-    def __init__(self, connector: FundamentalsConnector):
-        super().__init__(factor_name="Fundamental Health", max_iterations=2)
+    def __init__(self, connector: FundamentalsConnector, knowledge_store=None, llm_client=None):
+        super().__init__(factor_name="Fundamental Health", max_iterations=2,
+                         knowledge_store=knowledge_store, llm_client=llm_client)
         self.connector = connector
         
     async def _analyst_step(self, market_state: MarketState, ticker: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -239,8 +285,7 @@ class FundamentalHealthAgentPair(AgentPair):
         cash = data["total_cash"]
         debt = data["total_debt"]
         ratio = data["cash_to_debt_ratio"]
-        
-        # Helper to format large numbers
+
         def format_currency(val: float) -> str:
             if val >= 1_000_000_000:
                 return f"${val / 1_000_000_000:.2f}B"
@@ -248,23 +293,34 @@ class FundamentalHealthAgentPair(AgentPair):
                 return f"${val / 1_000_000:.2f}M"
             else:
                 return f"${val:,.0f}"
-                
+
         cash_str = format_currency(cash)
         debt_str = format_currency(debt)
-        
-        # Consider healthy if ratio is >= 1.0, or if cash is massive (e.g. > $1B) with manageable debt
+
+        is_ambiguous = 0.5 <= ratio <= 1.3
         is_healthy = ratio >= 1.0 or (cash > 1_000_000_000 and ratio >= 0.5)
-        
-        signal = 1 if is_healthy else 0
-        
-        rationale = (f"Fundamental Analysis: Total Cash Reserves = {cash_str}, "
-                     f"Total Debt = {debt_str}. Cash-to-Debt Ratio = {ratio:.2f}. ")
-                     
-        if signal == 1:
-            rationale += "The company demonstrates strong long-term fundamental health and manageable debt levels."
+
+        if is_ambiguous and self._llm:
+            llm_result = await self._llm.generate_swarm_analyst_call(
+                "Fundamental Health", ticker,
+                {"total_cash": cash, "total_debt": debt, "cash_to_debt_ratio": ratio},
+                [h["content"] for h in history if h.get("role") == "Memory"],
+            )
+            signal = int(llm_result.get("signal", 1 if is_healthy else 0))
+            rationale = (
+                f"Fundamental Analysis: Total Cash Reserves = {cash_str}, "
+                f"Total Debt = {debt_str}. Cash-to-Debt Ratio = {ratio:.2f}. "
+                f"LLM-assisted (ambiguous zone): {llm_result.get('rationale', '')}"
+            )
         else:
-            rationale += "The company exhibits concerning debt levels relative to cash reserves, indicating long-term risk."
-            
+            signal = 1 if is_healthy else 0
+            rationale = (f"Fundamental Analysis: Total Cash Reserves = {cash_str}, "
+                         f"Total Debt = {debt_str}. Cash-to-Debt Ratio = {ratio:.2f}. ")
+            if signal == 1:
+                rationale += "The company demonstrates strong long-term fundamental health and manageable debt levels."
+            else:
+                rationale += "The company exhibits concerning debt levels relative to cash reserves, indicating long-term risk."
+
         return {"rationale": rationale, "trading_signal": signal}
 
     async def _qa_verifier_step(self, analyst_report: Dict[str, Any], market_state: MarketState, history: List[Dict[str, str]]) -> Dict[str, Any]:

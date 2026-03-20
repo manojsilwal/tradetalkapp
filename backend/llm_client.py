@@ -56,6 +56,9 @@ MODEL_TIER = {
     "moderator":          "heavy",
     "strategy_parser":    "heavy",
     "backtest_explainer": "heavy",
+    "swarm_synthesizer":  "light",
+    "swarm_analyst":      "light",
+    "swarm_reflection_writer": "light",
     "video_scene_director": "light",
 }
 
@@ -123,6 +126,27 @@ AGENT_SYSTEM_PROMPTS = {
         "ONLY discuss investment and financial topics. "
         "Respond ONLY with valid JSON: {\"explanation\": \"2-3 paragraph explanation\"}"
     ),
+    "swarm_synthesizer": (
+        "You are a senior investment committee member resolving disagreements among factor analysts. "
+        "Given factor results that disagree, explain WHY they disagree in 2 sentences and produce a "
+        "confidence-weighted verdict. ONLY discuss investment topics. "
+        "Respond ONLY with valid JSON: {\"consensus_rationale\": \"2-sentence explanation\", "
+        "\"verdict\": \"STRONG BUY|BUY|NEUTRAL|SELL|STRONG SELL\", \"confidence\": 0.0-1.0}"
+    ),
+    "swarm_analyst": (
+        "You are a quantitative analyst reviewing ambiguous market data for a single factor. "
+        "Given the raw data and up to 2 prior lessons from past analyses, determine a trading signal. "
+        "Reason step by step about why the data is ambiguous and what the prior lessons suggest. "
+        "ONLY discuss investment topics. "
+        "Respond ONLY with valid JSON: {\"signal\": -1|0|1, \"rationale\": \"reasoning\", \"confidence\": 0.0-1.0}"
+    ),
+    "swarm_reflection_writer": (
+        "You are a post-trade analyst writing a structured lesson learned from a swarm prediction. "
+        "Given the original signal, confidence, and next-day price change, explain why the swarm "
+        "was right or wrong and what to remember for future analyses. "
+        "ONLY discuss investment topics. "
+        "Respond ONLY with valid JSON: {\"lesson\": \"1-2 sentence lesson\"}"
+    ),
     "video_scene_director": (
         "You are a visual director creating short educational finance scene plans. "
         "Return ONLY valid JSON in this shape: "
@@ -139,6 +163,9 @@ FALLBACK_TEMPLATES = {
     "value":    {"headline": "Fundamental quality is the primary long-term determinant.", "key_points": ["ROIC and ROE signal capital allocation efficiency.", "Free cash flow yield relative to price matters most.", "Balance sheet strength provides downside protection."], "confidence": 0.5},
     "momentum": {"headline": "Price action provides directional context for timing.", "key_points": ["52-week high/low positioning indicates trend strength.", "Recent price returns signal momentum continuation or reversal.", "Volume confirms or diverges from price moves."], "confidence": 0.5},
     "moderator": {"verdict": "NEUTRAL", "summary": "The panel presents mixed signals. A high-conviction directional call requires more data."},
+    "swarm_synthesizer": {"consensus_rationale": "Factors are split — insufficient conviction for a directional call.", "verdict": "NEUTRAL", "confidence": 0.5},
+    "swarm_analyst": {"signal": 0, "rationale": "Data falls in ambiguous range; defaulting to neutral.", "confidence": 0.5},
+    "swarm_reflection_writer": {"lesson": "Insufficient data to derive a clear lesson."},
     "video_scene_director": {"scenes": []},
 }
 
@@ -347,6 +374,48 @@ class LLMClient:
                 f"returning {ret:+.1f}% total vs SPY's {spy:+.1f}% CAGR. "
                 f"AI explanation unavailable — LLM backend unreachable."
             )
+
+    async def generate_swarm_synthesis(self, ticker: str, factor_results: list[dict]) -> dict:
+        """Resolve disagreements among swarm factor agents."""
+        factors_str = "\n".join(
+            f"- {f['factor_name']}: signal={f['trading_signal']}, confidence={f['confidence']:.2f}, "
+            f"status={f['status']}, rationale={f['rationale'][:200]}"
+            for f in factor_results
+        )
+        prompt = (
+            f"Ticker: {ticker.upper()}\n\n"
+            f"Factor results from the swarm:\n{factors_str}\n\n"
+            f"The factors disagree. Explain why and produce a final verdict."
+        )
+        return await self.generate("swarm_synthesizer", prompt)
+
+    async def generate_swarm_analyst_call(self, factor_name: str, ticker: str,
+                                          raw_data: dict, prior_lessons: list[str]) -> dict:
+        """LLM reasoning for ambiguous-zone swarm analyst steps."""
+        data_str = json.dumps(raw_data, indent=2, default=str)
+        lessons_str = "\n".join(f"  - {l}" for l in prior_lessons) if prior_lessons else "None available."
+        prompt = (
+            f"Factor: {factor_name}\nTicker: {ticker.upper()}\n\n"
+            f"Raw data:\n{data_str}\n\n"
+            f"Prior lessons:\n{lessons_str}\n\n"
+            f"The data is in an ambiguous range. Reason step by step and determine a signal."
+        )
+        return await self.generate("swarm_analyst", prompt)
+
+    async def generate_swarm_reflection(self, ticker: str, signal: int, verdict: str,
+                                        confidence: float, price_change_pct: float,
+                                        regime: str) -> dict:
+        """Write a structured lesson from a swarm prediction vs actual outcome."""
+        outcome = "correct" if (signal > 0 and price_change_pct > 0) or (signal <= 0 and price_change_pct <= 0) else "incorrect"
+        prompt = (
+            f"Ticker: {ticker.upper()}\n"
+            f"Swarm signal: {signal} ({verdict}), confidence: {confidence:.2f}\n"
+            f"Next-day price change: {price_change_pct:+.2f}%\n"
+            f"Market regime: {regime}\n"
+            f"Outcome: {outcome}\n\n"
+            f"Write a 1-2 sentence lesson for future swarm analyses."
+        )
+        return await self.generate("swarm_reflection_writer", prompt)
 
     @property
     def backend(self) -> str:

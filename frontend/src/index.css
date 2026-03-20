@@ -83,6 +83,9 @@ body {
   flex-direction: column;
   padding: 24px 16px;
   gap: 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .nav-btn {

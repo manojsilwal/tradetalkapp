@@ -50,6 +50,7 @@ class SwarmConsensus(BaseModel):
     global_signal: int
     global_verdict: str
     confidence: float
+    consensus_rationale: str = ""
     factors: Dict[str, FactorResult]
 
 class SectorData(BaseModel):
@@ -141,6 +142,7 @@ class DebateResult(BaseModel):
     bull_score: int
     bear_score: int
     neutral_score: int
+    quality_warning: Optional[str] = None
 
 
 # ── Strategy Backtesting Models ───────────────────────────────────────────────

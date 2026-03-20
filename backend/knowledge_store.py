@@ -21,13 +21,14 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
 COLLECTIONS = [
-    "swarm_history",       # every /trace call
-    "debate_history",      # every /debate call
-    "macro_alerts",        # every 60s news scan (already exists logic)
-    "strategy_backtests",  # every /backtest call
-    "price_movements",     # daily pipeline — top movers
-    "macro_snapshots",     # daily pipeline — FRED indicators
-    "youtube_insights",    # daily pipeline — finance channel videos
+    "swarm_history",        # every /trace call
+    "swarm_reflections",    # daily outcome tracking — swarm learns from results
+    "debate_history",       # every /debate call
+    "macro_alerts",         # every 60s news scan (already exists logic)
+    "strategy_backtests",   # every /backtest call
+    "price_movements",      # daily pipeline — top movers
+    "macro_snapshots",      # daily pipeline — FRED indicators
+    "youtube_insights",     # daily pipeline — finance channel videos
     "strategy_reflections", # post-backtest lessons learned memory
 ]
 
@@ -175,6 +176,67 @@ class KnowledgeStore:
             )
         except Exception as e:
             logger.warning(f"[KnowledgeStore] add_debate failed: {e}")
+
+    def add_swarm_reflection(self, ticker: str, signal: int, verdict: str,
+                              confidence: float, price_change_pct: float,
+                              lesson: str, regime: str, correct: bool) -> None:
+        """Store a daily-outcome reflection so future swarm runs learn from results."""
+        col = self._safe_col("swarm_reflections")
+        if not col:
+            return
+        try:
+            outcome = "correct" if correct else "incorrect"
+            effectiveness = 0.7 if correct else 0.3
+            doc = (
+                f"Swarm reflection for {ticker}: signal was {signal} ({verdict}), "
+                f"confidence {confidence:.2f}. Next-day price moved {price_change_pct:+.1f}%. "
+                f"Outcome: {outcome}. Regime: {regime}. Lesson: {lesson}"
+            )
+            entry_id = f"swarm_ref_{ticker}_{int(time.time())}"
+            col.add(
+                documents=[doc],
+                metadatas=[{
+                    "ticker": ticker,
+                    "signal": signal,
+                    "verdict": verdict,
+                    "confidence": confidence,
+                    "price_change_pct": price_change_pct,
+                    "outcome": outcome,
+                    "regime": regime,
+                    "effectiveness_score": effectiveness,
+                    "date": str(datetime.now(timezone.utc).date()),
+                }],
+                ids=[entry_id],
+            )
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] add_swarm_reflection failed: {e}")
+
+    def query_swarm_reflections(self, query_text: str, n_results: int = 3, filters: Optional[dict] = None) -> list[str]:
+        """Retrieve swarm reflections ranked by effectiveness and recency."""
+        col = self._safe_col("swarm_reflections")
+        if not col:
+            return []
+        try:
+            count = col.count()
+            if count == 0:
+                return []
+            actual_n = min(n_results, count)
+            oversample = min(actual_n * 3, count)
+            rows = col.query(query_texts=[query_text], n_results=oversample, where=filters)
+            docs = rows.get("documents", [[]])[0]
+            metas = rows.get("metadatas", [[]])[0]
+            ranked = sorted(
+                zip(docs, metas),
+                key=lambda x: (
+                    float(x[1].get("effectiveness_score", 0.5)),
+                    x[1].get("date", ""),
+                ),
+                reverse=True,
+            )
+            return [d for d, _ in ranked[:actual_n]]
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_swarm_reflections failed: {e}")
+            return []
 
     def add_macro_alert(self, alert) -> None:
         """Store a MacroAlert from the news scanner."""
