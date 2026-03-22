@@ -23,6 +23,7 @@ from .agent_policy_guardrails import (
     validate_startup_secrets,
 )
 import asyncio, json, time, os
+from datetime import datetime as _dt
 
 app = FastAPI(
     title="K2-Optimus Observer API",
@@ -101,6 +102,30 @@ llm_client = get_llm_client()
 
 # Cache for last trace data (populated by background loop)
 last_trace_data: dict = {}
+
+# ── Structured Observability Helper ──────────────────────────────────────────
+_app_logger = logging.getLogger("tradetalk.tool")
+
+
+def _log_tool_call(
+    agent_name: str,
+    tool_name: str,
+    args: Any,
+    result: Any,
+    elapsed_ms: float,
+) -> None:
+    """Emit one structured JSON log line per tool call (Phase 4 observability)."""
+    try:
+        _app_logger.info(json.dumps({
+            "ts":          _dt.utcnow().isoformat(),
+            "agent":       agent_name,
+            "tool":        tool_name,
+            "args_size":   len(str(args)),
+            "output_size": len(str(result)),
+            "latency_ms":  round(elapsed_ms, 1),
+        }))
+    except Exception:
+        pass  # logging must never crash the app
 
 def _sync_scan_and_process():
     """Run the entire scan+process cycle synchronously (called from thread)."""
@@ -686,6 +711,33 @@ async def runtime_policy_check():
         "policy_block_reason": blocked_reason,
         "startup_secret_issues": issues,
     }
+
+
+# ── Cache & Router Debug Endpoints ───────────────────────────────────────────
+
+@app.get("/cache/stats")
+async def cache_stats_endpoint():
+    """Returns L1 in-memory tool-call cache hit/miss stats."""
+    from .cache import cache_stats
+    return cache_stats()
+
+
+@app.delete("/cache/flush")
+async def cache_flush_endpoint(tool_name: str = None):
+    """Flush the L1 tool cache (optionally filter by tool name)."""
+    from .cache import invalidate
+    removed = invalidate(tool_name or None)
+    return {"flushed": removed, "tool_name": tool_name}
+
+
+@app.get("/query/route")
+async def query_route_endpoint(q: str = Query(..., description="User query to classify")):
+    """
+    Debug endpoint: classify a query into sql / rag / python / general using
+    the lightweight regex-based router (no LLM call, instant).
+    """
+    from .query_router import route_query_detail
+    return route_query_detail(q)
 
 
 if __name__ == "__main__":

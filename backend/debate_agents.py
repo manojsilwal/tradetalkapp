@@ -92,10 +92,10 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
     """Generic agent runner used by all 5 specialists."""
     ensure_capability("debate", "knowledge_read")
     query_map = {
-        "bull":     ["price_movements", "youtube_insights", "debate_history"],
+        "bull":     ["price_movements", "youtube_insights", "debate_history", "sp500_fundamentals_narratives"],
         "bear":     ["macro_snapshots", "macro_alerts", "swarm_history"],
-        "macro":    ["macro_snapshots", "macro_alerts"],
-        "value":    ["swarm_history", "debate_history"],
+        "macro":    ["macro_snapshots", "macro_alerts", "sp500_sector_analysis"],
+        "value":    ["swarm_history", "debate_history", "sp500_fundamentals_narratives"],
         "momentum": ["price_movements", "youtube_insights"],
     }
 

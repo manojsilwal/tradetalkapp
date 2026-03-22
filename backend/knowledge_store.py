@@ -435,7 +435,7 @@ class KnowledgeStore:
             )
             col.add(
                 documents=[doc],
-                metadatas={"ticker": ticker, "change_pct": change_pct, "sector": sector, "date": today},
+                metadatas=[{"ticker": ticker, "change_pct": change_pct, "sector": sector, "date": today}],
                 ids=[f"pm_{ticker}_{today}_{int(time.time())}"],
             )
         except Exception as e:
