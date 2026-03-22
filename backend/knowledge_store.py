@@ -21,15 +21,19 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
 COLLECTIONS = [
-    "swarm_history",        # every /trace call
-    "swarm_reflections",    # daily outcome tracking — swarm learns from results
-    "debate_history",       # every /debate call
-    "macro_alerts",         # every 60s news scan (already exists logic)
-    "strategy_backtests",   # every /backtest call
-    "price_movements",      # daily pipeline — top movers
-    "macro_snapshots",      # daily pipeline — FRED indicators
-    "youtube_insights",     # daily pipeline — finance channel videos
-    "strategy_reflections", # post-backtest lessons learned memory
+    "swarm_history",                 # every /trace call
+    "swarm_reflections",             # daily outcome tracking — swarm learns from results
+    "debate_history",                # every /debate call
+    "macro_alerts",                  # every 60s news scan (already exists logic)
+    "strategy_backtests",            # every /backtest call
+    "price_movements",               # daily pipeline — top movers
+    "macro_snapshots",               # daily pipeline — FRED indicators
+    "youtube_insights",              # daily pipeline — finance channel videos
+    "strategy_reflections",          # post-backtest lessons learned memory
+    "stock_profiles",                # data lake — 15yr per-ticker narrative profiles
+    "earnings_memory",               # data lake — earnings events with price reactions
+    "sp500_fundamentals_narratives", # S&P 500 daily fundamental snapshots as text narratives
+    "sp500_sector_analysis",         # S&P 500 weekly sector rotation + momentum narratives
 ]
 
 class _CollectionProxy:
@@ -238,6 +242,42 @@ class KnowledgeStore:
             logger.warning(f"[KnowledgeStore] query_swarm_reflections failed: {e}")
             return []
 
+    def query_stock_profile(self, ticker: str) -> str:
+        """Retrieve the 15-year stock profile for a ticker (data lake)."""
+        col = self._safe_col("stock_profiles")
+        if not col:
+            return ""
+        try:
+            count = col.count()
+            if count == 0:
+                return ""
+            results = col.query(query_texts=[f"{ticker} 15-year profile"], n_results=1,
+                                where={"ticker": ticker})
+            docs = results.get("documents", [[]])[0]
+            return docs[0] if docs else ""
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_stock_profile failed: {e}")
+            return ""
+
+    def query_earnings_memory(self, ticker: str, query_text: str | None = None,
+                              n_results: int = 5) -> list[str]:
+        """Retrieve earnings-event memories for a ticker (data lake)."""
+        col = self._safe_col("earnings_memory")
+        if not col:
+            return []
+        try:
+            count = col.count()
+            if count == 0:
+                return []
+            q = query_text or f"{ticker} earnings surprise reaction"
+            actual_n = min(n_results, count)
+            results = col.query(query_texts=[q], n_results=actual_n,
+                                where={"ticker": ticker})
+            return results.get("documents", [[]])[0]
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_earnings_memory failed: {e}")
+            return []
+
     def add_macro_alert(self, alert) -> None:
         """Store a MacroAlert from the news scanner."""
         col = self._safe_col("macro_alerts")
@@ -407,16 +447,37 @@ class KnowledgeStore:
             return
         try:
             today = str(datetime.now(timezone.utc).date())
+            nar = snapshot.get("macro_narrative") or ""
             doc = (
-                f"Macro snapshot {today}: "
-                f"Fed Funds Rate {snapshot.get('fed_funds_rate', 'N/A')}%, "
+                f"Macro snapshot {today}. "
+                f"{nar} "
+                f"Fed Funds {snapshot.get('fed_funds_rate', 'N/A')}%, "
                 f"CPI YoY {snapshot.get('cpi_yoy', 'N/A')}%, "
-                f"10Y Treasury {snapshot.get('treasury_10y', 'N/A')}%, "
+                f"2Y/10Y Treasury {snapshot.get('treasury_2y', 'N/A')}% / {snapshot.get('treasury_10y', 'N/A')}%, "
+                f"USD broad index {snapshot.get('usd_broad_index', 'N/A')} "
+                f"({snapshot.get('usd_strength_label', 'n/a')} vs 5d), "
+                f"ICE DXY {snapshot.get('dxy_level', 'N/A')} "
+                f"({snapshot.get('dxy_strength_label', 'n/a')} vs 5d), "
                 f"Unemployment {snapshot.get('unemployment', 'N/A')}%."
             )
+            meta = {"date": today}
+            for k in (
+                "fed_funds_rate",
+                "cpi_yoy",
+                "treasury_10y",
+                "treasury_2y",
+                "usd_broad_index",
+                "usd_strength_label",
+                "dxy_level",
+                "dxy_change_5d_pct",
+                "dxy_strength_label",
+            ):
+                v = snapshot.get(k)
+                if v is not None:
+                    meta[k] = v
             col.add(
                 documents=[doc],
-                metadatas={**snapshot, "date": today},
+                metadatas=meta,
                 ids=[f"macro_{today}"],
             )
         except Exception as e:
@@ -565,6 +626,90 @@ class KnowledgeStore:
         if not docs:
             return "No relevant historical context found."
         return "\n".join(f"[Prior analysis {i+1}]: {d}" for i, d in enumerate(docs))
+
+    # ── S&P 500 INGESTION WRITE/QUERY METHODS ─────────────────────────────────
+
+    def upsert_sp500_fundamental(self, ticker: str, sector: str, narrative: str,
+                                  pe_ratio: float = 0.0, eps: float = 0.0,
+                                  market_cap_b: float = 0.0) -> None:
+        """Upsert a natural-language fundamental narrative for one S&P 500 ticker."""
+        col = self._safe_col("sp500_fundamentals_narratives")
+        if not col:
+            return
+        try:
+            today = str(datetime.now(timezone.utc).date())
+            # Use ticker+date as ID so each day's snapshot replaces the previous
+            entry_id = f"sp500_fund_{ticker}_{today}"
+            col.add(
+                documents=[narrative],
+                metadatas=[{
+                    "ticker": ticker,
+                    "sector": sector,
+                    "pe_ratio": pe_ratio,
+                    "eps": eps,
+                    "market_cap_b": market_cap_b,
+                    "date": today,
+                }],
+                ids=[entry_id],
+            )
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] upsert_sp500_fundamental({ticker}) failed: {e}")
+
+    def query_sp500_fundamentals(self, query_text: str, n_results: int = 5,
+                                  sector: Optional[str] = None) -> list[str]:
+        """Semantic search over S&P 500 fundamental narratives. Optionally filter by sector."""
+        col = self._safe_col("sp500_fundamentals_narratives")
+        if not col:
+            return []
+        try:
+            count = col.count()
+            if count == 0:
+                return []
+            where = {"sector": sector} if sector else None
+            actual_n = min(n_results, count)
+            results = col.query(query_texts=[query_text], n_results=actual_n, where=where)
+            return results.get("documents", [[]])[0]
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_sp500_fundamentals failed: {e}")
+            return []
+
+    def upsert_sp500_sector_analysis(self, sector_name: str, etf_ticker: str,
+                                      narrative: str, week_return_pct: float = 0.0) -> None:
+        """Upsert a sector rotation/momentum narrative for one S&P 500 sector."""
+        col = self._safe_col("sp500_sector_analysis")
+        if not col:
+            return
+        try:
+            today = str(datetime.now(timezone.utc).date())
+            entry_id = f"sp500_sector_{etf_ticker}_{today}"
+            col.add(
+                documents=[narrative],
+                metadatas=[{
+                    "sector": sector_name,
+                    "etf_ticker": etf_ticker,
+                    "week_return_pct": week_return_pct,
+                    "date": today,
+                }],
+                ids=[entry_id],
+            )
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] upsert_sp500_sector_analysis({sector_name}) failed: {e}")
+
+    def query_sp500_sector_analysis(self, query_text: str, n_results: int = 5) -> list[str]:
+        """Semantic search over S&P 500 sector rotation narratives."""
+        col = self._safe_col("sp500_sector_analysis")
+        if not col:
+            return []
+        try:
+            count = col.count()
+            if count == 0:
+                return []
+            actual_n = min(n_results, count)
+            results = col.query(query_texts=[query_text], n_results=actual_n)
+            return results.get("documents", [[]])[0]
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_sp500_sector_analysis failed: {e}")
+            return []
 
     # ── STATS & EXPORT ────────────────────────────────────────────────────────
 

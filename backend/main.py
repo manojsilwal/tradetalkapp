@@ -152,6 +152,18 @@ async def startup_event():
     # Start daily knowledge pipeline scheduler
     from .daily_pipeline import start_scheduler
     start_scheduler(knowledge_store, llm_client=llm_client)
+    # Keep HF Space alive — pings self every 5 min, re-ingests S&P 500 hourly
+    from .keep_alive import start_keep_alive
+    start_keep_alive()
+    # Kick off S&P 500 fundamentals ingestion in background at startup
+    async def _run_sp500_on_startup():
+        try:
+            from .sp500_ingestion_pipeline import run_sp500_ingestion
+            await asyncio.sleep(15)  # let the server fully init first
+            await run_sp500_ingestion()
+        except Exception as e:
+            print(f"[SP500Pipeline][startup] ingestion error: {e}")
+    asyncio.create_task(_run_sp500_on_startup())
 
 @app.get("/notifications/stream")
 async def notification_stream():
@@ -218,14 +230,29 @@ async def get_macro_data():
     K2-Optimus Phase 9: Dedicated Global Macro Analysis Endpoint.
     """
     data = await macro_connector.fetch_data()
+    ind = data["indicators"]
     return MacroDataResponse(
-        vix_level=data["indicators"]["vix_level"],
-        credit_stress_index=data["indicators"]["credit_stress_index"],
-        market_regime="BULL_NORMAL" if data["indicators"]["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
+        vix_level=ind["vix_level"],
+        credit_stress_index=ind["credit_stress_index"],
+        market_regime="BULL_NORMAL" if ind["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
         sectors=data["sectors"],
         consumer_spending=data["consumer_spending"],
         capital_flows=data["capital_flows"],
-        cash_reserves=data["cash_reserves"]
+        cash_reserves=data["cash_reserves"],
+        usd_broad_index=ind.get("usd_broad_index"),
+        usd_index_change_5d_pct=ind.get("usd_index_change_5d_pct"),
+        usd_strength_label=ind.get("usd_strength_label") or "unknown",
+        dxy_level=ind.get("dxy_level"),
+        dxy_change_5d_pct=ind.get("dxy_change_5d_pct"),
+        dxy_strength_label=ind.get("dxy_strength_label") or "unknown",
+        treasury_2y=ind.get("treasury_2y"),
+        treasury_10y=ind.get("treasury_10y"),
+        yield_curve_spread_10y_2y=ind.get("yield_curve_spread_10y_2y"),
+        fed_funds_rate=ind.get("fed_funds_rate"),
+        cpi_yoy=ind.get("cpi_yoy"),
+        unemployment_rate=ind.get("unemployment"),
+        macro_narrative=ind.get("macro_narrative") or "",
+        fred_fetched_at=ind.get("fred_fetched_at"),
     )
 
 @app.get("/metrics/{ticker}", response_model=InvestorMetricsResponse)
@@ -385,10 +412,21 @@ async def debate_ticker(ticker: str = Query("GME", description="Stock ticker to 
 
     # Build macro state for agents
     macro_data = await macro_connector.fetch_data()
+    ind = macro_data["indicators"]
     macro_state = {
-        "credit_stress_index": macro_data["indicators"]["credit_stress_index"],
-        "vix_level":           macro_data["indicators"]["vix_level"],
-        "market_regime":       "BULL_NORMAL" if macro_data["indicators"]["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
+        "credit_stress_index": ind["credit_stress_index"],
+        "vix_level":           ind["vix_level"],
+        "market_regime":       "BULL_NORMAL" if ind["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
+        "macro_narrative":     ind.get("macro_narrative") or "",
+        "usd_strength_label":  ind.get("usd_strength_label") or "unknown",
+        "usd_broad_index":     ind.get("usd_broad_index"),
+        "usd_index_change_5d_pct": ind.get("usd_index_change_5d_pct"),
+        "dxy_level":           ind.get("dxy_level"),
+        "dxy_change_5d_pct":   ind.get("dxy_change_5d_pct"),
+        "dxy_strength_label":  ind.get("dxy_strength_label") or "unknown",
+        "yield_curve_spread_10y_2y": ind.get("yield_curve_spread_10y_2y"),
+        "treasury_10y":        ind.get("treasury_10y"),
+        "treasury_2y":         ind.get("treasury_2y"),
     }
 
     result = await run_full_debate(ticker, debate_data, macro_state, knowledge_store, llm_client)
@@ -450,10 +488,21 @@ async def analyze_ticker(
 
     debate_data = await fetch_debate_data(ticker)
     macro_data = await macro_connector.fetch_data()
+    ind = macro_data["indicators"]
     macro_state = {
-        "credit_stress_index": macro_data["indicators"]["credit_stress_index"],
-        "vix_level":           macro_data["indicators"]["vix_level"],
-        "market_regime":       "BULL_NORMAL" if macro_data["indicators"]["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
+        "credit_stress_index": ind["credit_stress_index"],
+        "vix_level":           ind["vix_level"],
+        "market_regime":       "BULL_NORMAL" if ind["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
+        "macro_narrative":     ind.get("macro_narrative") or "",
+        "usd_strength_label":  ind.get("usd_strength_label") or "unknown",
+        "usd_broad_index":     ind.get("usd_broad_index"),
+        "usd_index_change_5d_pct": ind.get("usd_index_change_5d_pct"),
+        "dxy_level":           ind.get("dxy_level"),
+        "dxy_change_5d_pct":   ind.get("dxy_change_5d_pct"),
+        "dxy_strength_label":  ind.get("dxy_strength_label") or "unknown",
+        "yield_curve_spread_10y_2y": ind.get("yield_curve_spread_10y_2y"),
+        "treasury_10y":        ind.get("treasury_10y"),
+        "treasury_2y":         ind.get("treasury_2y"),
     }
 
     debate_result = await run_full_debate(
@@ -564,6 +613,29 @@ async def trigger_pipeline():
     from .daily_pipeline import run_daily_pipeline
     summary = await run_daily_pipeline(knowledge_store)
     return {"status": "complete", "summary": summary}
+
+
+@app.post("/knowledge/sp500-ingest")
+async def trigger_sp500_ingestion(tickers: list[str] = None):
+    """
+    Manually trigger the S&P 500 fundamentals + sector ingestion pipeline.
+    Optionally pass a list of tickers to limit ingestion scope (default: PRIORITY_TICKERS).
+    """
+    from .sp500_ingestion_pipeline import run_sp500_ingestion
+    summary = await run_sp500_ingestion(tickers=tickers)
+    return {"status": "complete", "summary": summary}
+
+
+@app.get("/knowledge/sp500-stats")
+async def sp500_ingestion_stats():
+    """Returns counts for the S&P 500 vector collections."""
+    stats = knowledge_store.stats()
+    collections = stats.get("collections", {})
+    return {
+        "sp500_fundamentals_narratives": collections.get("sp500_fundamentals_narratives", 0),
+        "sp500_sector_analysis":         collections.get("sp500_sector_analysis", 0),
+        "vector_backend":                stats.get("vector_backend", "unknown"),
+    }
 
 
 @app.get("/strategies/leaderboard")
