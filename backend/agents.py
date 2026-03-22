@@ -23,21 +23,47 @@ class AgentPair:
         self._llm = llm_client
 
     def _fetch_prior_lessons(self, ticker: str, market_state: MarketState) -> str:
-        """Retrieve up to 2 swarm reflections relevant to this factor + ticker."""
-        if not self._ks or not hasattr(self._ks, "query_swarm_reflections"):
-            return ""
-        try:
-            regime = market_state.market_regime.value if market_state.market_regime else "BULL_NORMAL"
-            query = f"{self.factor_name} {ticker} {regime}"
-            lessons = self._ks.query_swarm_reflections(query, n_results=2)
-            if not lessons:
-                return ""
-            formatted = "\n".join(f"  - {l}" for l in lessons)
-            logger.info("[AgentPair:%s] injected %d prior lessons for %s", self.factor_name, len(lessons), ticker)
-            return f"\n[Prior lessons from swarm reflections]:\n{formatted}\n"
-        except Exception as e:
-            logger.warning("[AgentPair:%s] lesson retrieval failed: %s", self.factor_name, e)
-            return ""
+        """Retrieve swarm reflections plus data-lake stock profile & earnings memories (Phase 6)."""
+        blocks: list[str] = []
+        if self._ks and hasattr(self._ks, "query_swarm_reflections"):
+            try:
+                regime = market_state.market_regime.value if market_state.market_regime else "BULL_NORMAL"
+                query = f"{self.factor_name} {ticker} {regime}"
+                lessons = self._ks.query_swarm_reflections(query, n_results=2)
+                if lessons:
+                    formatted = "\n".join(f"  - {l}" for l in lessons)
+                    blocks.append(f"\n[Prior lessons from swarm reflections]:\n{formatted}\n")
+                    logger.info(
+                        "[AgentPair:%s] injected %d prior lessons for %s",
+                        self.factor_name,
+                        len(lessons),
+                        ticker,
+                    )
+            except Exception as e:
+                logger.warning("[AgentPair:%s] reflection retrieval failed: %s", self.factor_name, e)
+
+        if self._ks and hasattr(self._ks, "query_stock_profile"):
+            try:
+                profile = self._ks.query_stock_profile(ticker)
+                if profile:
+                    blocks.append(f"\n[Stock profile (data lake / RAG)]:\n{profile}\n")
+            except Exception as e:
+                logger.warning("[AgentPair:%s] stock_profile retrieval failed: %s", self.factor_name, e)
+
+        if self._ks and hasattr(self._ks, "query_earnings_memory"):
+            try:
+                em = self._ks.query_earnings_memory(
+                    ticker,
+                    query_text=f"{ticker} {self.factor_name} earnings surprise",
+                    n_results=4,
+                )
+                if em:
+                    lines = "\n".join(f"  - {x}" for x in em)
+                    blocks.append(f"\n[Earnings event memories (data lake)]:\n{lines}\n")
+            except Exception as e:
+                logger.warning("[AgentPair:%s] earnings_memory retrieval failed: %s", self.factor_name, e)
+
+        return "".join(blocks)
 
     async def run(self, market_state: MarketState, ticker: str = "GME") -> FactorResult:
         iteration = 0

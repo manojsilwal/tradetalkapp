@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Query, BackgroundTasks, Depends
-from typing import Optional as _Optional
+import logging
+from typing import Any, Optional as _Optional
 from .auth import get_optional_user as _get_optional_user
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
@@ -22,6 +23,7 @@ from .agent_policy_guardrails import (
     redact_secrets_in_text,
     validate_startup_secrets,
 )
+from .cron_auth import require_cron_secret
 import asyncio, json, time, os
 from datetime import datetime as _dt
 
@@ -632,19 +634,30 @@ async def knowledge_reflections(n: int = 20):
     return {"reflections": reflections, "total": len(reflections)}
 
 
-@app.post("/knowledge/pipeline-run")
+@app.post(
+    "/knowledge/pipeline-run",
+    dependencies=[Depends(require_cron_secret)],
+)
 async def trigger_pipeline():
-    """Manually trigger the daily knowledge pipeline (for testing)."""
+    """
+    Run the daily knowledge pipeline (movers, macro snapshot, YouTube, data-lake incremental).
+    When ``PIPELINE_CRON_SECRET`` is set in the environment, requires
+    ``Authorization: Bearer <secret>`` or ``X-Cron-Secret: <secret>``.
+    """
     from .daily_pipeline import run_daily_pipeline
     summary = await run_daily_pipeline(knowledge_store)
     return {"status": "complete", "summary": summary}
 
 
-@app.post("/knowledge/sp500-ingest")
+@app.post(
+    "/knowledge/sp500-ingest",
+    dependencies=[Depends(require_cron_secret)],
+)
 async def trigger_sp500_ingestion(tickers: list[str] = None):
     """
-    Manually trigger the S&P 500 fundamentals + sector ingestion pipeline.
+    Trigger the S&P 500 fundamentals + sector ingestion pipeline.
     Optionally pass a list of tickers to limit ingestion scope (default: PRIORITY_TICKERS).
+    Same cron-secret rules as ``/knowledge/pipeline-run`` when ``PIPELINE_CRON_SECRET`` is set.
     """
     from .sp500_ingestion_pipeline import run_sp500_ingestion
     summary = await run_sp500_ingestion(tickers=tickers)
@@ -659,6 +672,8 @@ async def sp500_ingestion_stats():
     return {
         "sp500_fundamentals_narratives": collections.get("sp500_fundamentals_narratives", 0),
         "sp500_sector_analysis":         collections.get("sp500_sector_analysis", 0),
+        "stock_profiles":                collections.get("stock_profiles", 0),
+        "earnings_memory":               collections.get("earnings_memory", 0),
         "vector_backend":                stats.get("vector_backend", "unknown"),
     }
 

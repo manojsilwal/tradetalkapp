@@ -60,6 +60,7 @@ MODEL_TIER = {
     "swarm_analyst":      "light",
     "swarm_reflection_writer": "light",
     "video_scene_director": "light",
+    "rag_narrative_polish": "light",
 }
 
 def _model_for_role(role: str) -> str:
@@ -416,6 +417,58 @@ class LLMClient:
             f"Write a 1-2 sentence lesson for future swarm analyses."
         )
         return await self.generate("swarm_reflection_writer", prompt)
+
+    def _plain_text_generate_sync(self, system: str, user: str) -> str:
+        """Single chat completion returning raw assistant text (no JSON parse)."""
+        model = OPENROUTER_MODEL_LIGHT
+        try:
+            if self._client is None:
+                return user
+            if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                with workload_scope("llm", "llm_inference"):
+                    completion = self._client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        temperature=0.2,
+                        max_tokens=min(900, LLM_MAX_TOKENS),
+                    )
+            else:
+                completion = self._client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=0.2,
+                    max_tokens=min(900, LLM_MAX_TOKENS),
+                )
+            out = (completion.choices[0].message.content or "").strip()
+            return out if len(out) > 40 else user
+        except Exception as e:
+            logger.warning(
+                "[LLMClient] plain_text_generate failed: %s",
+                redact_secrets_in_text(str(e)),
+            )
+            return user
+
+    async def generate_rag_polish(self, context_label: str, draft: str) -> str:
+        """
+        Phase 5 — tighten data-lake summaries for embedding/RAG (Nemotron via OpenRouter).
+        Falls back to draft when API key missing or on error.
+        """
+        if self._provider != "openrouter" or self._client is None:
+            return draft
+        system = (
+            "You are a financial data editor. Rewrite notes into one dense factual paragraph "
+            "for vector search (RAG). No buy/sell recommendations. Keep all numeric facts. "
+            "Plain prose only — no JSON, no markdown headings, no bullet lists."
+        )
+        user = f"Label: {context_label}\n\nDRAFT:\n{draft[:12000]}\n\nOutput one improved paragraph:"
+        async with self._sem:
+            return await asyncio.to_thread(self._plain_text_generate_sync, system, user)
 
     @property
     def backend(self) -> str:

@@ -1,0 +1,27 @@
+# Triggers the FastAPI daily knowledge pipeline on Render.
+# Required repo secrets:
+#   RENDER_API_BASE    — e.g. https://tradetalkapp-backend.onrender.com (no trailing slash)
+#   PIPELINE_CRON_SECRET — must match the same env var on Render
+name: Render daily pipeline
+
+on:
+  schedule:
+    - cron: "5 0 * * *" # 00:05 UTC daily
+  workflow_dispatch:
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /knowledge/pipeline-run
+        env:
+          BASE: ${{ secrets.RENDER_API_BASE }}
+          SECRET: ${{ secrets.PIPELINE_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "${BASE:-}" || { echo "Set RENDER_API_BASE in repo secrets"; exit 1; }
+          test -n "${SECRET:-}" || { echo "Set PIPELINE_CRON_SECRET in repo secrets (same as Render)"; exit 1; }
+          curl -fsS --max-time 600 -X POST "${BASE}/knowledge/pipeline-run" \
+            -H "Authorization: Bearer ${SECRET}" \
+            -H "Content-Type: application/json"
+          echo "Pipeline triggered OK"

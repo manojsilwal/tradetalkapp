@@ -35,6 +35,9 @@ HF_SPACE_URL = os.environ.get(
 PING_ENDPOINT  = f"{HF_SPACE_URL}/"
 INGEST_ENDPOINT = f"{HF_SPACE_URL}/knowledge/sp500-ingest"
 
+# Must match backend ``PIPELINE_CRON_SECRET`` when protected routes are enabled.
+PIPELINE_CRON_SECRET = os.environ.get("PIPELINE_CRON_SECRET", "").strip()
+
 
 def _ping_loop():
     """Background thread: pings the Space every PING_INTERVAL_SECONDS."""
@@ -52,7 +55,10 @@ def _ping_loop():
         # to refresh fundamentals with latest yFinance data
         if cycle > 0 and cycle % 12 == 0:
             try:
-                resp = requests.post(INGEST_ENDPOINT, timeout=120)
+                headers = {}
+                if PIPELINE_CRON_SECRET:
+                    headers["Authorization"] = f"Bearer {PIPELINE_CRON_SECRET}"
+                resp = requests.post(INGEST_ENDPOINT, timeout=120, headers=headers)
                 logger.info(f"[KeepAlive] SP500 re-ingest triggered → {resp.status_code}")
             except Exception as e:
                 logger.warning(f"[KeepAlive] SP500 re-ingest failed: {e}")

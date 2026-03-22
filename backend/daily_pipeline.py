@@ -1,10 +1,13 @@
 """
-Daily Knowledge Pipeline — orchestrates all 4 knowledge source ingestion jobs.
+Daily Knowledge Pipeline — orchestrates knowledge ingestion jobs.
 Runs every night at midnight via APScheduler.
-Each run adds new records to ChromaDB; all historical data remains searchable.
+Each run adds new records to the vector store; historical data remains searchable.
+
+Set DATA_LAKE_DAILY_INCREMENTAL=0 to skip Phase-7 Parquet append / event slices (long-running).
 """
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from .agent_policy_guardrails import ensure_capability
 
@@ -29,15 +32,20 @@ async def run_daily_pipeline(knowledge_store, llm_client=None) -> dict:
         "errors": [],
     }
 
-    results = await asyncio.gather(
+    jobs = [
         _ingest_price_movements(knowledge_store),
         _ingest_macro_snapshot(knowledge_store),
         _ingest_youtube(knowledge_store),
-        return_exceptions=True,
-    )
+    ]
+    job_names = ["price_movements", "macro_snapshot", "youtube"]
+    if os.environ.get("DATA_LAKE_DAILY_INCREMENTAL", "1").strip().lower() not in ("0", "false", "no"):
+        jobs.append(asyncio.to_thread(_run_data_lake_incremental_sync))
+        job_names.append("data_lake_incremental")
+
+    results = await asyncio.gather(*jobs, return_exceptions=True)
 
     for i, result in enumerate(results):
-        job_name = ["price_movements", "macro_snapshot", "youtube"][i]
+        job_name = job_names[i]
         if isinstance(result, Exception):
             summary["errors"].append(f"{job_name}: {result}")
             logger.warning(f"[DailyPipeline] {job_name} failed: {result}")
@@ -76,14 +84,36 @@ async def _ingest_price_movements(knowledge_store) -> dict:
 
 
 async def _ingest_macro_snapshot(knowledge_store) -> dict:
-    """Fetch FRED macro indicators and store in macro_snapshots collection."""
+    """Fetch macro indicators (FRED + DXY narrative) and store in macro_snapshots collection."""
     ensure_capability("scheduler", "market_data_read")
-    from .connectors.fred import fetch_macro_snapshot
-    snapshot = await fetch_macro_snapshot()
-    if snapshot:
-        knowledge_store.add_macro_snapshot(snapshot)
-        return {"macro_snapshot_added": True}
-    return {"macro_snapshot_added": False}
+    from .connectors.macro import MacroHealthConnector
+    data = await MacroHealthConnector().fetch_data()
+    ind = data.get("indicators") or {}
+    if not ind:
+        return {"macro_snapshot_added": False}
+    knowledge_store.add_macro_snapshot(dict(ind))
+    return {"macro_snapshot_added": True}
+
+
+def _run_data_lake_incremental_sync() -> dict:
+    """
+    Phase 7 — append recent OHLCV, rotate event re-ingest, weekly insider/recs (Mondays).
+    Runs in a thread from the async pipeline so yfinance/pandas do not block the event loop.
+    """
+    from datetime import datetime, timezone
+
+    out: dict = {}
+    try:
+        from .data_lake import incremental as dinc
+
+        out.update(dinc.append_recent_ohlcv(tickers=None, extra_days=6))
+        out.update(dinc.run_daily_event_slice())
+        if datetime.now(timezone.utc).weekday() == 0:
+            out.update(dinc.run_weekly_insider_and_recommendations())
+    except Exception as e:
+        out["data_lake_incremental_error"] = str(e)
+        logger.warning("[DailyPipeline] data lake incremental: %s", e)
+    return out
 
 
 async def _ingest_youtube(knowledge_store) -> dict:

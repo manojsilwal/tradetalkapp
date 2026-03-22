@@ -10,6 +10,8 @@ venv/
 # Databases & local data
 *.db
 .chroma_db/
+chroma_db/
+data_lake_output/
 output.json
 
 # Environment secrets

@@ -23,3 +23,6 @@ services:
       # Comma-separated list of allowed CORS origins (your Vercel URL goes here)
       - key: CORS_ORIGINS
         value: https://frontend-manojsilwals-projects.vercel.app
+      # Optional: set PIPELINE_CRON_SECRET in the Render Dashboard (secret) to lock down
+      # POST /knowledge/pipeline-run and POST /knowledge/sp500-ingest. Match GitHub secret.
+      # Optional: DATA_LAKE_DAILY_INCREMENTAL=0 to skip heavy Parquet work on free tier.
