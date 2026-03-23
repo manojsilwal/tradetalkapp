@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 sp500_ingestion_pipeline.py
 ----------------------------
@@ -180,7 +182,15 @@ async def _fetch_ticker_info(ticker: str) -> Optional[dict]:
         info = await loop.run_in_executor(None, lambda: yf.Ticker(ticker).info)
         return info if isinstance(info, dict) and info.get("symbol") else None
     except Exception as e:
-        logger.warning(f"[SP500Pipeline] Failed to fetch {ticker}: {e}")
+        msg = str(e).lower()
+        # Yahoo often returns 401/429/NoneType from datacenter IPs — log quietly
+        if any(
+            x in msg
+            for x in ("nonetype", "401", "429", "unauthorized", "rate", "too many", "crumb")
+        ):
+            logger.debug("[SP500Pipeline] fetch %s (suppressed): %s", ticker, e)
+        else:
+            logger.warning("[SP500Pipeline] Failed to fetch %s: %s", ticker, e)
         return None
 
 
@@ -201,13 +211,24 @@ async def _fetch_week_return(etf_ticker: str) -> float:
             return 0.0
         return ((end_price - start_price) / start_price) * 100
     except Exception as e:
-        logger.warning(f"[SP500Pipeline] Failed to fetch return for {etf_ticker}: {e}")
+        msg = str(e).lower()
+        if any(x in msg for x in ("401", "429", "unauthorized", "rate", "too many", "crumb")):
+            logger.debug("[SP500Pipeline] ETF return %s (suppressed): %s", etf_ticker, e)
+        else:
+            logger.warning("[SP500Pipeline] Failed to fetch return for %s: %s", etf_ticker, e)
         return 0.0
+
+
+def _default_batch_size() -> int:
+    try:
+        return max(1, int(os.environ.get("SP500_BATCH_SIZE", "5")))
+    except ValueError:
+        return 5
 
 
 async def run_sp500_ingestion(
     tickers: Optional[list[str]] = None,
-    batch_size: int = 10,
+    batch_size: int | None = None,
 ) -> dict:
     """
     Main entry point. Fetches fundamentals for each ticker and sector ETF,
@@ -228,6 +249,8 @@ async def run_sp500_ingestion(
 
     store = get_knowledge_store()
     target_tickers = tickers or PRIORITY_TICKERS
+    if batch_size is None:
+        batch_size = _default_batch_size()
     tickers_written = 0
     tickers_failed  = 0
 
@@ -258,18 +281,23 @@ async def run_sp500_ingestion(
                 logger.warning(f"[SP500Pipeline] Error processing {ticker}: {e}")
                 tickers_failed += 1
 
-        # Small sleep between batches to be kind to yFinance rate limits
-        await asyncio.sleep(1.0)
+        # Sleep between batches — Yahoo aggressively rate-limits cloud IPs
+        await asyncio.sleep(float(os.environ.get("SP500_BATCH_SLEEP_SEC", "2.0")))
 
     # ── Process sector ETFs ────────────────────────────────────────────────────
     logger.info("[SP500Pipeline] Starting sector rotation ingestion...")
     sectors_written = 0
     sectors_failed  = 0
 
-    sector_tasks = [
-        _fetch_week_return(etf) for etf in SECTOR_ETFS.values()
-    ]
-    week_returns = await asyncio.gather(*sector_tasks)
+    # Stagger sector ETF fetches (parallel blast triggers Yahoo rate limits on cloud IPs)
+    etf_list = list(SECTOR_ETFS.values())
+    week_returns: list[float] = []
+    sector_chunk = max(1, int(os.environ.get("SP500_SECTOR_CONCURRENCY", "2")))
+    for j in range(0, len(etf_list), sector_chunk):
+        chunk = etf_list[j : j + sector_chunk]
+        part = await asyncio.gather(*[_fetch_week_return(e) for e in chunk])
+        week_returns.extend(part)
+        await asyncio.sleep(0.5)
 
     for (sector_name, etf_ticker), week_return in zip(SECTOR_ETFS.items(), week_returns):
         try:

@@ -26,3 +26,6 @@ services:
       # Optional: set PIPELINE_CRON_SECRET in the Render Dashboard (secret) to lock down
       # POST /knowledge/pipeline-run and POST /knowledge/sp500-ingest. Match GitHub secret.
       # Optional: DATA_LAKE_DAILY_INCREMENTAL=0 to skip heavy Parquet work on free tier.
+      # Yahoo Finance rate-limits datacenter IPs — do not run heavy SP500 ingest at startup.
+      - key: SP500_INGEST_ON_STARTUP
+        value: "0"

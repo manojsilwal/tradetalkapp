@@ -214,17 +214,34 @@ async def startup_event():
     # Start daily knowledge pipeline scheduler
     from .daily_pipeline import start_scheduler
     start_scheduler(knowledge_store, llm_client=llm_client)
-    # Keep HF Space alive — pings self every 5 min, re-ingests S&P 500 hourly
+    # Keep HF Space alive — pings self every 5 min (skipped on Render; see keep_alive.py)
     from .keep_alive import start_keep_alive
     start_keep_alive()
-    # Kick off S&P 500 fundamentals ingestion in background at startup
+    # S&P 500 Yahoo ingest: disabled by default on Render (Yahoo rate-limits datacenter IPs;
+    # heavy ingest can delay deploy health checks). Use cron POST /knowledge/sp500-ingest
+    # or set SP500_INGEST_ON_STARTUP=1 to enable.
+    def _sp500_ingest_on_startup() -> bool:
+        v = os.environ.get("SP500_INGEST_ON_STARTUP", "").strip().lower()
+        if v in ("1", "true", "yes"):
+            return True
+        if v in ("0", "false", "no"):
+            return False
+        render = os.environ.get("RENDER", "").strip().lower()
+        if render in ("true", "1", "yes"):
+            return False
+        return True
+
     async def _run_sp500_on_startup():
+        if not _sp500_ingest_on_startup():
+            print("[SP500Pipeline][startup] skipped (set SP500_INGEST_ON_STARTUP=1 to enable on this host)")
+            return
         try:
             from .sp500_ingestion_pipeline import run_sp500_ingestion
             await asyncio.sleep(15)  # let the server fully init first
             await run_sp500_ingestion()
         except Exception as e:
             print(f"[SP500Pipeline][startup] ingestion error: {e}")
+
     asyncio.create_task(_run_sp500_on_startup())
 
 @app.get("/notifications/stream")

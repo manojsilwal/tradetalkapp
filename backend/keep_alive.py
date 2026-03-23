@@ -71,6 +71,11 @@ def start_keep_alive():
     Start the keep-alive ping loop in a daemon thread.
     Call this once from app startup.
     """
+    # Render.com (and similar) should not ping a Hugging Face URL — wastes egress and
+    # can delay or confuse health checks.
+    if os.environ.get("RENDER", "").strip().lower() in ("true", "1", "yes"):
+        logger.info("[KeepAlive] Skipping on Render (set HF_SPACE_URL only for Hugging Face Spaces).")
+        return
     if not HF_SPACE_URL:
         logger.warning("[KeepAlive] HF_SPACE_URL not set — keep-alive disabled.")
         return
