@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Query, BackgroundTasks, Depends, HTTPException
 import asyncio
-import logging
 from typing import Any, Optional as _Optional
 from .auth import get_optional_user as _get_optional_user
 from fastapi.middleware.cors import CORSMiddleware
@@ -117,6 +116,8 @@ llm_client = get_llm_client()
 last_trace_data: dict = {}
 
 # ── Structured Observability Helper ──────────────────────────────────────────
+import logging
+
 _app_logger = logging.getLogger("tradetalk.tool")
 
 

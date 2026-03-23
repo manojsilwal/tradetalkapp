@@ -34,9 +34,17 @@ class VectorBackendBase:
 
 class ChromaVectorBackend(VectorBackendBase):
     def __init__(self, chroma_path: str):
-        import chromadb
+        # Disable Chroma product telemetry (avoids noisy logs / posthog "capture()" bugs on serverless).
+        import os
 
-        self._client = chromadb.PersistentClient(path=chroma_path)
+        os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+        import chromadb
+        from chromadb.config import Settings
+
+        self._client = chromadb.PersistentClient(
+            path=chroma_path,
+            settings=Settings(anonymized_telemetry=False),
+        )
         self._cols: Dict[str, Any] = {}
 
     def ensure_collection(self, name: str) -> None:
