@@ -276,7 +276,11 @@ function Leaderboard() {
           <div>
             <div style={{ color: '#e2e8f0', fontWeight: 600, marginBottom: 2 }}>{e.strategy_name}</div>
             <div style={{ color: '#334155', fontSize: '0.7rem' }}>
+              {e.strategy_category && e.strategy_category !== 'custom' && (
+                <span style={{ color: '#64748b', marginRight: 6 }}>{e.strategy_category}</span>
+              )}
               {e.start_date} → {e.end_date}
+              {e.preset_id && <span style={{ color: '#475569', marginLeft: 6 }}>({e.preset_id})</span>}
               {e.outperformed && <span style={{ color: '#10b981', marginLeft: 6 }}>▲ beat SPY</span>}
             </div>
           </div>
@@ -306,6 +310,8 @@ function Leaderboard() {
 export default function BacktestUI() {
   const [activeTab, setActiveTab]   = useState('backtest');
   const [strategyText, setStrategyText] = useState('');
+  const [presetId, setPresetId]     = useState('');
+  const [presets, setPresets]       = useState([]);
   const [startDate, setStartDate]   = useState('2010-01-01');
   const [endDate, setEndDate]       = useState('2024-01-01');
   const [loading, setLoading]       = useState(false);
@@ -313,14 +319,26 @@ export default function BacktestUI() {
   const [error, setError]           = useState('');
   const [showExamples, setShowExamples] = useState(false);
 
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/strategies/presets`)
+      .then(r => r.json())
+      .then(d => setPresets(d.presets || []))
+      .catch(() => setPresets([]));
+  }, []);
+
   const runBacktest = async () => {
-    if (!strategyText.trim()) return;
+    if (!presetId && !strategyText.trim()) return;
     setLoading(true); setResult(null); setError('');
     try {
       const res = await fetch(`${API_BASE_URL}/backtest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategy: strategyText, start_date: startDate, end_date: endDate }),
+        body: JSON.stringify({
+          preset_id: presetId || undefined,
+          strategy: presetId ? '' : strategyText,
+          start_date: startDate,
+          end_date: endDate,
+        }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
       const data = await res.json();
@@ -434,11 +452,33 @@ export default function BacktestUI() {
             border: '1px solid rgba(255,255,255,0.07)', marginBottom: 20,
           }}>
             <label style={{ color: '#94a3b8', fontSize: '0.78rem', display: 'block', marginBottom: 8, fontWeight: 600 }}>
+              PROVEN STRATEGY PRESET (OPTIONAL)
+            </label>
+            <select
+              value={presetId}
+              onChange={e => {
+                const v = e.target.value;
+                setPresetId(v);
+                if (v) setStrategyText('');
+              }}
+              style={{ ...inputStyle, marginBottom: 12, cursor: 'pointer' }}
+            >
+              <option value="">— Custom: describe below in plain English —</option>
+              {presets.map(p => (
+                <option key={p.preset_id} value={p.preset_id}>
+                  [{p.category}] {p.name} — {p.rebalance_freq}
+                </option>
+              ))}
+            </select>
+            <label style={{ color: '#94a3b8', fontSize: '0.78rem', display: 'block', marginBottom: 8, fontWeight: 600 }}>
               STRATEGY DESCRIPTION
             </label>
             <textarea
               value={strategyText}
-              onChange={e => setStrategyText(e.target.value)}
+              onChange={e => {
+                setStrategyText(e.target.value);
+                if (e.target.value.trim()) setPresetId('');
+              }}
               placeholder='e.g. "Buy Mag7 stocks when PE ratio is below 25, sell when PE exceeds 35"'
               rows={3}
               style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6, minHeight: 80, fontFamily: 'inherit' }}
@@ -455,13 +495,13 @@ export default function BacktestUI() {
               </div>
               <button
                 onClick={runBacktest}
-                disabled={loading || !strategyText.trim()}
+                disabled={loading || (!presetId && !strategyText.trim())}
                 style={{
                   flex: '2 1 180px',
                   background: loading ? 'rgba(99,102,241,0.25)' : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
                   border: 'none', borderRadius: 8, padding: '10px 20px',
                   color: '#fff', fontWeight: 700, fontSize: '0.88rem',
-                  cursor: loading || !strategyText.trim() ? 'not-allowed' : 'pointer',
+                  cursor: loading || (!presetId && !strategyText.trim()) ? 'not-allowed' : 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
                   boxShadow: loading ? 'none' : '0 4px 14px rgba(99,102,241,0.35)',
                 }}
@@ -550,14 +590,31 @@ export default function BacktestUI() {
                 <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: '0.95rem', marginBottom: 10 }}>
                   {result.strategy.name}
                 </div>
+                <div style={{ color: '#64748b', fontSize: '0.74rem', marginBottom: 8, lineHeight: 1.5 }}>
+                  {result.strategy.description}
+                </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-                  {result.strategy.filters.map((f, i) => <FilterChip key={i} filter={f} variant="buy" />)}
+                  {(result.strategy.filters || []).length === 0 && !result.strategy.rank_by_metric && (
+                    <span style={{ color: '#475569', fontSize: '0.72rem' }}>No static filters</span>
+                  )}
+                  {(result.strategy.filters || []).map((f, i) => <FilterChip key={i} filter={f} variant="buy" />)}
                   {(result.strategy.sell_filters || []).map((f, i) => <FilterChip key={i} filter={f} variant="sell" />)}
                 </div>
+                {result.strategy.rank_by_metric && (
+                  <div style={{ color: '#818cf8', fontSize: '0.72rem', marginBottom: 8 }}>
+                    Rank: <strong>{result.strategy.rank_by_metric}</strong> · top {result.strategy.select_top_n} ·{' '}
+                    {result.strategy.rank_higher_is_better ? 'higher = better' : 'lower = better'}
+                  </div>
+                )}
+                {result.strategy.survivorship_note && (
+                  <div style={{ color: '#64748b', fontSize: '0.7rem', marginBottom: 8, fontStyle: 'italic' }}>
+                    {result.strategy.survivorship_note}
+                  </div>
+                )}
                 <div style={{ color: '#475569', fontSize: '0.74rem' }}>
                   {result.strategy.start_date} → {result.strategy.end_date} ·
                   {' '}{result.strategy.rebalance_months}mo check interval ·
-                  {' '}{result.strategy.universe.length} stocks screened
+                  {' '}{result.strategy.universe?.length ?? 0} stocks screened
                   {result.strategy.sell_filters?.length > 0 && (
                     <span style={{ color: '#818cf8', marginLeft: 6 }}>· event-driven exits</span>
                   )}

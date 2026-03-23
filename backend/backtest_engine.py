@@ -13,6 +13,7 @@ Key improvements over v1:
 import asyncio
 import logging
 import math
+import statistics
 from datetime import datetime, date, timedelta
 from typing import Optional
 from .schemas import (
@@ -185,7 +186,7 @@ def _simulate(rules: StrategyRules, universe_data: dict) -> tuple:
         if has_sell_filters:
             for ticker in list(holdings.keys()):
                 data = universe_data.get(ticker, {})
-                if _passes_filters(rules.sell_filters, data, check_date):
+                if _passes_filters(rules.sell_filters, data, check_date, ticker, universe_data):
                     sell_price = _price_on(data, check_date)
                     if sell_price and sell_price > 0:
                         h = holdings.pop(ticker)
@@ -229,7 +230,7 @@ def _simulate(rules: StrategyRules, universe_data: dict) -> tuple:
         # ── 3. Buy screen at rebalance dates ──────────────────────────────
         if date_str in rebalance_set and cash > 50:
             already_held = set(holdings.keys())
-            candidates   = _screen(rules.filters, universe_data, check_date)
+            candidates   = _screen(rules, universe_data, check_date)
             new_buys     = [t for t in candidates if t not in already_held]
 
             if new_buys:
@@ -284,19 +285,46 @@ def _simulate(rules: StrategyRules, universe_data: dict) -> tuple:
 
 # ── Screening & filtering ──────────────────────────────────────────────────────
 
-def _screen(filters: list, universe_data: dict, as_of: date) -> list:
+def _screen(rules: StrategyRules, universe_data: dict, as_of: date) -> list:
+    filters = rules.filters
+    rank_by = (rules.rank_by_metric or "").strip() or None
+    if rank_by:
+        candidates: list[tuple[str, float]] = []
+        for ticker, data in universe_data.items():
+            if not data.get("prices"):
+                continue
+            if filters and not _passes_filters(filters, data, as_of, ticker, universe_data):
+                continue
+            val = _metric(rank_by, data, as_of, ticker, universe_data)
+            if val is not None:
+                candidates.append((ticker, val))
+        if not candidates:
+            return []
+        reverse = rules.rank_higher_is_better
+        candidates.sort(key=lambda x: x[1], reverse=reverse)
+        cap = min(rules.select_top_n, MAX_POSITIONS, len(candidates))
+        return [t[0] for t in candidates[:cap]]
+
     selected = [
         ticker for ticker, data in universe_data.items()
-        if _passes_filters(filters, data, as_of)
+        if _passes_filters(filters, data, as_of, None, universe_data)
     ]
     return selected[:MAX_POSITIONS]
 
 
-def _passes_filters(filters: list, data: dict, as_of: date) -> bool:
+def _passes_filters(
+    filters: list,
+    data: dict,
+    as_of: date,
+    ticker: Optional[str] = None,
+    universe_data: Optional[dict] = None,
+) -> bool:
     if not data.get("prices"):
         return False
+    if not filters:
+        return True
     for f in filters:
-        val = _metric(f.metric, data, as_of)
+        val = _metric(f.metric, data, as_of, ticker, universe_data)
         if val is None:
             return False
         if not _op(val, f.op, f.value):
@@ -304,7 +332,53 @@ def _passes_filters(filters: list, data: dict, as_of: date) -> bool:
     return True
 
 
-def _metric(metric: str, data: dict, as_of: date) -> Optional[float]:
+def _momentum_12_1_pct(prices: list, as_of: date) -> Optional[float]:
+    """Jegadeesh-Titman style ~11-month return ending ~1 month before as_of (trading days)."""
+    before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+    if len(before) < 253:
+        return None
+    end_p = before[-22]["close"]
+    start_p = before[-253]["close"]
+    if not start_p or start_p <= 0:
+        return None
+    return ((end_p / start_p) - 1) * 100
+
+
+def _realized_vol_annualized_pct(prices: list, as_of: date) -> Optional[float]:
+    before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+    if len(before) < 253:
+        return None
+    recent = before[-252:]
+    log_rets: list[float] = []
+    for i in range(1, len(recent)):
+        c0, c1 = recent[i - 1]["close"], recent[i]["close"]
+        if c0 and c0 > 0 and c1:
+            log_rets.append(math.log(c1 / c0))
+    if len(log_rets) < 20:
+        return None
+    std = statistics.stdev(log_rets)
+    return std * math.sqrt(252) * 100
+
+
+def _price_to_52w_high_pct(prices: list, as_of: date) -> Optional[float]:
+    before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+    if len(before) < 20:
+        return None
+    window = before[-252:] if len(before) >= 252 else before
+    hi = max((p.get("high") or p["close"]) for p in window)
+    last = window[-1]["close"]
+    if not hi or hi <= 0:
+        return None
+    return (last / hi) * 100
+
+
+def _metric(
+    metric: str,
+    data: dict,
+    as_of: date,
+    ticker: Optional[str] = None,
+    universe_data: Optional[dict] = None,
+) -> Optional[float]:
     """Compute a single metric value as of a specific date."""
     info         = data.get("info", {})
     prices       = data.get("prices", [])
@@ -380,6 +454,76 @@ def _metric(metric: str, data: dict, as_of: date) -> Optional[float]:
             return None
         ma = sum(p["close"] for p in before[-window:]) / window
         return before[-1]["close"] - ma
+
+    # ── Academic / factor metrics (ranking + presets) ─────────────────────
+    if metric == "momentum_12_1":
+        return _momentum_12_1_pct(prices, as_of)
+
+    if metric == "realized_vol_252":
+        return _realized_vol_annualized_pct(prices, as_of)
+
+    if metric == "price_to_52w_high":
+        return _price_to_52w_high_pct(prices, as_of)
+
+    if metric == "magic_formula_score":
+        pe = _metric("pe_ratio", data, as_of, ticker, universe_data)
+        roe_v = _metric("roe", data, as_of, ticker, universe_data)
+        de = _metric("debt_to_equity", data, as_of, ticker, universe_data)
+        ey = (100.0 / pe) if pe and pe > 0 else 0.0
+        qual = (roe_v or 0.0) * 0.5 - min((de or 0.0), 100.0) * 0.15
+        return ey + qual
+
+    if metric == "value_momentum_combo":
+        pe = _metric("pe_ratio", data, as_of, ticker, universe_data)
+        mom = _momentum_12_1_pct(prices, as_of)
+        val = (40.0 - min(pe or 40.0, 40.0)) if pe else 0.0
+        mpart = (mom or 0.0) * 0.25
+        return val + mpart
+
+    if metric == "shareholder_yield_proxy":
+        dy = _metric("dividend_yield", data, as_of, ticker, universe_data)
+        return (dy or 0.0) * 1.15
+
+    if metric == "quality_value_score":
+        roe_v = _metric("roe", data, as_of, ticker, universe_data)
+        gm = _metric("gross_margins", data, as_of, ticker, universe_data)
+        de = _metric("debt_to_equity", data, as_of, ticker, universe_data)
+        pb = _metric("pb_ratio", data, as_of, ticker, universe_data)
+        return (
+            (roe_v or 0.0)
+            + (gm or 0.0) * 0.15
+            - min((de or 0.0), 150.0) * 0.12
+            + max(0.0, 15.0 - min(pb or 15.0, 15.0))
+        )
+
+    if metric == "buffett_garp_score":
+        pe = _metric("pe_ratio", data, as_of, ticker, universe_data)
+        roe_v = _metric("roe", data, as_of, ticker, universe_data)
+        rg = _metric("revenue_growth_yoy", data, as_of, ticker, universe_data)
+        if (roe_v or 0.0) < 15.0 or (rg or 0.0) < 0.08:
+            return None
+        if pe and pe > 0:
+            return 5000.0 / pe + (roe_v or 0.0) * 0.5
+        return None
+
+    if metric == "dual_momentum_rank":
+        if not ticker or not universe_data:
+            return None
+        spy = universe_data.get("SPY", {})
+        efa = universe_data.get("EFA", {})
+        shy = universe_data.get("SHY", {})
+        ms = _momentum_12_1_pct(spy.get("prices", []), as_of) if spy.get("prices") else None
+        me = _momentum_12_1_pct(efa.get("prices", []), as_of) if efa.get("prices") else None
+        mh = _momentum_12_1_pct(shy.get("prices", []), as_of) if shy.get("prices") else None
+        if ms is None or mh is None:
+            return None
+        if ms <= mh:
+            return 1.0 if ticker == "SHY" else 0.0
+        if me is None:
+            return 1.0 if ticker == "SPY" else 0.0
+        if ms >= me:
+            return 1.0 if ticker == "SPY" else 0.0
+        return 1.0 if ticker == "EFA" else 0.0
 
     return None
 
@@ -473,7 +617,7 @@ def _fundamentals_as_of(annual_financials: dict, as_of: date) -> dict:
 def _build_filter_reason(filters: list, data: dict, as_of: date, prefix: str = "") -> str:
     parts = []
     for f in filters:
-        val = _metric(f.metric, data, as_of)
+        val = _metric(f.metric, data, as_of, None, None)
         if val is not None:
             label = f.metric.replace("_", " ").title()
             parts.append(f"{label} {f.op} {f.value} (actual: {val:.2f})")

@@ -12,6 +12,7 @@ import asyncio
 import logging
 from .schemas import DebateArgument, DebateResult, AgentStance
 from .agent_policy_guardrails import ensure_capability, workload_scope
+from .telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +267,15 @@ async def run_full_debate(ticker: str, debate_data: dict, macro_state: dict, ks,
     Execute all 5 agents concurrently, then run the moderator.
     Returns a complete DebateResult.
     """
+    tracer = get_tracer()
+    with tracer.start_as_current_span("debate.run_full_debate"):
+        return await _run_full_debate_impl(
+            ticker, debate_data, macro_state, ks, llm, swarm_context=swarm_context,
+        )
+
+
+async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
+                                swarm_context: str = "") -> DebateResult:
     bull_arg, bear_arg, macro_arg, value_arg, momentum_arg = await asyncio.gather(
         run_bull_agent(ticker, debate_data, macro_state, ks, llm, swarm_context=swarm_context),
         run_bear_agent(ticker, debate_data, macro_state, ks, llm, swarm_context=swarm_context),
@@ -304,3 +314,4 @@ async def run_full_debate(ticker: str, debate_data: dict, macro_state: dict, ks,
         neutral_score=neutral_score,
         quality_warning=quality_warning,
     )
+

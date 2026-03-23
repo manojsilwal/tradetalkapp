@@ -164,6 +164,16 @@ class StrategyRules(BaseModel):
     start_date: str
     end_date: str
     strategy_type: str = "fundamental"   # "fundamental" | "momentum" | "mixed"
+    # Optional ranking (Fama-French, momentum, low-vol, etc.) — when set, picks top-N by metric after filters
+    rank_by_metric: Optional[str] = None
+    rank_higher_is_better: bool = True
+    select_top_n: int = 30
+    strategy_category: str = "custom"    # Factor, Macro, Value, Momentum, Blended, Income, Quality
+    preset_id: Optional[str] = None
+    survivorship_note: str = (
+        "Universe uses a liquid S&P 500 subset (~40 names) for Yahoo rate limits; "
+        "results are illustrative, not full-index reproduction."
+    )
 
 
 class BacktestAction(BaseModel):

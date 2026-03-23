@@ -1,8 +1,12 @@
 """
-Knowledge Store — vector-memory singleton with 8 collections.
+Knowledge Store — vector-memory singleton with multiple collections.
 Every agent run, debate, backtest, and daily pipeline job writes here.
 Agents query this store before every LLM call (RAG).
 All data is cumulative — semantic search spans the full history.
+
+Operational policy (TTL, PII, collection purpose) is documented in
+``docs/RAG_POLICY.md`` at the repository root — read before changing
+ingestion or retention behavior.
 """
 import os
 import json
@@ -328,6 +332,8 @@ class KnowledgeStore:
                 metadatas=[{
                     "strategy_name":   result.strategy.name,
                     "strategy_type":   result.strategy.strategy_type,
+                    "strategy_category": getattr(result.strategy, "strategy_category", "custom"),
+                    "preset_id":       getattr(result.strategy, "preset_id", None) or "",
                     "market_regime":   getattr(result.reflection, "market_regime", "unknown"),
                     "drawdown_bucket": getattr(result.reflection, "drawdown_bucket", "unknown"),
                     "start_date":      result.strategy.start_date,
@@ -522,6 +528,8 @@ class KnowledgeStore:
                     "id":               ids[i] if i < len(ids) else f"entry_{i}",
                     "strategy_name":    meta.get("strategy_name", "Unknown"),
                     "strategy_type":    meta.get("strategy_type", "unknown"),
+                    "strategy_category": meta.get("strategy_category", "custom"),
+                    "preset_id":        meta.get("preset_id", ""),
                     "start_date":       meta.get("start_date", ""),
                     "end_date":         meta.get("end_date", ""),
                     "cagr":             float(meta.get("cagr", 0.0)),
@@ -543,6 +551,20 @@ class KnowledgeStore:
 
     def query(self, collection: str, query_text: str, n_results: int = 3) -> list[str]:
         """Semantic similarity search. Returns list of document strings."""
+        try:
+            from .telemetry import get_tracer
+
+            tracer = get_tracer()
+            with tracer.start_as_current_span("rag.query") as span:
+                try:
+                    span.set_attribute("rag.collection", collection)
+                except Exception:
+                    pass
+                return self._query_impl(collection, query_text, n_results)
+        except Exception:
+            return self._query_impl(collection, query_text, n_results)
+
+    def _query_impl(self, collection: str, query_text: str, n_results: int) -> list[str]:
         col = self._safe_col(collection)
         if not col:
             return []

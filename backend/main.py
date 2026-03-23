@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Query, BackgroundTasks, Depends
+from fastapi import FastAPI, Query, BackgroundTasks, Depends, HTTPException
+import asyncio
 import logging
 from typing import Any, Optional as _Optional
 from .auth import get_optional_user as _get_optional_user
@@ -23,8 +24,16 @@ from .agent_policy_guardrails import (
     redact_secrets_in_text,
     validate_startup_secrets,
 )
+from .ingress_models import (
+    AnalyzeIngressRequest,
+    DebateIngressRequest,
+    TraceIngressRequest,
+    validate_ticker_query,
+)
+from .telemetry import RequestIDMiddleware, get_request_id, get_tracer
+from .tool_registry import registry as tool_registry
 from .cron_auth import require_cron_secret
-import asyncio, json, time, os
+import json, time, os
 from datetime import datetime as _dt
 
 app = FastAPI(
@@ -48,6 +57,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Request correlation ID (last-added middleware runs first on incoming requests)
+app.add_middleware(RequestIDMiddleware)
 
 # Mock and Live data connectors representing the ingestion layer
 shorts_connector = ShortsConnector()
@@ -118,16 +129,39 @@ def _log_tool_call(
 ) -> None:
     """Emit one structured JSON log line per tool call (Phase 4 observability)."""
     try:
-        _app_logger.info(json.dumps({
+        rid = get_request_id()
+        payload = {
             "ts":          _dt.utcnow().isoformat(),
             "agent":       agent_name,
             "tool":        tool_name,
             "args_size":   len(str(args)),
             "output_size": len(str(result)),
             "latency_ms":  round(elapsed_ms, 1),
-        }))
+        }
+        if rid:
+            payload["request_id"] = rid
+        _app_logger.info(json.dumps(payload))
     except Exception:
         pass  # logging must never crash the app
+
+
+def _macro_state_from_indicators(ind: dict) -> dict:
+    """Shared macro blob for debate agents (matches prior /debate behavior)."""
+    return {
+        "credit_stress_index": ind["credit_stress_index"],
+        "vix_level":           ind["vix_level"],
+        "market_regime":       "BULL_NORMAL" if ind["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
+        "macro_narrative":     ind.get("macro_narrative") or "",
+        "usd_strength_label":  ind.get("usd_strength_label") or "unknown",
+        "usd_broad_index":     ind.get("usd_broad_index"),
+        "usd_index_change_5d_pct": ind.get("usd_index_change_5d_pct"),
+        "dxy_level":           ind.get("dxy_level"),
+        "dxy_change_5d_pct":   ind.get("dxy_change_5d_pct"),
+        "dxy_strength_label":  ind.get("dxy_strength_label") or "unknown",
+        "yield_curve_spread_10y_2y": ind.get("yield_curve_spread_10y_2y"),
+        "treasury_10y":        ind.get("treasury_10y"),
+        "treasury_2y":         ind.get("treasury_2y"),
+    }
 
 def _sync_scan_and_process():
     """Run the entire scan+process cycle synchronously (called from thread)."""
@@ -297,6 +331,137 @@ async def get_investor_metrics(ticker: str):
         metrics=data["metrics"]
     )
 
+async def _execute_swarm_trace(
+    ticker: str,
+    credit_stress: _Optional[float],
+    _auth_user,
+) -> SwarmConsensus:
+    """
+    Core swarm logic. ``ticker`` must already be normalized (1–5 uppercase letters).
+    """
+    tracer = get_tracer()
+    with tracer.start_as_current_span("swarm.trace"):
+        # 1. Evaluate context using live Macro Health (VIX) — via tool registry
+        try:
+            macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=45.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail={"error": "timeout", "tool": "macro_fetch", "message": "Macro data fetch timed out"},
+            ) from None
+
+        live_credit_stress = macro_data["indicators"]["credit_stress_index"]
+
+        # Allow override for testing purposes via the UI, otherwise use live
+        actual_stress = credit_stress if credit_stress is not None else live_credit_stress
+
+        regime = MarketRegime.BULL_NORMAL if actual_stress <= 1.1 else MarketRegime.BEAR_STRESS
+
+        market_state = MarketState(
+            credit_stress_index=actual_stress,
+            market_regime=regime
+        )
+
+        # 2. Instantiate AgentPairs with knowledge_store for reflection-aware analysis
+        short_pair = ShortInterestAgentPair(connector=shorts_connector,
+                                            knowledge_store=knowledge_store, llm_client=llm_client)
+        social_pair = SocialSentimentAgentPair(connector=social_connector,
+                                               knowledge_store=knowledge_store, llm_client=llm_client)
+        poly_pair = PolymarketAgentPair(connector=poly_connector,
+                                         knowledge_store=knowledge_store, llm_client=llm_client)
+        fund_pair = FundamentalHealthAgentPair(connector=fund_connector,
+                                               knowledge_store=knowledge_store, llm_client=llm_client)
+
+        # 3. Execute Swarm concurrently
+        results = await asyncio.gather(
+            short_pair.run(market_state=market_state, ticker=ticker),
+            social_pair.run(market_state=market_state, ticker=ticker),
+            poly_pair.run(market_state=market_state, ticker=ticker),
+            fund_pair.run(market_state=market_state, ticker=ticker)
+        )
+
+        short_res, social_res, poly_res, fund_res = results
+
+        # 4. Confidence-weighted consensus
+        verified = [r for r in results if r.status == "VERIFIED"]
+        rejected = [r for r in results if r.status == "REJECTED"]
+
+        if verified:
+            total_conf = sum(r.confidence for r in verified)
+            weighted_signal = sum(r.confidence * r.trading_signal for r in verified) / total_conf
+        else:
+            weighted_signal = 0.0
+            total_conf = 0.0
+
+        if rejected:
+            global_verdict = "REJECTED (MACRO/RISK STRESS)"
+            global_signal = 0
+        elif weighted_signal > 0.7:
+            global_verdict = "STRONG BUY"
+            global_signal = 1
+        elif weighted_signal > 0.4:
+            global_verdict = "BUY"
+            global_signal = 1
+        elif weighted_signal < -0.7:
+            global_verdict = "STRONG SELL"
+            global_signal = -1
+        elif weighted_signal < -0.4:
+            global_verdict = "SELL"
+            global_signal = -1
+        else:
+            global_verdict = "NEUTRAL"
+            global_signal = 0
+
+        avg_confidence = sum(r.confidence for r in results) / len(results)
+
+        # 5. LLM conflict synthesis when factors disagree
+        consensus_rationale = ""
+        signals = [r.trading_signal for r in verified]
+        has_conflict = len(set(signals)) > 1 and len(verified) >= 2
+        if has_conflict:
+            try:
+                factor_dicts = [r.model_dump() for r in results]
+                synthesis = await llm_client.generate_swarm_synthesis(ticker, factor_dicts)
+                consensus_rationale = synthesis.get("consensus_rationale", "")
+                synth_verdict = synthesis.get("verdict", "").upper()
+                synth_confidence = float(synthesis.get("confidence", avg_confidence))
+                if synth_verdict in ("STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"):
+                    global_verdict = synth_verdict
+                    avg_confidence = synth_confidence
+            except Exception as e:
+                consensus_rationale = f"Synthesis unavailable: {e}"
+
+        # XP hook — award for running a valuation (only when logged in)
+        if _auth_user:
+            try:
+                up.award_xp(_auth_user.id, "valuation", note=ticker)
+            except Exception:
+                pass
+
+        consensus = SwarmConsensus(
+            ticker=ticker.upper(),
+            macro_state=market_state,
+            global_signal=global_signal,
+            global_verdict=global_verdict,
+            confidence=avg_confidence,
+            consensus_rationale=consensus_rationale,
+            factors={
+                "short_interest": short_res,
+                "social_sentiment": social_res,
+                "polymarket": poly_res,
+                "fundamentals": fund_res
+            }
+        )
+
+        # Knowledge hook — persist this analysis for future RAG queries
+        try:
+            knowledge_store.add_swarm_analysis(consensus)
+        except Exception as e:
+            print(f"[KnowledgeHook] add_swarm_analysis failed: {e}")
+
+        return consensus
+
+
 @app.get("/trace", response_model=SwarmConsensus)
 async def get_agent_trace(
     ticker: str = Query("GME", description="The stock ticker to analyze."),
@@ -306,173 +471,93 @@ async def get_agent_trace(
     """
     K2-Optimus Phase 6: Live Swarm execution across Short Interest, Social, and Macro dimensions.
     """
-    import asyncio
-    
-    # 1. Evaluate context using live Macro Health (VIX)
-    macro_data = await macro_connector.fetch_data()
-    live_credit_stress = macro_data["indicators"]["credit_stress_index"]
-    
-    # Allow override for testing purposes via the UI, otherwise use live
-    actual_stress = credit_stress if credit_stress is not None else live_credit_stress
-    
-    regime = MarketRegime.BULL_NORMAL if actual_stress <= 1.1 else MarketRegime.BEAR_STRESS
-    
-    market_state = MarketState(
-        credit_stress_index=actual_stress,
-        market_regime=regime
-    )
-    
-    # 2. Instantiate AgentPairs with knowledge_store for reflection-aware analysis
-    short_pair = ShortInterestAgentPair(connector=shorts_connector,
-                                        knowledge_store=knowledge_store, llm_client=llm_client)
-    social_pair = SocialSentimentAgentPair(connector=social_connector,
-                                           knowledge_store=knowledge_store, llm_client=llm_client)
-    poly_pair = PolymarketAgentPair(connector=poly_connector,
-                                     knowledge_store=knowledge_store, llm_client=llm_client)
-    fund_pair = FundamentalHealthAgentPair(connector=fund_connector,
-                                           knowledge_store=knowledge_store, llm_client=llm_client)
-    
-    # 3. Execute Swarm concurrently
-    results = await asyncio.gather(
-        short_pair.run(market_state=market_state, ticker=ticker),
-        social_pair.run(market_state=market_state, ticker=ticker),
-        poly_pair.run(market_state=market_state, ticker=ticker),
-        fund_pair.run(market_state=market_state, ticker=ticker)
-    )
-    
-    short_res, social_res, poly_res, fund_res = results
+    t = validate_ticker_query(ticker)
+    return await _execute_swarm_trace(t, credit_stress, _auth_user)
 
-    # 4. Confidence-weighted consensus
-    verified = [r for r in results if r.status == "VERIFIED"]
-    rejected = [r for r in results if r.status == "REJECTED"]
 
-    if verified:
-        total_conf = sum(r.confidence for r in verified)
-        weighted_signal = sum(r.confidence * r.trading_signal for r in verified) / total_conf
-    else:
-        weighted_signal = 0.0
-        total_conf = 0.0
-
-    if rejected:
-        global_verdict = "REJECTED (MACRO/RISK STRESS)"
-        global_signal = 0
-    elif weighted_signal > 0.7:
-        global_verdict = "STRONG BUY"
-        global_signal = 1
-    elif weighted_signal > 0.4:
-        global_verdict = "BUY"
-        global_signal = 1
-    elif weighted_signal < -0.7:
-        global_verdict = "STRONG SELL"
-        global_signal = -1
-    elif weighted_signal < -0.4:
-        global_verdict = "SELL"
-        global_signal = -1
-    else:
-        global_verdict = "NEUTRAL"
-        global_signal = 0
-
-    avg_confidence = sum(r.confidence for r in results) / len(results)
-
-    # 5. LLM conflict synthesis when factors disagree
-    consensus_rationale = ""
-    signals = [r.trading_signal for r in verified]
-    has_conflict = len(set(signals)) > 1 and len(verified) >= 2
-    if has_conflict:
-        try:
-            factor_dicts = [r.model_dump() for r in results]
-            synthesis = await llm_client.generate_swarm_synthesis(ticker, factor_dicts)
-            consensus_rationale = synthesis.get("consensus_rationale", "")
-            synth_verdict = synthesis.get("verdict", "").upper()
-            synth_confidence = float(synthesis.get("confidence", avg_confidence))
-            if synth_verdict in ("STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"):
-                global_verdict = synth_verdict
-                avg_confidence = synth_confidence
-        except Exception as e:
-            consensus_rationale = f"Synthesis unavailable: {e}"
-
-    # XP hook — award for running a valuation (only when logged in)
-    if _auth_user:
-        try:
-            up.award_xp(_auth_user.id, "valuation", note=ticker)
-        except Exception:
-            pass
-
-    consensus = SwarmConsensus(
-        ticker=ticker.upper(),
-        macro_state=market_state,
-        global_signal=global_signal,
-        global_verdict=global_verdict,
-        confidence=avg_confidence,
-        consensus_rationale=consensus_rationale,
-        factors={
-            "short_interest": short_res,
-            "social_sentiment": social_res,
-            "polymarket": poly_res,
-            "fundamentals": fund_res
-        }
-    )
-
-    # Knowledge hook — persist this analysis for future RAG queries
-    try:
-        knowledge_store.add_swarm_analysis(consensus)
-    except Exception as e:
-        print(f"[KnowledgeHook] add_swarm_analysis failed: {e}")
-
-    return consensus
+@app.post("/trace", response_model=SwarmConsensus)
+async def post_agent_trace(
+    body: TraceIngressRequest,
+    _auth_user=Depends(_get_optional_user),
+):
+    """Schema-first swarm trace (same behavior as GET /trace)."""
+    return await _execute_swarm_trace(body.ticker, body.credit_stress, _auth_user)
 
 
 # ── AI Debate Endpoint ────────────────────────────────────────────────────────
 
-@app.get("/debate", response_model=DebateResult)
-async def debate_ticker(ticker: str = Query("GME", description="Stock ticker to debate."),
-                        _auth_user=Depends(_get_optional_user)):
+async def _execute_debate(
+    ticker: str,
+    _auth_user,
+    swarm_context: str = "",
+    *,
+    award_debate_xp: bool = True,
+) -> DebateResult:
     """
-    Run a full 5-agent AI investment debate on a ticker.
-    All agents use RAG from ChromaDB for historical context.
+    Core debate pipeline. ``ticker`` must already be normalized.
+    Uses the internal tool registry for debate data + macro snapshot.
     """
-    from .connectors.debate_data import fetch_debate_data
     from .debate_agents import run_full_debate
 
-    # Fetch live market data for the ticker
-    debate_data = await fetch_debate_data(ticker)
+    try:
+        debate_data = await tool_registry.invoke("fetch_debate_data", {"ticker": ticker}, timeout_s=90.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail={"error": "timeout", "tool": "fetch_debate_data", "message": "Debate market data fetch timed out"},
+        ) from None
 
-    # Build macro state for agents
-    macro_data = await macro_connector.fetch_data()
+    try:
+        macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=45.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail={"error": "timeout", "tool": "macro_fetch", "message": "Macro data fetch timed out"},
+        ) from None
+
     ind = macro_data["indicators"]
-    macro_state = {
-        "credit_stress_index": ind["credit_stress_index"],
-        "vix_level":           ind["vix_level"],
-        "market_regime":       "BULL_NORMAL" if ind["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
-        "macro_narrative":     ind.get("macro_narrative") or "",
-        "usd_strength_label":  ind.get("usd_strength_label") or "unknown",
-        "usd_broad_index":     ind.get("usd_broad_index"),
-        "usd_index_change_5d_pct": ind.get("usd_index_change_5d_pct"),
-        "dxy_level":           ind.get("dxy_level"),
-        "dxy_change_5d_pct":   ind.get("dxy_change_5d_pct"),
-        "dxy_strength_label":  ind.get("dxy_strength_label") or "unknown",
-        "yield_curve_spread_10y_2y": ind.get("yield_curve_spread_10y_2y"),
-        "treasury_10y":        ind.get("treasury_10y"),
-        "treasury_2y":         ind.get("treasury_2y"),
-    }
+    macro_state = _macro_state_from_indicators(ind)
 
-    result = await run_full_debate(ticker, debate_data, macro_state, knowledge_store, llm_client)
+    result = await run_full_debate(
+        ticker, debate_data, macro_state, knowledge_store, llm_client,
+        swarm_context=swarm_context,
+    )
 
-    # Knowledge hook — save debate result
     try:
         ensure_capability("debate", "knowledge_write")
         knowledge_store.add_debate(result)
     except Exception as e:
         print(f"[KnowledgeHook] add_debate failed: {redact_secrets_in_text(str(e))}")
 
-    # XP hook
-    if _auth_user:
+    if _auth_user and award_debate_xp:
         try:
             up.award_xp(_auth_user.id, "debate", note=ticker)
         except Exception:
             pass
 
     return result
+
+
+@app.get("/debate", response_model=DebateResult)
+async def debate_ticker_get(
+    ticker: str = Query("GME", description="Stock ticker to debate."),
+    _auth_user=Depends(_get_optional_user),
+):
+    """
+    Run a full 5-agent AI investment debate on a ticker.
+    All agents use RAG from ChromaDB for historical context.
+    """
+    t = validate_ticker_query(ticker)
+    return await _execute_debate(t, _auth_user)
+
+
+@app.post("/debate", response_model=DebateResult)
+async def debate_ticker_post(
+    body: DebateIngressRequest,
+    _auth_user=Depends(_get_optional_user),
+):
+    """Schema-first debate (same behavior as GET /debate)."""
+    return await _execute_debate(body.ticker, _auth_user)
 
 
 # ── Sequential Analyze Endpoint (Swarm then Debate) ──────────────────────────
@@ -482,22 +567,14 @@ class AnalyzeResponse(BaseModel):
     debate: DebateResult
 
 
-@app.get("/analyze", response_model=AnalyzeResponse)
-async def analyze_ticker(
-    ticker: str = Query("GME", description="Stock ticker for deep analysis."),
-    credit_stress: float = Query(None, description="Optional override for credit stress index."),
-    _auth_user=Depends(_get_optional_user),
-):
-    """
-    Sequential pipeline: run Swarm first, then feed SwarmConsensus into the
-    Debate as grounding context so LLM agents reason over quantitative data.
-    """
-    import asyncio
+async def _execute_analyze(
+    ticker: str,
+    credit_stress: _Optional[float],
+    _auth_user,
+) -> AnalyzeResponse:
+    """Sequential Swarm + Debate; ``ticker`` must already be normalized."""
+    swarm_result = await _execute_swarm_trace(ticker, credit_stress, _auth_user)
 
-    # Phase 1 — Swarm
-    swarm_result = await get_agent_trace(ticker=ticker, credit_stress=credit_stress, _auth_user=_auth_user)
-
-    # Build swarm context string for debate agents
     factor_summary = "; ".join(
         f"{name}: signal={fr.trading_signal}, conf={fr.confidence:.2f}"
         for name, fr in swarm_result.factors.items()
@@ -509,39 +586,9 @@ async def analyze_ticker(
         f"{swarm_result.consensus_rationale}"
     )
 
-    # Phase 2 — Debate with swarm context injected
-    from .connectors.debate_data import fetch_debate_data
-    from .debate_agents import run_full_debate
-
-    debate_data = await fetch_debate_data(ticker)
-    macro_data = await macro_connector.fetch_data()
-    ind = macro_data["indicators"]
-    macro_state = {
-        "credit_stress_index": ind["credit_stress_index"],
-        "vix_level":           ind["vix_level"],
-        "market_regime":       "BULL_NORMAL" if ind["credit_stress_index"] <= 1.1 else "BEAR_STRESS",
-        "macro_narrative":     ind.get("macro_narrative") or "",
-        "usd_strength_label":  ind.get("usd_strength_label") or "unknown",
-        "usd_broad_index":     ind.get("usd_broad_index"),
-        "usd_index_change_5d_pct": ind.get("usd_index_change_5d_pct"),
-        "dxy_level":           ind.get("dxy_level"),
-        "dxy_change_5d_pct":   ind.get("dxy_change_5d_pct"),
-        "dxy_strength_label":  ind.get("dxy_strength_label") or "unknown",
-        "yield_curve_spread_10y_2y": ind.get("yield_curve_spread_10y_2y"),
-        "treasury_10y":        ind.get("treasury_10y"),
-        "treasury_2y":         ind.get("treasury_2y"),
-    }
-
-    debate_result = await run_full_debate(
-        ticker, debate_data, macro_state, knowledge_store, llm_client,
-        swarm_context=swarm_context,
+    debate_result = await _execute_debate(
+        ticker, _auth_user, swarm_context=swarm_context, award_debate_xp=False,
     )
-
-    try:
-        ensure_capability("debate", "knowledge_write")
-        knowledge_store.add_debate(debate_result)
-    except Exception:
-        pass
 
     if _auth_user:
         try:
@@ -552,25 +599,72 @@ async def analyze_ticker(
     return AnalyzeResponse(swarm=swarm_result, debate=debate_result)
 
 
+@app.get("/analyze", response_model=AnalyzeResponse)
+async def analyze_ticker_get(
+    ticker: str = Query("GME", description="Stock ticker for deep analysis."),
+    credit_stress: float = Query(None, description="Optional override for credit stress index."),
+    _auth_user=Depends(_get_optional_user),
+):
+    """
+    Sequential pipeline: run Swarm first, then feed SwarmConsensus into the
+    Debate as grounding context so LLM agents reason over quantitative data.
+    """
+    t = validate_ticker_query(ticker)
+    return await _execute_analyze(t, credit_stress, _auth_user)
+
+
+@app.post("/analyze", response_model=AnalyzeResponse)
+async def analyze_ticker_post(
+    body: AnalyzeIngressRequest,
+    _auth_user=Depends(_get_optional_user),
+):
+    """Schema-first deep analysis (same behavior as GET /analyze)."""
+    return await _execute_analyze(body.ticker, body.credit_stress, _auth_user)
+
+
 # ── Strategy Backtest Endpoint ────────────────────────────────────────────────
 
 class BacktestRequest(BaseModel):
-    strategy: str
+    """Either ``preset_id`` (built-in academic/factor strategies) or ``strategy`` (plain English)."""
+    strategy: str = ""
+    preset_id: _Optional[str] = None
     start_date: str = "2020-01-01"
     end_date: str = "2024-01-01"
+
+
+@app.get("/strategies/presets")
+async def list_strategy_presets():
+    """
+    Catalog of code-defined strategies (Fama-French style, momentum, low-vol, Magic Formula, etc.).
+    """
+    from .strategy_presets import list_preset_summaries
+    return {"presets": list_preset_summaries()}
 
 
 @app.post("/backtest", response_model=BacktestResult)
 async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(_get_optional_user)):
     """
-    Parse a plain-English investing strategy, run a backtest, and return results.
-    Uses the configured LLM backend to parse strategy and explain results.
+    Run a backtest from a **preset_id** (see GET /strategies/presets) or **plain-English strategy** text.
+    Uses the configured LLM backend to explain results.
     """
     from .strategy_parser import parse_strategy
     from .backtest_engine import run_backtest
+    from .strategy_presets import get_preset_rules
 
-    # Parse strategy text into rules
-    rules = await parse_strategy(req.strategy, req.start_date, req.end_date, llm_client, knowledge_store)
+    pid = (req.preset_id or "").strip()
+    strat = (req.strategy or "").strip()
+    if pid:
+        try:
+            rules = get_preset_rules(pid, req.start_date, req.end_date)
+        except KeyError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    elif strat:
+        rules = await parse_strategy(strat, req.start_date, req.end_date, llm_client, knowledge_store)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either preset_id (see /strategies/presets) or non-empty strategy text.",
+        )
 
     # Run backtest simulation
     result = await run_backtest(rules, llm_client, knowledge_store)
@@ -590,7 +684,7 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(_get_op
     # XP hook
     if _auth_user:
         try:
-            up.award_xp(_auth_user.id, "backtest", note=req.strategy[:40])
+            up.award_xp(_auth_user.id, "backtest", note=(req.preset_id or req.strategy)[:40])
         except Exception:
             pass
 
