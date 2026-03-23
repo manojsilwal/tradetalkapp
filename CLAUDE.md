@@ -60,6 +60,18 @@ If a command fails:
 
 ---
 
+## Backend smoke tests (Python API)
+
+From the repository root:
+
+```bash
+PYTHONPATH=. python -m unittest discover -s backend/tests -p 'test_*.py' -v
+```
+
+Requires `backend/requirements.txt` installed. Avoids slow routes (full debate/trace).
+
+---
+
 ## Project Conventions
 
 - Use **TypeScript strict mode** for all source files.
