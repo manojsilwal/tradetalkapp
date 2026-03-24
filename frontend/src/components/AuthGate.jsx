@@ -31,74 +31,84 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
     };
 
     return (
-        <div style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-            minHeight: 400, padding: '40px 20px', textAlign: 'center',
-        }}>
+        <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 16, border: '1px solid rgba(255,255,255,0.08)' }}>
+            {/* Blurred preview */}
             <div style={{
-                width: 64, height: 64, borderRadius: 16, marginBottom: 20,
-                background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.3)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 28,
+                filter: 'blur(6px)', opacity: 0.4, pointerEvents: 'none',
+                padding: 24, minHeight: 300,
             }}>
-                {featureIcon}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                    {[1,2,3].map(i => (
+                        <div key={i} style={{
+                            background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 20, height: 100,
+                        }} />
+                    ))}
+                </div>
+                <div style={{ marginTop: 20, height: 200, background: 'rgba(255,255,255,0.03)', borderRadius: 12 }} />
             </div>
 
-            <h2 style={{ fontSize: 20, fontWeight: 700, color: '#e2e8f0', margin: '0 0 8px' }}>
-                Sign in to use {featureName}
-            </h2>
-            <p style={{ fontSize: 14, color: '#64748b', maxWidth: 320, lineHeight: 1.6, margin: '0 0 28px' }}>
-                Your progress, XP, streaks and portfolio are saved per account.
-                All other analysis tools are free to use without signing in.
-            </p>
-
+            {/* Overlay CTA */}
             <div style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: 16, padding: 24, width: '100%', maxWidth: 320,
+                position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center',
+                background: 'linear-gradient(180deg, rgba(15,17,26,0.3), rgba(15,17,26,0.9))',
             }}>
-                {!isDevMode && (
-                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-                        <GoogleLogin
-                            onSuccess={handleGoogleSuccess}
-                            onError={() => setError('Google login failed. Please try again.')}
-                            theme="filled_black"
-                            size="large"
-                            text="signin_with"
-                            shape="rectangular"
-                        />
-                    </div>
-                )}
-
-                {isDevMode && (
-                    <button
-                        onClick={handleDevLogin}
-                        disabled={loading}
-                        style={{
-                            width: '100%', padding: '12px 20px', borderRadius: 10,
-                            border: 'none',
-                            background: loading ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #7c3aed, #a78bfa)',
-                            color: '#fff', fontSize: 14, fontWeight: 700,
-                            cursor: loading ? 'not-allowed' : 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                        }}
-                    >
-                        <LogIn size={16} />
-                        {loading ? 'Signing in...' : 'Sign in (Dev Mode)'}
-                    </button>
-                )}
-
-                {error && <p style={{ marginTop: 10, fontSize: 12, color: '#ef4444' }}>{error}</p>}
+                <div style={{ fontSize: 40, marginBottom: 16 }}>{featureIcon}</div>
+                <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8, color: '#f8fafc' }}>
+                    Unlock {featureName}
+                </h3>
+                <p style={{ color: '#94a3b8', fontSize: 14, marginBottom: 20, maxWidth: 300, textAlign: 'center' }}>
+                    Sign in to access {featureName.toLowerCase()}, earn XP, and track your progress.
+                </p>
 
                 <div style={{
-                    marginTop: 14, padding: '8px 12px', borderRadius: 8,
-                    background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.15)',
-                    display: 'flex', alignItems: 'center', gap: 8,
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 16, padding: 24, width: '100%', maxWidth: 320,
                 }}>
-                    <Zap size={12} color="#a78bfa" />
-                    <span style={{ fontSize: 11, color: '#94a3b8' }}>
-                        Earn XP, badges, and track your streak
-                    </span>
+                    {!isDevMode && (
+                        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+                            <GoogleLogin
+                                onSuccess={handleGoogleSuccess}
+                                onError={() => setError('Google login failed. Please try again.')}
+                                theme="filled_black"
+                                size="large"
+                                text="signin_with"
+                                shape="rectangular"
+                            />
+                        </div>
+                    )}
+
+                    {isDevMode && (
+                        <button
+                            onClick={handleDevLogin}
+                            disabled={loading}
+                            style={{
+                                width: '100%', padding: '12px 20px', borderRadius: 10,
+                                border: 'none',
+                                background: loading ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #7c3aed, #a78bfa)',
+                                color: '#fff', fontSize: 14, fontWeight: 700,
+                                cursor: loading ? 'not-allowed' : 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                            }}
+                        >
+                            <LogIn size={16} />
+                            {loading ? 'Signing in...' : 'Sign in (Dev Mode)'}
+                        </button>
+                    )}
+
+                    {error && <p style={{ marginTop: 10, fontSize: 12, color: '#ef4444' }}>{error}</p>}
+
+                    <div style={{
+                        marginTop: 14, padding: '8px 12px', borderRadius: 8,
+                        background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.15)',
+                        display: 'flex', alignItems: 'center', gap: 8,
+                    }}>
+                        <Zap size={12} color="#a78bfa" />
+                        <span style={{ fontSize: 11, color: '#94a3b8' }}>
+                            Earn XP, badges, and track your streak
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>

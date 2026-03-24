@@ -263,8 +263,24 @@ export default function DebateUI() {
   const [result, setResult]       = useState(null);
   const [error, setError]         = useState('');
   const [stats, setStats]         = useState(null);
+  const [copied, setCopied]       = useState(false);
   const verdictRef = useRef(null);
   const { recentDebates, addDebate } = useAnalysisHistory();
+
+  const handleCopyMarkdown = (data) => {
+    if (!data) return;
+    const md = `## AI Debate: ${ticker}\n\n` +
+      `**Verdict:** ${data.verdict} (confidence: ${Math.round(data.consensus_confidence * 100)}%)\n` +
+      `**Bull Score:** ${data.bull_score}/5 | **Bear Score:** ${data.bear_score}/5\n\n` +
+      `### Arguments\n` +
+      (data.arguments || []).map(a =>
+        `- **${a.agent_role.toUpperCase()}** (${a.stance}): ${a.headline}\n  ${a.key_points.map(p => `  - ${p}`).join('\n')}`
+      ).join('\n\n') +
+      (data.moderator_summary ? `\n\n### Moderator Summary\n${data.moderator_summary}` : '');
+    navigator.clipboard.writeText(md);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   // Load knowledge stats on mount
   useEffect(() => {
@@ -491,6 +507,32 @@ export default function DebateUI() {
               </p>
             </div>
           </blockquote>
+        </div>
+      )}
+
+      {/* ── Export Bar ──────────────────────────────────────────────────────── */}
+      {result && !loading && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <button onClick={() => handleCopyMarkdown(result)} style={{
+            padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+            border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)',
+            color: copied ? '#10b981' : '#94a3b8', cursor: 'pointer',
+          }}>
+            {copied ? '✓ Copied!' : '📋 Copy as Markdown'}
+          </button>
+          <button onClick={() => {
+            const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `debate-${ticker}-${Date.now()}.json`;
+            a.click(); URL.revokeObjectURL(url);
+          }} style={{
+            padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+            border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)',
+            color: '#94a3b8', cursor: 'pointer',
+          }}>
+            📥 Download JSON
+          </button>
         </div>
       )}
 

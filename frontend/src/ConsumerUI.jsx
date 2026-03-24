@@ -1,17 +1,64 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Users, Globe, Activity, Loader2, DollarSign, ShieldAlert, BarChart3, Target, CheckCircle2, XCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from 'recharts';
 import { API_BASE_URL, apiFetch } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 
 export default function ConsumerUI() {
+    const navigate = useNavigate();
     const [ticker, setTicker] = useState("GME");
     const [data, setData] = useState(null);
     const [metricsData, setMetricsData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [loadingStep, setLoadingStep] = useState('');
     const [error, setError] = useState(null);
+    const [copied, setCopied] = useState(false);
     const { recentAnalyses, addAnalysis, getLastAnalysis } = useAnalysisHistory();
+
+    const [compareTicker, setCompareTicker] = useState('');
+    const [compareData, setCompareData] = useState(null);
+    const [compareLoading, setCompareLoading] = useState(false);
+
+    const [watchlist, setWatchlist] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('k2_watchlist') || '[]'); } catch { return []; }
+    });
+
+    const toggleWatch = (t) => {
+        setWatchlist(prev => {
+            const next = prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t].slice(0, 20);
+            localStorage.setItem('k2_watchlist', JSON.stringify(next));
+            return next;
+        });
+    };
+
+    const runCompare = async () => {
+        if (!compareTicker) return;
+        setCompareLoading(true);
+        try {
+            const result = await apiFetch(`${API_BASE_URL}/trace?ticker=${compareTicker}`);
+            setCompareData(result);
+        } catch (err) {
+            setError(`Compare failed: ${err.message}`);
+        } finally {
+            setCompareLoading(false);
+        }
+    };
+
+    const handleCopyMarkdown = (data) => {
+        if (!data) return;
+        const md = `## Swarm Analysis: ${data.ticker}\n\n` +
+            `**Verdict:** ${data.global_verdict} (confidence: ${(data.confidence * 100).toFixed(0)}%)\n` +
+            `**Signal:** ${data.global_signal > 0 ? 'BUY' : data.global_signal < 0 ? 'SELL' : 'NEUTRAL'}\n\n` +
+            `### Factors\n` +
+            Object.entries(data.factors || {}).map(([k, v]) =>
+                `- **${k}**: signal ${v.trading_signal}, confidence ${(v.confidence * 100).toFixed(0)}%`
+            ).join('\n') +
+            (data.consensus_rationale ? `\n\n### Rationale\n${data.consensus_rationale}` : '');
+        navigator.clipboard.writeText(md);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
 
     const analyzeTicker = async () => {
         setLoading(true);
@@ -90,8 +137,72 @@ export default function ConsumerUI() {
                 </div>
             )}
 
+            {watchlist.length > 0 && !data && (
+                <div style={{ marginBottom: 20, padding: 16, background: 'rgba(255,255,255,0.03)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <h4 style={{ color: '#94a3b8', fontSize: 12, fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>WATCHLIST</h4>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {watchlist.map(t => (
+                            <button key={t} onClick={() => { setTicker(t); }} style={{
+                                padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                border: '1px solid rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.08)',
+                                color: '#f59e0b', cursor: 'pointer',
+                            }}>
+                                ⭐ {t}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {data && (
                 <>
+                    {/* ── Export Bar ── */}
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                        <button onClick={() => handleCopyMarkdown(data)} style={{
+                            padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                            border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)',
+                            color: copied ? '#10b981' : '#94a3b8', cursor: 'pointer',
+                        }}>
+                            {copied ? '✓ Copied!' : '📋 Copy as Markdown'}
+                        </button>
+                        <button onClick={() => {
+                            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url; a.download = `swarm-${data.ticker}-${Date.now()}.json`;
+                            a.click(); URL.revokeObjectURL(url);
+                        }} style={{
+                            padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                            border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)',
+                            color: '#94a3b8', cursor: 'pointer',
+                        }}>
+                            📥 Download JSON
+                        </button>
+                    </div>
+
+                    {/* ── Action Buttons ── */}
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                        {data && (
+                            <button onClick={() => navigate('/portfolio', { state: { addTicker: data.ticker } })} style={{
+                                padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                border: '1px solid rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.1)',
+                                color: '#10b981', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                            }}>
+                                📈 Add to Paper Portfolio
+                            </button>
+                        )}
+                        {data && (
+                            <button onClick={() => toggleWatch(data.ticker)} style={{
+                                padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                border: `1px solid ${watchlist.includes(data.ticker) ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.1)'}`,
+                                background: watchlist.includes(data.ticker) ? 'rgba(245,158,11,0.1)' : 'rgba(255,255,255,0.05)',
+                                color: watchlist.includes(data.ticker) ? '#f59e0b' : '#94a3b8', cursor: 'pointer',
+                            }}>
+                                {watchlist.includes(data.ticker) ? '⭐ Watching' : '☆ Watch Ticker'}
+                            </button>
+                        )}
+                    </div>
+
                     {/* ── Premium Verdict Banner ── */}
                     <div className="fade-in" style={{
                         marginBottom: '32px',
@@ -245,6 +356,69 @@ export default function ConsumerUI() {
                                 />
 
                             </div>
+                        </div>
+                    )}
+
+                    {/* ── Compare Section ── */}
+                    {data && !compareData && (
+                        <div style={{
+                            display: 'flex', alignItems: 'center', gap: 12, marginTop: 20,
+                            padding: 16, background: 'rgba(255,255,255,0.03)', borderRadius: 12,
+                            border: '1px solid rgba(255,255,255,0.06)',
+                        }}>
+                            <span style={{ color: '#94a3b8', fontSize: 13 }}>Compare with:</span>
+                            <input
+                                value={compareTicker}
+                                onChange={e => setCompareTicker(e.target.value.toUpperCase())}
+                                placeholder="e.g. MSFT"
+                                style={{
+                                    background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
+                                    color: 'white', padding: '8px 12px', borderRadius: 8, width: 80, fontSize: 13,
+                                }}
+                                onKeyDown={e => e.key === 'Enter' && compareTicker && runCompare()}
+                            />
+                            <button
+                                onClick={runCompare}
+                                disabled={!compareTicker || compareLoading}
+                                style={{
+                                    padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                    background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)',
+                                    color: 'white', border: 'none', cursor: 'pointer',
+                                    opacity: (!compareTicker || compareLoading) ? 0.5 : 1,
+                                }}
+                            >
+                                {compareLoading ? 'Comparing...' : '⚖️ Compare'}
+                            </button>
+                        </div>
+                    )}
+
+                    {data && compareData && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 20 }}>
+                            <div style={{ padding: 16, background: 'rgba(255,255,255,0.03)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)' }}>
+                                <h4 style={{ color: '#f8fafc', fontSize: 16, marginBottom: 8 }}>{data.ticker}</h4>
+                                <div style={{ color: data.global_signal > 0 ? '#10b981' : data.global_signal < 0 ? '#ef4444' : '#f59e0b', fontSize: 20, fontWeight: 700 }}>
+                                    {data.global_verdict}
+                                </div>
+                                <div style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>
+                                    Confidence: {(data.confidence * 100).toFixed(0)}%
+                                </div>
+                            </div>
+                            <div style={{ padding: 16, background: 'rgba(255,255,255,0.03)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)' }}>
+                                <h4 style={{ color: '#f8fafc', fontSize: 16, marginBottom: 8 }}>{compareData.ticker}</h4>
+                                <div style={{ color: compareData.global_signal > 0 ? '#10b981' : compareData.global_signal < 0 ? '#ef4444' : '#f59e0b', fontSize: 20, fontWeight: 700 }}>
+                                    {compareData.global_verdict}
+                                </div>
+                                <div style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>
+                                    Confidence: {(compareData.confidence * 100).toFixed(0)}%
+                                </div>
+                            </div>
+                            <button onClick={() => { setCompareData(null); setCompareTicker(''); }} style={{
+                                gridColumn: '1 / -1', padding: '8px', borderRadius: 8, fontSize: 13,
+                                border: '1px solid rgba(255,255,255,0.1)', background: 'transparent',
+                                color: '#94a3b8', cursor: 'pointer',
+                            }}>
+                                ✕ Clear comparison
+                            </button>
                         </div>
                     )}
                 </>

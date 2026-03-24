@@ -717,6 +717,36 @@ export default function BacktestUI() {
                   </div>
                 )}
               </div>
+
+              {/* ── Strategy Lab Feedback Loop ── */}
+              {result && (
+                <div style={{
+                  display: 'flex', gap: 12, marginTop: 20, padding: 16,
+                  background: 'rgba(255,255,255,0.03)', borderRadius: 12,
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}>
+                  <button onClick={() => {
+                    setStrategyText(prev => prev || result?.strategy?.name || '');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }} style={{
+                    padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)',
+                    color: '#a78bfa', cursor: 'pointer',
+                  }}>
+                    🔄 Try a Variation
+                  </button>
+                  <button onClick={() => {
+                    setPresetId('');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }} style={{
+                    padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    border: '1px solid rgba(59,130,246,0.3)', background: 'rgba(59,130,246,0.1)',
+                    color: '#60a5fa', cursor: 'pointer',
+                  }}>
+                    📊 Compare with Preset
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </>
