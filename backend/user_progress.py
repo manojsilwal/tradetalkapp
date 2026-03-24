@@ -24,6 +24,7 @@ XP_TABLE = {
     "valuation":        10,
     "debate":           15,
     "backtest":         20,
+    "gold_advisor":     12,
     "daily_challenge":  30,
     "lesson_complete":  35,
     "module_complete":  25,

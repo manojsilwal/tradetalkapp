@@ -228,3 +228,25 @@ class BacktestResult(BaseModel):
     retrieval_telemetry: RetrievalTelemetry = Field(default_factory=RetrievalTelemetry)
     knowledge_context: str
 
+
+# ── Gold Advisor (investor snapshot, not real-time trading) ───────────────────
+
+class GoldAdvisorBriefing(BaseModel):
+    """LLM synthesis over deterministic context."""
+
+    directional_bias: str = Field(
+        description="constructive | neutral | caution — allocation tone, not a trade signal",
+    )
+    summary: str
+    key_drivers: List[str] = Field(default_factory=list)
+    levels_to_watch: str = ""
+    risk_factors: List[str] = Field(default_factory=list)
+    confidence_0_1: float = Field(ge=0.0, le=1.0, default=0.5)
+
+
+class GoldAdvisorResponse(BaseModel):
+    """Full API payload: facts + narrative."""
+
+    context: Dict[str, Any]
+    briefing: Dict[str, Any]
+

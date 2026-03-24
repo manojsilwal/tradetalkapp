@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from .schemas import (
     MarketState, FactorResult, MarketRegime, SwarmConsensus,
     MacroDataResponse, InvestorMetricsResponse, MacroAlert, AlertResponse,
-    DebateResult, StrategyRules, BacktestResult,
+    DebateResult, StrategyRules, BacktestResult, GoldAdvisorResponse,
 )
 from .agents import ShortInterestAgentPair, SocialSentimentAgentPair, MacroHealthAgentPair, PolymarketAgentPair, FundamentalHealthAgentPair
 from .connectors import ShortsConnector, SocialSentimentConnector, MacroHealthConnector, PolymarketConnector, FundamentalsConnector, InvestorMetricsConnector, NewsScannerConnector
@@ -302,6 +302,24 @@ async def notification_trace():
         "total_scanned": 0, "passed_filter": 0, "rejected": 0, "alerts_produced": 0,
         "headlines": [], "stored_alerts": db.get_all_alerts(limit=10), "alerts": [],
     }
+
+@app.get("/advisor/gold", response_model=GoldAdvisorResponse)
+async def gold_advisor_snapshot(_auth_user=Depends(_get_optional_user)):
+    """
+    Investor-first gold allocator snapshot: FRED real yields, VIX, DXY, gold futures,
+    deterministic daily technicals, optional headline sentiment (NEWSAPI_KEY), LLM briefing.
+    Not real-time; refresh occasionally for allocation context only.
+    """
+    from .gold_advisor_service import run_gold_advisor
+
+    result = await run_gold_advisor(macro_connector, llm_client)
+    if _auth_user:
+        try:
+            up.award_xp(_auth_user.id, "gold_advisor", note="gold_snapshot")
+        except Exception:
+            pass
+    return GoldAdvisorResponse(context=result["context"], briefing=result["briefing"])
+
 
 @app.get("/macro", response_model=MacroDataResponse)
 async def get_macro_data():

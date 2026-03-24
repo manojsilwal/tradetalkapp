@@ -56,6 +56,7 @@ MODEL_TIER = {
     "moderator":          "heavy",
     "strategy_parser":    "heavy",
     "backtest_explainer": "heavy",
+    "gold_advisor":       "heavy",
     "swarm_synthesizer":  "light",
     "swarm_analyst":      "light",
     "swarm_reflection_writer": "light",
@@ -154,6 +155,21 @@ AGENT_SYSTEM_PROMPTS = {
         "{\"scenes\":[{\"scene\":1,\"visual_prompt\":\"...\",\"caption\":\"...\",\"duration\":8}]}. "
         "No markdown fences."
     ),
+    "gold_advisor": (
+        "You are a precious-metals allocator advisor for LONG-TERM investors (not day traders). "
+        "You receive a JSON snapshot: macro (VIX, 10Y TIPS real yield, nominal 10Y, DXY, gold futures), "
+        "pre-computed daily technicals (RSI, MACD, Bollinger, ATR, pivots — do NOT recalculate), "
+        "headline sentiment score, and calendar hints. "
+        "Explain how real yields and the dollar typically relate to gold; be nuanced — correlation breaks. "
+        "No buy/sell orders; frame as education and risk awareness. "
+        "ONLY discuss investment and macro topics. "
+        "Respond ONLY with valid JSON: {\"directional_bias\":\"constructive|neutral|caution\", "
+        "\"summary\":\"3-5 sentences plain English\", "
+        "\"key_drivers\":[\"bullet1\",\"bullet2\",\"bullet3\"], "
+        "\"levels_to_watch\":\"reference pivot/ATR/MA levels from the data when useful\", "
+        "\"risk_factors\":[\"bullet1\",\"bullet2\"], "
+        "\"confidence_0_1\":0.0-1.0}"
+    ),
 }
 
 # ── Rule-based fallback templates ─────────────────────────────────────────────
@@ -168,6 +184,24 @@ FALLBACK_TEMPLATES = {
     "swarm_analyst": {"signal": 0, "rationale": "Data falls in ambiguous range; defaulting to neutral.", "confidence": 0.5},
     "swarm_reflection_writer": {"lesson": "Insufficient data to derive a clear lesson."},
     "video_scene_director": {"scenes": []},
+    "gold_advisor": {
+        "directional_bias": "neutral",
+        "summary": (
+            "Gold is often sensitive to real interest rates and the dollar, but relationships vary. "
+            "Review the attached TIPS yield, DXY, and VIX alongside technical structure before sizing exposure."
+        ),
+        "key_drivers": [
+            "Real yields (TIPS) and USD strength are classic headwinds or tailwinds for bullion.",
+            "Risk sentiment (VIX spikes) can drive short-term safe-haven demand.",
+            "Position sizing should reflect volatility (ATR) and your time horizon.",
+        ],
+        "levels_to_watch": "Use classic pivots and recent MA levels from the technicals block as reference zones only.",
+        "risk_factors": [
+            "Policy surprises can move rates and gold faster than fundamentals suggest.",
+            "Futures-based snapshots may not match physical gold or ETF execution prices.",
+        ],
+        "confidence_0_1": 0.45,
+    },
 }
 
 
@@ -375,6 +409,18 @@ class LLMClient:
                 f"returning {ret:+.1f}% total vs SPY's {spy:+.1f}% CAGR. "
                 f"AI explanation unavailable — LLM backend unreachable."
             )
+
+    async def generate_gold_briefing(self, context: dict) -> dict:
+        """Investor gold snapshot → structured briefing (deterministic context, LLM synthesis)."""
+        ctx = json.dumps(context, indent=2, default=str)
+        if len(ctx) > 14_000:
+            ctx = ctx[:14_000] + "\n…(truncated)"
+        prompt = (
+            "Here is today's deterministic Gold Advisor context (JSON). "
+            "Synthesize an investor briefing. Do not recalculate indicators.\n\n"
+            f"{ctx}"
+        )
+        return await self.generate("gold_advisor", prompt)
 
     async def generate_swarm_synthesis(self, ticker: str, factor_results: list[dict]) -> dict:
         """Resolve disagreements among swarm factor agents."""

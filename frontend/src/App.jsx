@@ -1,8 +1,9 @@
 import { useState, useCallback } from 'react'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins } from 'lucide-react'
 import ObserverUI from './ObserverUI'
 import ConsumerUI from './ConsumerUI'
 import MacroUI from './MacroUI'
+import GoldAdvisorUI from './GoldAdvisorUI'
 import DebateUI from './DebateUI'
 import BacktestUI from './BacktestUI'
 import NotificationBell from './NotificationBell'
@@ -130,6 +131,14 @@ function App() {
                     </button>
 
                     <button
+                        className={`nav-btn ${activeTab === 'gold' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('gold')}
+                    >
+                        <Coins size={20} />
+                        <span>Gold Advisor</span>
+                    </button>
+
+                    <button
                         className={`nav-btn ${activeTab === 'debate' ? 'active' : ''}`}
                         onClick={() => setActiveTab('debate')}
                     >
@@ -215,6 +224,7 @@ function App() {
                 <div className="content-wrapper fade-in">
                     {activeTab === 'consumer'  && <ConsumerUI />}
                     {activeTab === 'macro'     && <MacroUI />}
+                    {activeTab === 'gold'      && <GoldAdvisorUI />}
                     {activeTab === 'debate'    && <DebateUI />}
                     {activeTab === 'backtest'  && <BacktestUI />}
                     {activeTab === 'observer'  && <ObserverUI />}
