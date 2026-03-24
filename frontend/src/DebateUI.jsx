@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL, apiFetch } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
+import { EducationTooltip } from './components/EducationLink.jsx';
 
 // Agent configuration
 const AGENTS = [
@@ -124,6 +125,7 @@ function AgentCard({ argument, agent }) {
       {/* Headline */}
       <p style={{ color: '#f1f5f9', fontSize: '0.95rem', fontWeight: 600, lineHeight: 1.4, marginBottom: 12 }}>
         {argument.headline}
+        <EducationTooltip term={argument.headline || ''} />
       </p>
 
       <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', marginBottom: 12 }} />
@@ -502,9 +504,14 @@ export default function DebateUI() {
           }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
               <Gavel size={16} color={verdictStyle.color} style={{ flexShrink: 0, marginTop: 2 }} />
-              <p style={{ color: '#cbd5e1', fontSize: '0.87rem', lineHeight: 1.65, margin: 0 }}>
-                {result.moderator_summary}
-              </p>
+              <div>
+                <p style={{ color: '#cbd5e1', fontSize: '0.87rem', lineHeight: 1.65, margin: 0 }}>
+                  {result.moderator_summary}
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+                  <EducationTooltip term={result.moderator_summary || ''} />
+                </div>
+              </div>
             </div>
           </blockquote>
         </div>

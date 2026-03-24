@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { API_BASE_URL } from './api';
+import { EducationTooltip } from './components/EducationLink.jsx';
 
 const EXAMPLE_STRATEGIES = [
   "Buy Mag7 stocks (AAPL, MSFT, GOOGL, META, AMZN, NVDA, TSLA) when PE ratio is below 25, sell when PE ratio exceeds 35",
@@ -711,6 +712,11 @@ export default function BacktestUI() {
                 <p style={{ color: '#94a3b8', fontSize: '0.86rem', lineHeight: 1.7, margin: '0 0 12px' }}>
                   {result.ai_explanation}
                 </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+                    <EducationTooltip term="sharpe ratio" />
+                    <EducationTooltip term="cagr" />
+                    <EducationTooltip term="max drawdown" />
+                </div>
                 {result.knowledge_context && result.knowledge_context !== 'No relevant historical context found.' && (
                   <div style={{ color: '#334155', fontSize: '0.72rem', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: 10 }}>
                     Informed by prior backtests in the knowledge base
