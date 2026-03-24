@@ -6,6 +6,7 @@ import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
 import AuthGate from './components/AuthGate'
 import { useAuth } from './AuthContext'
+import OnboardingOverlay from './components/OnboardingOverlay.jsx'
 
 const ConsumerUI = React.lazy(() => import('./ConsumerUI'))
 const MacroUI = React.lazy(() => import('./MacroUI'))
@@ -65,6 +66,8 @@ function App() {
 
     return (
         <div className="app-container">
+            <OnboardingOverlay />
+
             {/* XP flash toast */}
             {xpFlash && (
                 <div style={{

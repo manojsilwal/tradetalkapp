@@ -5,6 +5,7 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 import './index.css'
 import App from './App.jsx'
 import { AuthProvider } from './AuthContext.jsx'
+import { AnalysisProvider } from './AnalysisContext.jsx'
 import { GOOGLE_CLIENT_ID } from './api.js'
 
 createRoot(document.getElementById('root')).render(
@@ -12,7 +13,9 @@ createRoot(document.getElementById('root')).render(
         <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID || 'dev-placeholder'}>
             <AuthProvider>
                 <BrowserRouter>
-                    <App />
+                    <AnalysisProvider>
+                        <App />
+                    </AnalysisProvider>
                 </BrowserRouter>
             </AuthProvider>
         </GoogleOAuthProvider>

@@ -2,28 +2,36 @@ import React, { useState } from 'react';
 import { TrendingUp, TrendingDown, Users, Globe, Activity, Loader2, DollarSign, ShieldAlert, BarChart3, Target, CheckCircle2, XCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from 'recharts';
 import { API_BASE_URL, apiFetch } from './api';
+import { useAnalysisHistory } from './AnalysisContext';
 
 export default function ConsumerUI() {
     const [ticker, setTicker] = useState("GME");
     const [data, setData] = useState(null);
     const [metricsData, setMetricsData] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [loadingStep, setLoadingStep] = useState('');
     const [error, setError] = useState(null);
+    const { recentAnalyses, addAnalysis, getLastAnalysis } = useAnalysisHistory();
 
     const analyzeTicker = async () => {
         setLoading(true);
         setError(null);
+        setLoadingStep('Fetching market data...');
         try {
             const [traceData, metricsJson] = await Promise.all([
                 apiFetch(`${API_BASE_URL}/trace?ticker=${ticker}`),
                 apiFetch(`${API_BASE_URL}/metrics/${ticker}`),
             ]);
 
+            setLoadingStep('Running multi-factor analysis...');
             setData(traceData);
+            setLoadingStep('Computing consensus verdict...');
             setMetricsData(metricsJson.metrics);
+            addAnalysis(ticker.toUpperCase(), { trace: traceData, metrics: metricsJson.metrics });
         } catch (err) {
             setError(err.message);
         } finally {
+            setLoadingStep('');
             setLoading(false);
         }
     };
@@ -68,6 +76,13 @@ export default function ConsumerUI() {
                     </button>
                 </div>
             </div>
+
+            {loading && (
+                <div style={{textAlign: 'center', padding: 40}}>
+                    <Loader2 size={32} style={{animation: 'spin 1s linear infinite', color: '#3b82f6'}} />
+                    <p style={{color: '#94a3b8', marginTop: 16, fontSize: 14}}>{loadingStep}</p>
+                </div>
+            )}
 
             {error && (
                 <div className="error-banner glass-panel" style={{ borderColor: 'var(--accent-red)', marginBottom: '20px' }}>
@@ -233,6 +248,39 @@ export default function ConsumerUI() {
                         </div>
                     )}
                 </>
+            )}
+
+            {/* Recent Analyses */}
+            {!loading && !data && recentAnalyses.length > 0 && (
+                <div style={{ marginTop: 32 }}>
+                    <h3 style={{ color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>
+                        Recent Analyses
+                    </h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {recentAnalyses.map((a) => (
+                            <button
+                                key={a.ticker}
+                                onClick={() => {
+                                    setTicker(a.ticker);
+                                    setData(a.result.trace);
+                                    setMetricsData(a.result.metrics);
+                                }}
+                                style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                                    borderRadius: 10, padding: '12px 16px', cursor: 'pointer',
+                                    color: '#e2e8f0', fontSize: '0.9rem', fontWeight: 600,
+                                    transition: 'border-color 0.2s',
+                                }}
+                            >
+                                <span>{a.ticker}</span>
+                                <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>
+                                    {new Date(a.timestamp).toLocaleTimeString()}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
             )}
         </div>
     );

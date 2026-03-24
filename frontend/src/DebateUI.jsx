@@ -4,6 +4,7 @@ import {
   Download, ChevronDown, ChevronUp, Loader2, AlertTriangle,
 } from 'lucide-react';
 import { API_BASE_URL, apiFetch } from './api';
+import { useAnalysisHistory } from './AnalysisContext';
 
 // Agent configuration
 const AGENTS = [
@@ -258,10 +259,12 @@ export default function DebateUI() {
   const [ticker, setTicker]       = useState('GME');
   const [inputTicker, setInput]   = useState('GME');
   const [loading, setLoading]     = useState(false);
+  const [loadingStep, setLoadingStep] = useState('');
   const [result, setResult]       = useState(null);
   const [error, setError]         = useState('');
   const [stats, setStats]         = useState(null);
   const verdictRef = useRef(null);
+  const { recentDebates, addDebate } = useAnalysisHistory();
 
   // Load knowledge stats on mount
   useEffect(() => {
@@ -277,16 +280,19 @@ export default function DebateUI() {
     setLoading(true);
     setResult(null);
     setError('');
+    setLoadingStep('Gathering historical context...');
     try {
+      setLoadingStep('Agents are debating...');
       const data = await apiFetch(`${API_BASE_URL}/debate?ticker=${t}`);
+      setLoadingStep('Computing panel verdict...');
       setResult(data);
-      // Refresh stats
+      addDebate(t, data);
       apiFetch(`${API_BASE_URL}/knowledge/stats`).then(setStats).catch(() => {});
-      // Scroll to verdict
       setTimeout(() => verdictRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
     } catch (e) {
       setError(e.message || 'Failed to run debate. Check server.');
     } finally {
+      setLoadingStep('');
       setLoading(false);
     }
   };
@@ -395,6 +401,14 @@ export default function DebateUI() {
         </div>
       )}
 
+      {/* Loading step indicator */}
+      {loading && loadingStep && (
+        <div style={{ textAlign: 'center', padding: '24px 0 8px' }}>
+          <Loader2 size={28} style={{ animation: 'spin 1s linear infinite', color: '#6366f1' }} />
+          <p style={{ color: '#94a3b8', marginTop: 12, fontSize: '0.85rem' }}>{loadingStep}</p>
+        </div>
+      )}
+
       {/* ── Debate Arena ─────────────────────────────────────────────────────── */}
       {(loading || result) && (
         <div style={{
@@ -483,6 +497,45 @@ export default function DebateUI() {
       {/* ── Knowledge Strip ──────────────────────────────────────────────────── */}
       {(result || stats) && !loading && (
         <KnowledgeStrip stats={stats} ticker={ticker} onExport={exportData} />
+      )}
+
+      {/* Recent Debates */}
+      {!loading && !result && recentDebates.length > 0 && (
+        <div style={{ marginTop: 28 }}>
+          <h3 style={{ color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>
+            Recent Debates
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {recentDebates.map((d) => {
+              const vs = VERDICT_STYLES[d.result?.verdict] || VERDICT_STYLES.NEUTRAL;
+              return (
+                <button
+                  key={d.ticker}
+                  onClick={() => {
+                    setTicker(d.ticker);
+                    setInput(d.ticker);
+                    setResult(d.result);
+                  }}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 10, padding: '12px 16px', cursor: 'pointer',
+                    color: '#e2e8f0', fontSize: '0.9rem', fontWeight: 600,
+                    transition: 'border-color 0.2s',
+                  }}
+                >
+                  <span>{d.ticker}</span>
+                  <span style={{ color: vs.color, fontSize: '0.78rem', fontWeight: 700 }}>
+                    {d.result?.verdict || '—'}
+                  </span>
+                  <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>
+                    {new Date(d.timestamp).toLocaleTimeString()}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );
