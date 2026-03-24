@@ -10,15 +10,26 @@ When unset (local dev), routes stay open — set the env var in Render Dashboard
 from __future__ import annotations
 
 import os
+import logging
 from typing import Annotated
 
 from fastapi import Header, HTTPException, status
 
 _ENV_KEY = "PIPELINE_CRON_SECRET"
+_logger = logging.getLogger(__name__)
 
 
 def cron_secret_configured() -> str:
     return os.environ.get(_ENV_KEY, "").strip()
+
+
+# Warn at import time if cron secret is unprotected in production
+_RENDER = os.environ.get("RENDER", "").strip().lower() in ("true", "1", "yes")
+if not cron_secret_configured() and _RENDER:
+    _logger.warning(
+        "[CronAuth] PIPELINE_CRON_SECRET is not set on Render! "
+        "Cron endpoints (/knowledge/pipeline-run, /knowledge/sp500-ingest) are open to anyone."
+    )
 
 
 async def require_cron_secret(
