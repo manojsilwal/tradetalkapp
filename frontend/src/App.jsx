@@ -1,21 +1,23 @@
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback, Suspense } from 'react'
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins } from 'lucide-react'
-import ObserverUI from './ObserverUI'
-import ConsumerUI from './ConsumerUI'
-import MacroUI from './MacroUI'
-import GoldAdvisorUI from './GoldAdvisorUI'
-import DebateUI from './DebateUI'
-import BacktestUI from './BacktestUI'
 import NotificationBell from './NotificationBell'
-import DailyChallengeUI from './DailyChallengeUI'
-import LearningPathUI from './LearningPathUI'
-import VideoAcademyUI from './VideoAcademyUI'
-import PaperPortfolioUI from './PaperPortfolioUI'
-import SystemMapUI from './SystemMapUI'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
 import AuthGate from './components/AuthGate'
 import { useAuth } from './AuthContext'
+
+const ConsumerUI = React.lazy(() => import('./ConsumerUI'))
+const MacroUI = React.lazy(() => import('./MacroUI'))
+const GoldAdvisorUI = React.lazy(() => import('./GoldAdvisorUI'))
+const DebateUI = React.lazy(() => import('./DebateUI'))
+const BacktestUI = React.lazy(() => import('./BacktestUI'))
+const ObserverUI = React.lazy(() => import('./ObserverUI'))
+const SystemMapUI = React.lazy(() => import('./SystemMapUI'))
+const DailyChallengeUI = React.lazy(() => import('./DailyChallengeUI'))
+const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
+const LearningPathUI = React.lazy(() => import('./LearningPathUI'))
+const VideoAcademyUI = React.lazy(() => import('./VideoAcademyUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when user is not signed in.
@@ -26,11 +28,28 @@ function GamificationTab({ user, featureName, featureIcon, children }) {
     return children
 }
 
+const ROUTE_TO_KEY = {
+    '/': 'consumer',
+    '/macro': 'macro',
+    '/gold': 'gold',
+    '/debate': 'debate',
+    '/backtest': 'backtest',
+    '/observer': 'observer',
+    '/systemmap': 'systemmap',
+    '/challenge': 'challenge',
+    '/portfolio': 'portfolio',
+    '/learning': 'learning',
+    '/academy': 'academy',
+}
+
 function App() {
     const { user, login, logout } = useAuth()
-    const [activeTab, setActiveTab] = useState('consumer')
+    const navigate = useNavigate()
+    const location = useLocation()
     const [newBadges, setNewBadges] = useState([])
     const [xpFlash, setXpFlash]    = useState(null)
+
+    const activeTab = ROUTE_TO_KEY[location.pathname] || 'consumer'
 
     const handleXpGained = useCallback((progress) => {
         if (!progress) return
@@ -91,7 +110,7 @@ function App() {
                             </button>
                         ) : (
                             <button
-                                onClick={() => setActiveTab('challenge')}
+                                onClick={() => navigate('/challenge')}
                                 title="Sign in to track XP, streaks & portfolio"
                                 style={{
                                     width: 30, height: 30, borderRadius: '50%', border: '1px solid rgba(167,139,250,0.4)',
@@ -116,7 +135,7 @@ function App() {
                     </div>
                     <button
                         className={`nav-btn ${activeTab === 'consumer' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('consumer')}
+                        onClick={() => navigate('/')}
                     >
                         <LayoutDashboard size={20} />
                         <span>Valuation Dashboard</span>
@@ -124,7 +143,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'macro' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('macro')}
+                        onClick={() => navigate('/macro')}
                     >
                         <Globe size={20} />
                         <span>Global Macro</span>
@@ -132,7 +151,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'gold' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('gold')}
+                        onClick={() => navigate('/gold')}
                     >
                         <Coins size={20} />
                         <span>Gold Advisor</span>
@@ -140,7 +159,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'debate' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('debate')}
+                        onClick={() => navigate('/debate')}
                     >
                         <Swords size={20} />
                         <span>AI Debate</span>
@@ -148,7 +167,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'backtest' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('backtest')}
+                        onClick={() => navigate('/backtest')}
                     >
                         <FlaskConical size={20} />
                         <span>Strategy Lab</span>
@@ -161,7 +180,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'challenge' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('challenge')}
+                        onClick={() => navigate('/challenge')}
                     >
                         <Zap size={20} />
                         <span>Daily Challenge</span>
@@ -169,7 +188,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'portfolio' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('portfolio')}
+                        onClick={() => navigate('/portfolio')}
                     >
                         <Target size={20} />
                         <span>Paper Portfolio</span>
@@ -182,7 +201,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'learning' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('learning')}
+                        onClick={() => navigate('/learning')}
                     >
                         <BookOpen size={20} />
                         <span>Learning Path</span>
@@ -190,7 +209,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'academy' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('academy')}
+                        onClick={() => navigate('/academy')}
                     >
                         <Film size={20} />
                         <span>Video Academy</span>
@@ -203,7 +222,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'observer' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('observer')}
+                        onClick={() => navigate('/observer')}
                     >
                         <Terminal size={20} />
                         <span>Developer Trace</span>
@@ -211,7 +230,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'systemmap' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('systemmap')}
+                        onClick={() => navigate('/systemmap')}
                     >
                         <Network size={20} />
                         <span>System Map</span>
@@ -222,33 +241,37 @@ function App() {
             {/* Main Content Area */}
             <main className="main-content">
                 <div className="content-wrapper fade-in">
-                    {activeTab === 'consumer'  && <ConsumerUI />}
-                    {activeTab === 'macro'     && <MacroUI />}
-                    {activeTab === 'gold'      && <GoldAdvisorUI />}
-                    {activeTab === 'debate'    && <DebateUI />}
-                    {activeTab === 'backtest'  && <BacktestUI />}
-                    {activeTab === 'observer'  && <ObserverUI />}
-                    {activeTab === 'systemmap' && <SystemMapUI />}
-                    {activeTab === 'challenge' && (
-                        <GamificationTab user={user} featureName="Daily Challenges" featureIcon="⚡">
-                            <DailyChallengeUI onXpGained={handleXpGained} />
-                        </GamificationTab>
-                    )}
-                    {activeTab === 'portfolio' && (
-                        <GamificationTab user={user} featureName="Paper Portfolio" featureIcon="📈">
-                            <PaperPortfolioUI onXpGained={handleXpGained} />
-                        </GamificationTab>
-                    )}
-                    {activeTab === 'learning' && (
-                        <GamificationTab user={user} featureName="Learning Path" featureIcon="📚">
-                            <LearningPathUI onXpGained={handleXpGained} />
-                        </GamificationTab>
-                    )}
-                    {activeTab === 'academy' && (
-                        <GamificationTab user={user} featureName="Video Academy" featureIcon="🎬">
-                            <VideoAcademyUI onXpGained={handleXpGained} />
-                        </GamificationTab>
-                    )}
+                    <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>Loading...</div>}>
+                        <Routes>
+                            <Route path="/" element={<ConsumerUI />} />
+                            <Route path="/macro" element={<MacroUI />} />
+                            <Route path="/gold" element={<GoldAdvisorUI />} />
+                            <Route path="/debate" element={<DebateUI />} />
+                            <Route path="/backtest" element={<BacktestUI />} />
+                            <Route path="/observer" element={<ObserverUI />} />
+                            <Route path="/systemmap" element={<SystemMapUI />} />
+                            <Route path="/challenge" element={
+                                <GamificationTab user={user} featureName="Daily Challenges" featureIcon="⚡">
+                                    <DailyChallengeUI onXpGained={handleXpGained} />
+                                </GamificationTab>
+                            } />
+                            <Route path="/portfolio" element={
+                                <GamificationTab user={user} featureName="Paper Portfolio" featureIcon="📈">
+                                    <PaperPortfolioUI onXpGained={handleXpGained} />
+                                </GamificationTab>
+                            } />
+                            <Route path="/learning" element={
+                                <GamificationTab user={user} featureName="Learning Path" featureIcon="📚">
+                                    <LearningPathUI onXpGained={handleXpGained} />
+                                </GamificationTab>
+                            } />
+                            <Route path="/academy" element={
+                                <GamificationTab user={user} featureName="Video Academy" featureIcon="🎬">
+                                    <VideoAcademyUI onXpGained={handleXpGained} />
+                                </GamificationTab>
+                            } />
+                        </Routes>
+                    </Suspense>
                 </div>
             </main>
         </div>
