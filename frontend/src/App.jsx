@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -48,6 +48,7 @@ function App() {
     const location = useLocation()
     const [newBadges, setNewBadges] = useState([])
     const [xpFlash, setXpFlash]    = useState(null)
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
 
     const activeTab = ROUTE_TO_KEY[location.pathname] || 'consumer'
 
@@ -84,7 +85,7 @@ function App() {
             <BadgePopup badges={newBadges} />
 
             {/* Premium Glassmorphic Sidebar */}
-            <aside className="sidebar glass-panel">
+            <aside className={`sidebar glass-panel ${sidebarCollapsed ? 'collapsed' : ''}`}>
                 <div className="brand" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <Activity className="brand-icon" size={28} />
@@ -92,6 +93,9 @@ function App() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <NotificationBell />
+                        <button className="mobile-menu-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label="Toggle navigation menu">
+                            <Menu size={20} />
+                        </button>
                         {user ? (
                             <button
                                 onClick={logout}
@@ -128,14 +132,15 @@ function App() {
                 {/* XP bar */}
                 <XPBar />
 
-                <nav className="nav-menu">
+                <nav className="nav-menu" aria-label="Main navigation">
                     {/* --- Core tools --- */}
                     <div style={{ fontSize: 9, color: '#475569', fontWeight: 700, letterSpacing: 1.5, padding: '8px 12px 4px', marginTop: 4 }}>
                         ANALYSIS
                     </div>
                     <button
                         className={`nav-btn ${activeTab === 'consumer' ? 'active' : ''}`}
-                        onClick={() => navigate('/')}
+                        onClick={() => { navigate('/'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/' ? 'page' : undefined}
                     >
                         <LayoutDashboard size={20} />
                         <span>Valuation Dashboard</span>
@@ -143,7 +148,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'macro' ? 'active' : ''}`}
-                        onClick={() => navigate('/macro')}
+                        onClick={() => { navigate('/macro'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/macro' ? 'page' : undefined}
                     >
                         <Globe size={20} />
                         <span>Global Macro</span>
@@ -151,7 +157,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'gold' ? 'active' : ''}`}
-                        onClick={() => navigate('/gold')}
+                        onClick={() => { navigate('/gold'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/gold' ? 'page' : undefined}
                     >
                         <Coins size={20} />
                         <span>Gold Advisor</span>
@@ -159,7 +166,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'debate' ? 'active' : ''}`}
-                        onClick={() => navigate('/debate')}
+                        onClick={() => { navigate('/debate'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/debate' ? 'page' : undefined}
                     >
                         <Swords size={20} />
                         <span>AI Debate</span>
@@ -167,7 +175,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'backtest' ? 'active' : ''}`}
-                        onClick={() => navigate('/backtest')}
+                        onClick={() => { navigate('/backtest'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/backtest' ? 'page' : undefined}
                     >
                         <FlaskConical size={20} />
                         <span>Strategy Lab</span>
@@ -180,7 +189,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'challenge' ? 'active' : ''}`}
-                        onClick={() => navigate('/challenge')}
+                        onClick={() => { navigate('/challenge'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/challenge' ? 'page' : undefined}
                     >
                         <Zap size={20} />
                         <span>Daily Challenge</span>
@@ -188,7 +198,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'portfolio' ? 'active' : ''}`}
-                        onClick={() => navigate('/portfolio')}
+                        onClick={() => { navigate('/portfolio'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/portfolio' ? 'page' : undefined}
                     >
                         <Target size={20} />
                         <span>Paper Portfolio</span>
@@ -201,7 +212,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'learning' ? 'active' : ''}`}
-                        onClick={() => navigate('/learning')}
+                        onClick={() => { navigate('/learning'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/learning' ? 'page' : undefined}
                     >
                         <BookOpen size={20} />
                         <span>Learning Path</span>
@@ -209,7 +221,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'academy' ? 'active' : ''}`}
-                        onClick={() => navigate('/academy')}
+                        onClick={() => { navigate('/academy'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/academy' ? 'page' : undefined}
                     >
                         <Film size={20} />
                         <span>Video Academy</span>
@@ -222,7 +235,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'observer' ? 'active' : ''}`}
-                        onClick={() => navigate('/observer')}
+                        onClick={() => { navigate('/observer'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/observer' ? 'page' : undefined}
                     >
                         <Terminal size={20} />
                         <span>Developer Trace</span>
@@ -230,7 +244,8 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'systemmap' ? 'active' : ''}`}
-                        onClick={() => navigate('/systemmap')}
+                        onClick={() => { navigate('/systemmap'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/systemmap' ? 'page' : undefined}
                     >
                         <Network size={20} />
                         <span>System Map</span>
