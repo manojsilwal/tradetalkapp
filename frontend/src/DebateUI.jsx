@@ -3,7 +3,7 @@ import {
   TrendingUp, ShieldAlert, Globe, Zap, Gavel,
   Download, ChevronDown, ChevronUp, Loader2, AlertTriangle,
 } from 'lucide-react';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, apiFetch } from './api';
 
 // Agent configuration
 const AGENTS = [
@@ -265,8 +265,7 @@ export default function DebateUI() {
 
   // Load knowledge stats on mount
   useEffect(() => {
-    fetch(`${API_BASE_URL}/knowledge/stats`)
-      .then(r => r.json())
+    apiFetch(`${API_BASE_URL}/knowledge/stats`)
       .then(setStats)
       .catch(() => {});
   }, []);
@@ -279,12 +278,10 @@ export default function DebateUI() {
     setResult(null);
     setError('');
     try {
-      const res = await fetch(`${API_BASE_URL}/debate?ticker=${t}`);
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const data = await res.json();
+      const data = await apiFetch(`${API_BASE_URL}/debate?ticker=${t}`);
       setResult(data);
       // Refresh stats
-      fetch(`${API_BASE_URL}/knowledge/stats`).then(r => r.json()).then(setStats).catch(() => {});
+      apiFetch(`${API_BASE_URL}/knowledge/stats`).then(setStats).catch(() => {});
       // Scroll to verdict
       setTimeout(() => verdictRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
     } catch (e) {

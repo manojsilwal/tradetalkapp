@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Globe, TrendingUp, TrendingDown, DollarSign, Loader2, AlertTriangle, ArrowRightLeft, Wallet } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, apiFetch } from './api';
 
 export default function MacroUI() {
     const [data, setData] = useState(null);
@@ -11,9 +11,7 @@ export default function MacroUI() {
     useEffect(() => {
         const fetchMacro = async () => {
             try {
-                const res = await fetch(`${API_BASE_URL}/macro`);
-                if (!res.ok) throw new Error("Failed to fetch Global Macro data.");
-                const json = await res.json();
+                const json = await apiFetch(`${API_BASE_URL}/macro`);
                 setData(json);
             } catch (err) {
                 setError(err.message);

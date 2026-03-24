@@ -9,11 +9,15 @@ export default function LearningPathUI({ onXpGained }) {
     const [quizState, setQuizState]   = useState(null);   // {answers: {}, submitted: bool, score: int}
     const [loading, setLoading]       = useState(true);
     const [submitting, setSubmitting] = useState(false);
+    const [error, setError]           = useState(null);
 
     useEffect(() => {
         apiFetch(`${API_BASE_URL}/learning/curriculum`)
             .then(data => setCurriculum(data))
-            .catch(() => {})
+            .catch(err => {
+                setError('Failed to load curriculum. Please try again.');
+                console.error('[LearningPath] curriculum load error:', err);
+            })
             .finally(() => setLoading(false));
     }, []);
 
@@ -53,6 +57,14 @@ export default function LearningPathUI({ onXpGained }) {
     if (loading) return (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
             <div style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#a78bfa', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        </div>
+    );
+
+    if (error) return (
+        <div style={{ maxWidth: 680, margin: '0 auto', padding: '0 16px' }}>
+            <div style={{ padding: '16px 20px', borderRadius: 12, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: '#ef4444', fontSize: 14, textAlign: 'center' }}>
+                {error}
+            </div>
         </div>
     );
 

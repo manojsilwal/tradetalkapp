@@ -17,13 +17,20 @@ export default function VideoAcademyUI({ onXpGained }) {
     const [generating, setGenerating]   = useState({});
     const [pollMap, setPollMap]         = useState({});
     const [loading, setLoading]         = useState(true);
+    const [error, setError]             = useState(null);
 
     const fetchCatalogue = async () => {
-        const data = await apiFetch(`${API_BASE_URL}/academy/catalogue`);
-        setLessons(data.lessons || []);
-        const trackSet = ['All', ...new Set((data.lessons || []).map(l => l.track))];
-        setTracks(trackSet);
-        setLoading(false);
+        try {
+            const data = await apiFetch(`${API_BASE_URL}/academy/catalogue`);
+            setLessons(data.lessons || []);
+            const trackSet = ['All', ...new Set((data.lessons || []).map(l => l.track))];
+            setTracks(trackSet);
+        } catch (err) {
+            setError('Failed to load video catalogue. Please try again.');
+            console.error('[VideoAcademy] fetchCatalogue error:', err);
+        } finally {
+            setLoading(false);
+        }
     };
 
     useEffect(() => { fetchCatalogue(); }, []);
@@ -77,6 +84,14 @@ export default function VideoAcademyUI({ onXpGained }) {
     if (selected) {
         return <VideoPlayer lesson={selected} onBack={() => setSelected(null)} onXpGained={onXpGained} />;
     }
+
+    if (error) return (
+        <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 16px' }}>
+            <div style={{ padding: '16px 20px', borderRadius: 12, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: '#ef4444', fontSize: 14, textAlign: 'center' }}>
+                {error}
+            </div>
+        </div>
+    );
 
     return (
         <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 16px' }}>

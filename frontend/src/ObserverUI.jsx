@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Play, Loader2, Bot, ShieldCheck, AlertCircle, CheckCircle2, XCircle, Clock, AlertTriangle, Database, ArrowRight, Zap, MessageSquare, TrendingUp, TrendingDown, Info, Bell, Filter, Search, Shield } from 'lucide-react';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, apiFetch } from './api';
 
 // ── Agent metadata ──
 const AGENTS = [
@@ -27,9 +27,8 @@ export default function ObserverUI() {
         setTraceData(null);
         setActiveAgent(0);
         try {
-            const res = await fetch(`${API_BASE_URL}/trace?ticker=${ticker}`);
-            if (!res.ok) throw new Error("Backend not reachable. Is uvicorn running?");
-            setTraceData(await res.json());
+            const data = await apiFetch(`${API_BASE_URL}/trace?ticker=${ticker}`);
+            setTraceData(data);
         } catch (err) { setError(err.message); }
         finally { setLoading(false); }
     };
@@ -109,8 +108,8 @@ export default function ObserverUI() {
                             if (!notifTrace) {
                                 setNotifLoading(true);
                                 try {
-                                    const res = await fetch(`${API_BASE_URL}/notifications/trace`);
-                                    setNotifTrace(await res.json());
+                                    const data = await apiFetch(`${API_BASE_URL}/notifications/trace`);
+                                    setNotifTrace(data);
                                 } catch (e) { console.error(e); }
                                 finally { setNotifLoading(false); }
                             }
