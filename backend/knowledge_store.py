@@ -517,6 +517,13 @@ class KnowledgeStore:
         if not col or col.count() == 0:
             return []
         try:
+            count = col.count()
+            if count > 1000:
+                logger.warning(
+                    "[KnowledgeStore] strategy_backtests has %d entries; "
+                    "get_strategy_leaderboard loads all into memory. "
+                    "Consider pagination or database-side sorting.", count
+                )
             results = col.get(include=["documents", "metadatas"])
             ids = results.get("ids", [])
             entries = []
