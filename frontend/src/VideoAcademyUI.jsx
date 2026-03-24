@@ -59,7 +59,7 @@ export default function VideoAcademyUI({ onXpGained }) {
             await apiFetch(`${API_BASE_URL}/academy/lesson/${lessonId}/generate`, { method: 'POST' });
             await fetchCatalogue();
         } finally {
-            setGenerating(g => { const n = { ...n, ...g }; delete n[lessonId]; return n; });
+            setGenerating(g => { const n = { ...g }; delete n[lessonId]; return n; });
         }
     };
 

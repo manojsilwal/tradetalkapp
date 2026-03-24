@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   TrendingUp, ShieldAlert, Globe, Zap, Gavel,
   Download, ChevronDown, ChevronUp, Loader2, AlertTriangle,
@@ -85,7 +85,7 @@ function AgentCardSkeleton({ agent }) {
 // Loaded agent card
 function AgentCard({ argument, agent }) {
   const stanceStyle = STANCE_STYLES[argument.stance] || STANCE_STYLES.NEUTRAL;
-  const priorCount = Math.floor(Math.random() * 24) + 3;
+  const priorCount = useMemo(() => Math.floor(Math.random() * 24) + 3, []);
 
   return (
     <div style={{
