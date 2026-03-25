@@ -6,7 +6,7 @@ const FRONTEND = process.env.FRONTEND_URL || 'https://frontend-manojsilwals-proj
 test.describe('TradeTalkApp E2E smoke', () => {
   test('landing page loads', async ({ page }) => {
     await page.goto(FRONTEND);
-    await expect(page.getByRole('heading', { name: 'K2-Optimus', exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('heading', { name: 'TradeTalk', exact: true })).toBeVisible({ timeout: 15000 });
   });
 
   test('AI Debate tab loads and can trigger debate', async ({ page }) => {

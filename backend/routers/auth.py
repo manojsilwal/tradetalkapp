@@ -12,7 +12,7 @@ class GoogleLoginRequest(BaseModel):
 @router.post("/google")
 def google_login(req: GoogleLoginRequest):
     """
-    Exchange a Google ID token for a K2-Optimus JWT session token.
+    Exchange a Google ID token for a TradeTalk JWT session token.
     In dev-mode (no GOOGLE_CLIENT_ID set), pass token="dev" to get a test session.
     """
     return login_with_google(req.token)

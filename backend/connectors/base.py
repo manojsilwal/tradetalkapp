@@ -3,7 +3,7 @@ from typing import Dict, Any
 
 class DataConnector(ABC):
     """
-    Abstract base class for all external data connectors in K2-Optimus.
+    Abstract base class for all external data connectors in TradeTalk.
     Enforces a standard asynchronous data fetching method.
     """
     

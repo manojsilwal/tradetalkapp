@@ -290,7 +290,7 @@ export default function SystemMapUI() {
                     System Architecture Map
                 </h2>
                 <p style={{ color: '#64748b', fontSize: 13, margin: 0 }}>
-                    Interactive view of how every layer of K2-Optimus connects — from customer input to final verdict.
+                    Interactive view of how every layer of TradeTalk connects — from customer input to final verdict.
                 </p>
             </div>
 

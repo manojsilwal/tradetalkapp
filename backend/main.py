@@ -1,5 +1,5 @@
 """
-K2-Optimus Observer API — application entry point.
+TradeTalk App API — application entry point.
 
 All route handlers are in backend/routers/. Shared state lives in backend/deps.py.
 """
@@ -23,8 +23,8 @@ from .deps import (
 )
 
 app = FastAPI(
-    title="K2-Optimus Observer API",
-    description="Observer trace API for the K2-Optimus Financial Swarm.",
+    title="TradeTalk App API",
+    description="AI-powered investment analysis API for the TradeTalk platform.",
     version="0.1.0",
 )
 
@@ -121,11 +121,11 @@ async def news_scan_loop():
                         knowledge_store.add_macro_alert(MacroAlert(**alert))
                     except Exception:
                         pass
-                print(f"[K2-Notifier] {trace['alerts_produced']} new alerts saved to DB")
+                print(f"[TradeTalk-Notifier] {trace['alerts_produced']} new alerts saved to DB")
             else:
-                print("[K2-Notifier] No new macro headlines")
+                print("[TradeTalk-Notifier] No new macro headlines")
         except Exception as e:
-            print(f"[K2-Notifier] Error: {e}")
+            print(f"[TradeTalk-Notifier] Error: {e}")
         await asyncio.sleep(60)
 
 

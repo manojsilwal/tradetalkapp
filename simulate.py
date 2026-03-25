@@ -1,9 +1,8 @@
 import asyncio
 import random
-from k2_optimus.schemas import MarketState, MarketRegime
-from k2_optimus.agents import ShortInterestAgentPair
-from k2_optimus.connectors import ShortsConnector
-from k2_optimus.memory import DomainBrain, PostMortemAgent
+from backend.schemas import MarketState, MarketRegime
+from backend.agents import ShortInterestAgentPair
+from backend.connectors import ShortsConnector
 
 async def run_simulation():
     print("Initializing ChromaDB Domain Brain...")

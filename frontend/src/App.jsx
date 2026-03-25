@@ -92,7 +92,7 @@ function App() {
                 <div className="brand" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <Activity className="brand-icon" size={28} />
-                        <h1>K2-Optimus</h1>
+                        <h1>TradeTalk</h1>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <NotificationBell />

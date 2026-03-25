@@ -6,7 +6,7 @@ const ONBOARDING_KEY = 'k2_onboarding_complete';
 const STEPS = [
     {
         icon: <Sparkles size={32} />,
-        title: 'Welcome to K2-Optimus',
+        title: 'Welcome to TradeTalk',
         description: 'Your AI-powered investment analysis platform. Let us show you around.',
         color: '#3b82f6',
     },

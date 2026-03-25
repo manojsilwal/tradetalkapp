@@ -219,7 +219,7 @@ async def get_agent_trace(
     credit_stress: float = Query(None, description="Optional override for Credit stress index."),
     _auth_user=Depends(get_optional_user),
 ):
-    """K2-Optimus: Live Swarm execution across Short Interest, Social, and Macro dimensions."""
+    """Live Swarm execution across Short Interest, Social, and Macro dimensions."""
     t = validate_ticker_query(ticker)
     return await _execute_swarm_trace(t, credit_stress, _auth_user)
 

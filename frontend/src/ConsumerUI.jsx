@@ -107,7 +107,7 @@ export default function ConsumerUI() {
         <div className="consumer-container fade-in">
             <div className="header-section">
                 <div className="title-group">
-                    <h2>K2-Optimus Retail Dashboard</h2>
+                    <h2>TradeTalk Valuation Dashboard</h2>
                     <p>Real-time Swarm Analysis Summary</p>
                 </div>
                 <div className="controls">
