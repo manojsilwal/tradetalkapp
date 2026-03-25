@@ -289,12 +289,26 @@ async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
         if i + eps_batch < len(all_tickers):
             await asyncio.sleep(1.0)
 
+    # ── Step 2b: Per-ticker info + annual financials ─────────────────────────
+    info_batch = 3
+    info_by_ticker: dict = {t: {"info": {}, "annual_financials": {}} for t in all_tickers}
+    for i in range(0, len(all_tickers), info_batch):
+        batch = all_tickers[i: i + info_batch]
+        tasks = [asyncio.to_thread(_fetch_info_and_financials, t) for t in batch]
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for ticker, result in zip(batch, batch_results):
+            if not isinstance(result, Exception):
+                info_by_ticker[ticker] = result
+        if i + info_batch < len(all_tickers):
+            await asyncio.sleep(1.0)
+
     # ── Assemble final results ────────────────────────────────────────────────
     for t in all_tickers:
+        info_data = info_by_ticker.get(t, {"info": {}, "annual_financials": {}})
         results[t] = {
             "prices":            prices_by_ticker.get(t, []),
-            "annual_financials": {},
-            "info":              {},
+            "annual_financials": info_data["annual_financials"],
+            "info":              info_data["info"],
             "quarterly_eps":     eps_by_ticker.get(t, []),
         }
         logger.info(f"[BacktestData] {t}: {len(results[t]['prices'])} price pts, "
@@ -361,6 +375,32 @@ def _fetch_eps_only(ticker: str) -> list:
 
     quarterly_eps.sort(key=lambda x: x["date"])
     return quarterly_eps
+
+
+def _fetch_info_and_financials(ticker: str) -> dict:
+    """Fetch yFinance .info dict and annual income statement for a single ticker."""
+    info = {}
+    annual_financials = {}
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker.upper())
+        info = t.info or {}
+
+        inc = t.income_stmt
+        if inc is not None and not inc.empty:
+            for col in inc.columns:
+                year = str(col.year) if hasattr(col, 'year') else str(col)[:4]
+                entry = {}
+                for metric in ("Total Revenue", "Net Income"):
+                    if metric in inc.index:
+                        val = _safe_float(inc.loc[metric, col])
+                        if val is not None:
+                            entry[metric.lower().replace(" ", "_")] = val
+                if entry:
+                    annual_financials[year] = entry
+    except Exception as e:
+        logger.debug(f"[BacktestData] info/financials failed for {ticker}: {e}")
+    return {"info": info, "annual_financials": annual_financials}
 
 
 def _fetch_one(ticker: str, start: str, end: str) -> dict:
