@@ -146,6 +146,9 @@ class KnowledgeStore:
                     "ticker": consensus.ticker,
                     "verdict": consensus.global_verdict,
                     "confidence": consensus.confidence,
+                    "global_signal": consensus.global_signal,
+                    "market_regime": consensus.macro_state.market_regime.value if hasattr(consensus.macro_state.market_regime, 'value') else str(consensus.macro_state.market_regime),
+                    "credit_stress": consensus.macro_state.credit_stress_index,
                     "date": str(datetime.now(timezone.utc).date()),
                 }],
                 ids=[entry_id],
@@ -483,7 +486,7 @@ class KnowledgeStore:
                     meta[k] = v
             col.add(
                 documents=[doc],
-                metadatas=meta,
+                metadatas=[meta],
                 ids=[f"macro_{today}"],
             )
         except Exception as e:
@@ -503,7 +506,7 @@ class KnowledgeStore:
             entry_id = f"yt_{channel}_{int(time.time())}"
             col.add(
                 documents=[doc],
-                metadatas={"channel": channel, "title": title, "published": published, "date": today},
+                metadatas=[{"channel": channel, "title": title, "published": published, "date": today}],
                 ids=[entry_id],
             )
         except Exception as e:
