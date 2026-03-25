@@ -9,6 +9,7 @@ from ..auth import get_optional_user
 from ..agent_policy_guardrails import ensure_capability, redact_secrets_in_text
 from ..rate_limiter import rate_limit
 from ..deps import knowledge_store, llm_client, up
+from ..strategy_validator import validate_strategy
 
 router = APIRouter(tags=["backtest"])
 
@@ -30,6 +31,13 @@ async def list_strategy_presets():
     return {"presets": list_preset_summaries()}
 
 
+@router.post("/backtest/validate")
+async def validate_backtest_request(req: BacktestRequest):
+    """Pre-flight validation — check if strategy is meaningful before running."""
+    result = validate_strategy(req.strategy, req.start_date, req.end_date, req.preset_id or "")
+    return result
+
+
 @router.post("/backtest", response_model=BacktestResult, dependencies=[Depends(_rl_expensive)])
 async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(get_optional_user)):
     """Run a backtest from a preset_id or plain-English strategy text."""
@@ -39,6 +47,13 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(get_opt
 
     pid = (req.preset_id or "").strip()
     strat = (req.strategy or "").strip()
+
+    # Pre-flight validation for custom strategies
+    if strat and not pid:
+        validation = validate_strategy(strat, req.start_date, req.end_date)
+        if not validation.get("valid"):
+            raise HTTPException(status_code=422, detail=validation)
+
     if pid:
         try:
             rules = get_preset_rules(pid, req.start_date, req.end_date)
