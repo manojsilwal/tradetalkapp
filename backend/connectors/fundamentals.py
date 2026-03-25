@@ -2,6 +2,7 @@ import asyncio
 import yfinance as yf
 from typing import Dict, Any
 from .base import DataConnector
+from ..connector_cache import get_cached, set_cached
 
 class FundamentalsConnector(DataConnector):
     """
@@ -12,7 +13,11 @@ class FundamentalsConnector(DataConnector):
     
     async def fetch_data(self, **kwargs) -> Dict[str, Any]:
         ticker_sym = kwargs.get("ticker", "GME")
-        
+        ticker = ticker_sym.upper()
+        cached = get_cached("fundamentals", ticker)
+        if cached is not None:
+            return cached
+
         def get_fundamentals() -> Dict[str, Any]:
             ticker = yf.Ticker(ticker_sym)
             info = ticker.info
@@ -44,4 +49,5 @@ class FundamentalsConnector(DataConnector):
             ratio = 999.0 # Effectively infinite/very healthy
             
         data["cash_to_debt_ratio"] = round(ratio, 2)
+        set_cached("fundamentals", data, ticker)
         return data

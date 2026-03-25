@@ -10,6 +10,8 @@ Moderator synthesises all 5 arguments into a final DebateResult.
 """
 import asyncio
 import logging
+import time
+from datetime import datetime, timezone
 from .schemas import DebateArgument, DebateResult, AgentStance
 from .agent_policy_guardrails import ensure_capability, workload_scope
 from .telemetry import get_tracer
@@ -115,8 +117,9 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
             "sp500_fundamentals_narratives",
             "stock_profiles",
             "earnings_memory",
+            "strategy_backtests",
         ],
-        "momentum": ["price_movements", "youtube_insights", "stock_profiles", "earnings_memory"],
+        "momentum": ["price_movements", "youtube_insights", "stock_profiles", "earnings_memory", "strategy_backtests"],
     }
 
     context_docs = []
@@ -261,6 +264,32 @@ def _score_arguments(arguments: list[DebateArgument]) -> tuple[int, int, int]:
     return bull, bear, neut
 
 
+def _store_agent_snapshot(ks, ticker: str, argument, macro_state: dict):
+    """Store a compact snapshot of what each debate agent analyzed for future RAG."""
+    col = ks._safe_col("debate_history")
+    if not col:
+        return
+    doc = (
+        f"[{argument.agent_role}] {argument.stance.value} on {ticker}: "
+        f"{argument.headline}. {argument.analysis[:300]}"
+    )
+    entry_id = f"agent_{argument.agent_role}_{ticker}_{int(time.time())}"
+    try:
+        col.add(
+            documents=[doc],
+            metadatas=[{
+                "ticker": ticker,
+                "agent_role": argument.agent_role,
+                "stance": argument.stance.value,
+                "date": str(datetime.now(timezone.utc).date()),
+                "market_regime": macro_state.get("market_regime", "unknown"),
+            }],
+            ids=[entry_id],
+        )
+    except Exception:
+        pass
+
+
 async def run_full_debate(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
                           swarm_context: str = "") -> DebateResult:
     """
@@ -302,6 +331,13 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
 
     if not verdict or verdict == "NEUTRAL" and heuristic_verdict != "NEUTRAL":
         verdict = heuristic_verdict
+
+    # Store per-agent data snapshots for future learning
+    try:
+        for arg in arguments:
+            _store_agent_snapshot(ks, ticker, arg, macro_state)
+    except Exception as e:
+        logger.warning(f"[Debate] agent snapshot storage failed: {e}")
 
     return DebateResult(
         ticker=ticker.upper(),

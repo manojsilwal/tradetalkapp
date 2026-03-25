@@ -1,5 +1,7 @@
 """Analysis endpoints — swarm trace, AI debate, deep analyze."""
 import asyncio
+import time as _time
+from datetime import datetime as _dt2, timezone as _tz2
 from typing import Optional
 
 from fastapi import APIRouter, Query, Depends, HTTPException
@@ -28,6 +30,35 @@ from ..deps import (
 router = APIRouter(tags=["analysis"])
 
 _rl_expensive = rate_limit("expensive")
+
+
+def _store_factor_snapshot(ks, ticker: str, factor_name: str, result, market_state):
+    """Store individual factor analysis for granular future RAG."""
+    col = ks._safe_col("swarm_history")
+    if not col:
+        return
+    doc = (
+        f"[{factor_name}] {ticker} analysis: status={result.status}, "
+        f"signal={result.trading_signal}, confidence={result.confidence:.2f}. "
+        f"Summary: {result.analysis[:400]}"
+    )
+    entry_id = f"factor_{factor_name}_{ticker}_{int(_time.time())}"
+    try:
+        col.add(
+            documents=[doc],
+            metadatas=[{
+                "ticker": ticker,
+                "factor": factor_name,
+                "signal": result.trading_signal,
+                "confidence": result.confidence,
+                "status": result.status,
+                "market_regime": market_state.market_regime.value if hasattr(market_state.market_regime, 'value') else str(market_state.market_regime),
+                "date": str(_dt2.now(_tz2.utc).date()),
+            }],
+            ids=[entry_id],
+        )
+    except Exception:
+        pass
 
 
 def _macro_state_from_indicators(ind: dict) -> dict:
@@ -148,6 +179,13 @@ async def _execute_swarm_trace(
             knowledge_store.add_swarm_analysis(consensus)
         except Exception as e:
             print(f"[KnowledgeHook] add_swarm_analysis failed: {e}")
+
+        # Store per-factor snapshots for granular RAG
+        try:
+            for factor_name, factor_result in consensus.factors.items():
+                _store_factor_snapshot(knowledge_store, ticker, factor_name, factor_result, market_state)
+        except Exception as e:
+            print(f"[KnowledgeHook] factor snapshot failed: {e}")
 
         return consensus
 
