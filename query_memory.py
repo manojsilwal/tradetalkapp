@@ -1,4 +1,4 @@
-from k2_optimus.memory import DomainBrain
+from backend.knowledge_store import get_knowledge_store
 import json
 
 def test_queries():

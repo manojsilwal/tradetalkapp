@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { API_BASE_URL } from './api';
+import { EducationTooltip } from './components/EducationLink.jsx';
 
 const EXAMPLE_STRATEGIES = [
   "Buy Mag7 stocks (AAPL, MSFT, GOOGL, META, AMZN, NVDA, TSLA) when PE ratio is below 25, sell when PE ratio exceeds 35",
@@ -330,6 +331,25 @@ export default function BacktestUI() {
     if (!presetId && !strategyText.trim()) return;
     setLoading(true); setResult(null); setError('');
     try {
+      // Validate strategy before running expensive backtest
+      if (!presetId && strategyText.trim()) {
+        const validRes = await fetch(`${API_BASE_URL}/backtest/validate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            strategy: strategyText,
+            start_date: startDate,
+            end_date: endDate,
+          }),
+        });
+        const validation = await validRes.json();
+        if (!validation.valid) {
+          setError(validation.reason + (validation.suggestion ? '\n💡 ' + validation.suggestion : ''));
+          setLoading(false);
+          return;
+        }
+      }
+
       const res = await fetch(`${API_BASE_URL}/backtest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -451,25 +471,85 @@ export default function BacktestUI() {
             background: 'rgba(15,23,42,0.7)', borderRadius: 14, padding: '22px 24px',
             border: '1px solid rgba(255,255,255,0.07)', marginBottom: 20,
           }}>
-            <label style={{ color: '#94a3b8', fontSize: '0.78rem', display: 'block', marginBottom: 8, fontWeight: 600 }}>
-              PROVEN STRATEGY PRESET (OPTIONAL)
+            <label style={{ color: '#94a3b8', fontSize: '0.78rem', display: 'block', marginBottom: 12, fontWeight: 600 }}>
+              PROVEN STRATEGY PRESETS
             </label>
-            <select
-              value={presetId}
-              onChange={e => {
-                const v = e.target.value;
-                setPresetId(v);
-                if (v) setStrategyText('');
-              }}
-              style={{ ...inputStyle, marginBottom: 12, cursor: 'pointer' }}
-            >
-              <option value="">— Custom: describe below in plain English —</option>
-              {presets.map(p => (
-                <option key={p.preset_id} value={p.preset_id}>
-                  [{p.category}] {p.name} — {p.rebalance_freq}
-                </option>
-              ))}
-            </select>
+            
+            {/* Category filter */}
+            {(() => {
+              const categories = [...new Set(presets.map(p => p.category))];
+              return (
+                <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => setPresetId('')}
+                    style={{
+                      padding: '5px 12px', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600,
+                      border: !presetId ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                      background: !presetId ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.03)',
+                      color: !presetId ? '#818cf8' : '#64748b', cursor: 'pointer',
+                    }}
+                  >
+                    ✍️ Custom
+                  </button>
+                  {categories.map(cat => {
+                    const active = presets.find(p => p.preset_id === presetId)?.category === cat;
+                    return (
+                      <button key={cat} onClick={() => {
+                        const first = presets.find(p => p.category === cat);
+                        if (first) { setPresetId(first.preset_id); setStrategyText(''); }
+                      }} style={{
+                        padding: '5px 12px', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600,
+                        border: active ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                        background: active ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.03)',
+                        color: active ? '#818cf8' : '#64748b', cursor: 'pointer',
+                      }}>
+                        {cat}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {/* Preset cards grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10, marginBottom: 16 }}>
+              {presets.map(p => {
+                const isActive = presetId === p.preset_id;
+                const catColors = {
+                  'Factor': '#818cf8', 'Momentum': '#f59e0b', 'Value': '#10b981',
+                  'Macro': '#ef4444', 'Income': '#22d3ee', 'Blended': '#a78bfa', 'Quality': '#34d399',
+                };
+                const accent = catColors[p.category] || '#818cf8';
+                return (
+                  <button key={p.preset_id} onClick={() => {
+                    setPresetId(isActive ? '' : p.preset_id);
+                    if (!isActive) setStrategyText('');
+                  }} style={{
+                    textAlign: 'left', cursor: 'pointer', padding: '14px 16px', borderRadius: 12,
+                    background: isActive ? `${accent}11` : 'rgba(255,255,255,0.02)',
+                    border: isActive ? `1.5px solid ${accent}44` : '1px solid rgba(255,255,255,0.06)',
+                    transition: 'all 0.2s',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <span style={{
+                        fontSize: '0.65rem', fontWeight: 700, padding: '2px 8px', borderRadius: 10,
+                        background: `${accent}18`, color: accent, letterSpacing: '0.04em',
+                      }}>
+                        {p.category}
+                      </span>
+                      <span style={{ fontSize: '0.68rem', color: '#475569' }}>{p.rebalance_freq}</span>
+                      {isActive && <CheckCircle2 size={14} color={accent} style={{ marginLeft: 'auto' }} />}
+                    </div>
+                    <div style={{ color: isActive ? '#e2e8f0' : '#94a3b8', fontSize: '0.85rem', fontWeight: 600, marginBottom: 4 }}>
+                      {p.name}
+                    </div>
+                    <div style={{ color: '#475569', fontSize: '0.72rem', lineHeight: 1.4 }}>
+                      {p.short_description}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
             <label style={{ color: '#94a3b8', fontSize: '0.78rem', display: 'block', marginBottom: 8, fontWeight: 600 }}>
               STRATEGY DESCRIPTION
             </label>
@@ -711,12 +791,47 @@ export default function BacktestUI() {
                 <p style={{ color: '#94a3b8', fontSize: '0.86rem', lineHeight: 1.7, margin: '0 0 12px' }}>
                   {result.ai_explanation}
                 </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+                    <EducationTooltip term="sharpe ratio" />
+                    <EducationTooltip term="cagr" />
+                    <EducationTooltip term="max drawdown" />
+                </div>
                 {result.knowledge_context && result.knowledge_context !== 'No relevant historical context found.' && (
                   <div style={{ color: '#334155', fontSize: '0.72rem', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: 10 }}>
                     Informed by prior backtests in the knowledge base
                   </div>
                 )}
               </div>
+
+              {/* ── Strategy Lab Feedback Loop ── */}
+              {result && (
+                <div style={{
+                  display: 'flex', gap: 12, marginTop: 20, padding: 16,
+                  background: 'rgba(255,255,255,0.03)', borderRadius: 12,
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}>
+                  <button onClick={() => {
+                    setStrategyText(prev => prev || result?.strategy?.name || '');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }} style={{
+                    padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)',
+                    color: '#a78bfa', cursor: 'pointer',
+                  }}>
+                    🔄 Try a Variation
+                  </button>
+                  <button onClick={() => {
+                    setPresetId('');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }} style={{
+                    padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    border: '1px solid rgba(59,130,246,0.3)', background: 'rgba(59,130,246,0.1)',
+                    color: '#60a5fa', cursor: 'pointer',
+                  }}>
+                    📊 Compare with Preset
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </>

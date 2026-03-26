@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bell, X, AlertTriangle, ShieldCheck, Clock } from 'lucide-react';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, apiFetch } from './api';
 
 export default function NotificationBell() {
     const [alerts, setAlerts] = useState([]);
@@ -11,8 +11,7 @@ export default function NotificationBell() {
 
     // Fetch initial history
     useEffect(() => {
-        fetch(`${API_BASE_URL}/notifications/history`)
-            .then(r => r.json())
+        apiFetch(`${API_BASE_URL}/notifications/history`)
             .then(data => {
                 setAlerts(data.alerts || []);
                 setUnread(data.unread || 0);
@@ -48,8 +47,18 @@ export default function NotificationBell() {
         return () => document.removeEventListener('mousedown', handler);
     }, [showRecent]);
 
+    // Close dropdown on Escape key
+    useEffect(() => {
+        if (!showRecent) return;
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') setShowRecent(false);
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [showRecent]);
+
     const dismissAlert = async (id) => {
-        await fetch(`${API_BASE_URL}/notifications/dismiss/${id}`, { method: 'POST' });
+        await apiFetch(`${API_BASE_URL}/notifications/dismiss/${id}`, { method: 'POST' });
         setAlerts(prev => prev.map(a => a.id === id ? { ...a, is_read: true } : a));
         setUnread(prev => Math.max(0, prev - 1));
     };
@@ -76,14 +85,13 @@ export default function NotificationBell() {
                             // User is viewing alerts — after 3s mark them as seen and clear from DB
                             setTimeout(async () => {
                                 if (alerts.length > 0) {
-                                    await fetch(`${API_BASE_URL}/notifications/mark-seen`, { method: 'POST' });
+                                    await apiFetch(`${API_BASE_URL}/notifications/mark-seen`, { method: 'POST' });
                                     setUnread(0);
                                 }
                             }, 3000);
                         } else {
                             // Closing the panel — refetch fresh state from DB
-                            fetch(`${API_BASE_URL}/notifications/history`)
-                                .then(r => r.json())
+                            apiFetch(`${API_BASE_URL}/notifications/history`)
                                 .then(data => {
                                     setAlerts(data.alerts || []);
                                     setUnread(data.unread || 0);
@@ -91,6 +99,9 @@ export default function NotificationBell() {
                                 .catch(() => { });
                         }
                     }}
+                    aria-expanded={showRecent}
+                    aria-haspopup="true"
+                    aria-label={`Notifications${unread > 0 ? `, ${unread} unread` : ''}`}
                     style={{
                         background: showRecent ? 'rgba(255,255,255,0.1)' : 'transparent',
                         border: 'none', cursor: 'pointer', padding: '8px',

@@ -16,6 +16,7 @@ export default function DailyChallengeUI({ onXpGained }) {
     const [result, setResult]       = useState(null);
     const [loading, setLoading]     = useState(true);
     const [submitting, setSubmitting] = useState(false);
+    const [error, setError]         = useState(null);
 
     useEffect(() => {
         Promise.all([
@@ -30,6 +31,9 @@ export default function DailyChallengeUI({ onXpGained }) {
                     setResult({ resolved: true, correct: today.correct, xp_awarded: today.xp_awarded });
                 }
             }
+        }).catch(err => {
+            setError('Failed to load daily challenge. Please try again.');
+            console.error('[DailyChallenge] fetch error:', err);
         }).finally(() => setLoading(false));
     }, []);
 
@@ -56,6 +60,14 @@ export default function DailyChallengeUI({ onXpGained }) {
     if (loading) return (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
             <div className="spinner" style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#a78bfa', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        </div>
+    );
+
+    if (error) return (
+        <div style={{ maxWidth: 640, margin: '0 auto', padding: '0 16px' }}>
+            <div style={{ padding: '16px 20px', borderRadius: 12, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: '#ef4444', fontSize: 14, textAlign: 'center' }}>
+                {error}
+            </div>
         </div>
     );
 

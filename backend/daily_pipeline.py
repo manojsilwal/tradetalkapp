@@ -84,15 +84,40 @@ async def _ingest_price_movements(knowledge_store) -> dict:
 
 
 async def _ingest_macro_snapshot(knowledge_store) -> dict:
-    """Fetch macro indicators (FRED + DXY narrative) and store in macro_snapshots collection."""
+    """Ingest macro snapshot merging yFinance market data with FRED economic indicators."""
     ensure_capability("scheduler", "market_data_read")
     from .connectors.macro import MacroHealthConnector
     data = await MacroHealthConnector().fetch_data()
-    ind = data.get("indicators") or {}
-    if not ind:
-        return {"macro_snapshot_added": False}
-    knowledge_store.add_macro_snapshot(dict(ind))
-    return {"macro_snapshot_added": True}
+    ind = dict(data.get("indicators") or {})
+
+    # Merge FRED economic data (rates, CPI, unemployment, treasury yields)
+    try:
+        from .connectors import fetch_macro_snapshot
+        fred_data = await asyncio.to_thread(fetch_macro_snapshot)
+        if fred_data:
+            for key in ("fed_funds_rate", "cpi_yoy", "treasury_10y", "treasury_2y",
+                         "unemployment", "m2_supply"):
+                if fred_data.get(key) is not None:
+                    ind[key] = fred_data[key]
+            ind["fred_fetched_at"] = fred_data.get("fetched_at", "")
+            # Build a macro narrative from real data
+            parts = []
+            if ind.get("fed_funds_rate") is not None:
+                parts.append(f"Fed Funds at {ind['fed_funds_rate']}%")
+            if ind.get("cpi_yoy") is not None:
+                parts.append(f"CPI YoY {ind['cpi_yoy']}%")
+            if ind.get("unemployment") is not None:
+                parts.append(f"unemployment {ind['unemployment']}%")
+            vix = ind.get("vix_level")
+            if vix is not None:
+                parts.append(f"VIX at {vix:.1f}")
+            if parts:
+                ind["macro_narrative"] = "; ".join(parts)
+    except Exception as e:
+        logger.warning(f"[DailyPipeline] FRED merge failed: {e}")
+
+    knowledge_store.add_macro_snapshot(ind)
+    return {"macro_snapshot_added": True, "keys": list(ind.keys())}
 
 
 def _run_data_lake_incremental_sync() -> dict:

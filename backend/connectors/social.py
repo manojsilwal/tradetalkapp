@@ -4,6 +4,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import Dict, Any, List
 from .base import DataConnector
+from ..connector_cache import get_cached, set_cached
 
 class SocialSentimentConnector(DataConnector):
     """
@@ -11,7 +12,11 @@ class SocialSentimentConnector(DataConnector):
     by parsing the Google News RSS feed.
     """
     async def fetch_data(self, ticker: str = "SPY", **kwargs) -> Dict[str, Any]:
-        
+        ticker = kwargs.get("ticker", ticker).upper()
+        cached = get_cached("social", ticker)
+        if cached is not None:
+            return cached
+
         def fetch_rss_titles(query: str, limit: int = 15) -> List[str]:
             q = urllib.parse.quote(query)
             # Use '1m' age to vaguely target recent (though Google News handles recency inherently based on buzz)
@@ -45,7 +50,7 @@ class SocialSentimentConnector(DataConnector):
             
         combined_titles = results["blogs"] + results["youtube"]
         
-        return {
+        result = {
             "source": "Live Google News RSS (Blogs & YouTube)",
             "ticker": ticker,
             "recent_titles": combined_titles,
@@ -54,3 +59,5 @@ class SocialSentimentConnector(DataConnector):
                 "youtube": len(results["youtube"])
             }
         }
+        set_cached("social", result, ticker)
+        return result

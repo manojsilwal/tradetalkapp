@@ -194,3 +194,76 @@ body {
   cursor: not-allowed;
   transform: none;
 }
+
+/* ── Mobile Responsiveness ───────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .app-container {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+  }
+  
+  .sidebar {
+    width: 100%;
+    height: auto;
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--border-glass);
+  }
+  
+  .sidebar.collapsed {
+    max-height: 64px;
+    overflow: hidden;
+  }
+  
+  .brand {
+    padding: 16px 20px;
+    justify-content: space-between;
+  }
+  
+  .mobile-menu-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid var(--border-glass);
+    border-radius: 8px;
+    color: var(--text-muted);
+    padding: 8px;
+    cursor: pointer;
+  }
+  
+  .nav-menu {
+    padding: 12px;
+    gap: 4px;
+    flex-wrap: wrap;
+    flex-direction: row;
+  }
+  
+  .nav-btn {
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    flex: 0 0 auto;
+  }
+  
+  .nav-btn span {
+    display: none;
+  }
+  
+  .main-content {
+    padding: 20px 16px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  
+  .content-wrapper {
+    max-width: 100%;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobile-menu-toggle {
+    display: none;
+  }
+}

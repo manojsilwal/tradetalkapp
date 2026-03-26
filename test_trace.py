@@ -1,4 +1,4 @@
-from k2_optimus.main import get_agent_trace
+from backend.main import app
 import json
 import asyncio
 

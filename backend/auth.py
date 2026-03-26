@@ -30,6 +30,13 @@ JWT_ALGO         = "HS256"
 JWT_EXPIRY_SECS  = 7 * 24 * 3600   # 7 days
 DEV_MODE         = os.environ.get("DEV_MODE", "false").lower() == "true" or not GOOGLE_CLIENT_ID or GOOGLE_CLIENT_ID == "PLACEHOLDER_SET_AFTER_GOOGLE_SETUP"
 
+# Fail-loud: warn if JWT_SECRET is the default in non-dev environments
+if not DEV_MODE and JWT_SECRET == "dev-secret-change-in-prod":
+    logger.critical(
+        "[Auth] JWT_SECRET is the default 'dev-secret-change-in-prod' in production mode! "
+        "Set JWT_SECRET environment variable to a strong random secret."
+    )
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "progress.db")
 _local  = threading.local()
 
@@ -92,7 +99,10 @@ def _issue_jwt(user_id: str) -> str:
         payload = {"sub": user_id, "exp": int(time.time()) + JWT_EXPIRY_SECS}
         return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
     except ImportError:
-        # PyJWT not installed — use a simple base64 token in dev
+        if not DEV_MODE:
+            raise RuntimeError(
+                "PyJWT is required in production. Install it: pip install PyJWT"
+            )
         import base64, json
         payload = json.dumps({"sub": user_id}).encode()
         return "dev." + base64.b64encode(payload).decode()

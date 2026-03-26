@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Plus, X, DollarSign, BarChart3, Target } from 'lucide-react';
 import { API_BASE_URL, apiFetch } from './api';
 
@@ -6,6 +7,7 @@ const fmt = (n, dec = 2) => (n >= 0 ? '+' : '') + n.toFixed(dec);
 const fmtUSD = n => (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(2);
 
 export default function PaperPortfolioUI({ onXpGained }) {
+    const location = useLocation();
     const [perf, setPerf]           = useState(null);
     const [loading, setLoading]     = useState(true);
     const [error, setError]         = useState(null);
@@ -14,6 +16,13 @@ export default function PaperPortfolioUI({ onXpGained }) {
     const [adding, setAdding]       = useState(false);
     const [addError, setAddError]   = useState('');
     const [closing, setClosing]     = useState(null);
+
+    useEffect(() => {
+        if (location.state?.addTicker) {
+            setAddForm(f => ({ ...f, ticker: location.state.addTicker }));
+            setShowAdd(true);
+        }
+    }, [location.state]);
 
     const fetchPerf = async () => {
         try {

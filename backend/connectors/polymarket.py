@@ -4,6 +4,7 @@ import json
 import yfinance as yf
 from typing import Dict, Any
 from .base import DataConnector
+from ..connector_cache import get_cached, set_cached
 
 # Map common tickers to company names / keywords for Polymarket search
 TICKER_KEYWORDS = {
@@ -28,6 +29,9 @@ class PolymarketConnector(DataConnector):
     """
     async def fetch_data(self, ticker: str = "GME", **kwargs) -> Dict[str, Any]:
         ticker_upper = ticker.upper()
+        cached = get_cached("polymarket", ticker_upper)
+        if cached is not None:
+            return cached
 
         # 1. Resolve keywords: static map first, then yfinance fallback
         keywords = TICKER_KEYWORDS.get(ticker_upper)
@@ -82,9 +86,11 @@ class PolymarketConnector(DataConnector):
                     })
                     break  # Don't double-count
 
-        return {
+        result = {
             "source": "Polymarket Gamma API (Live)",
             "ticker": ticker_upper,
             "events": relevant_events,
             "has_relevant_data": len(relevant_events) > 0
         }
+        set_cached("polymarket", result, ticker_upper)
+        return result
