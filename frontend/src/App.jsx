@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -9,6 +9,7 @@ import { useAuth } from './AuthContext'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
 
 const ConsumerUI = React.lazy(() => import('./ConsumerUI'))
+const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
 const MacroUI = React.lazy(() => import('./MacroUI'))
 const GoldAdvisorUI = React.lazy(() => import('./GoldAdvisorUI'))
 const DebateUI = React.lazy(() => import('./DebateUI'))
@@ -31,6 +32,7 @@ function GamificationTab({ user, featureName, featureIcon, children }) {
 
 const ROUTE_TO_KEY = {
     '/': 'consumer',
+    '/decision-terminal': 'decision_terminal',
     '/macro': 'macro',
     '/gold': 'gold',
     '/debate': 'debate',
@@ -150,6 +152,15 @@ function App() {
                     </button>
 
                     <button
+                        className={`nav-btn ${activeTab === 'decision_terminal' ? 'active' : ''}`}
+                        onClick={() => { navigate('/decision-terminal'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/decision-terminal' ? 'page' : undefined}
+                    >
+                        <Gauge size={20} />
+                        <span>Decision Terminal</span>
+                    </button>
+
+                    <button
                         className={`nav-btn ${activeTab === 'macro' ? 'active' : ''}`}
                         onClick={() => { navigate('/macro'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/macro' ? 'page' : undefined}
@@ -262,6 +273,7 @@ function App() {
                     <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>Loading...</div>}>
                         <Routes>
                             <Route path="/" element={<ConsumerUI />} />
+                            <Route path="/decision-terminal" element={<DecisionTerminalUI />} />
                             <Route path="/macro" element={<MacroUI />} />
                             <Route path="/gold" element={<GoldAdvisorUI />} />
                             <Route path="/debate" element={<DebateUI />} />

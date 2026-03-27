@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from ..schemas import (
     MarketState, MarketRegime, SwarmConsensus, DebateResult,
+    DecisionTerminalPayload,
 )
 from ..agents import (
     ShortInterestAgentPair, SocialSentimentAgentPair,
@@ -234,7 +235,13 @@ class AnalyzeResponse(BaseModel):
     debate: DebateResult
 
 
-async def _execute_analyze(ticker: str, credit_stress: Optional[float], _auth_user) -> AnalyzeResponse:
+async def _execute_analyze(
+    ticker: str,
+    credit_stress: Optional[float],
+    _auth_user,
+    *,
+    award_deep_analysis_xp: bool = True,
+) -> AnalyzeResponse:
     swarm_result = await _execute_swarm_trace(ticker, credit_stress, _auth_user)
     factor_summary = "; ".join(f"{name}: signal={fr.trading_signal}, conf={fr.confidence:.2f}" for name, fr in swarm_result.factors.items())
     swarm_context = (
@@ -243,7 +250,7 @@ async def _execute_analyze(ticker: str, credit_stress: Optional[float], _auth_us
         f"Factors: {factor_summary}. {swarm_result.consensus_rationale}"
     )
     debate_result = await _execute_debate(ticker, _auth_user, swarm_context=swarm_context, award_debate_xp=False)
-    if _auth_user:
+    if _auth_user and award_deep_analysis_xp:
         try:
             up.award_xp(_auth_user.id, "deep_analysis", note=ticker)
         except Exception:
@@ -299,3 +306,44 @@ async def analyze_ticker_get(
 async def analyze_ticker_post(body: AnalyzeIngressRequest, _auth_user=Depends(get_optional_user)):
     """Schema-first deep analysis."""
     return await _execute_analyze(body.ticker, body.credit_stress, _auth_user)
+
+
+@router.get("/decision-terminal", response_model=DecisionTerminalPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_get(
+    ticker: str = Query("AAPL", description="Stock ticker for the decision terminal."),
+    credit_stress: float = Query(None, description="Optional credit stress override (same as /analyze)."),
+    _auth_user=Depends(get_optional_user),
+):
+    """
+    Glanceable four-panel terminal: valuation heuristics, quality snapshot, fused verdict/sentiment,
+    and 3Y scenario prices. Runs full swarm + debate once. Does not award deep_analysis XP.
+    """
+    from ..decision_terminal import run_decision_terminal_request
+
+    t = validate_ticker_query(ticker)
+    return await run_decision_terminal_request(
+        t,
+        credit_stress,
+        _auth_user,
+        execute_analyze=_execute_analyze,
+        tool_registry=tool_registry,
+        poly_connector=poly_connector,
+        llm_client=llm_client,
+    )
+
+
+@router.post("/decision-terminal", response_model=DecisionTerminalPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_post(body: AnalyzeIngressRequest, _auth_user=Depends(get_optional_user)):
+    """Schema-first decision terminal (same behavior as GET)."""
+    from ..decision_terminal import run_decision_terminal_request
+
+    t = validate_ticker_query(body.ticker)
+    return await run_decision_terminal_request(
+        t,
+        body.credit_stress,
+        _auth_user,
+        execute_analyze=_execute_analyze,
+        tool_registry=tool_registry,
+        poly_connector=poly_connector,
+        llm_client=llm_client,
+    )

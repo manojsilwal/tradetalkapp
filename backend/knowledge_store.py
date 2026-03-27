@@ -97,7 +97,43 @@ class KnowledgeStore:
 
     def _init_vector_backend(self):
         try:
-            if VECTOR_BACKEND == "supabase":
+            if VECTOR_BACKEND == "hf":
+                from huggingface_hub import hf_hub_download
+                import chromadb
+                hf_id = os.environ.get("HF_DATASET_ID", "")
+                if not hf_id:
+                    raise RuntimeError("HF_DATASET_ID missing for VECTOR_BACKEND=hf")
+                
+                logger.info(f"[KnowledgeStore] Downloading all_summaries.json from HF {hf_id}...")
+                file_path = hf_hub_download(repo_id=hf_id, repo_type="dataset", filename="rag_summaries/all_summaries.json")
+                with open(file_path, "r") as f:
+                    summaries = json.load(f)
+                    
+                self._vector_backend = ChromaVectorBackend(chroma_path=None) 
+                self._active_vector_backend = "hf"
+                
+                for name in COLLECTIONS:
+                    self._vector_backend.ensure_collection(name)
+                    self._cols[name] = _CollectionProxy(self._vector_backend, name)
+                
+                by_collection = {}
+                for s in summaries:
+                    by_collection.setdefault(s.get("collection", "unknown"), []).append(s)
+                
+                for col_name, items in by_collection.items():
+                    if col_name in self._cols:
+                        docs = [s["document"] for s in items]
+                        metas = [s.get("metadata", {}) for s in items]
+                        ids = [s["id"] for s in items]
+                        for m in metas:
+                            for k, v in list(m.items()):
+                                if v is None: m[k] = ""
+                                elif isinstance(v, (list, dict)): m[k] = json.dumps(v)
+                        self._cols[col_name].add(documents=docs, metadatas=metas, ids=ids)
+                
+                backend_name = "Hugging Face (In-Memory)"
+
+            elif VECTOR_BACKEND == "supabase":
                 if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
                     raise RuntimeError("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY missing for VECTOR_BACKEND=supabase")
                 self._vector_backend = SupabaseVectorBackend(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
@@ -107,9 +143,11 @@ class KnowledgeStore:
                 self._vector_backend = ChromaVectorBackend(chroma_path=CHROMA_PATH)
                 backend_name = "ChromaDB"
                 self._active_vector_backend = "chroma"
-            for name in COLLECTIONS:
-                self._vector_backend.ensure_collection(name)
-                self._cols[name] = _CollectionProxy(self._vector_backend, name)
+                
+            if VECTOR_BACKEND != "hf":
+                for name in COLLECTIONS:
+                    self._vector_backend.ensure_collection(name)
+                    self._cols[name] = _CollectionProxy(self._vector_backend, name)
             logger.info(f"[KnowledgeStore] {backend_name} vector backend ready — {len(COLLECTIONS)} collections")
         except Exception as e:
             logger.error(f"[KnowledgeStore] Vector backend init failed ({VECTOR_BACKEND}): {e}")
@@ -266,7 +304,7 @@ class KnowledgeStore:
             logger.warning(f"[KnowledgeStore] query_stock_profile failed: {e}")
             return ""
 
-    def query_earnings_memory(self, ticker: str, query_text: str | None = None,
+    def query_earnings_memory(self, ticker: str, query_text: Optional[str] = None,
                               n_results: int = 5) -> list[str]:
         """Retrieve earnings-event memories for a ticker (data lake)."""
         col = self._safe_col("earnings_memory")

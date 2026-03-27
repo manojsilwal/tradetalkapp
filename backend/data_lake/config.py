@@ -19,6 +19,10 @@ MACRO_DIR = os.path.join(DATA_DIR, "macro_history")
 SUMMARIES_DIR = os.path.join(DATA_DIR, "rag_summaries")
 CHECKPOINT_FILE = os.path.join(DATA_DIR, ".checkpoint.json")
 
+# ── Hugging Face Remote Lake ──────────────────────────────────────────────────
+HF_DATASET_ID = os.environ.get("HF_DATASET_ID", "")
+DATA_LAKE_SOURCE = os.environ.get("DATA_LAKE_SOURCE", "local").lower()
+
 # ── Google Drive ──────────────────────────────────────────────────────────────
 GDRIVE_CREDENTIALS_FILE = os.environ.get("GDRIVE_CREDENTIALS_FILE", "credentials.json")
 GDRIVE_FOLDER_NAME = os.environ.get("GDRIVE_FOLDER_NAME", "TradetalkDataLake")

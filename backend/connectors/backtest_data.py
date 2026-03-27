@@ -8,6 +8,11 @@ Data sources and depth:
                      SEC EDGAR ~15 years going back to 2010 (augment/fallback)
   - Annual fins    : yFinance  — last 4 reported years
 
+Optional Hugging Face Dataset warehouse (Parquet): set ``BACKTEST_DATA_SOURCE`` to
+``hub`` or ``auto``, plus ``HF_DATASET_REPO`` and optional ``HF_DATASET_REVISION``
+(``BACKTEST_HF_*`` aliases supported). Private repos need ``HF_TOKEN`` or
+``HUGGING_FACE_HUB_TOKEN``.
+
 Combined, PE-based strategies now work reliably from 2010 onward.
 """
 import asyncio
@@ -202,17 +207,18 @@ def _fetch_edgar_quarterly_eps(ticker: str) -> list:
 
 # ── Main data fetching ────────────────────────────────────────────────────────
 
-async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
+def _backtest_data_source() -> str:
+    """live | hub | auto — see fetch_backtest_data docstring."""
+    v = (os.environ.get("BACKTEST_DATA_SOURCE") or "live").strip().lower()
+    if v in ("hub", "live", "auto"):
+        return v
+    return "live"
+
+
+async def fetch_backtest_data_live(tickers: list, start: str, end: str) -> dict:
     """
-    Fetch historical price data and fundamentals for all tickers.
+    Yahoo Finance + SEC EDGAR only (no Hugging Face). Used by ETL and as Hub fallback.
     Returns: {ticker: {prices, annual_financials, info, quarterly_eps}}
-
-    Architecture (optimised for cloud IPs with strict Yahoo Finance rate limits):
-      1. yf.download() — one bulk HTTP call for ALL ticker price histories
-      2. Per-ticker quarterly_income_stmt — only for EPS (PE computation)
-      3. SEC EDGAR — deep quarterly EPS history back to 2010
-
-    yf.download() is far cheaper than N individual t.history() calls.
     """
     import yfinance as yf
     import pandas as pd
@@ -314,6 +320,69 @@ async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
         logger.info(f"[BacktestData] {t}: {len(results[t]['prices'])} price pts, "
                     f"{len(results[t]['quarterly_eps'])} EPS pts")
 
+    return results
+
+
+async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
+    """
+    Fetch historical price data and fundamentals for all tickers.
+    Returns: {ticker: {prices, annual_financials, info, quarterly_eps}}
+
+    **Data source** (`BACKTEST_DATA_SOURCE`):
+      - ``live`` (default): Yahoo Finance bulk download + per-ticker EPS/info + EDGAR.
+      - ``hub``: read Parquet from Hugging Face Dataset (`HF_DATASET_REPO`); fill gaps with live.
+      - ``auto``: use Hub when `HF_DATASET_REPO` (or `BACKTEST_HF_DATASET_REPO`) is set, else live.
+
+    **Hub env:** `HF_DATASET_REPO`, `HF_DATASET_REVISION` (or `BACKTEST_HF_*`), optional
+    `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` for private datasets.
+
+    Architecture for live path (optimised for cloud IPs with strict Yahoo Finance rate limits):
+      1. yf.download() — one bulk HTTP call for ALL ticker price histories
+      2. Per-ticker quarterly_income_stmt — only for EPS (PE computation)
+      3. SEC EDGAR — deep quarterly EPS history back to 2010
+    """
+    src = _backtest_data_source()
+    from . import backtest_data_hub as hub
+
+    if src == "live":
+        return await fetch_backtest_data_live(tickers, start, end)
+    if src == "auto" and not hub.hub_reads_enabled():
+        return await fetch_backtest_data_live(tickers, start, end)
+    if src == "hub" and not hub.hub_reads_enabled():
+        logger.warning("[BacktestData] BACKTEST_DATA_SOURCE=hub but HF_DATASET_REPO unset; using live APIs")
+        return await fetch_backtest_data_live(tickers, start, end)
+
+    all_tickers = list(set(tickers))
+    upper_list = [t.upper() for t in all_tickers]
+    try:
+        partial_by_u, nbytes, rev = hub.assemble_from_hub(upper_list, start, end)
+        logger.info(
+            "[BacktestData] Hub revision=%s bytes_downloaded≈%s partial=%s/%s",
+            rev,
+            nbytes,
+            len(partial_by_u),
+            len(upper_list),
+        )
+    except Exception as e:
+        logger.warning("[BacktestData] Hub read failed, using live: %s", e)
+        return await fetch_backtest_data_live(tickers, start, end)
+
+    missing_u = [
+        u
+        for u in upper_list
+        if u not in partial_by_u or not partial_by_u[u].get("prices")
+    ]
+    if missing_u:
+        logger.info("[BacktestData] Hub missing or empty prices; live fallback for %s", missing_u)
+        canon = [next(t for t in all_tickers if t.upper() == u) for u in missing_u]
+        live_part = await fetch_backtest_data_live(canon, start, end)
+        for t in canon:
+            partial_by_u[t.upper()] = live_part[t]
+
+    results: dict = {}
+    for t in all_tickers:
+        u = t.upper()
+        results[t] = partial_by_u[u]
     return results
 
 

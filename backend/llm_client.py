@@ -62,6 +62,7 @@ MODEL_TIER = {
     "swarm_reflection_writer": "light",
     "video_scene_director": "light",
     "rag_narrative_polish": "light",
+    "decision_terminal_roadmap": "light",
 }
 
 def _model_for_role(role: str) -> str:
@@ -155,6 +156,14 @@ AGENT_SYSTEM_PROMPTS = {
         "{\"scenes\":[{\"scene\":1,\"visual_prompt\":\"...\",\"caption\":\"...\",\"duration\":8}]}. "
         "No markdown fences."
     ),
+    "decision_terminal_roadmap": (
+        "You output illustrative 3-year USD price scenarios for an educational dashboard only — "
+        "not investment advice. Use the provided JSON context (spot price, debate verdict, scores). "
+        "Keep bull/base/bear ordered bull >= base >= bear when possible and within plausible bands vs spot. "
+        "Respond ONLY with valid JSON: {\"bull_price_usd\": number, \"base_price_usd\": number, "
+        "\"bear_price_usd\": number, \"assumptions\": [\"short bullet\", \"...\"], "
+        "\"confidence_0_1\": 0.0-1.0, \"used_heuristic_fallback\": false}"
+    ),
     "gold_advisor": (
         "You are a precious-metals allocator advisor for LONG-TERM investors (not day traders). "
         "You receive a JSON snapshot: macro (VIX, 10Y TIPS real yield, nominal 10Y, DXY, gold futures), "
@@ -184,6 +193,14 @@ FALLBACK_TEMPLATES = {
     "swarm_analyst": {"signal": 0, "rationale": "Data falls in ambiguous range; defaulting to neutral.", "confidence": 0.5},
     "swarm_reflection_writer": {"lesson": "Insufficient data to derive a clear lesson."},
     "video_scene_director": {"scenes": []},
+    "decision_terminal_roadmap": {
+        "bull_price_usd": 0,
+        "base_price_usd": 0,
+        "bear_price_usd": 0,
+        "assumptions": [],
+        "confidence_0_1": 0,
+        "used_heuristic_fallback": True,
+    },
     "gold_advisor": {
         "directional_bias": "neutral",
         "summary": (
@@ -448,6 +465,17 @@ class LLMClient:
             f"The data is in an ambiguous range. Reason step by step and determine a signal."
         )
         return await self.generate("swarm_analyst", prompt)
+
+    async def generate_decision_terminal_roadmap(self, ticker: str, context: dict) -> dict:
+        """3Y bull/base/bear prices for Decision Terminal — JSON only; fallback zeros trigger heuristics."""
+        ctx = json.dumps(context, indent=2, default=str)
+        if len(ctx) > 12000:
+            ctx = ctx[:12000] + "\n…(truncated)"
+        prompt = (
+            f"Ticker: {ticker.upper()}\n\nContext JSON:\n{ctx}\n\n"
+            "Produce bull/base/bear scenario prices and list explicit assumptions."
+        )
+        return await self.generate("decision_terminal_roadmap", prompt)
 
     async def generate_swarm_reflection(self, ticker: str, signal: int, verdict: str,
                                         confidence: float, price_change_pct: float,

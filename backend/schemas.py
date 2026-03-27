@@ -250,3 +250,88 @@ class GoldAdvisorResponse(BaseModel):
     context: Dict[str, Any]
     briefing: Dict[str, Any]
 
+
+# ── K2 Investor Decision Terminal (glanceable view-model) ─────────────────────
+
+class TerminalFieldProvenance(BaseModel):
+    """Honest sourcing for a single figure or widget."""
+
+    source: str = Field(default="", description="e.g. yfinance, polymarket_gamma, debate_llm, heuristic")
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    formula_or_note: str = ""
+    missing_reason: Optional[str] = None
+
+
+class TerminalValuationModel(BaseModel):
+    name: str
+    fair_value_usd: Optional[float] = None
+    available: bool = True
+    provenance: TerminalFieldProvenance
+
+
+class TerminalValuationPanel(BaseModel):
+    current_price_usd: Optional[float] = None
+    average_fair_value_usd: Optional[float] = None
+    pct_vs_average: Optional[float] = Field(
+        default=None,
+        description="Positive = stock trades below average fair value (undervalued)",
+    )
+    gauge_label: str = ""
+    models: List[TerminalValuationModel] = Field(default_factory=list)
+    panel_note: str = ""
+
+
+class TerminalQualityRow(BaseModel):
+    id: str
+    label: str
+    value_label: str
+    status_label: str = ""
+    provenance: TerminalFieldProvenance
+
+
+class TerminalQualityPanel(BaseModel):
+    rows: List[TerminalQualityRow] = Field(default_factory=list)
+
+
+class TerminalVerdictPanel(BaseModel):
+    headline_verdict: str
+    debate_verdict: str
+    swarm_verdict: str
+    fusion_note: str = ""
+    expert_bullish_pct: Optional[float] = Field(
+        default=None, description="0-100, from debate stance mix + confidence"
+    )
+    prediction_market_bullish_pct: Optional[float] = None
+    prediction_market_event_title: Optional[str] = None
+    polymarket_relevance_score: Optional[float] = Field(
+        default=None, description="0-1 internal gate; None if no event"
+    )
+    polymarket_gated_out: bool = False
+
+
+class TerminalRoadmapPanel(BaseModel):
+    bull_price_usd: Optional[float] = None
+    base_price_usd: Optional[float] = None
+    bear_price_usd: Optional[float] = None
+    predicted_cagr_base_pct: Optional[float] = None
+    assumptions: List[str] = Field(default_factory=list)
+    confidence_0_1: float = Field(default=0.0, ge=0.0, le=1.0)
+    used_heuristic_fallback: bool = False
+    provenance: TerminalFieldProvenance = Field(default_factory=TerminalFieldProvenance)
+
+
+class DecisionTerminalPayload(BaseModel):
+    """
+    UI-ready payload for the K2 Investor Decision Terminal.
+    Illustrative only — not investment advice; see disclaimer.
+    """
+
+    ticker: str
+    disclaimer: str
+    generated_at_utc: str
+    cache_ttl_seconds: int = 300
+    valuation: TerminalValuationPanel
+    quality: TerminalQualityPanel
+    verdict: TerminalVerdictPanel
+    roadmap: TerminalRoadmapPanel
+

@@ -1,0 +1,44 @@
+# Parquet snapshot for the backtest HF Dataset (live Yahoo + SEC via fetch_backtest_data_live).
+#
+# Setup:
+#   - Repository secrets: HF_TOKEN (write), HF_DATASET_REPO (e.g. org/tradetalk-backtest-data)
+#   - Optional variable: EDGAR_USER_AGENT (identifying contact for SEC; else backend default)
+#
+# Uncomment `schedule` below for daily runs after secrets exist (watch GHA minute limits).
+name: Backtest data ETL
+
+on:
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: "35 6 * * *"
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Run ETL
+        env:
+          EDGAR_USER_AGENT: ${{ vars.EDGAR_USER_AGENT }}
+          HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -e
+          if [ -n "$HF_TOKEN" ] && [ -n "$HF_DATASET_REPO" ]; then
+            PYTHONPATH=. python scripts/hf_backtest_etl.py --out ./dataset_staging \
+              --upload --repo-id "$HF_DATASET_REPO"
+          else
+            echo "HF_TOKEN or HF_DATASET_REPO unset — run ETL without upload (artifact not saved)."
+            PYTHONPATH=. python scripts/hf_backtest_etl.py --out ./dataset_staging
+          fi

@@ -16,3 +16,5 @@ PyJWT
 pandas
 apscheduler
 aiofiles
+huggingface_hub
+pyarrow

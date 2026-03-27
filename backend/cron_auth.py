@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import logging
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import Header, HTTPException, status
 
@@ -33,15 +33,15 @@ if not cron_secret_configured() and _RENDER:
 
 
 async def require_cron_secret(
-    authorization: Annotated[str | None, Header()] = None,
-    x_cron_secret: Annotated[str | None, Header(alias="X-Cron-Secret")] = None,
+    authorization: Annotated[Optional[str], Header()] = None,
+    x_cron_secret: Annotated[Optional[str], Header(alias="X-Cron-Secret")] = None,
 ) -> None:
     """FastAPI dependency — no-op if secret not configured; else validate headers."""
     expected = cron_secret_configured()
     if not expected:
         return
 
-    token: str | None = None
+    token: Optional[str] = None
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization[7:].strip()
     if x_cron_secret:
