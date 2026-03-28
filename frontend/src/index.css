@@ -54,6 +54,7 @@ body {
   flex-direction: column;
   border-right: 1px solid var(--border-glass);
   z-index: 10;
+  background-color: #0b0f14;
 }
 
 .brand {
@@ -121,6 +122,18 @@ body {
   overflow-y: auto;
   padding: 40px;
   position: relative;
+}
+
+.main-content.dt-mode {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dt-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .content-wrapper {

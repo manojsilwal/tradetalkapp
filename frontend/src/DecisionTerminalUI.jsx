@@ -24,6 +24,7 @@ import {
   Legend,
 } from 'recharts';
 import { API_BASE_URL, apiFetch } from './api';
+import { SP500_TICKERS } from './sp500';
 import './DecisionTerminalUI.css';
 
 const QUALITY_ICONS = {
@@ -139,6 +140,14 @@ export default function DecisionTerminalUI() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const searchUpper = ticker.trim().toUpperCase();
+  const isValid = !searchUpper || SP500_TICKERS.includes(searchUpper);
+  const suggestions = useMemo(() => {
+    if (isValid || !searchUpper) return [];
+    return SP500_TICKERS.filter(t => t.startsWith(searchUpper) || t.includes(searchUpper)).slice(0, 4);
+  }, [searchUpper, isValid]);
+
+
   const run = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -211,11 +220,7 @@ export default function DecisionTerminalUI() {
     <div className="dt-page-bleed dt-page fade-in">
       <div className="dt-main">
         <header className="dt-topbar">
-          <div className="dt-topbar-left">
-            <span className="dt-logo-mark">K2</span>
-            <h1 className="dt-topbar-title">K2 Investor Decision Terminal</h1>
-          </div>
-          <div className="dt-topbar-right">
+          <div className="dt-topbar-right" style={{ width: '100%', justifyContent: 'flex-start' }}>
             <div className="dt-topbar-run">
               <input
                 type="text"
@@ -225,22 +230,19 @@ export default function DecisionTerminalUI() {
                 maxLength={8}
                 className="dt-ticker-input"
               />
-              <button type="button" className="dt-run-btn" onClick={run} disabled={loading || !ticker.trim()}>
+              <button type="button" className="dt-run-btn" onClick={run} disabled={loading || !searchUpper || !isValid}>
                 {loading ? <Loader2 className="spinner" size={18} /> : 'Run analysis'}
               </button>
             </div>
-            <button type="button" className="dt-icon-btn" title="Help">
-              <HelpCircle size={22} strokeWidth={1.5} />
-            </button>
-            <button type="button" className="dt-icon-btn dt-bell-wrap" title="Notifications">
-              <Bell size={22} strokeWidth={1.5} />
-              <span className="dt-bell-dot" />
-            </button>
-            <button type="button" className="dt-icon-btn dt-avatar" title="Profile">
-              <User size={20} strokeWidth={1.5} />
-            </button>
           </div>
         </header>
+
+        {(!isValid && searchUpper) && (
+          <div className="dt-error-banner" style={{ marginTop: '-8px' }}>
+            Incorrect ticker (not in S&P 500). 
+            {suggestions.length > 0 && ` Did you mean: ${suggestions.join(', ')}?`}
+          </div>
+        )}
 
         {payload?.disclaimer && <div className="dt-disclaimer">{payload.disclaimer}</div>}
         {error && <div className="dt-error-banner">{error}</div>}
