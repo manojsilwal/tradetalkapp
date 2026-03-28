@@ -246,8 +246,17 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
             id="daily_knowledge_pipeline",
             replace_existing=True,
         )
+        scheduler.add_job(
+            _l1_market_refresh_job,
+            trigger="interval",
+            minutes=15,
+            id="market_l1_cache_refresh",
+            replace_existing=True,
+        )
         scheduler.start()
-        logger.info("[DailyPipeline] APScheduler started — daily run at 00:00 UTC")
+        logger.info(
+            "[DailyPipeline] APScheduler started — daily 00:00 UTC + L1 market cache every 15m"
+        )
     except Exception as e:
         logger.warning(f"[DailyPipeline] Scheduler start failed: {e}")
 
@@ -255,3 +264,13 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
 async def _pipeline_job(knowledge_store, llm_client=None) -> None:
     """Async wrapper for the scheduler to call run_daily_pipeline."""
     await run_daily_pipeline(knowledge_store, llm_client=llm_client)
+
+
+async def _l1_market_refresh_job() -> None:
+    """Refresh in-memory quotes/macro for chat L1 (no per-message SQLite)."""
+    try:
+        from .market_l1_cache import refresh
+
+        await refresh()
+    except Exception as e:
+        logger.warning(f"[DailyPipeline] L1 market refresh failed: {e}")

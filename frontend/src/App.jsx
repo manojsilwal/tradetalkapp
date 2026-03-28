@@ -1,12 +1,13 @@
 import React, { useState, useCallback, Suspense } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, MessageCircle } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
 import AuthGate from './components/AuthGate'
 import { useAuth } from './AuthContext'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
+import { API_BASE_URL, getToken } from './api'
 
 const ConsumerUI = React.lazy(() => import('./ConsumerUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
@@ -20,6 +21,7 @@ const DailyChallengeUI = React.lazy(() => import('./DailyChallengeUI'))
 const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
 const LearningPathUI = React.lazy(() => import('./LearningPathUI'))
 const VideoAcademyUI = React.lazy(() => import('./VideoAcademyUI'))
+const ChatUI = React.lazy(() => import('./ChatUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when user is not signed in.
@@ -43,6 +45,7 @@ const ROUTE_TO_KEY = {
     '/portfolio': 'portfolio',
     '/learning': 'learning',
     '/academy': 'academy',
+    '/chat': 'chat',
 }
 
 function App() {
@@ -52,6 +55,17 @@ function App() {
     const [newBadges, setNewBadges] = useState([])
     const [xpFlash, setXpFlash]    = useState(null)
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+    const [chatPrefetch, setChatPrefetch] = useState(null)
+
+    React.useEffect(() => {
+        const headers = { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) }
+        Promise.all([
+            fetch(`${API_BASE_URL}/chat/bootstrap`).then((r) => r.json()),
+            fetch(`${API_BASE_URL}/chat/user-context`, { headers }).then((r) => r.json()),
+        ])
+            .then(([boot, user]) => setChatPrefetch({ boot, user }))
+            .catch(() => {})
+    }, [])
 
     const activeTab = ROUTE_TO_KEY[location.pathname] || 'consumer'
 
@@ -179,6 +193,15 @@ function App() {
                     </button>
 
                     <button
+                        className={`nav-btn ${activeTab === 'chat' ? 'active' : ''}`}
+                        onClick={() => { navigate('/chat'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/chat' ? 'page' : undefined}
+                    >
+                        <MessageCircle size={20} />
+                        <span>Assistant</span>
+                    </button>
+
+                    <button
                         className={`nav-btn ${activeTab === 'debate' ? 'active' : ''}`}
                         onClick={() => { navigate('/debate'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/debate' ? 'page' : undefined}
@@ -276,6 +299,7 @@ function App() {
                             <Route path="/decision-terminal" element={<DecisionTerminalUI />} />
                             <Route path="/macro" element={<MacroUI />} />
                             <Route path="/gold" element={<GoldAdvisorUI />} />
+                            <Route path="/chat" element={<ChatUI prefetch={chatPrefetch} />} />
                             <Route path="/debate" element={<DebateUI />} />
                             <Route path="/backtest" element={<BacktestUI />} />
                             <Route path="/observer" element={<ObserverUI />} />

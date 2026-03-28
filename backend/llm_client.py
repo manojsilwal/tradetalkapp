@@ -22,7 +22,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Optional
+from typing import Optional, AsyncIterator
 from .agent_policy_guardrails import (
     guard_host,
     is_enabled as policy_guardrails_enabled,
@@ -236,12 +236,13 @@ class LLMClient:
         self._model = ""
         self._endpoint = ""
         self._client = None
+        self._async_client = None
         self._sem = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
         self._init_client()
 
     def _init_client(self):
         try:
-            from openai import OpenAI
+            from openai import OpenAI, AsyncOpenAI
         except Exception as e:
             logger.warning("[LLMClient] openai sdk unavailable: %s", redact_secrets_in_text(str(e)))
             return
@@ -257,6 +258,11 @@ class LLMClient:
                 if GUARDRAILS_ENABLE and policy_guardrails_enabled():
                     guard_host("llm", OPENROUTER_BASE_URL)
                 self._client = OpenAI(
+                    base_url=OPENROUTER_BASE_URL,
+                    api_key=OPENROUTER_API_KEY,
+                    default_headers=headers,
+                )
+                self._async_client = AsyncOpenAI(
                     base_url=OPENROUTER_BASE_URL,
                     api_key=OPENROUTER_API_KEY,
                     default_headers=headers,
@@ -527,6 +533,133 @@ class LLMClient:
                 redact_secrets_in_text(str(e)),
             )
             return user
+
+    async def stream_chat_plain(
+        self,
+        system: str,
+        messages: list[dict],
+        *,
+        max_tokens: Optional[int] = None,
+        tools: Optional[list] = None,
+        tool_handlers: Optional[dict] = None,
+    ) -> AsyncIterator[str]:
+        """
+        Stream assistant text tokens (plain prose, not JSON). Used by TradeTalk chat.
+        Yields incremental text chunks; transparently handles autonomous tool execution if provided.
+        """
+        mt = max_tokens if max_tokens is not None else min(2048, LLM_MAX_TOKENS)
+        model = OPENROUTER_MODEL_LIGHT
+        if self._async_client is None:
+            yield (
+                "Chat requires OPENROUTER_API_KEY. "
+                "Configure the API key on the server to enable live responses."
+            )
+            return
+        
+        msgs = [{"role": "system", "content": system}]
+        for m in messages:
+            # Reconstruct valid message payloads, including raw tool turns if passed
+            if m.get("role") in ("user", "assistant", "tool") and m.get("content") is not None:
+                msgs.append(m)
+            elif m.get("role") == "assistant" and m.get("tool_calls"):
+                msgs.append(m)
+
+        depth = 0
+        while depth < 3:
+            depth += 1
+            tool_call_id = None
+            tool_name = ""
+            tool_args_str = ""
+            is_tool_call = False
+
+            try:
+                kwargs = {
+                    "model": model,
+                    "messages": msgs,
+                    "temperature": 0.35,
+                    "max_tokens": mt,
+                    "stream": True,
+                }
+                if tools:
+                    kwargs["tools"] = tools
+
+                async with self._sem:
+                    stream = await self._async_client.chat.completions.create(**kwargs)
+
+                    async for chunk in stream:
+                        delta = chunk.choices[0].delta if chunk.choices else None
+                        if not delta:
+                            continue
+
+                        if getattr(delta, "tool_calls", None):
+                            is_tool_call = True
+                            tc = delta.tool_calls[0]
+                            if getattr(tc, "id", None):
+                                tool_call_id = tc.id
+                            if getattr(tc, "function", None):
+                                if getattr(tc.function, "name", None):
+                                    tool_name += tc.function.name
+                                if getattr(tc.function, "arguments", None):
+                                    tool_args_str += tc.function.arguments
+                            continue
+
+                        ch = getattr(delta, "content", None)
+                        if ch:
+                            yield ch
+
+            except Exception as e:
+                logger.warning(
+                    "[LLMClient] stream_chat_plain failed: %s",
+                    redact_secrets_in_text(str(e)),
+                )
+                yield f"\n\n[Chat error: {redact_secrets_in_text(str(e))[:200]}]"
+                return
+
+            if is_tool_call and tool_name and tool_handlers and tool_name in tool_handlers:
+                args_dict = {}
+                try:
+                    args_dict = json.loads(tool_args_str)
+                except Exception:
+                    pass
+                t = args_dict.get("ticker", "")
+                # Show a context-appropriate loading message per tool
+                if tool_name == "get_top_movers":
+                    direction = args_dict.get("direction", "movers")
+                    yield f"\n*[Scanning real-time {direction}...]*\n\n"
+                elif tool_name == "get_market_news":
+                    yield f"\n*[Fetching live headlines...]*\n\n"
+                elif tool_name == "get_stock_quote" and t:
+                    yield f"\n*[Fetching real-time quote for {t}...]*\n\n"
+                else:
+                    yield f"\n*[Fetching data...]*\n\n"
+
+                try:
+                    func = tool_handlers[tool_name]
+                    result = await func(**args_dict) if asyncio.iscoroutinefunction(func) else func(**args_dict)
+                except Exception as e:
+                    result = f"Error executing {tool_name}: {e}"
+                
+                msgs.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": tool_call_id or "call_0",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": tool_args_str
+                        }
+                    }]
+                })
+                msgs.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id or "call_0",
+                    "name": tool_name,
+                    "content": str(result)
+                })
+                # Loop repeats! The next iteration will pass the tool result back to the LLM.
+            else:
+                break
 
     async def generate_rag_polish(self, context_label: str, draft: str) -> str:
         """

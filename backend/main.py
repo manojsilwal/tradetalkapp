@@ -67,7 +67,7 @@ va.init_academy_db()
 from .routers import (
     auth as auth_router,
     progress, challenges, portfolio, learning, academy,
-    notifications, analysis, backtest, macro, knowledge, debug,
+    notifications, analysis, backtest, macro, knowledge, debug, chat,
 )
 
 app.include_router(auth_router.router)
@@ -82,6 +82,7 @@ app.include_router(backtest.router)
 app.include_router(macro.router)
 app.include_router(knowledge.router)
 app.include_router(debug.router)
+app.include_router(chat.router)
 
 # ── Serve generated video files ──────────────────────────────────────────────
 _static_videos = os.path.join(os.path.dirname(__file__), "static", "videos")
@@ -141,6 +142,16 @@ async def startup_event():
     asyncio.create_task(news_scan_loop())
     from .daily_pipeline import start_scheduler
     start_scheduler(knowledge_store, llm_client=llm_client)
+
+    # Register market intel refresh jobs on APScheduler
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    _mil_scheduler = AsyncIOScheduler()
+    from .market_intel import refresh_fast as _mil_fast, refresh_slow as _mil_slow
+    _mil_scheduler.add_job(_mil_fast, "interval", minutes=10, id="mil_fast", max_instances=1)
+    _mil_scheduler.add_job(_mil_slow, "interval", minutes=30, id="mil_slow", max_instances=1)
+    _mil_scheduler.start()
+    print("[MarketIntel] APScheduler: fast=10min, slow=30min")
+
     from .keep_alive import start_keep_alive
     start_keep_alive()
 
@@ -167,6 +178,30 @@ async def startup_event():
             print(f"[SP500Pipeline][startup] ingestion error: {e}")
 
     asyncio.create_task(_run_sp500_on_startup())
+
+    async def _warm_market_l1():
+        await asyncio.sleep(3)
+        try:
+            from .market_l1_cache import refresh
+
+            await refresh()
+        except Exception as e:
+            print(f"[MarketL1] startup warm failed: {e}")
+
+    asyncio.create_task(_warm_market_l1())
+
+    async def _warm_market_intel():
+        await asyncio.sleep(10)  # stagger after L1 warm
+        try:
+            from .market_intel import refresh_fast, refresh_slow
+            print("[MarketIntel] Starting startup warm (S&P 500 batch + news + slow layer)...")
+            await asyncio.gather(refresh_fast(), refresh_slow(), return_exceptions=True)
+            print("[MarketIntel] Startup warm complete.")
+        except Exception as e:
+            print(f"[MarketIntel] startup warm failed: {e}")
+
+    asyncio.create_task(_warm_market_intel())
+
 
 
 if __name__ == "__main__":

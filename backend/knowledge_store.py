@@ -627,6 +627,45 @@ class KnowledgeStore:
             logger.warning(f"[KnowledgeStore] query({collection}) failed: {e}")
             return []
 
+    def query_with_metadata(
+        self, collection: str, query_text: str, n_results: int = 8
+    ) -> list[dict]:
+        """
+        Semantic search with documents, metadata, and distance per hit (for chat RAG reranking).
+        Each item: {"document": str, "metadata": dict, "distance": float}.
+        """
+        col = self._safe_col(collection)
+        if not col:
+            return []
+        try:
+            count = col.count()
+            if count == 0:
+                return []
+            actual_n = min(n_results, count)
+            results = col.query(query_texts=[query_text], n_results=actual_n)
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            dists = results.get("distances", [[]])[0]
+            out = []
+            for i, doc in enumerate(docs):
+                dval = 1.0
+                if dists is not None and i < len(dists):
+                    try:
+                        dval = float(dists[i])
+                    except Exception:
+                        dval = 1.0
+                out.append(
+                    {
+                        "document": doc or "",
+                        "metadata": metas[i] if i < len(metas) else {},
+                        "distance": dval,
+                    }
+                )
+            return out
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_with_metadata({collection}) failed: {e}")
+            return []
+
     def query_reflections(self, query_text: str, n_results: int = 5, filters: Optional[dict] = None):
         """Reflection retrieval with metadata filtering, effectiveness weighting, and recency."""
         col = self._safe_col("strategy_reflections")
