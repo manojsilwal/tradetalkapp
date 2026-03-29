@@ -220,7 +220,7 @@ function LessonCard({ lesson, onWatch, onGenerate, isGenerating }) {
                 {/* Action button */}
                 {ready ? (
                     <button onClick={onWatch} style={{
-                        width: '100%', padding: '9px', borderRadius: 8, border: 'none',
+                        width: '100%', padding: '9px', borderRadius: 8,
                         background: `linear-gradient(135deg, ${tc.color}22, ${tc.color}44)`,
                         border: `1px solid ${tc.border}`,
                         color: tc.color, fontSize: 12, fontWeight: 700, cursor: 'pointer',
