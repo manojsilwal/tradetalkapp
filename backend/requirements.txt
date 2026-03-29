@@ -19,3 +19,4 @@ apscheduler
 aiofiles
 huggingface_hub
 pyarrow
+httpx<0.28

@@ -224,24 +224,37 @@ async def chat_send_message(
             return f"Error reading movers cache: {e}"
 
     async def get_market_news(query: str = "market") -> str:
-        """Return preloaded news headlines from cache. Falls back to live fetch if cache is empty."""
+        """
+        Return market news headlines + optional full-article summaries.
+        Priority: FinCrawler (rich text) → MIL cache (RSS headlines) → live Yahoo RSS fallback.
+        """
         try:
+            from ..fincrawler_client import fc
+
+            # 1. If FinCrawler is up, scrape a richer set of articles
+            if fc.enabled and query.lower() not in ("market", ""):
+                fc_news = await fc.get_stock_news("SPY" if query in ("market", "") else query, limit=6)
+                if fc_news:
+                    return (
+                        f"[Deep news via FinCrawler — topic: {query}]\n"
+                        + "\n".join(f"• {item}" for item in fc_news)
+                    )
+
+            # 2. MIL preloaded RSS cache
             from .. import market_intel
             intel = market_intel.get_intel()
             headlines = intel.get("headlines") or []
-
             if headlines:
-                import time
-                data_age = int(time.time() - market_intel.updated_at_epoch())
-                filtered = headlines  # could filter by query keyword in future
+                import time as _t
+                data_age = int(_t.time() - market_intel.updated_at_epoch())
                 lines = [f"[Live market headlines, data age: {data_age}s]"]
-                lines += [f"• {h}" for h in filtered[:20]]
+                lines += [f"• {h}" for h in headlines[:20]]
                 return "\n".join(lines)
 
-            # Cache empty (server just started) — fetch live
+            # 3. Live RSS fallback
             def _fetch():
                 import urllib.request, xml.etree.ElementTree as ET, yfinance as yf
-                headlines = []
+                heads = []
                 rss_urls = [
                     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US",
                     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY&region=US&lang=en-US",
@@ -253,22 +266,97 @@ async def chat_send_message(
                             for item in ET.parse(r).findall(".//item")[:8]:
                                 t = item.findtext("title", "").strip()
                                 if t:
-                                    headlines.append(t)
+                                    heads.append(t)
                     except Exception:
                         pass
                 try:
                     for n in (yf.Ticker("^GSPC").news or [])[:8]:
                         t = n.get("title", "").strip()
-                        if t and t not in headlines:
-                            headlines.append(t)
+                        if t and t not in heads:
+                            heads.append(t)
                 except Exception:
                     pass
-                if not headlines:
+                if not heads:
                     return "No live news headlines available at this time."
-                return "[Live market headlines]\n" + "\n".join(f"• {h}" for h in headlines[:16])
+                return "[Live market headlines]\n" + "\n".join(f"• {h}" for h in heads[:16])
             return await asyncio.to_thread(_fetch)
         except Exception as e:
             return f"Error fetching news: {e}"
+
+    async def get_deep_news(ticker: str) -> str:
+        """
+        Use FinCrawler to fetch deep, full-text news articles for a specific company.
+        Returns richer context than headlines — ideal for stock-specific 'why' questions.
+        Falls back to yfinance news titles if FinCrawler is unavailable.
+        """
+        sym = ticker.upper().strip()
+        if not sym:
+            return "Please provide a ticker symbol."
+        try:
+            from ..fincrawler_client import fc
+            if fc.enabled:
+                articles = await fc.get_stock_news(sym, limit=6)
+                if articles:
+                    return (
+                        f"[Deep news for {sym} via FinCrawler]\n"
+                        + "\n\n".join(f"• {a}" for a in articles)
+                    )
+            # Fallback to yfinance news titles
+            def _yf_news():
+                import yfinance as yf
+                t = yf.Ticker(sym)
+                news = t.news or []
+                if not news:
+                    return f"No recent news found for {sym}."
+                lines = [f"[Recent news for {sym} — yfinance fallback]"]
+                for n in news[:8]:
+                    title = n.get("title", "").strip()
+                    if title:
+                        lines.append(f"• {title}")
+                return "\n".join(lines)
+            return await asyncio.to_thread(_yf_news)
+        except Exception as e:
+            return f"Error fetching deep news for {sym}: {e}"
+
+    async def get_sec_filing(ticker: str, form: str = "10-K") -> str:
+        """
+        Fetch the most recent SEC filing (10-K annual report, 10-Q quarterly, or 8-K event)
+        for a company using FinCrawler's SEC EDGAR scraper.
+        Returns LLM-ready extracted text from the filing.
+        """
+        sym = ticker.upper().strip()
+        if not sym:
+            return "Please provide a ticker symbol."
+        valid_forms = ("10-K", "10-Q", "8-K", "DEF 14A")
+        form_clean = form.upper().strip() if form.upper().strip() in valid_forms else "10-K"
+        try:
+            from ..fincrawler_client import fc
+            if not fc.enabled:
+                return (
+                    f"SEC filing lookup is unavailable (FinCrawler not configured). "
+                    f"Try searching EDGAR manually: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={sym}&type={form_clean}"
+                )
+            text = await fc.get_sec_filing(sym, form=form_clean)
+            return text or f"No {form_clean} filing found for {sym} via FinCrawler."
+        except Exception as e:
+            return f"Error fetching {form_clean} for {sym}: {e}"
+
+    async def scrape_url(url: str) -> str:
+        """
+        Scrape any public URL and return clean, LLM-ready text.
+        Use for hedge fund letters, earnings call transcripts, news articles, or any web page.
+        """
+        if not url.startswith("http"):
+            return "Invalid URL. Must start with http:// or https://"
+        try:
+            from ..fincrawler_client import fc
+            if not fc.enabled:
+                return "URL scraping is unavailable (FinCrawler not configured)."
+            text = await fc.scrape_text(url)
+            return text[:6000] if text else f"No content found at {url}."
+        except Exception as e:
+            return f"Error scraping {url}: {e}"
+
 
     tools = [
         {
@@ -321,9 +409,9 @@ async def chat_send_message(
             "function": {
                 "name": "get_market_news",
                 "description": (
-                    "Fetch live news headlines for WHY/REASON questions about the market. "
+                    "Fetch live news headlines for WHY/REASON questions about the macro market. "
                     "Use for: why is market down, geopolitical events (tariffs, Iran, Trump, Fed, war, oil). "
-                    "Do NOT use for price or movers ranking queries."
+                    "Do NOT use for company-specific news — use get_deep_news for that."
                 ),
                 "parameters": {
                     "type": "object",
@@ -333,6 +421,66 @@ async def chat_send_message(
                     "required": []
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_deep_news",
+                "description": (
+                    "Fetch rich, full-text news articles for a SPECIFIC COMPANY using FinCrawler. "
+                    "Use for: 'why is TSLA down', 'what happened to NVDA', 'latest news on AAPL'. "
+                    "Returns much richer content than get_market_news. Requires a ticker symbol."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker": {"type": "string", "description": "Exact uppercase ticker symbol e.g. TSLA NVDA AAPL"}
+                    },
+                    "required": ["ticker"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_sec_filing",
+                "description": (
+                    "Fetch the most recent SEC filing for a company (10-K annual report, 10-Q quarterly earnings, or 8-K event filing). "
+                    "Use for: 'show me Apple's annual report', 'what does Tesla's 10-K say about risk factors', "
+                    "'get Microsoft's latest 10-Q', 'any recent 8-K filings for Amazon'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker": {"type": "string", "description": "Exact uppercase ticker symbol e.g. AAPL MSFT TSLA"},
+                        "form": {
+                            "type": "string",
+                            "enum": ["10-K", "10-Q", "8-K", "DEF 14A"],
+                            "description": "SEC form type: 10-K annual, 10-Q quarterly, 8-K event, DEF 14A proxy",
+                            "default": "10-K"
+                        }
+                    },
+                    "required": ["ticker"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "scrape_url",
+                "description": (
+                    "Scrape any public URL and return clean text — hedge fund letters, earnings transcripts, "
+                    "news articles, investor presentations, Reddit posts, or any web page. "
+                    "Use when the user pastes a link or mentions a specific article/document URL."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "Full URL starting with https://"}
+                    },
+                    "required": ["url"]
+                }
+            }
         }
     ]
 
@@ -340,6 +488,9 @@ async def chat_send_message(
         "get_stock_quote": get_stock_quote,
         "get_top_movers": get_top_movers,
         "get_market_news": get_market_news,
+        "get_deep_news": get_deep_news,
+        "get_sec_filing": get_sec_filing,
+        "scrape_url": scrape_url,
     }
 
     async def event_stream():
