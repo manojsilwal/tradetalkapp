@@ -4,9 +4,26 @@
  * Set in frontend/.env.local for local dev:
  *   VITE_API_BASE_URL=http://localhost:8000
  *   VITE_GOOGLE_CLIENT_ID=<your_google_client_id>
+ *
+ * Production builds sometimes set the base to `https://host/api`; the FastAPI app
+ * serves routes at the root (`/macro`, `/trace`, …), so strip a trailing `/api`.
  */
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+function normalizeApiBaseUrl(raw) {
+  const fallback = 'http://localhost:8000';
+  if (!raw || typeof raw !== 'string') return fallback;
+  let u = raw.trim();
+  if (!u) return fallback;
+  u = u.replace(/\/+$/, '');
+  if (u.endsWith('/api')) {
+    u = u.slice(0, -4);
+    u = u.replace(/\/+$/, '');
+  }
+  return u || fallback;
+}
+
+export const API_BASE_URL = normalizeApiBaseUrl(
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+);
 
 export const GOOGLE_CLIENT_ID =
   import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
