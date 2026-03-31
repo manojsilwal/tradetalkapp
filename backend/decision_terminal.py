@@ -139,7 +139,8 @@ def _get_historical_cagr_3y(ticker: str) -> Optional[float]:
         if DATA_LAKE_SOURCE == "hf" and HF_DATASET_ID:
             from huggingface_hub import hf_hub_download
             try:
-                path = hf_hub_download(repo_id=HF_DATASET_ID, repo_type="dataset", filename=f"daily_prices/{ticker}.parquet")
+                token = os.environ.get("HF_TOKEN")
+                path = hf_hub_download(repo_id=HF_DATASET_ID, repo_type="dataset", filename=f"daily_prices/{ticker}.parquet", token=token)
             except Exception as e:
                 logger.warning("[decision_terminal] HF DL failed for %s daily_prices: %s", ticker, e)
 
@@ -171,7 +172,8 @@ def _get_historical_quality_metrics(ticker: str) -> dict:
         if DATA_LAKE_SOURCE == "hf" and HF_DATASET_ID:
             from huggingface_hub import hf_hub_download
             try:
-                path = hf_hub_download(repo_id=HF_DATASET_ID, repo_type="dataset", filename=f"quarterly_financials/{ticker}.parquet")
+                token = os.environ.get("HF_TOKEN")
+                path = hf_hub_download(repo_id=HF_DATASET_ID, repo_type="dataset", filename=f"quarterly_financials/{ticker}.parquet", token=token)
             except Exception as e:
                 logger.warning("[decision_terminal] HF DL failed for %s financials: %s", ticker, e)
 

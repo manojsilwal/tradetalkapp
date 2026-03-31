@@ -106,7 +106,8 @@ class KnowledgeStore:
                     raise RuntimeError("HF_DATASET_ID missing for VECTOR_BACKEND=hf")
                 
                 logger.info(f"[KnowledgeStore] Downloading all_summaries.json from HF {hf_id}...")
-                file_path = hf_hub_download(repo_id=hf_id, repo_type="dataset", filename="rag_summaries/all_summaries.json")
+                token = os.environ.get("HF_TOKEN")
+                file_path = hf_hub_download(repo_id=hf_id, repo_type="dataset", filename="rag_summaries/all_summaries.json", token=token)
                 with open(file_path, "r") as f:
                     summaries = json.load(f)
                     
