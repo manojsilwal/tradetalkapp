@@ -3,7 +3,7 @@ import {
   TrendingUp, ShieldAlert, Globe, Zap, Gavel,
   Download, ChevronDown, ChevronUp, Loader2, AlertTriangle,
 } from 'lucide-react';
-import { API_BASE_URL, apiFetch } from './api';
+import { API_BASE_URL, apiFetch, apiFetchResponse } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { EducationTooltip } from './components/EducationLink.jsx';
 
@@ -317,7 +317,7 @@ export default function DebateUI() {
 
   const exportData = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/knowledge/export`);
+      const res = await apiFetchResponse(`${API_BASE_URL}/knowledge/export`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

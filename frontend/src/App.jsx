@@ -7,7 +7,7 @@ import BadgePopup from './components/BadgePopup'
 import AuthGate from './components/AuthGate'
 import { useAuth } from './AuthContext'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
-import { API_BASE_URL, getToken } from './api'
+import { API_BASE_URL, BACKEND_RETRY_EVENT, apiFetch, getToken } from './api'
 
 const ConsumerUI = React.lazy(() => import('./ConsumerUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
@@ -57,15 +57,24 @@ function App() {
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
     const [chatPrefetch, setChatPrefetch] = useState(null)
 
-    React.useEffect(() => {
-        const headers = { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) }
+    const loadChatPrefetch = React.useCallback(() => {
         Promise.all([
-            fetch(`${API_BASE_URL}/chat/bootstrap`).then((r) => r.json()),
-            fetch(`${API_BASE_URL}/chat/user-context`, { headers }).then((r) => r.json()),
+            apiFetch(`${API_BASE_URL}/chat/bootstrap`),
+            apiFetch(`${API_BASE_URL}/chat/user-context`),
         ])
             .then(([boot, user]) => setChatPrefetch({ boot, user }))
             .catch(() => {})
     }, [])
+
+    React.useEffect(() => {
+        loadChatPrefetch()
+    }, [loadChatPrefetch])
+
+    React.useEffect(() => {
+        const onRetry = () => loadChatPrefetch()
+        window.addEventListener(BACKEND_RETRY_EVENT, onRetry)
+        return () => window.removeEventListener(BACKEND_RETRY_EVENT, onRetry)
+    }, [loadChatPrefetch])
 
     const activeTab = ROUTE_TO_KEY[location.pathname] || 'consumer'
 

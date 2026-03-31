@@ -15,8 +15,11 @@ export function AuthProvider({ children }) {
             try {
                 const data = await apiFetch(`${API_BASE_URL}/auth/me`);
                 setUser(data);
-            } catch {
-                clearToken();  // expired or invalid
+            } catch (e) {
+                const msg = e?.message || '';
+                if (/^HTTP 401\b/.test(msg) || /^HTTP 403\b/.test(msg) || /not authenticated|invalid token|expired/i.test(msg)) {
+                    clearToken();
+                }
             } finally {
                 setLoading(false);
             }

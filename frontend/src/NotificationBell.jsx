@@ -1,16 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Bell, X, AlertTriangle, ShieldCheck, Clock } from 'lucide-react';
-import { API_BASE_URL, apiFetch } from './api';
+import { API_BASE_URL, BACKEND_RETRY_EVENT, apiFetch, notifyBackendUnreachable } from './api';
 
 export default function NotificationBell() {
     const [alerts, setAlerts] = useState([]);
     const [unread, setUnread] = useState(0);
     const [showRecent, setShowRecent] = useState(false);
     const [toasts, setToasts] = useState([]);
+    const [sseKey, setSseKey] = useState(0);
     const bellRef = useRef(null);
 
-    // Fetch initial history
-    useEffect(() => {
+    const loadHistory = useCallback(() => {
         apiFetch(`${API_BASE_URL}/notifications/history`)
             .then(data => {
                 setAlerts(data.alerts || []);
@@ -18,6 +18,19 @@ export default function NotificationBell() {
             })
             .catch(() => { });
     }, []);
+
+    useEffect(() => {
+        loadHistory();
+    }, [loadHistory]);
+
+    useEffect(() => {
+        const onRetry = () => {
+            loadHistory();
+            setSseKey((k) => k + 1);
+        };
+        window.addEventListener(BACKEND_RETRY_EVENT, onRetry);
+        return () => window.removeEventListener(BACKEND_RETRY_EVENT, onRetry);
+    }, [loadHistory]);
 
     // SSE for real-time push
     useEffect(() => {
@@ -33,9 +46,11 @@ export default function NotificationBell() {
                 setTimeout(() => setToasts(prev => prev.filter(t => t._toastId !== toastId)), 10000);
             } catch (e) { }
         };
-        sse.onerror = () => { };
+        sse.onerror = () => {
+            notifyBackendUnreachable();
+        };
         return () => sse.close();
-    }, []);
+    }, [sseKey]);
 
     // Close dropdown on outside click
     useEffect(() => {

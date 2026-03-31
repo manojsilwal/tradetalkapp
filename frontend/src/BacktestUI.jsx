@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   FlaskConical, Lightbulb, TrendingUp, TrendingDown,
   Loader2, AlertTriangle, ChevronDown, ChevronUp, Play,
   CheckCircle2, Trophy, DollarSign, BarChart3, Info,
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, BACKEND_RETRY_EVENT, apiFetch, apiFetchResponse } from './api';
 import { EducationTooltip } from './components/EducationLink.jsx';
 
 const EXAMPLE_STRATEGIES = [
@@ -223,12 +223,23 @@ function Leaderboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError]    = useState('');
 
-  useEffect(() => {
-    fetch(`${API_BASE_URL}/strategies/leaderboard?n=20`)
-      .then(r => r.json())
+  const loadLeaderboard = useCallback(() => {
+    setLoading(true);
+    setError('');
+    apiFetch(`${API_BASE_URL}/strategies/leaderboard?n=20`)
       .then(d => { setEntries(d.strategies || []); setLoading(false); })
       .catch(e => { setError(e.message); setLoading(false); });
   }, []);
+
+  useEffect(() => {
+    loadLeaderboard();
+  }, [loadLeaderboard]);
+
+  useEffect(() => {
+    const onRetry = () => loadLeaderboard();
+    window.addEventListener(BACKEND_RETRY_EVENT, onRetry);
+    return () => window.removeEventListener(BACKEND_RETRY_EVENT, onRetry);
+  }, [loadLeaderboard]);
 
   const MEDAL = ['🥇', '🥈', '🥉'];
 
@@ -320,12 +331,21 @@ export default function BacktestUI() {
   const [error, setError]           = useState('');
   const [showExamples, setShowExamples] = useState(false);
 
-  useEffect(() => {
-    fetch(`${API_BASE_URL}/strategies/presets`)
-      .then(r => r.json())
+  const loadPresets = useCallback(() => {
+    apiFetch(`${API_BASE_URL}/strategies/presets`)
       .then(d => setPresets(d.presets || []))
       .catch(() => setPresets([]));
   }, []);
+
+  useEffect(() => {
+    loadPresets();
+  }, [loadPresets]);
+
+  useEffect(() => {
+    const onRetry = () => loadPresets();
+    window.addEventListener(BACKEND_RETRY_EVENT, onRetry);
+    return () => window.removeEventListener(BACKEND_RETRY_EVENT, onRetry);
+  }, [loadPresets]);
 
   const runBacktest = async () => {
     if (!presetId && !strategyText.trim()) return;
@@ -333,9 +353,8 @@ export default function BacktestUI() {
     try {
       // Validate strategy before running expensive backtest
       if (!presetId && strategyText.trim()) {
-        const validRes = await fetch(`${API_BASE_URL}/backtest/validate`, {
+        const validRes = await apiFetchResponse(`${API_BASE_URL}/backtest/validate`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             strategy: strategyText,
             start_date: startDate,
@@ -350,9 +369,8 @@ export default function BacktestUI() {
         }
       }
 
-      const res = await fetch(`${API_BASE_URL}/backtest`, {
+      const res = await apiFetchResponse(`${API_BASE_URL}/backtest`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           preset_id: presetId || undefined,
           strategy: presetId ? '' : strategyText,
@@ -360,7 +378,6 @@ export default function BacktestUI() {
           end_date: endDate,
         }),
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
       const data = await res.json();
       setResult(data);
       setActiveTab('backtest'); // stay on results tab

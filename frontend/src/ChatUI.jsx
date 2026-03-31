@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { API_BASE_URL, getToken, apiFetch } from './api'
+import {
+  API_BASE_URL,
+  BACKEND_RETRY_EVENT,
+  getToken,
+  apiFetch,
+  apiFetchResponse,
+  notifyBackendUnreachable,
+} from './api'
 
 /**
  * Strip model-emitted citation artifacts like 【{"id":"1",...}】 and 【1†source】
@@ -23,6 +30,7 @@ export default function ChatUI({ prefetch = null }) {
   const [streaming, setStreaming] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [sessionRetryKey, setSessionRetryKey] = useState(0)
   const bottomRef = useRef(null)
   const refreshTimer = useRef(null)
 
@@ -41,23 +49,36 @@ export default function ChatUI({ prefetch = null }) {
 
   useEffect(() => {
     if (!bootstrap) {
-      fetch(`${API_BASE_URL}/chat/bootstrap`, { credentials: 'omit' })
-        .then((r) => r.json())
+      apiFetch(`${API_BASE_URL}/chat/bootstrap`)
         .then(setBootstrap)
         .catch(() => setBootstrap({}))
     }
-    const token = getToken()
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
     if (!userCtx) {
-      fetch(`${API_BASE_URL}/chat/user-context`, { headers })
-        .then((r) => r.json())
+      apiFetch(`${API_BASE_URL}/chat/user-context`)
         .then(setUserCtx)
         .catch(() => setUserCtx({ authenticated: false }))
     }
   }, [bootstrap, userCtx])
 
   useEffect(() => {
+    const onRetry = () => {
+      apiFetch(`${API_BASE_URL}/chat/bootstrap`)
+        .then(setBootstrap)
+        .catch(() => setBootstrap({}))
+      apiFetch(`${API_BASE_URL}/chat/user-context`)
+        .then(setUserCtx)
+        .catch(() => setUserCtx({ authenticated: false }))
+      setSessionRetryKey((k) => k + 1)
+    }
+    window.addEventListener(BACKEND_RETRY_EVENT, onRetry)
+    return () => window.removeEventListener(BACKEND_RETRY_EVENT, onRetry)
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
+    setSessionLoading(true)
+    setSessionId(null)
+    setErr('')
     ;(async () => {
       try {
         const data = await apiFetch(`${API_BASE_URL}/chat/session`, {
@@ -74,7 +95,7 @@ export default function ChatUI({ prefetch = null }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [sessionRetryKey])
 
   const l1AgeSec = bootstrap?.l1_updated_at
     ? Math.max(0, Date.now() / 1000 - bootstrap.l1_updated_at)
@@ -111,15 +132,11 @@ export default function ChatUI({ prefetch = null }) {
     }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/chat/message`, {
+      const res = await apiFetchResponse(`${API_BASE_URL}/chat/message`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ session_id: sessionId, message: text, history: messages }),
       })
-      if (!res.ok) {
-        const msg = await res.text()
-        throw new Error(msg || `HTTP ${res.status}`)
-      }
       const reader = res.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
@@ -149,6 +166,7 @@ export default function ChatUI({ prefetch = null }) {
       setMessages((m) => [...m, { role: 'assistant', content: cleanText(assistant) || '(no response)' }])
       setStreaming('')
     } catch (e) {
+      if (e?.name === 'TypeError') notifyBackendUnreachable()
       setErr(e.message || 'Request failed')
     } finally {
       setBusy(false)
