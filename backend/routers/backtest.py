@@ -10,6 +10,7 @@ from ..agent_policy_guardrails import ensure_capability, redact_secrets_in_text
 from ..rate_limiter import rate_limit
 from ..deps import knowledge_store, llm_client, up
 from ..strategy_validator import validate_strategy
+from .. import user_preferences as uprefs
 
 router = APIRouter(tags=["backtest"])
 
@@ -80,6 +81,9 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(get_opt
     if _auth_user:
         try:
             up.award_xp(_auth_user.id, "backtest", note=(req.preset_id or req.strategy)[:40])
+            uprefs.learn_from_action(_auth_user.id, "backtest", {
+                "ticker": ",".join(rules.universe[:3]) if hasattr(rules, "universe") else "",
+            })
         except Exception:
             pass
 

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from ..auth import UserInfo, get_optional_user
 from ..deps import knowledge_store, llm_client
 from .. import chat_service
+from .. import user_preferences as uprefs
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,9 @@ async def chat_send_message(
         knowledge_store, sess, body.message.strip()
     )
     full_system = sess.system_prompt + rag_block
+
+    # Update sticky state from this message
+    chat_service.update_sticky_state(sess, body.message.strip())
 
     user_content = body.message.strip()
     messages = []
@@ -509,6 +513,18 @@ async def chat_send_message(
             logger.warning("[Chat] stream error: %s", e)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)[:300]})}\n\n"
         yield "data: [DONE]\n\n"
+
+        # ── Post-stream: preference learning (fire-and-forget) ────────────
+        if _user and _user.id:
+            try:
+                ticker = sess.sticky_state.get("active_ticker", "")
+                uprefs.learn_from_action(
+                    _user.id,
+                    "chat_ticker" if ticker else "chat",
+                    {"ticker": ticker} if ticker else {},
+                )
+            except Exception:
+                pass
 
     return StreamingResponse(
         event_stream(),

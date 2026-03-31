@@ -30,7 +30,7 @@ COLLECTIONS = [
     "debate_history",                # every /debate call
     "macro_alerts",                  # every 60s news scan (already exists logic)
     "strategy_backtests",            # every /backtest call
-    "price_movements",               # daily pipeline — top movers
+    "price_movements",              # daily pipeline — top movers
     "macro_snapshots",               # daily pipeline — FRED indicators
     "youtube_insights",              # daily pipeline — finance channel videos
     "strategy_reflections",          # post-backtest lessons learned memory
@@ -38,6 +38,7 @@ COLLECTIONS = [
     "earnings_memory",               # data lake — earnings events with price reactions
     "sp500_fundamentals_narratives", # S&P 500 daily fundamental snapshots as text narratives
     "sp500_sector_analysis",         # S&P 500 weekly sector rotation + momentum narratives
+    "chat_memories",                 # salient chat exchanges stored for cross-session recall
 ]
 
 class _CollectionProxy:
@@ -549,6 +550,58 @@ class KnowledgeStore:
             )
         except Exception as e:
             logger.warning(f"[KnowledgeStore] add_youtube_insight failed: {e}")
+
+    def add_chat_memory(
+        self, user_id: str, session_id: str,
+        summary: str, tickers: list, topic: str,
+    ) -> None:
+        """Store a salient chat exchange as searchable memory (per-user)."""
+        col = self._safe_col("chat_memories")
+        if not col:
+            return
+        try:
+            from .agent_policy_guardrails import redact_secrets_in_text
+            safe_summary = redact_secrets_in_text(summary)
+            today = str(datetime.now(timezone.utc).date())
+            col.add(
+                documents=[safe_summary],
+                metadatas=[{
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "tickers": json.dumps(tickers),
+                    "topic": topic,
+                    "date": today,
+                }],
+                ids=[f"chat_mem_{session_id}_{int(time.time())}"],
+            )
+            logger.info(
+                "[KnowledgeStore] chat_memory stored for user=%s tickers=%s",
+                user_id[:8], tickers,
+            )
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] add_chat_memory failed: {e}")
+
+    def query_chat_memories(
+        self, user_id: str, query_text: str, n_results: int = 5,
+    ) -> list[str]:
+        """Retrieve past chat memories for a user (semantic search)."""
+        col = self._safe_col("chat_memories")
+        if not col:
+            return []
+        try:
+            count = col.count()
+            if count == 0:
+                return []
+            actual_n = min(n_results, count)
+            results = col.query(
+                query_texts=[query_text],
+                n_results=actual_n,
+                where={"user_id": user_id},
+            )
+            return results.get("documents", [[]])[0]
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_chat_memories failed: {e}")
+            return []
 
     # ── QUERY METHODS ─────────────────────────────────────────────────────────
 

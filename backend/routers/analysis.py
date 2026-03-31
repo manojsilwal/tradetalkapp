@@ -27,6 +27,7 @@ from ..deps import (
     shorts_connector, social_connector, poly_connector, fund_connector,
     knowledge_store, llm_client, tool_registry, up,
 )
+from .. import user_preferences as uprefs
 
 router = APIRouter(tags=["analysis"])
 
@@ -158,6 +159,7 @@ async def _execute_swarm_trace(
         if _auth_user:
             try:
                 up.award_xp(_auth_user.id, "valuation", note=ticker)
+                uprefs.learn_from_action(_auth_user.id, "trace", {"ticker": ticker})
             except Exception:
                 pass
 
@@ -224,6 +226,7 @@ async def _execute_debate(
     if _auth_user and award_debate_xp:
         try:
             up.award_xp(_auth_user.id, "debate", note=ticker)
+            uprefs.learn_from_action(_auth_user.id, "debate", {"ticker": ticker})
         except Exception:
             pass
 

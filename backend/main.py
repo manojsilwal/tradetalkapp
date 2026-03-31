@@ -63,11 +63,15 @@ lp.init_learning_db()
 from . import video_academy as va
 va.init_academy_db()
 
+from . import user_preferences as uprefs
+uprefs.init_preferences_db()
+
 # ── Register routers ─────────────────────────────────────────────────────────
 from .routers import (
     auth as auth_router,
     progress, challenges, portfolio, learning, academy,
     notifications, analysis, backtest, macro, knowledge, debug, chat,
+    preferences,
 )
 
 app.include_router(auth_router.router)
@@ -83,6 +87,7 @@ app.include_router(macro.router)
 app.include_router(knowledge.router)
 app.include_router(debug.router)
 app.include_router(chat.router)
+app.include_router(preferences.router)
 
 # ── Serve generated video files ──────────────────────────────────────────────
 _static_videos = os.path.join(os.path.dirname(__file__), "static", "videos")
