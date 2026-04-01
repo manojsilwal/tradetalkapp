@@ -7,23 +7,6 @@ export function AuthProvider({ children }) {
     const [user, setUser]       = useState(null);
     const [loading, setLoading] = useState(true);
 
-    // On mount, try to restore session from localStorage
-    useEffect(() => {
-        const restore = async () => {
-            const token = getToken();
-            if (!token) { setLoading(false); return; }
-            try {
-                const data = await apiFetch(`${API_BASE_URL}/auth/me`);
-                setUser(data);
-            } catch {
-                clearToken();  // expired or invalid
-            } finally {
-                setLoading(false);
-            }
-        };
-        restore();
-    }, []);
-
     /**
      * Called after Google sign-in succeeds.
      * `googleToken` is the credential string from @react-oauth/google.
@@ -43,6 +26,35 @@ export function AuthProvider({ children }) {
         });
         return data;
     }, []);
+
+    // On mount, try to restore session from localStorage
+    useEffect(() => {
+        const restore = async () => {
+            const token = getToken();
+            if (!token) {
+                // Auto dev-login to disable login requirement
+                try {
+                    await login('dev');
+                } catch (e) {
+                    console.error('Auto dev login failed', e);
+                } finally {
+                    setLoading(false);
+                }
+                return;
+            }
+            try {
+                const data = await apiFetch(`${API_BASE_URL}/auth/me`);
+                setUser(data);
+            } catch {
+                clearToken();  // expired or invalid
+            } finally {
+                setLoading(false);
+            }
+        };
+        restore();
+    }, [login]);
+
+
 
     const logout = useCallback(() => {
         clearToken();
