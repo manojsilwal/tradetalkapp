@@ -375,9 +375,17 @@ async def fetch_backtest_data(tickers: list, start: str, end: str) -> dict:
     if missing_u:
         logger.info("[BacktestData] Hub missing or empty prices; live fallback for %s", missing_u)
         canon = [next(t for t in all_tickers if t.upper() == u) for u in missing_u]
-        live_part = await fetch_backtest_data_live(canon, start, end)
-        for t in canon:
-            partial_by_u[t.upper()] = live_part[t]
+        
+        # --- NEW CODE: Anti-Rate Limit Guard ---
+        if len(canon) > 5 and src != "live":
+            logger.error(f"[BacktestData] CRITICAL: Hub failed and requested fallback for {len(canon)} tickers. "
+                         "Aborting live fetch to prevent Yahoo Finance IP Ban! Returning empty data.")
+            for t in canon:
+                partial_by_u[t.upper()] = {"prices": [], "annual_financials": {}, "info": {}, "quarterly_eps": []}
+        else:
+            live_part = await fetch_backtest_data_live(canon, start, end)
+            for t in canon:
+                partial_by_u[t.upper()] = live_part.get(t, {"prices": [], "annual_financials": {}, "info": {}, "quarterly_eps": []})
 
     results: dict = {}
     for t in all_tickers:

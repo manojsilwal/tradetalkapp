@@ -9,8 +9,8 @@ name: Backtest data ETL
 
 on:
   workflow_dispatch: {}
-  # schedule:
-  #   - cron: "35 6 * * *"
+  schedule:
+    - cron: "35 6 * * *"
 
 jobs:
   etl:
