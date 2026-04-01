@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import UserInfo, get_optional_user
 from ..deps import knowledge_store, llm_client
+from .. import agent_memory
 from .. import chat_service
 from .. import user_preferences as uprefs
 
@@ -103,18 +104,36 @@ async def chat_send_message(
     )
     full_system = sess.system_prompt + rag_block
 
+    uid = _user.id if _user else None
+    memory_ok = bool(uid and sess.user_id and sess.user_id == uid)
+    if memory_ok:
+        mem_hits = agent_memory.search_memory(
+            knowledge_store, uid, body.message.strip(), n_results=4
+        )
+        full_system += agent_memory.format_memory_context_block(mem_hits)
+
     # Update sticky state from this message
     chat_service.update_sticky_state(sess, body.message.strip())
 
     user_content = body.message.strip()
     messages = []
-    
+
+    if memory_ok:
+        server_hist = agent_memory.load_memory(uid, sess.session_id)
+        hist_source = server_hist if server_hist else body.history[-8:]
+        # Persist this user turn after loading prior history (avoids duplicating the current message).
+        agent_memory.save_memory(
+            knowledge_store, uid, sess.session_id, "user", user_content,
+        )
+    else:
+        hist_source = body.history[-8:]
+
     # Optional history cutoff: limit to last 8 turns to prevent context bloat
-    for m in body.history[-8:]:
+    for m in hist_source[-8:]:
         if isinstance(m, dict) and "role" in m and "content" in m:
             if m["role"] in ("user", "assistant"):
                 messages.append({"role": m["role"], "content": str(m["content"])})
-                
+
     messages.append({"role": "user", "content": user_content})
 
     async def get_stock_quote(ticker: str) -> str:
@@ -499,6 +518,7 @@ async def chat_send_message(
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'meta', 'data': meta})}\n\n"
+        assistant_parts: list[str] = []
         try:
             stream_gen = llm_client.stream_chat_plain(
                 full_system, 
@@ -508,11 +528,36 @@ async def chat_send_message(
             )
             async for chunk in stream_gen:
                 if chunk:
+                    assistant_parts.append(chunk)
                     yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
         except Exception as e:
             logger.warning("[Chat] stream error: %s", e)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)[:300]})}\n\n"
         yield "data: [DONE]\n\n"
+
+        # ── Post-stream: durable assistant turn + semantic embedding ───────
+        if memory_ok and uid:
+            assistant_text = "".join(assistant_parts).strip()
+            if assistant_text:
+                tickers: list = []
+                st = sess.sticky_state
+                if st.get("active_ticker"):
+                    tickers.append(st["active_ticker"])
+                for t in st.get("mentioned_tickers") or []:
+                    if t not in tickers:
+                        tickers.append(t)
+                topic = str(st.get("analysis_mode") or "chat")
+                sem = f"User: {user_content[:1200]}\nAssistant: {assistant_text[:2000]}"
+                agent_memory.save_memory(
+                    knowledge_store,
+                    uid,
+                    sess.session_id,
+                    "assistant",
+                    assistant_text,
+                    semantic_summary=sem,
+                    tickers=tickers[:10],
+                    topic=topic[:80],
+                )
 
         # ── Post-stream: preference learning (fire-and-forget) ────────────
         if _user and _user.id:

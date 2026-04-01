@@ -66,6 +66,9 @@ va.init_academy_db()
 from . import user_preferences as uprefs
 uprefs.init_preferences_db()
 
+from . import agent_memory as agent_memory_mod
+agent_memory_mod.init_agent_memory_db()
+
 # ── Register routers ─────────────────────────────────────────────────────────
 from .routers import (
     auth as auth_router,
