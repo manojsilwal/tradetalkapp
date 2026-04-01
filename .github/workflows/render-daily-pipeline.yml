@@ -21,7 +21,16 @@ jobs:
           set -euo pipefail
           test -n "${BASE:-}" || { echo "Set RENDER_API_BASE in repo secrets"; exit 1; }
           test -n "${SECRET:-}" || { echo "Set PIPELINE_CRON_SECRET in repo secrets (same as Render)"; exit 1; }
-          curl -fsS --max-time 600 -X POST "${BASE}/knowledge/pipeline-run" \
-            -H "Authorization: Bearer ${SECRET}" \
-            -H "Content-Type: application/json"
-          echo "Pipeline triggered OK"
+          
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt..."
+            if curl -fsS --max-time 900 -X POST "${BASE}/knowledge/pipeline-run" \
+              -H "Authorization: Bearer ${SECRET}" \
+              -H "Content-Type: application/json"; then
+              echo "Pipeline triggered OK"
+              exit 0
+            fi
+            if [ $attempt -lt 3 ]; then sleep 30; fi
+          done
+          echo "Failed to trigger pipeline after 3 attempts"
+          exit 1
