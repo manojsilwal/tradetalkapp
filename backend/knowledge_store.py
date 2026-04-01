@@ -48,8 +48,8 @@ class _CollectionProxy:
         self._backend = backend
         self._name = name
 
-    def add(self, documents, metadatas, ids):
-        self._backend.add(self._name, documents=documents, metadatas=metadatas, ids=ids)
+    def add(self, documents, metadatas, ids, embeddings=None):
+        self._backend.add(self._name, documents=documents, metadatas=metadatas, ids=ids, embeddings=embeddings)
 
     def query(self, query_texts, n_results, where=None):
         rows = self._backend.query(
@@ -127,11 +127,17 @@ class KnowledgeStore:
                         docs = [s["document"] for s in items]
                         metas = [s.get("metadata", {}) for s in items]
                         ids = [s["id"] for s in items]
+                        embeddings = [s.get("embedding") for s in items]
+                        
                         for m in metas:
                             for k, v in list(m.items()):
                                 if v is None: m[k] = ""
                                 elif isinstance(v, (list, dict)): m[k] = json.dumps(v)
-                        self._cols[col_name].add(documents=docs, metadatas=metas, ids=ids)
+                                
+                        if all(e is None for e in embeddings):
+                            embeddings = None
+                            
+                        self._cols[col_name].add(documents=docs, metadatas=metas, ids=ids, embeddings=embeddings)
                 
                 backend_name = "Hugging Face (In-Memory)"
 

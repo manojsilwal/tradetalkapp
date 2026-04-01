@@ -10,7 +10,7 @@ class VectorBackendBase:
     def ensure_collection(self, name: str) -> None:
         raise NotImplementedError
 
-    def add(self, collection: str, documents: List[str], metadatas: List[dict], ids: List[str]) -> None:
+    def add(self, collection: str, documents: List[str], metadatas: List[dict], ids: List[str], embeddings: Optional[List[List[float]]] = None) -> None:
         raise NotImplementedError
 
     def query(
@@ -53,17 +53,39 @@ class ChromaVectorBackend(VectorBackendBase):
             
         self._cols: Dict[str, Any] = {}
 
+        # Use remote HF Embedding Function on Render instead of heavy local ONNX model
+        self._embedding_function = None
+        render = os.environ.get("RENDER", "").strip().lower()
+        if render in ("true", "1", "yes"):
+            hf_token = os.environ.get("HF_TOKEN")
+            if hf_token:
+                try:
+                    from chromadb.utils.embedding_functions import HuggingFaceEmbeddingFunction
+                    self._embedding_function = HuggingFaceEmbeddingFunction(
+                        api_key=hf_token,
+                        model_name="sentence-transformers/all-MiniLM-L6-v2"
+                    )
+                    logger.info("[ChromaVectorBackend] Configured remote HuggingFaceEmbeddingFunction (OOM prevention).")
+                except Exception as e:
+                    logger.warning(f"[ChromaVectorBackend] Failed to init remote embedding function: {e}")
+
     def ensure_collection(self, name: str) -> None:
-        self._cols[name] = self._client.get_or_create_collection(name=name)
+        if self._embedding_function:
+            self._cols[name] = self._client.get_or_create_collection(name=name, embedding_function=self._embedding_function)
+        else:
+            self._cols[name] = self._client.get_or_create_collection(name=name)
 
     def _col(self, name: str):
         return self._cols.get(name)
 
-    def add(self, collection: str, documents: List[str], metadatas: List[dict], ids: List[str]) -> None:
+    def add(self, collection: str, documents: List[str], metadatas: List[dict], ids: List[str], embeddings: Optional[List[List[float]]] = None) -> None:
         col = self._col(collection)
         if not col:
             return
-        col.add(documents=documents, metadatas=metadatas, ids=ids)
+        if embeddings:
+            col.add(documents=documents, metadatas=metadatas, ids=ids, embeddings=embeddings)
+        else:
+            col.add(documents=documents, metadatas=metadatas, ids=ids)
 
     def query(
         self,
@@ -162,9 +184,9 @@ class SupabaseVectorBackend(VectorBackendBase):
             logger.warning(f"[SupabaseVectorBackend] Embedding generation failed: {e}")
             return None
 
-    def add(self, collection: str, documents: List[str], metadatas: List[dict], ids: List[str]) -> None:
+    def add(self, collection: str, documents: List[str], metadatas: List[dict], ids: List[str], embeddings: Optional[List[List[float]]] = None) -> None:
         rows = []
-        for doc, meta, row_id in zip(documents, metadatas, ids):
+        for i, (doc, meta, row_id) in enumerate(zip(documents, metadatas, ids)):
             row = {
                 "id": row_id,
                 "collection": collection,
@@ -172,9 +194,12 @@ class SupabaseVectorBackend(VectorBackendBase):
                 "metadata": meta,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
-            embedding = self._embed(doc)
-            if embedding is not None:
-                row["embedding"] = embedding
+            if embeddings and i < len(embeddings) and embeddings[i] is not None:
+                row["embedding"] = embeddings[i]
+            else:
+                embedding = self._embed(doc)
+                if embedding is not None:
+                    row["embedding"] = embedding
             rows.append(row)
         self._client.table("vector_memory").upsert(rows).execute()
 
