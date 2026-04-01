@@ -1,5 +1,5 @@
 """Knowledge store endpoints — stats, export, pipeline, S&P 500."""
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from fastapi.responses import Response
 
 from ..cron_auth import require_cron_secret
@@ -47,19 +47,35 @@ async def knowledge_reflections(n: int = 20):
 
 
 @router.post("/pipeline-run", dependencies=[Depends(require_cron_secret)])
-async def trigger_pipeline():
-    """Run the daily knowledge pipeline."""
+async def trigger_pipeline(background_tasks: BackgroundTasks):
+    """Run the daily knowledge pipeline in the background."""
     from ..daily_pipeline import run_daily_pipeline
-    summary = await run_daily_pipeline(knowledge_store)
-    return {"status": "complete", "summary": summary}
+    import logging
+
+    async def _bg_run():
+        try:
+            await run_daily_pipeline(knowledge_store)
+        except Exception as e:
+            logging.error(f"[KnowledgeRouter] Background pipeline failed: {e}")
+
+    background_tasks.add_task(_bg_run)
+    return {"status": "accepted", "message": "Pipeline triggered in background"}
 
 
 @router.post("/sp500-ingest", dependencies=[Depends(require_cron_secret)])
-async def trigger_sp500_ingestion(tickers: list[str] = None):
-    """Trigger the S&P 500 fundamentals + sector ingestion pipeline."""
+async def trigger_sp500_ingestion(background_tasks: BackgroundTasks, tickers: list[str] = None):
+    """Trigger the S&P 500 ingestion pipeline in the background."""
     from ..sp500_ingestion_pipeline import run_sp500_ingestion
-    summary = await run_sp500_ingestion(tickers=tickers)
-    return {"status": "complete", "summary": summary}
+    import logging
+
+    async def _bg_ingest():
+        try:
+            await run_sp500_ingestion(tickers=tickers)
+        except Exception as e:
+            logging.error(f"[KnowledgeRouter] Background S&P500 ingestion failed: {e}")
+
+    background_tasks.add_task(_bg_ingest)
+    return {"status": "accepted", "message": "S&P 500 ingestion triggered in background"}
 
 
 @router.get("/sp500-stats")
