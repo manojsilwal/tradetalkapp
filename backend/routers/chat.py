@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Optional
 
@@ -22,6 +23,33 @@ from .. import user_preferences as uprefs
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+_QUOTE_TICKER_STOP = frozenset({
+    "THE", "AND", "FOR", "ARE", "WAS", "WHAT", "TODAY", "CHANGE", "PRICE", "QUOTE", "CURRENT",
+    "STOCK", "YOUR", "FROM", "WITH", "THAT", "THIS", "HAVE", "BEEN", "WILL", "HOW", "WHEN",
+    "DOES", "DID", "CAN", "ANY", "NOT", "ALL", "OUR", "OUT", "NEW", "NOW", "GET",
+})
+
+
+def _wants_live_quote(msg: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(price|quote|chang(e|es)?|%\s*change|percent|trading\s+at|last\s+close)\b",
+            msg,
+            re.I,
+        )
+    )
+
+
+def _extract_quote_ticker(msg: str) -> Optional[str]:
+    m = re.search(r"\bfor\s+([A-Z]{2,5})\b", msg, re.I)
+    if m:
+        return m.group(1).upper()
+    cands = re.findall(r"\b([A-Z]{2,5})\b", msg.upper())
+    for c in reversed(cands):
+        if c not in _QUOTE_TICKER_STOP and 2 <= len(c) <= 5:
+            return c
+    return None
 
 
 class ChatMessageRequest(BaseModel):
@@ -116,6 +144,15 @@ async def chat_send_message(
     chat_service.update_sticky_state(sess, body.message.strip())
 
     user_content = body.message.strip()
+    qc_ticker: Optional[str] = None
+    if _wants_live_quote(user_content):
+        qc_ticker = _extract_quote_ticker(user_content)
+    if qc_ticker:
+        full_system += (
+            "\n\nNote: A structured live quote card will be sent to the user first for this turn; "
+            "keep your answer short and do not duplicate the full quote table.\n"
+        )
+
     messages = []
 
     if memory_ok:
@@ -518,6 +555,13 @@ async def chat_send_message(
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'meta', 'data': meta})}\n\n"
+        if qc_ticker:
+            try:
+                qbody = await get_stock_quote(qc_ticker)
+            except Exception as e:
+                logger.warning("[Chat] quote_card prefetch failed: %s", e)
+                qbody = f"Could not load quote for {qc_ticker}: {e}"
+            yield f"data: {json.dumps({'type': 'quote_card', 'ticker': qc_ticker, 'body': qbody[:12000]})}\n\n"
         assistant_parts: list[str] = []
         try:
             stream_gen = llm_client.stream_chat_plain(

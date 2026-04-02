@@ -1,82 +1,88 @@
 // @ts-check
 const { test, expect } = require('@playwright/test');
+const { dismissOnboarding, expectNoGenericFetchFailure, expectOneOf } = require('./support');
 
-const FRONTEND = process.env.FRONTEND_URL || 'https://frontend-manojsilwals-projects.vercel.app';
-
-async function dismissOnboardingIfPresent(page) {
-  const skip = page.getByRole('button', { name: /skip tour/i });
-  if (await skip.isVisible().catch(() => false)) {
-    await skip.click();
-  }
-}
-
-test.describe('first-run UX', () => {
-  test('sidebar navigation works without clicking Skip (overlay is non-blocking)', async ({ page }) => {
-    await page.goto(`${FRONTEND}/`);
-    await page.waitForTimeout(500);
-    const welcome = page.getByText('Welcome to TradeTalk');
-    await expect(welcome).toBeVisible({ timeout: 10000 });
-    await page.getByRole('button', { name: /Strategy Lab/i }).click();
-    await expect(page).toHaveURL(/\/backtest/, { timeout: 15000 });
-    await expect(welcome).not.toBeVisible({ timeout: 5000 });
+test.describe('Investor Use Cases', () => {
+  test('valuation dashboard analyzes a ticker', async ({ page }) => {
+    await page.goto('/');
+    await dismissOnboarding(page);
+    await expect(page.getByRole('heading', { name: 'TradeTalk', exact: true })).toBeVisible({ timeout: 15000 });
+    await page.getByPlaceholder('Ticker').fill('AAPL');
+    await page.getByRole('button', { name: 'Analyze' }).click();
+    await expectOneOf(page, ['Overall Verdict', 'Elite Investor Valuation Profile', 'Margin of Safety'], 90000);
+    await expectNoGenericFetchFailure(page);
   });
 
-  test('Skip tour dismisses overlay', async ({ page }) => {
-    await page.goto(`${FRONTEND}/`);
-    await expect(page.getByText('Welcome to TradeTalk')).toBeVisible({ timeout: 10000 });
-    await page.getByRole('button', { name: /skip tour/i }).click();
-    await expect(page.getByText('Welcome to TradeTalk')).not.toBeVisible({ timeout: 3000 });
-  });
-});
-
-test.describe('analysis actions', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto(FRONTEND);
-    await dismissOnboardingIfPresent(page);
+  test('decision terminal returns a verdict panel', async ({ page }) => {
+    await page.goto('/decision-terminal');
+    await dismissOnboarding(page);
+    await expect(page.getByPlaceholder('TICKER')).toBeVisible({ timeout: 15000 });
+    await page.getByPlaceholder('TICKER').fill('NVDA');
+    await page.getByRole('button', { name: 'Run analysis' }).click();
+    await expectOneOf(page, ['Verdict & sentiment hub', 'Aggregate verdict', 'Future price roadmap'], 120000);
+    await expectNoGenericFetchFailure(page);
   });
 
-  test('AI Debate loads and starts debate flow', async ({ page }) => {
-    await page.getByRole('button', { name: /AI Debate/i }).click();
-    await expect(page).toHaveURL(/\/debate/, { timeout: 15000 });
-    const tickerInput = page.getByPlaceholder(/TICKER/i);
-    await expect(tickerInput).toBeVisible({ timeout: 10000 });
-    await tickerInput.fill('SPY');
-    await page.getByRole('button', { name: /Start Debate/i }).click();
-    await expect(page.getByText(/Bull Analyst|Bear Analyst|Analyst/i).first()).toBeVisible({
-      timeout: 180000,
-    });
+  test('macro page loads key investor context', async ({ page }) => {
+    await page.goto('/macro');
+    await dismissOnboarding(page);
+    await expect(page.getByText('Global Macroeconomic Grounding')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('Live Sector Rotation')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('Global Capital Flows')).toBeVisible({ timeout: 30000 });
   });
-});
 
-test.describe('backtest reliability', () => {
-  test('Strategy Lab runs a preset backtest or shows structured error (not raw Failed to fetch)', async ({
-    page,
-  }) => {
-    await page.goto(`${FRONTEND}/backtest`);
-    await dismissOnboardingIfPresent(page);
-    await expect(page.getByText(/PROVEN STRATEGY PRESETS|Strategy Lab/i).first()).toBeVisible({
-      timeout: 20000,
-    });
-    await page.locator('button').filter({ hasText: 'Fama-French Quality' }).first().click({ timeout: 20000 });
+  test('gold advisor shows macro inputs and briefing', async ({ page }) => {
+    await page.goto('/gold');
+    await dismissOnboarding(page);
+    await expect(page.getByText('Gold Advisor')).toBeVisible({ timeout: 30000 });
+    await expectOneOf(page, ['AI briefing', 'DXY', '10Y TIPS real yield %'], 90000);
+    await expectNoGenericFetchFailure(page);
+  });
+
+  test('debate flow produces a panel verdict', async ({ page }) => {
+    await page.goto('/debate');
+    await dismissOnboarding(page);
+    await expect(page.getByPlaceholder('TICKER')).toBeVisible({ timeout: 15000 });
+    await page.getByPlaceholder('TICKER').fill('TSLA');
+    await page.getByRole('button', { name: 'Start Debate' }).click();
+    await expectOneOf(page, ['Panel Verdict', 'Bull Analyst', 'Moderator'], 180000);
+    await expectNoGenericFetchFailure(page);
+  });
+
+  test('strategy lab loads and accepts a backtest prompt', async ({ page }) => {
+    await page.goto('/backtest');
+    await dismissOnboarding(page);
+    await expect(page.getByText('Strategy Lab')).toBeVisible({ timeout: 30000 });
+    const prompt = page.getByPlaceholder(/Buy Mag7 stocks/i);
+    await expect(prompt).toBeVisible({ timeout: 30000 });
+    await prompt.fill('Buy stocks trading above their 200-day moving average each year and rebalance annually');
     await page.getByRole('button', { name: /Run Backtest/i }).click();
-    await expect(page.locator('text=Failed to fetch')).toHaveCount(0, { timeout: 120000 });
-    const ok =
-      (await page.getByText(/Total Return|CAGR|Sharpe/i).first().isVisible().catch(() => false)) ||
-      (await page
-        .getByText(/Backtest run:|Validation request:|Network error|timed out|HTTP \d+/i)
-        .first()
-        .isVisible()
-        .catch(() => false));
-    expect(ok).toBeTruthy();
+    await expectOneOf(page, ['PARSED STRATEGY', 'CAGR', 'Max Drawdown', 'Sharpe Ratio', 'Backtest run:', 'Request ID:'], 180000);
+    await expectNoGenericFetchFailure(page);
   });
-});
 
-test.describe('portfolio (unauthenticated)', () => {
-  test('portfolio shows auth or summary surface', async ({ page }) => {
-    await page.goto(`${FRONTEND}/portfolio`);
-    await dismissOnboardingIfPresent(page);
-    const gate = page.getByText(/sign in|Sign in|unlock|paper portfolio/i);
-    const summary = page.getByText(/Portfolio Value|vs SPY|Open Positions/i);
-    await expect(gate.or(summary).first()).toBeVisible({ timeout: 15000 });
+  test('assistant opens a session and accepts a portfolio-level question', async ({ page }) => {
+    await page.goto('/chat');
+    await dismissOnboarding(page);
+    await expect(page.getByText('TradeTalk Assistant')).toBeVisible({ timeout: 30000 });
+    const box = page.getByPlaceholder(/Ask about markets, your portfolio, or strategies/i);
+    await expect(box).toBeVisible({ timeout: 30000 });
+    await box.fill('What does an inverted yield curve mean for tech stocks?');
+    await page.getByRole('button', { name: /Send/i }).click();
+    await expectOneOf(page, [
+      (p) => p.locator('strong').filter({ hasText: 'Assistant:' }),
+      'Assistant:',
+    ], 120000);
+    await expectNoGenericFetchFailure(page);
+  });
+
+  test('portfolio and daily challenge are reachable for the investor workflow', async ({ page }) => {
+    await page.goto('/portfolio');
+    await dismissOnboarding(page);
+    await expectOneOf(page, ['Open Positions', 'Unlock Paper Portfolio', 'Add Position'], 30000);
+
+    await page.goto('/challenge');
+    await dismissOnboarding(page);
+    await expectOneOf(page, ['DAILY CHALLENGE', 'Unlock Daily Challenge', 'Today\'s Challenge'], 30000);
   });
 });

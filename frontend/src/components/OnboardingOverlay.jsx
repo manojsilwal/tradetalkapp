@@ -49,11 +49,14 @@ export default function OnboardingOverlay({ onComplete }) {
     const [step, setStep] = useState(0);
     const [visible, setVisible] = useState(false);
 
+    // Full-screen tour only on the Valuation Dashboard (/). Other routes skip first-run overlay.
     useEffect(() => {
-        if (!localStorage.getItem(ONBOARDING_KEY)) {
-            setVisible(true);
+        if (localStorage.getItem(ONBOARDING_KEY)) {
+            setVisible(false);
+            return;
         }
-    }, []);
+        setVisible(location.pathname === '/');
+    }, [location.pathname]);
 
     const dismiss = useCallback(() => {
         localStorage.setItem(ONBOARDING_KEY, '1');

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FlaskConical, Lightbulb, TrendingUp, TrendingDown,
   Loader2, AlertTriangle, ChevronDown, ChevronUp, Play,
@@ -17,6 +17,8 @@ const EXAMPLE_STRATEGIES = [
 ];
 
 const MIN_BACKTEST_DATE = "2010-01-01";
+/** Server/proxy can be slow; align with client abort + watchdog. */
+const BACKTEST_POST_TIMEOUT_MS = 300000;
 
 const ACTION_COLORS = {
   BUY:       { bg: 'rgba(16,185,129,0.12)',  color: '#10b981', border: 'rgba(16,185,129,0.3)' },
@@ -324,6 +326,31 @@ export default function BacktestUI() {
   const [result, setResult]         = useState(null);
   const [error, setError]           = useState('');
   const [showExamples, setShowExamples] = useState(false);
+  const loadingWatchdogRef = useRef(null);
+
+  useEffect(() => {
+    if (!loading) {
+      if (loadingWatchdogRef.current) {
+        clearTimeout(loadingWatchdogRef.current);
+        loadingWatchdogRef.current = null;
+      }
+      return;
+    }
+    loadingWatchdogRef.current = setTimeout(() => {
+      setLoading(false);
+      setError(
+        (prev) =>
+          prev ||
+          `Backtest run stalled past ${Math.round(BACKTEST_POST_TIMEOUT_MS / 1000)}s. The request was stopped client-side. Try a preset, a shorter date range, or retry later. Check API logs with your Request ID if shown.`
+      );
+    }, BACKTEST_POST_TIMEOUT_MS + 5000);
+    return () => {
+      if (loadingWatchdogRef.current) {
+        clearTimeout(loadingWatchdogRef.current);
+        loadingWatchdogRef.current = null;
+      }
+    };
+  }, [loading]);
 
   useEffect(() => {
     fetchJsonWithMeta(`${API_BASE_URL}/strategies/presets`, {}, 30000)
@@ -376,7 +403,7 @@ export default function BacktestUI() {
             end_date: endDate,
           }),
         },
-        180000
+        BACKTEST_POST_TIMEOUT_MS
       );
       setResult(data);
       setActiveTab('backtest'); // stay on results tab
@@ -634,12 +661,18 @@ export default function BacktestUI() {
 
           {/* Error */}
           {error && (
-            <div style={{
-              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
-              borderRadius: 10, padding: '12px 16px', marginBottom: 20,
-              display: 'flex', gap: 10, color: '#f87171', fontSize: '0.83rem',
-            }}>
-              <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> {error}
+            <div
+              role="alert"
+              data-testid="backtest-error"
+              style={{
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+                borderRadius: 10, padding: '12px 16px', marginBottom: 20,
+                display: 'flex', gap: 10, color: '#f87171', fontSize: '0.83rem',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>{error}</span>
             </div>
           )}
 

@@ -2,7 +2,8 @@
 /** @type {import('@playwright/test').PlaywrightTestConfig} */
 module.exports = {
   testDir: './e2e',
-  timeout: 120000,
+  /** Backtest + slow API paths can exceed 2m; align with client BACKTEST_POST_TIMEOUT_MS (+ buffer). */
+  timeout: 360000,
   retries: 1,
   use: {
     baseURL: process.env.FRONTEND_URL || 'https://frontend-manojsilwals-projects.vercel.app',

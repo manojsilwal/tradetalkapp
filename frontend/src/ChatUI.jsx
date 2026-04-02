@@ -65,6 +65,7 @@ export default function ChatUI({ prefetch = null }) {
   const [streaming, setStreaming] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [quoteCards, setQuoteCards] = useState([])
   const bottomRef = useRef(null)
   const refreshTimer = useRef(null)
 
@@ -145,17 +146,21 @@ export default function ChatUI({ prefetch = null }) {
     setMessages((m) => [...m, { role: 'user', content: text }])
     setBusy(true)
     setStreaming('')
+    setQuoteCards([])
 
     const token = getToken()
     const headers = {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     }
+    const chatAbort = new AbortController()
+    const chatTimer = setTimeout(() => chatAbort.abort(), 120000)
 
     try {
       const res = await fetch(`${API_BASE_URL}/chat/message`, {
         method: 'POST',
         headers,
+        signal: chatAbort.signal,
         body: JSON.stringify({ session_id: sessionId, message: text, history: messages }),
       })
       if (!res.ok) {
@@ -182,6 +187,9 @@ export default function ChatUI({ prefetch = null }) {
               assistant += cleanText(j.text)
               setStreaming(assistant)
             }
+            if (j.type === 'quote_card' && j.ticker && j.body) {
+              setQuoteCards((qc) => [...qc, { ticker: j.ticker, body: j.body }])
+            }
             if (j.type === 'error') setErr(j.message || 'Stream error')
           } catch {
             /* ignore partial */
@@ -191,11 +199,13 @@ export default function ChatUI({ prefetch = null }) {
       setMessages((m) => [...m, { role: 'assistant', content: cleanText(assistant) || '(no response)' }])
       setStreaming('')
     } catch (e) {
-      setErr(e.message || 'Request failed')
+      const msg = e.name === 'AbortError' ? 'Chat timed out after 120s — try a shorter question.' : (e.message || 'Request failed')
+      setErr(msg)
     } finally {
+      clearTimeout(chatTimer)
       setBusy(false)
     }
-  }, [input, sessionId, busy])
+  }, [input, sessionId, busy, messages])
 
   const onKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -279,6 +289,28 @@ export default function ChatUI({ prefetch = null }) {
             }}
           >
             <strong>{m.role === 'user' ? 'You' : 'Assistant'}:</strong> {linkifyContent(m.content)}
+          </div>
+        ))}
+        {quoteCards.map((q, i) => (
+          <div
+            key={`qc-${q.ticker}-${i}`}
+            style={{
+              marginBottom: 12,
+              padding: 12,
+              borderRadius: 10,
+              border: '1px solid rgba(16,185,129,0.35)',
+              background: 'rgba(16,185,129,0.08)',
+              fontSize: 13,
+              lineHeight: 1.45,
+              color: '#e2e8f0',
+              whiteSpace: 'pre-wrap',
+            }}
+            data-testid="quote-card"
+          >
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#34d399', marginBottom: 6, letterSpacing: '0.04em' }}>
+              LIVE QUOTE · {q.ticker}
+            </div>
+            {q.body}
           </div>
         ))}
         {streaming && (
