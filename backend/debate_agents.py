@@ -269,9 +269,12 @@ def _store_agent_snapshot(ks, ticker: str, argument, macro_state: dict):
     col = ks._safe_col("debate_history")
     if not col:
         return
+    kp = argument.key_points[:5] if argument.key_points else []
+    points_text = "; ".join(kp) if kp else ""
+    body = f"{argument.headline}. {points_text}" if points_text else argument.headline
     doc = (
         f"[{argument.agent_role}] {argument.stance.value} on {ticker}: "
-        f"{argument.headline}. {argument.analysis[:300]}"
+        f"{body[:300]}"
     )
     entry_id = f"agent_{argument.agent_role}_{ticker}_{int(time.time())}"
     try:

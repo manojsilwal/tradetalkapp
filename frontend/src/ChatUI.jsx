@@ -1,5 +1,47 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { API_BASE_URL, getToken, apiFetch } from './api'
+
+/** Turn URLs and internal /routes into clickable links (assistant + user messages). */
+function linkifyContent(text) {
+  if (!text) return null
+  const re =
+    /(https?:\/\/[^\s<]+[^<>\s.,;)]*)|(\/(?:debate|backtest|decision-terminal|portfolio|macro|gold|chat|observer|challenge|learning|academy)(?:\?[^\s<]*)?)/gi
+  const out = []
+  let last = 0
+  let mi = 0
+  let m
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) {
+      out.push(text.slice(last, m.index))
+    }
+    const chunk = m[0]
+    if (chunk.startsWith('http')) {
+      out.push(
+        <a
+          key={`lnk-${mi++}`}
+          href={chunk}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: '#93c5fd', textDecoration: 'underline' }}
+        >
+          {chunk}
+        </a>
+      )
+    } else {
+      out.push(
+        <Link key={`lnk-${mi++}`} to={chunk} style={{ color: '#93c5fd', textDecoration: 'underline' }}>
+          {chunk}
+        </Link>
+      )
+    }
+    last = re.lastIndex
+  }
+  if (last < text.length) {
+    out.push(text.slice(last))
+  }
+  return out.length ? out : text
+}
 
 /**
  * Strip model-emitted citation artifacts like 【{"id":"1",...}】 and 【1†source】
@@ -179,6 +221,31 @@ export default function ChatUI({ prefetch = null }) {
       <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 16 }}>
         Context is prefetched on app load; session opens with market + portfolio snapshot. Responses stream token-by-token.
       </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+        {[
+          { to: '/debate', label: 'Debate' },
+          { to: '/backtest', label: 'Backtest' },
+          { to: '/decision-terminal', label: 'Decision' },
+          { to: '/portfolio', label: 'Portfolio' },
+          { to: '/macro', label: 'Macro' },
+        ].map((a) => (
+          <Link
+            key={a.to}
+            to={a.to}
+            style={{
+              fontSize: 12,
+              padding: '6px 12px',
+              borderRadius: 8,
+              border: '1px solid rgba(148,163,184,0.25)',
+              color: '#cbd5e1',
+              textDecoration: 'none',
+              background: 'rgba(30,41,59,0.5)',
+            }}
+          >
+            {a.label}
+          </Link>
+        ))}
+      </div>
       {staleBanner}
       {sessionLoading && (
         <div style={{ color: '#94a3b8', fontSize: 13 }}>Preparing session…</div>
@@ -211,12 +278,12 @@ export default function ChatUI({ prefetch = null }) {
               lineHeight: 1.5,
             }}
           >
-            <strong>{m.role === 'user' ? 'You' : 'Assistant'}:</strong> {m.content}
+            <strong>{m.role === 'user' ? 'You' : 'Assistant'}:</strong> {linkifyContent(m.content)}
           </div>
         ))}
         {streaming && (
           <div style={{ whiteSpace: 'pre-wrap', color: '#e2e8f0', fontSize: 14 }}>
-            <strong>Assistant:</strong> {streaming}
+            <strong>Assistant:</strong> {linkifyContent(streaming)}
             <span className="cursor-blink">▍</span>
           </div>
         )}

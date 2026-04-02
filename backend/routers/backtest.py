@@ -1,4 +1,6 @@
 """Backtest and strategy endpoints."""
+import logging
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,7 +12,10 @@ from ..agent_policy_guardrails import ensure_capability, redact_secrets_in_text
 from ..rate_limiter import rate_limit
 from ..deps import knowledge_store, llm_client, up
 from ..strategy_validator import validate_strategy
+from ..telemetry import get_request_id
 from .. import user_preferences as uprefs
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["backtest"])
 
@@ -46,6 +51,9 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(get_opt
     from ..backtest_engine import run_backtest
     from ..strategy_presets import get_preset_rules
 
+    rid = get_request_id() or "unknown"
+    t0 = time.monotonic()
+
     pid = (req.preset_id or "").strip()
     strat = (req.strategy or "").strip()
 
@@ -61,11 +69,42 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(get_opt
         except KeyError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
     elif strat:
-        rules = await parse_strategy(strat, req.start_date, req.end_date, llm_client, knowledge_store)
+        try:
+            rules = await parse_strategy(strat, req.start_date, req.end_date, llm_client, knowledge_store)
+        except Exception as e:
+            logger.exception("[backtest] parse_strategy failed req_id=%s", rid)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": redact_secrets_in_text(str(e)),
+                    "request_id": rid,
+                    "stage": "parse_strategy",
+                },
+            ) from e
     else:
         raise HTTPException(status_code=400, detail="Provide either preset_id or non-empty strategy text.")
 
-    result = await run_backtest(rules, llm_client, knowledge_store)
+    try:
+        result = await run_backtest(rules, llm_client, knowledge_store)
+    except Exception as e:
+        logger.exception("[backtest] run_backtest failed req_id=%s", rid)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": redact_secrets_in_text(str(e)),
+                "request_id": rid,
+                "stage": "run_backtest",
+            },
+        ) from e
+
+    elapsed = time.monotonic() - t0
+    logger.info(
+        "[backtest] ok req_id=%s duration_s=%.2f preset=%s rag_docs=%s",
+        rid,
+        elapsed,
+        pid or "(custom)",
+        result.retrieval_telemetry.retrieved_docs_count,
+    )
     print(
         f"[BacktestRAG] retrieved_docs_count={result.retrieval_telemetry.retrieved_docs_count} "
         f"reflection_hits={result.retrieval_telemetry.reflection_hits}"

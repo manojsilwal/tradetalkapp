@@ -1,7 +1,7 @@
 """Tests for cron secret authentication."""
 import os
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch
 
 os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
 
@@ -31,7 +31,8 @@ class TestRequireCronSecret(unittest.TestCase):
     @patch.dict(os.environ, {"PIPELINE_CRON_SECRET": ""})
     def test_no_secret_configured_passes(self):
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+
+        result = asyncio.run(
             require_cron_secret(authorization=None, x_cron_secret=None)
         )
         self.assertIsNone(result)
@@ -39,7 +40,8 @@ class TestRequireCronSecret(unittest.TestCase):
     @patch.dict(os.environ, {"PIPELINE_CRON_SECRET": "test-secret"})
     def test_correct_bearer_passes(self):
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+
+        result = asyncio.run(
             require_cron_secret(authorization="Bearer test-secret", x_cron_secret=None)
         )
         self.assertIsNone(result)
@@ -47,7 +49,8 @@ class TestRequireCronSecret(unittest.TestCase):
     @patch.dict(os.environ, {"PIPELINE_CRON_SECRET": "test-secret"})
     def test_correct_header_passes(self):
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+
+        result = asyncio.run(
             require_cron_secret(authorization=None, x_cron_secret="test-secret")
         )
         self.assertIsNone(result)
@@ -56,8 +59,9 @@ class TestRequireCronSecret(unittest.TestCase):
     def test_wrong_secret_raises(self):
         import asyncio
         from fastapi import HTTPException
+
         with self.assertRaises(HTTPException) as ctx:
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 require_cron_secret(authorization="Bearer wrong", x_cron_secret=None)
             )
         self.assertEqual(ctx.exception.status_code, 401)
@@ -66,8 +70,9 @@ class TestRequireCronSecret(unittest.TestCase):
     def test_missing_secret_raises(self):
         import asyncio
         from fastapi import HTTPException
+
         with self.assertRaises(HTTPException) as ctx:
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 require_cron_secret(authorization=None, x_cron_secret=None)
             )
         self.assertEqual(ctx.exception.status_code, 401)

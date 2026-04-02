@@ -41,3 +41,88 @@ export async function apiFetch(url, options = {}) {
   }
   return res.json();
 }
+
+/**
+ * JSON fetch with optional timeout, auth header, and X-Request-ID on errors.
+ * Use for long-running endpoints (e.g. POST /backtest) where callers need request_id for QA.
+ */
+export async function fetchJsonWithMeta(url, options = {}, timeoutMs = 180000) {
+  const token = getToken();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = {
+    ...(options.headers || {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+  if (options.body != null) {
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+  }
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers,
+    });
+    clearTimeout(timer);
+    const requestId = res.headers.get('x-request-id') || '';
+    const text = await res.text();
+
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      if (text) {
+        try {
+          const body = JSON.parse(text);
+          if (body.detail !== undefined) {
+            detail =
+              typeof body.detail === 'string'
+                ? body.detail
+                : JSON.stringify(body.detail);
+          } else if (body.message) {
+            detail = String(body.message);
+          }
+        } catch {
+          detail = text.slice(0, 800);
+        }
+      }
+      const err = new Error(
+        requestId ? `${detail}\n\nRequest ID: ${requestId}` : detail
+      );
+      err.requestId = requestId;
+      err.status = res.status;
+      throw err;
+    }
+
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = {};
+      }
+    }
+    return { data, requestId };
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      const err = new Error(
+        `Request timed out after ${Math.round(timeoutMs / 1000)}s. The server may still be working — check logs or retry.`
+      );
+      err.code = 'TIMEOUT';
+      throw err;
+    }
+    const msg = String(e.message || '');
+    if (
+      msg === 'Failed to fetch' ||
+      e.name === 'TypeError' ||
+      msg.includes('NetworkError')
+    ) {
+      const err = new Error(
+        `Network error — cannot reach the API at ${API_BASE_URL}. ` +
+          `Confirm VITE_API_BASE_URL in your build, CORS settings, and that the backend is running.`
+      );
+      err.code = 'NETWORK';
+      throw err;
+    }
+    throw e;
+  }
+}

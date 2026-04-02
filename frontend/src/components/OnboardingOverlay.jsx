@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { LayoutDashboard, TrendingUp, Brain, FlaskConical, Globe, Sparkles } from 'lucide-react';
 
 const ONBOARDING_KEY = 'k2_onboarding_complete';
@@ -43,6 +44,8 @@ const STEPS = [
 ];
 
 export default function OnboardingOverlay({ onComplete }) {
+    const location = useLocation();
+    const initialPathRef = useRef(location.pathname);
     const [step, setStep] = useState(0);
     const [visible, setVisible] = useState(false);
 
@@ -52,37 +55,63 @@ export default function OnboardingOverlay({ onComplete }) {
         }
     }, []);
 
+    const dismiss = useCallback(() => {
+        localStorage.setItem(ONBOARDING_KEY, '1');
+        setVisible(false);
+        if (onComplete) onComplete();
+    }, [onComplete]);
+
+    // Auto-dismiss when user navigates away from first route (tour no longer blocks sidebar).
+    useEffect(() => {
+        if (!visible) return;
+        if (location.pathname !== initialPathRef.current) {
+            dismiss();
+        }
+    }, [location.pathname, visible, dismiss]);
+
     if (!visible) return null;
 
     const handleNext = () => {
         if (step < STEPS.length - 1) {
             setStep(step + 1);
         } else {
-            localStorage.setItem(ONBOARDING_KEY, '1');
-            setVisible(false);
-            if (onComplete) onComplete();
+            dismiss();
         }
     };
 
-    const handleSkip = () => {
-        localStorage.setItem(ONBOARDING_KEY, '1');
-        setVisible(false);
-        if (onComplete) onComplete();
-    };
+    const handleSkip = () => dismiss();
 
     const current = STEPS[step];
 
     return (
-        <div style={{
-            position: 'fixed', inset: 0, zIndex: 9999,
-            background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 9999,
+                pointerEvents: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+            }}
+            aria-hidden={false}
+        >
+            <div
+                style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background: 'rgba(0,0,0,0.65)',
+                    backdropFilter: 'blur(6px)',
+                    pointerEvents: 'none',
+                }}
+            />
             <div style={{
                 background: 'linear-gradient(145deg, #1e293b, #0f172a)',
                 border: '1px solid rgba(255,255,255,0.1)',
                 borderRadius: 20, padding: '48px 40px', maxWidth: 480,
                 textAlign: 'center', position: 'relative',
+                pointerEvents: 'auto',
+                zIndex: 1,
             }}>
                 <div style={{
                     width: 64, height: 64, borderRadius: 16,
@@ -95,8 +124,11 @@ export default function OnboardingOverlay({ onComplete }) {
                 <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12, color: '#f8fafc' }}>
                     {current.title}
                 </h2>
-                <p style={{ color: '#94a3b8', fontSize: 15, lineHeight: 1.6, marginBottom: 32 }}>
+                <p style={{ color: '#94a3b8', fontSize: 15, lineHeight: 1.6, marginBottom: 12 }}>
                     {current.description}
+                </p>
+                <p style={{ color: '#64748b', fontSize: 12, lineHeight: 1.5, marginBottom: 24 }}>
+                    You can use the app behind this tour, or skip anytime.
                 </p>
                 <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 24 }}>
                     {STEPS.map((_, i) => (

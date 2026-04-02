@@ -5,7 +5,7 @@ import {
   CheckCircle2, Trophy, DollarSign, BarChart3, Info,
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, fetchJsonWithMeta } from './api';
 import { EducationTooltip } from './components/EducationLink.jsx';
 
 const EXAMPLE_STRATEGIES = [
@@ -224,10 +224,15 @@ function Leaderboard() {
   const [error, setError]    = useState('');
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/strategies/leaderboard?n=20`)
-      .then(r => r.json())
-      .then(d => { setEntries(d.strategies || []); setLoading(false); })
-      .catch(e => { setError(e.message); setLoading(false); });
+    fetchJsonWithMeta(`${API_BASE_URL}/strategies/leaderboard?n=20`, {}, 30000)
+      .then(({ data }) => {
+        setEntries(data.strategies || []);
+        setLoading(false);
+      })
+      .catch((e) => {
+        setError(e.message || 'Leaderboard failed');
+        setLoading(false);
+      });
   }, []);
 
   const MEDAL = ['🥇', '🥈', '🥉'];
@@ -321,9 +326,8 @@ export default function BacktestUI() {
   const [showExamples, setShowExamples] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/strategies/presets`)
-      .then(r => r.json())
-      .then(d => setPresets(d.presets || []))
+    fetchJsonWithMeta(`${API_BASE_URL}/strategies/presets`, {}, 30000)
+      .then(({ data }) => setPresets(data.presets || []))
       .catch(() => setPresets([]));
   }, []);
 
@@ -333,39 +337,51 @@ export default function BacktestUI() {
     try {
       // Validate strategy before running expensive backtest
       if (!presetId && strategyText.trim()) {
-        const validRes = await fetch(`${API_BASE_URL}/backtest/validate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            strategy: strategyText,
-            start_date: startDate,
-            end_date: endDate,
-          }),
-        });
-        const validation = await validRes.json();
-        if (!validation.valid) {
-          setError(validation.reason + (validation.suggestion ? '\n💡 ' + validation.suggestion : ''));
+        try {
+          const { data: validation } = await fetchJsonWithMeta(
+            `${API_BASE_URL}/backtest/validate`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                strategy: strategyText,
+                start_date: startDate,
+                end_date: endDate,
+              }),
+            },
+            90000
+          );
+          if (!validation.valid) {
+            setError(
+              `Validation: ${validation.reason || 'failed'}` +
+                (validation.suggestion ? '\n💡 ' + validation.suggestion : '')
+            );
+            setLoading(false);
+            return;
+          }
+        } catch (ve) {
+          setError(`Validation request: ${ve.message || ve}`);
           setLoading(false);
           return;
         }
       }
 
-      const res = await fetch(`${API_BASE_URL}/backtest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          preset_id: presetId || undefined,
-          strategy: presetId ? '' : strategyText,
-          start_date: startDate,
-          end_date: endDate,
-        }),
-      });
-      if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
-      const data = await res.json();
+      const { data } = await fetchJsonWithMeta(
+        `${API_BASE_URL}/backtest`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            preset_id: presetId || undefined,
+            strategy: presetId ? '' : strategyText,
+            start_date: startDate,
+            end_date: endDate,
+          }),
+        },
+        180000
+      );
       setResult(data);
       setActiveTab('backtest'); // stay on results tab
     } catch (e) {
-      setError(e.message || 'Backtest failed.');
+      setError(`Backtest run: ${e.message || 'failed'}`);
     } finally {
       setLoading(false);
     }

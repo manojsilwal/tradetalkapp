@@ -39,10 +39,11 @@ def _store_factor_snapshot(ks, ticker: str, factor_name: str, result, market_sta
     col = ks._safe_col("swarm_history")
     if not col:
         return
+    rationale_preview = (getattr(result, "rationale", None) or "")[:400]
     doc = (
         f"[{factor_name}] {ticker} analysis: status={result.status}, "
         f"signal={result.trading_signal}, confidence={result.confidence:.2f}. "
-        f"Summary: {result.analysis[:400]}"
+        f"Summary: {rationale_preview}"
     )
     entry_id = f"factor_{factor_name}_{ticker}_{int(_time.time())}"
     try:

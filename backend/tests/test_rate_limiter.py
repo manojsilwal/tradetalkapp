@@ -11,6 +11,10 @@ class TestRateLimiter(unittest.TestCase):
     """Rate limiter sliding window tests."""
 
     def setUp(self):
+        import backend.rate_limiter as rl
+
+        # Env may have been read at first import before tests set RATE_LIMIT_ENABLED.
+        rl.RATE_LIMIT_ENABLED = True
         with _lock:
             _hits.clear()
 

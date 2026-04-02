@@ -233,11 +233,33 @@ export default function PaperPortfolioUI({ onXpGained }) {
                                 </div>
 
                                 <div>
-                                    <div style={{ fontWeight: 700, color: '#e2e8f0', fontSize: 15 }}>{pos.ticker}</div>
-                                    <div style={{ fontSize: 11, color: '#64748b' }}>
-                                        {pos.shares.toFixed(4)} shares · ${pos.entry_price.toFixed(2)} entry
-                                        {pos.note && ` · ${pos.note}`}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                        <span style={{ fontWeight: 700, color: '#e2e8f0', fontSize: 15 }}>{pos.ticker}</span>
+                                        <span
+                                            style={{
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                                letterSpacing: 0.5,
+                                                textTransform: 'uppercase',
+                                                padding: '2px 8px',
+                                                borderRadius: 6,
+                                                background: 'rgba(124,58,237,0.2)',
+                                                color: '#c4b5fd',
+                                                border: '1px solid rgba(124,58,237,0.35)',
+                                            }}
+                                            title="Where this position was recorded from"
+                                        >
+                                            {(pos.source || 'manual').replace(/_/g, ' ')}
+                                        </span>
                                     </div>
+                                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                                        {pos.shares.toFixed(4)} shares · ${pos.entry_price.toFixed(2)} entry
+                                    </div>
+                                    {pos.note ? (
+                                        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 6, fontStyle: 'italic' }}>
+                                            Note: {pos.note}
+                                        </div>
+                                    ) : null}
                                 </div>
 
                                 <div style={{ textAlign: 'right' }}>
