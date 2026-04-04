@@ -18,6 +18,22 @@ from .vector_backends import ChromaVectorBackend, SupabaseVectorBackend
 
 logger = logging.getLogger(__name__)
 
+
+def _coerce_stored_embedding(raw):
+    """Return a list[float] embedding, or None if missing/invalid (e.g. legacy HF API error dict)."""
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return None
+    if not isinstance(raw, list) or len(raw) == 0:
+        return None
+    if isinstance(raw[0], (int, float)):
+        return [float(x) for x in raw]
+    if isinstance(raw[0], list) and raw[0] and isinstance(raw[0][0], (int, float)):
+        return [float(x) for x in raw[0]]
+    return None
+
+
 # Persist to disk so knowledge survives restarts
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "./chroma_db")
 VECTOR_BACKEND = os.environ.get("VECTOR_BACKEND", "chroma").lower()
@@ -101,6 +117,8 @@ class KnowledgeStore:
             if VECTOR_BACKEND == "hf":
                 from huggingface_hub import hf_hub_download
                 import chromadb
+
+                os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
                 hf_id = os.environ.get("HF_DATASET_ID", "")
                 if not hf_id:
                     raise RuntimeError("HF_DATASET_ID missing for VECTOR_BACKEND=hf")
@@ -127,16 +145,25 @@ class KnowledgeStore:
                         docs = [s["document"] for s in items]
                         metas = [s.get("metadata", {}) for s in items]
                         ids = [s["id"] for s in items]
-                        embeddings = [s.get("embedding") for s in items]
-                        
+                        raw_embs = [s.get("embedding") for s in items]
+                        embeddings = [_coerce_stored_embedding(e) for e in raw_embs]
+
                         for m in metas:
                             for k, v in list(m.items()):
-                                if v is None: m[k] = ""
-                                elif isinstance(v, (list, dict)): m[k] = json.dumps(v)
-                                
+                                if v is None:
+                                    m[k] = ""
+                                elif isinstance(v, (list, dict)):
+                                    m[k] = json.dumps(v)
+
                         if all(e is None for e in embeddings):
                             embeddings = None
-                            
+                        elif any(e is None for e in embeddings):
+                            logger.warning(
+                                "[KnowledgeStore] HF summaries have mixed/invalid embeddings for %s; re-embedding all rows.",
+                                col_name,
+                            )
+                            embeddings = None
+
                         self._cols[col_name].add(documents=docs, metadatas=metas, ids=ids, embeddings=embeddings)
                 
                 backend_name = "Hugging Face (In-Memory)"

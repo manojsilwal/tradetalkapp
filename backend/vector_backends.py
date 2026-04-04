@@ -5,6 +5,34 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Chroma's built-in HuggingFaceEmbeddingFunction still points at deprecated
+# https://api-inference.huggingface.co — use InferenceClient (router) instead.
+_DEFAULT_HF_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+class HfInferenceRouterEmbeddingFunction:
+    """Embedding function for Chroma using huggingface_hub InferenceClient (router.huggingface.co)."""
+
+    def __init__(self, api_key: str, model_name: str = _DEFAULT_HF_EMBED_MODEL):
+        from huggingface_hub import InferenceClient
+
+        self._client = InferenceClient(model=model_name, token=api_key)
+        self._model_name = model_name
+
+    def __call__(self, input: List[str]) -> List[List[float]]:
+        out: List[List[float]] = []
+        for text in input:
+            arr = self._client.feature_extraction(text)
+            if hasattr(arr, "tolist"):
+                vec = arr.tolist()
+            else:
+                vec = list(arr)
+            # Normalize nested [[...]] from some servers to [...]
+            while vec and isinstance(vec[0], list):
+                vec = vec[0]
+            out.append([float(x) for x in vec])
+        return out
+
 
 class VectorBackendBase:
     def ensure_collection(self, name: str) -> None:
@@ -60,12 +88,15 @@ class ChromaVectorBackend(VectorBackendBase):
             hf_token = os.environ.get("HF_TOKEN")
             if hf_token:
                 try:
-                    from chromadb.utils.embedding_functions import HuggingFaceEmbeddingFunction
-                    self._embedding_function = HuggingFaceEmbeddingFunction(
+                    model_name = os.environ.get("HF_EMBEDDING_MODEL", _DEFAULT_HF_EMBED_MODEL).strip() or _DEFAULT_HF_EMBED_MODEL
+                    self._embedding_function = HfInferenceRouterEmbeddingFunction(
                         api_key=hf_token,
-                        model_name="sentence-transformers/all-MiniLM-L6-v2"
+                        model_name=model_name,
                     )
-                    logger.info("[ChromaVectorBackend] Configured remote HuggingFaceEmbeddingFunction (OOM prevention).")
+                    logger.info(
+                        "[ChromaVectorBackend] Configured HfInferenceRouterEmbeddingFunction (%s) via InferenceClient.",
+                        model_name,
+                    )
                 except Exception as e:
                     logger.warning(f"[ChromaVectorBackend] Failed to init remote embedding function: {e}")
 
