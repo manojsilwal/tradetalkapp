@@ -1,57 +1,67 @@
-# AGENTS.md
+# TradeTalk — agent instructions (FaultHunter remediation and release)
 
-## Cursor Cloud specific instructions
+**Unattended remediation:** use **Cursor Background / Cloud Agent** tied to this repo. Do **not** assume a developer Mac is online—run tests in the **cloud agent sandbox** or in **GitHub Actions**, not only locally.
 
-### Architecture overview
+**Alarm clock:** scheduled **FaultHunter** reports are surfaced via GitHub Issues (see [`.github/workflows/faulthunter-report-reminder.yml`](.github/workflows/faulthunter-report-reminder.yml)). Point the cloud agent at the latest **FaultHunter findings** issue plus this file.
 
-TradeTalk is an AI-powered investment analysis platform with two tightly-coupled services:
+---
 
-| Service | Tech | Port | Start command |
-|---------|------|------|---------------|
-| **Backend** | Python 3.12 + FastAPI + Uvicorn | 8000 | `cd /workspace && PYTHONPATH=. python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000` |
-| **Frontend** | React 19 + Vite 7 (JSX) | 5173 | `cd /workspace/frontend && npm run dev` |
+## Mandatory loop after every code change
 
-Both ChromaDB (vector store) and SQLite (auth/progress) are embedded — no external database services needed for local dev.
+1. **Targeted tests** — After each task, run tests for **affected** code in the cloud agent (or CI):  
+   - Backend: `cd backend && pytest` with paths narrowed to changed modules when possible (e.g. `pytest tests/test_macro.py`).  
+   - E2E: `npm run e2e` with a focused file or grep when possible (see [`playwright.config.js`](playwright.config.js)).  
+   Do **not** assume a local machine.
 
-### Environment files (not committed)
+2. **Missing tests** — If behavior changed without coverage, add **unit/integration** tests under `backend/tests/` and **E2E** under [`e2e/`](e2e). Prefer stable selectors and timeouts aligned with [`playwright.config.js`](playwright.config.js) (long timeouts for backtest-heavy flows).
 
-- `backend/.env` — copy from `backend/.env.example`; set `VECTOR_BACKEND=chroma` for local dev (avoids Supabase dependency). Pre-seeded ChromaDB data lives in `/workspace/chroma_db/`.
-- `frontend/.env.local` — set `VITE_API_BASE_URL=http://localhost:8000`.
+3. **Red-green** — If tests fail, fix code or tests and return to step 1. Do not commit a broken tree.
 
-### Key dev-mode behaviors
+4. **Commit and push** — Logical commits; message may reference FaultHunter **test ids** (e.g. `decision-aapl-today`) when fixing evaluator findings.
 
-- Without `OPENROUTER_API_KEY`, the LLM client uses a **rule-based fallback** — AI features still work but with templated responses.
-- Without `GOOGLE_CLIENT_ID`, the app enters **DEV_MODE** — authentication is bypassed with a hardcoded dev user.
-- The `SP500_INGEST_ON_STARTUP` defaults to `true` in non-Render environments; set to `0` to skip the slow Yahoo Finance ingest on startup.
+5. **Deploy** — Pushing to the branch connected to **Render** (backend) and **Vercel** (frontend) triggers builds. Optional **explicit** hooks (if git sync lags): store **Render Deploy Hook** and **Vercel Deploy Hook** URLs as GitHub secrets `RENDER_DEPLOY_HOOK_URL` and `VERCEL_DEPLOY_HOOK_URL`, then `curl -fsS -X POST "$URL"` after push. Avoid double-deploy if pushes already trigger both.
 
-### Running tests
+6. **Verify in production** — Run E2E smoke against the live frontend (default base URL in Playwright):  
+   `FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e`  
+   Ensure API calls hit production backend (env vars your tests use for API base, if any). Record pass/fail in the PR or issue.
 
-Backend smoke tests (per `CLAUDE.md`):
-```bash
-cd /workspace && PYTHONPATH=. python3 -m unittest discover -s backend/tests -p 'test_*.py' -v
-```
+**CORS:** production backend should list this origin (see [`render.yaml`](render.yaml) `CORS_ORIGINS`).
 
-### Build
+---
 
-Frontend production build: `cd /workspace/frontend && npm run build`
+## FaultHunter report → code map
 
-### Known gotchas
+FaultHunter labels cases by **feature** and HTTP path. Use this to find TradeTalk code and tests.
 
-- `python3-dev` build headers are required for `chroma-hnswlib` (C++ extension). The update script ensures they are present.
-- `httpx>=0.28` breaks `starlette` `TestClient` (which `fastapi==0.110.0` ships). Pin `httpx<0.28` after installing requirements to keep tests working. The update script handles this.
-- ChromaDB telemetry emits `capture() takes 1 positional argument but 3 were given` warnings — these are harmless and can be ignored.
-- The frontend has no ESLint or TypeScript config despite `CLAUDE.md` mentioning TypeScript; the codebase is pure JSX. Use `npm run build` (Vite/esbuild) as the lint/compile check.
+| FaultHunter `feature` | Endpoint (typical) | Backend module | Suggested E2E / tests |
+|-------------------------|-------------------|----------------|------------------------|
+| `decision_terminal` | `/decision-terminal` | [`backend/routers/analysis.py`](backend/routers/analysis.py) | [`e2e/analysis-surfaces.spec.js`](e2e/analysis-surfaces.spec.js), [`backend/tests/test_market_data_parity.py`](backend/tests/test_market_data_parity.py) |
+| `macro` | `/macro` | [`backend/routers/macro.py`](backend/routers/macro.py) | [`e2e/analysis-surfaces.spec.js`](e2e/analysis-surfaces.spec.js), [`backend/tests/test_macro.py`](backend/tests/test_macro.py) |
+| `gold` | `/advisor/gold` | [`backend/routers/macro.py`](backend/routers/macro.py) | [`e2e/analysis-surfaces.spec.js`](e2e/investor-usecases.spec.js) |
+| `trace` | `/trace` | [`backend/routers/analysis.py`](backend/routers/analysis.py) | [`e2e/investor-usecases.spec.js`](e2e/investor-usecases.spec.js) |
+| `debate` | `/debate` | [`backend/routers/analysis.py`](backend/routers/analysis.py) | [`e2e/investor-usecases.spec.js`](e2e/investor-usecases.spec.js) |
+| `backtest` | `/backtest` | [`backend/routers/backtest.py`](backend/routers/backtest.py) | [`e2e/analysis-surfaces.spec.js`](e2e/analysis-surfaces.spec.js) |
 
-### Scalability constraints (single-process)
+---
 
-The backend is designed for single-process deployment:
-- **SSE client list** (`sse_clients` in `deps.py`) is in-memory — no cross-worker broadcasting.
-- **L1 cache** (`cache.py`) is an in-process `OrderedDict` — no shared cache across workers.
-- **APScheduler** runs cron jobs in-process — running multiple workers would duplicate jobs.
-- **SQLite** uses thread-local connections — suitable for moderate write loads; for higher concurrency, migrate to PostgreSQL.
+## Ingesting a report
 
-For multi-worker scaling, the recommended path is:
-1. Replace SSE with Redis Pub/Sub for real-time notifications.
-2. Replace L1 cache with Redis.
-3. Move scheduler to a dedicated worker process or use an external scheduler (e.g. Celery Beat).
-4. Migrate SQLite to PostgreSQL for concurrent writes.
+- **URL:** set `FAULTHUNTER_REPORT_URL` to the raw Markdown URL of `reports/latest.md` (or a dated file) in the FaultHunter repo. For **public** repos, no PAT is needed—e.g. `https://raw.githubusercontent.com/manojsilwal/FaultHunter/main/reports/latest.md`.  
+- **Summarize:**  
+  `python scripts/summarize_faulthunter_report.py path/to/report.md --markdown`  
+  or `--json` for machine-readable output.
+
+---
+
+## What not to “fix” blindly
+
+- **Empty `Target` or bad base URL** in the report: often **Render / GitHub secrets** for FaultHunter (`TRADETALK_BASE_URL`), not application logic.  
+- **HTTP 599 / outages:** infrastructure or deploy, not parity tuning.  
+- **Yahoo parity mismatch:** do not weaken FaultHunter checks without human review; fix app fields or data freshness instead.
+
+---
+
+## Related automation
+
+- Scheduled issue with report summary: [`.github/workflows/faulthunter-report-reminder.yml`](.github/workflows/faulthunter-report-reminder.yml)  
+- Optional Cursor rule: [`.cursor/rules/tradetalk-release.mdc`](.cursor/rules/tradetalk-release.mdc)

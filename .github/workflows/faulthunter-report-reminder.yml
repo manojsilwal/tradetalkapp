@@ -1,0 +1,74 @@
+# Fetches the latest FaultHunter Markdown report and opens a GitHub Issue with a parsed summary
+# for Cursor Cloud Agent / developers. Runs on a schedule (after typical FaultHunter daily commit)
+# or manually (optionally override URL).
+#
+# Required repository secret (for scheduled runs):
+#   FAULTHUNTER_REPORT_URL — raw URL to reports/latest.md in the FaultHunter repo, e.g.
+#   https://raw.githubusercontent.com/manojsilwal/FaultHunter/main/reports/latest.md
+#   Public repos: no GitHub token required for curl (anonymous raw fetch).
+#
+name: FaultHunter report reminder
+
+on:
+  schedule:
+    - cron: "45 3 * * *"
+  workflow_dispatch:
+    inputs:
+      report_url:
+        description: "Raw URL to FaultHunter report .md (overrides secret when set)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  open-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve report URL and fetch
+        env:
+          SECRET_URL: ${{ secrets.FAULTHUNTER_REPORT_URL }}
+          INPUT_URL: ${{ inputs.report_url }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          URL="${SECRET_URL:-}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "${INPUT_URL:-}" ]; then
+            URL="$INPUT_URL"
+          fi
+          if [ -z "$URL" ]; then
+            echo "::notice::Skipping: set repository secret FAULTHUNTER_REPORT_URL or run workflow_dispatch with report_url."
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "Fetching report from configured URL..."
+          curl -fsSL "$URL" -o /tmp/fh-report.md
+          echo "SKIP=false" >> "$GITHUB_ENV"
+
+      - name: Summarize report
+        if: env.SKIP != 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/summarize_faulthunter_report.py /tmp/fh-report.md --markdown > /tmp/issue-body.md
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "*Automation: [.github/workflows/faulthunter-report-reminder.yml](.github/workflows/faulthunter-report-reminder.yml). Remediation: follow [AGENTS.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/AGENTS.md).*"
+          } >> /tmp/issue-body.md
+
+      - name: Create GitHub Issue
+        if: env.SKIP != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TITLE="FaultHunter findings $(date -u +%Y-%m-%d) (UTC)"
+          gh issue create --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --body-file /tmp/issue-body.md

@@ -84,6 +84,20 @@ class MacroDataResponse(BaseModel):
     consumer_spending: List[ConsumerSpendingDataPoint]
     capital_flows: List[CapitalFlowData]
     cash_reserves: List[CashReserveDataPoint]
+    usd_broad_index: Optional[float] = None
+    usd_index_change_5d_pct: Optional[float] = None
+    usd_strength_label: str = "unknown"
+    dxy_level: Optional[float] = None
+    dxy_change_5d_pct: Optional[float] = None
+    dxy_strength_label: str = "unknown"
+    treasury_2y: Optional[float] = None
+    treasury_10y: Optional[float] = None
+    yield_curve_spread_10y_2y: Optional[float] = None
+    fed_funds_rate: Optional[float] = None
+    cpi_yoy: Optional[float] = None
+    unemployment_rate: Optional[float] = None
+    macro_narrative: str = ""
+    fred_fetched_at: Optional[str] = None
 
 class MetricDataPoint(BaseModel):
     current: str
@@ -334,4 +348,3 @@ class DecisionTerminalPayload(BaseModel):
     quality: TerminalQualityPanel
     verdict: TerminalVerdictPanel
     roadmap: TerminalRoadmapPanel
-
