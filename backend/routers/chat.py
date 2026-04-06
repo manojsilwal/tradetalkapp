@@ -52,6 +52,50 @@ def _extract_quote_ticker(msg: str) -> Optional[str]:
     return None
 
 
+_LOSER_INTENT = (
+    re.compile(r"\b(top\s+losers|biggest\s+losers|worst\s+performers|largest\s+declin|steepest\s+drop|most\s+down)\b", re.I),
+    re.compile(r"\b(biggest|worst|largest)\s+decliners\b", re.I),
+    re.compile(
+        r"\b(market\s+losers|which\s+stocks\s+(are\s+)?(down|losing|falling)|"
+        r"losers\s+today|stocks\s+down\s+today|biggest\s+declin\w*\s+today)\b",
+        re.I,
+    ),
+    re.compile(r"\bwhat\s+(are\s+)?(the\s+)?(biggest|worst)\s+(losers|decliners)\b", re.I),
+    re.compile(r"\bwho\s+(lost|are\s+losing)\s+(the\s+)?most\b", re.I),
+)
+_GAINER_INTENT = (
+    re.compile(r"\b(top\s+gainers|best\s+performers|biggest\s+gainers|most\s+up)\b", re.I),
+    re.compile(r"\b(market\s+gainers|which\s+stocks\s+(are\s+)?(up|rising)|gainers\s+today)\b", re.I),
+)
+
+
+def _mover_query_intent(message: str) -> Optional[str]:
+    """If the user is asking for ranked gainers/losers, return losers | gainers; else None."""
+    if not (message and message.strip()):
+        return None
+    t = message.strip()
+    for p in _LOSER_INTENT:
+        if p.search(t):
+            return "losers"
+    for p in _GAINER_INTENT:
+        if p.search(t):
+            return "gainers"
+    return None
+
+
+async def fetch_top_movers_table(direction: str = "losers", universe: str = "sp500") -> str:
+    """
+    Movers for chat: parallel Yahoo fast_info (session %) with TTL cache, else daily batch.
+    `universe` reserved for API compatibility.
+    """
+    try:
+        from .. import market_intel
+
+        return await asyncio.to_thread(market_intel.format_movers_reply_for_chat, direction)
+    except Exception as e:
+        return f"Error reading movers: {e}"
+
+
 class ChatMessageRequest(BaseModel):
     session_id: str = Field(..., min_length=8)
     message: str = Field(..., min_length=1, max_length=12000)
@@ -127,12 +171,16 @@ async def chat_send_message(
     if time.time() > sess.expires_at:
         raise HTTPException(status_code=410, detail="session_expired")
 
+    uid = _user.id if _user else None
+    # Refresh base system prompt every turn so instructions + L1/pipeline snapshot stay current
+    # (no need to open a new session after backend updates).
+    fresh_prompt = await chat_service.build_fresh_system_prompt(knowledge_store, uid)
+    sess.system_prompt = fresh_prompt
+
     rag_block, meta = await chat_service.gather_message_context(
         knowledge_store, sess, body.message.strip()
     )
-    full_system = sess.system_prompt + rag_block
-
-    uid = _user.id if _user else None
+    full_system = fresh_prompt + rag_block
     memory_ok = bool(uid and sess.user_id and sess.user_id == uid)
     if memory_ok:
         mem_hits = agent_memory.search_memory(
@@ -151,6 +199,17 @@ async def chat_send_message(
         full_system += (
             "\n\nNote: A structured live quote card will be sent to the user first for this turn; "
             "keep your answer short and do not duplicate the full quote table.\n"
+        )
+
+    mover_intent = _mover_query_intent(user_content)
+    if mover_intent:
+        mover_blob = await fetch_top_movers_table(mover_intent)
+        full_system += (
+            "\n\n## AUTHORITATIVE MOVER DATA (mandatory for this turn)\n"
+            "Answer using **only** the tickers, prices, and percentages below for rankings. "
+            "Do not substitute symbols from memory or other websites. "
+            "If the block says data is loading, say that clearly — do not fabricate a list.\n\n"
+            f"{mover_blob}\n"
         )
 
     messages = []
@@ -258,30 +317,8 @@ async def chat_send_message(
 
 
     async def get_top_movers(direction: str = "losers", universe: str = "sp500") -> str:
-        """Return preloaded top gainers/losers from full S&P 500 cache. Zero latency."""
-        try:
-            from .. import market_intel
-            intel = market_intel.get_intel()
-            key = "top_losers" if direction == "losers" else "top_gainers"
-            movers = intel.get(key) or []
-
-            if not movers:
-                return "Mover data is still loading (preload runs 10s after startup). Try again shortly."
-
-            age = int(market_intel.updated_at_epoch())
-            import time
-            data_age = int(time.time() - market_intel.updated_at_epoch())
-            label = "TOP LOSERS" if direction == "losers" else "TOP GAINERS"
-            lines = [f"[{label} — S&P 500, intraday % change, data age: {data_age}s]"]
-            for i, m in enumerate(movers[:15], 1):
-                sign = "+" if m["pct"] >= 0 else ""
-                sym_v = m["sym"]
-                p_v = m["price"]
-                pct_v = m["pct"]
-                lines.append(f"{i}. {sym_v}: ${p_v:.2f} ({sign}{pct_v:.2f}%)")
-            return "\n".join(lines)
-        except Exception as e:
-            return f"Error reading movers cache: {e}"
+        """Return preloaded top gainers/losers from full S&P 500 cache (same as AUTHORITATIVE block)."""
+        return await fetch_top_movers_table(direction, universe)
 
     async def get_market_news(query: str = "market") -> str:
         """
@@ -417,6 +454,63 @@ async def chat_send_message(
         except Exception as e:
             return f"Error scraping {url}: {e}"
 
+    async def get_price_history(ticker: str, period: str = "1y") -> str:
+        """
+        Historical daily closes from Yahoo Finance — total return over period, high/low, best/worst day.
+        Use for YTD, 1y/5y performance, \"how did AAPL do since...\", drawdown context (not live intraday).
+        """
+        sym = ticker.upper().strip()
+        if not sym or len(sym) > 12:
+            return "Invalid ticker."
+        allowed = ("5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "ytd", "max")
+        p = (period or "1y").lower().strip()
+        if p not in allowed:
+            p = "1y"
+
+        def _sync() -> str:
+            import yfinance as yf
+
+            t = yf.Ticker(sym)
+            hist = t.history(period=p, interval="1d", auto_adjust=True)
+            if hist is None or hist.empty:
+                return f"No historical daily data for {sym} (period={p}). Symbol may be invalid or delisted."
+            close = hist["Close"].dropna()
+            if len(close) < 1:
+                return f"No close prices for {sym} (period={p})."
+            first_date = close.index[0]
+            last_date = close.index[-1]
+            first_c = float(close.iloc[0])
+            last_c = float(close.iloc[-1])
+            total_ret = (last_c / first_c - 1.0) * 100.0 if first_c else 0.0
+            hi = float(close.max())
+            lo = float(close.min())
+            hi_d = close.idxmax()
+            lo_d = close.idxmin()
+            rets = close.pct_change().dropna()
+            lines = [
+                f"[Historical daily closes for {sym} — Yahoo Finance · period={p} · auto-adjusted]",
+                f"- Sessions: {len(close)} · {first_date.date()} → {last_date.date()}",
+                f"- First close: ${first_c:.2f} · Last close: ${last_c:.2f}",
+                f"- Total return over period: {total_ret:+.2f}%",
+                f"- Period high close: ${hi:.2f} ({hi_d.date()}) · low: ${lo:.2f} ({lo_d.date()})",
+            ]
+            if len(rets) > 0:
+                bd = rets.idxmax()
+                wd = rets.idxmin()
+                lines.append(
+                    f"- Best day: {rets.max() * 100:+.2f}% ({bd.date()}) · "
+                    f"worst day: {rets.min() * 100:+.2f}% ({wd.date()})"
+                )
+            lines.append(
+                "- Note: Daily bars; not tick-level intraday. For current price use get_stock_quote."
+            )
+            return "\n".join(lines)
+
+        try:
+            return await asyncio.to_thread(_sync)
+        except Exception as e:
+            return f"Error fetching history for {sym}: {e}"
+
 
     tools = [
         {
@@ -424,9 +518,10 @@ async def chat_send_message(
             "function": {
                 "name": "get_stock_quote",
                 "description": (
-                    "Fetch real-time price for ONE specific stock ticker symbol like AAPL, PLTR, SNOW. "
-                    "NEVER call this with generic words like market, stocks, index, information, data. "
-                    "For market-wide rankings use get_top_movers. For why/reason questions use get_market_news."
+                    "Current snapshot for ONE ticker: price, day change, valuation fields (Yahoo fast_info / info). "
+                    "Use for: \"what is AAPL at\", \"quote MSFT\", \"market cap of NVDA\". "
+                    "For **historical** returns or YTD / multi-year performance use **get_price_history**, not this. "
+                    "For ranked gainers/losers use **get_top_movers**. For macro \"why\" use **get_market_news**."
                 ),
                 "parameters": {
                     "type": "object",
@@ -440,11 +535,41 @@ async def chat_send_message(
         {
             "type": "function",
             "function": {
+                "name": "get_price_history",
+                "description": (
+                    "Historical **daily** prices from Yahoo: total return over a period, period high/low, "
+                    "best/worst days. Use for: YTD or 5-year performance, \"how did AAPL do last year\", "
+                    "drawdown context, index performance (^GSPC). "
+                    "Not for live quote (use get_stock_quote) or top movers list (use get_top_movers)."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker": {
+                            "type": "string",
+                            "description": "Symbol e.g. AAPL TSLA ^GSPC (index symbols allowed)",
+                        },
+                        "period": {
+                            "type": "string",
+                            "enum": ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "ytd", "max"],
+                            "description": "Lookback window for daily bars",
+                            "default": "1y",
+                        },
+                    },
+                    "required": ["ticker"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "get_top_movers",
                 "description": (
-                    "Fetch real intraday top gainers or losers ranked by % price change. "
+                    "Fetch verified top gainers or losers from the S&P 500 batch cache "
+                    "(daily % vs prior close, yfinance). "
                     "Use for: top losers, biggest declines, top gainers, best performers, "
-                    "what is down today, what is up today, market movers, sector leaders/laggards."
+                    "what is down today, what is up today, market movers. "
+                    "Do not answer from memory — always call this for ranked lists."
                 ),
                 "parameters": {
                     "type": "object",
@@ -456,8 +581,9 @@ async def chat_send_message(
                         },
                         "universe": {
                             "type": "string",
-                            "enum": ["large_cap", "l1_only"],
-                            "description": "large_cap scans 45 names default, l1_only uses cached snapshot only"
+                            "enum": ["sp500", "large_cap", "l1_only"],
+                            "description": "sp500 = full cached S&P 500 scan (default); others reserved",
+                            "default": "sp500",
                         }
                     },
                     "required": ["direction"]
@@ -546,6 +672,7 @@ async def chat_send_message(
 
     tool_handlers = {
         "get_stock_quote": get_stock_quote,
+        "get_price_history": get_price_history,
         "get_top_movers": get_top_movers,
         "get_market_news": get_market_news,
         "get_deep_news": get_deep_news,

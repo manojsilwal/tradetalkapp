@@ -195,6 +195,28 @@ def _build_system_prompt(
         "Lead with a one-sentence takeaway, then details. "
         "Cite retrieved context when used; do not invent facts. "
         "This is educational context, not personalized investment advice.\n\n"
+        "## HARD RULES — numeric market data\n"
+        "- Do **not** state specific stock **prices**, **percent changes**, **ranks**, or "
+        "\"top N\" gainers/losers unless they come from (1) a **tool result** in this chat turn, or "
+        "(2) an **AUTHORITATIVE MOVER DATA** / **Live Market Intelligence** block in this system prompt.\n"
+        "- Do **not** state **historical** returns, period high/low, or YTD / 5Y performance figures unless they "
+        "come from **get_price_history** (or another tool result), not from memory.\n"
+        "- If the user asks for rankings, movers, or who's up/down today, call **get_top_movers** "
+        "(or use the AUTHORITATIVE block when present). Never fabricate plausible tickers or numbers.\n"
+        "- If verified data is missing or still loading, say so plainly — do not guess.\n"
+        "- Rankings prefer TradeTalk's **live Yahoo fast_info scan** (session % vs prior close), "
+        "else a scheduled daily batch; data may be delayed ~15m. Other sites may rank differently.\n\n"
+        "## Tool routing (use the right fetch; do not invent numbers)\n"
+        "- **One ticker, current quote / valuation fields** → `get_stock_quote`.\n"
+        "- **Historical performance**, YTD, 1y/5y return, period high/low, \"how did X do over...\" → "
+        "`get_price_history` (Yahoo daily bars).\n"
+        "- **Ranked gainers/losers**, market movers → `get_top_movers`.\n"
+        "- **Macro / broad market why** (Fed, geopolitics, sector themes) → `get_market_news`.\n"
+        "- **Company-specific why / recent events** → `get_deep_news(ticker)`.\n"
+        "- **SEC filing text** (10-K, 10-Q, 8-K) → `get_sec_filing`.\n"
+        "- **Pasted or named URL** → `scrape_url`.\n"
+        "- **Retrieval / L1 blocks** below may contain KB or snapshot facts — cite them, but if the user "
+        "asks for **exact** numbers not there, call the matching tool.\n\n"
         f"## Market snapshot (cached)\n{snap}\n\n"
         f"## User portfolio context (if any)\n{uctx}\n\n"
         f"## Knowledge pipeline status\n{pipe}\n"
@@ -218,6 +240,44 @@ async def get_user_context_block(user_id: Optional[str]) -> dict:
         return {}
 
 
+async def build_fresh_system_prompt(ks, user_id: Optional[str]) -> str:
+    """
+    Recompute the base system prompt (instructions + L1 snapshot + portfolio + pipeline + prefs).
+    Call on **every** chat message so rule text and cached numbers stay current without a new session.
+    """
+    async def l1():
+        return market_l1_cache.get_snapshot()
+
+    async def pipe():
+        try:
+            return ks.stats().get("pipeline_status") or {}
+        except Exception:
+            return {}
+
+    async def uctx():
+        return await get_user_context_block(user_id)
+
+    async def load_prefs():
+        if not user_id:
+            return ""
+        try:
+            from . import user_preferences as up
+            return await asyncio.to_thread(up.format_for_system_prompt, user_id)
+        except Exception as e:
+            logger.debug("[Chat] preference load failed: %s", e)
+            return ""
+
+    market_snapshot, pipeline_status, user_ctx, pref_block = await asyncio.gather(
+        l1(), pipe(), uctx(), load_prefs()
+    )
+    return _build_system_prompt(
+        {"l1": market_snapshot, "updated_at": market_l1_cache.updated_at_epoch()},
+        user_ctx,
+        pipeline_status,
+        user_preferences_block=pref_block,
+    )
+
+
 async def create_session(
     ks,
     user_id: Optional[str],
@@ -226,40 +286,9 @@ async def create_session(
     """asyncio.gather snapshot assembly + predictive RAG pre-warm + preference loading."""
     tracer = get_tracer()
     with tracer.start_as_current_span("chat.create_session") as span:
-        async def l1():
-            return market_l1_cache.get_snapshot()
-
-        async def pipe():
-            try:
-                return ks.stats().get("pipeline_status") or {}
-            except Exception:
-                return {}
-
-        async def uctx():
-            return await get_user_context_block(user_id)
-
-        async def load_prefs():
-            if not user_id:
-                return ""
-            try:
-                from . import user_preferences as up
-                return await asyncio.to_thread(up.format_for_system_prompt, user_id)
-            except Exception as e:
-                logger.debug("[Chat] preference load failed: %s", e)
-                return ""
-
-        market_snapshot, pipeline_status, user_ctx, pref_block = await asyncio.gather(
-            l1(), pipe(), uctx(), load_prefs()
-        )
+        system_prompt = await build_fresh_system_prompt(ks, user_id)
 
         rag_prewarm = await prewarm_predictive_rag(ks)
-
-        system_prompt = _build_system_prompt(
-            {"l1": market_snapshot, "updated_at": market_l1_cache.updated_at_epoch()},
-            user_ctx,
-            pipeline_status,
-            user_preferences_block=pref_block,
-        )
 
         now = time.time()
         sid = str(uuid.uuid4())
@@ -378,6 +407,8 @@ async def gather_message_context(
             "1. If the user is just saying hello, making small talk, or asking a broad non-financial question, reply naturally and conversationally. Do NOT recite the snapshot or retrieval data unless directly relevant.\n"
             "2. When you use facts from the retrieval block, mention they come from TradeTalk's knowledge base. "
             "Blend with the live L1 snapshot below when relevant.\n"
+            "3. For numeric or time-series questions not fully answered by retrieval/L1, use the appropriate "
+            "chat tools (quote, price history, movers, news, filings) — do not invent figures.\n"
             f"## L1 refresh snapshot\n{json.dumps(l1_snap, default=str)[:4000]}\n"
             f"## User context (refreshed)\n{json.dumps(uctx, default=str)[:4000]}\n"
         )

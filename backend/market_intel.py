@@ -5,15 +5,18 @@ All data is fetched in the background by APScheduler and stored in memory.
 Chat agent tools, Decision Terminal, and Backtest read from this cache
 with a single O(1) call — no per-request API calls for common queries.
 
+**Live movers (chat):** `format_movers_reply_for_chat` uses a parallel Yahoo `fast_info` scan
+(session % vs prior close, TTL-cached) over the curated universe, with fallback to the
+scheduled 1d batch download. FinCrawler does not supply exchange rankings — it is for news/SEC/URLs.
+
 Refresh cadence (configured in main.py via APScheduler):
   - Fast layer (quotes, movers, news, sector %):  every 5 minutes
   - Slow layer (FOMC, earnings, PCR):             every 30 minutes
 
 Data available after first warm-up (~8s after startup):
-  ├── top_losers       — ranked list of today's biggest intraday decliners
-  ├── top_gainers      — ranked list of today's biggest intraday gainers
+  ├── top_losers / top_gainers — scheduled **1d batch** (yf.download) + optional **live** snapshot
   ├── headlines        — live Yahoo Finance RSS + yfinance news
-  ├── sector_perf      — 10 SPDR sector ETFs with intraday % change + name
+  ├── sector_perf      — 10 SPDR sector ETFs with daily % change + name
   ├── fomc             — next FOMC meeting date + last rate decision
   ├── earnings         — upcoming earnings dates + last EPS surprise per ticker
   └── options_flow     — SPY put-call ratio (market fear gauge)
@@ -22,7 +25,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -32,6 +38,11 @@ logger = logging.getLogger(__name__)
 _data: Dict[str, Any] = {}
 _updated_at: float = 0.0
 _lock = asyncio.Lock()
+
+# Live movers: parallel Yahoo fast_info (session % vs prior close), short TTL cache
+_live_movers_lock = threading.Lock()
+_live_movers_cache: Optional[Dict[str, Any]] = None
+_live_movers_cache_ts: float = 0.0
 
 # Full S&P 500 universe imported from the backtest connector (already maintained)
 def _get_sp500_universe() -> List[str]:
@@ -90,6 +101,122 @@ def updated_at_epoch() -> float:
     return _updated_at
 
 
+def _fast_info_mover_row(sym: str) -> Optional[Dict[str, Any]]:
+    """One symbol: last price vs previous close → session-style % (Yahoo may be delayed ~15m)."""
+    try:
+        import yfinance as yf
+
+        fi = yf.Ticker(sym).fast_info
+        price = fi.get("lastPrice") or fi.get("regularMarketPrice")
+        prev = fi.get("previousClose")
+        if price is None or prev is None or float(prev) <= 0:
+            return None
+        pct = (float(price) - float(prev)) / float(prev) * 100.0
+        return {"sym": sym, "price": round(float(price), 2), "pct": round(pct, 2)}
+    except Exception:
+        return None
+
+
+def _compute_live_movers_parallel() -> Dict[str, Any]:
+    """
+    Scan curated universe with parallel fast_info — closer to 'today' than 1d batch bars.
+    """
+    syms = _get_sp500_universe()
+    workers = max(4, min(32, int(os.environ.get("MIL_LIVE_MOVERS_WORKERS", "16"))))
+    movers: List[Dict[str, Any]] = []
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(_fast_info_mover_row, s): s for s in syms}
+        for fut in as_completed(futures):
+            try:
+                row = fut.result()
+                if row:
+                    movers.append(row)
+            except Exception:
+                continue
+    movers.sort(key=lambda x: x["pct"])
+    elapsed = time.time() - t0
+    logger.info("[MarketIntel] live movers: %d/%d symbols in %.2fs", len(movers), len(syms), elapsed)
+    return {
+        "losers": movers[:25],
+        "gainers": list(reversed(movers))[:25],
+        "computed_at": time.time(),
+        "n_scanned": len(syms),
+        "n_ok": len(movers),
+        "elapsed_s": round(elapsed, 2),
+        "methodology": (
+            "Source: Yahoo Finance `fast_info` (last vs previous close). "
+            "May be delayed ~15 minutes vs exchange; not identical to every public 'top losers' table."
+        ),
+    }
+
+
+def get_live_movers_snapshot(force_refresh: bool = False) -> Dict[str, Any]:
+    """
+    Cached live movers snapshot (TTL default 120s). Thread-safe.
+    Set MIL_LIVE_MOVERS_TTL_SEC to tune freshness vs Yahoo load.
+    """
+    global _live_movers_cache, _live_movers_cache_ts
+    ttl = float(os.environ.get("MIL_LIVE_MOVERS_TTL_SEC", "120"))
+    now = time.time()
+    with _live_movers_lock:
+        if (
+            not force_refresh
+            and _live_movers_cache is not None
+            and (now - _live_movers_cache_ts) < ttl
+        ):
+            return _live_movers_cache
+        snap = _compute_live_movers_parallel()
+        _live_movers_cache = snap
+        _live_movers_cache_ts = now
+        return snap
+
+
+def format_movers_reply_for_chat(direction: str) -> str:
+    """
+    Markdown block for chat + tools: prefer live parallel scan; fall back to scheduled 1d batch.
+    direction: losers | gainers
+    """
+    direction = (direction or "losers").lower()
+    if direction not in ("losers", "gainers"):
+        direction = "losers"
+    key = "top_losers" if direction == "losers" else "top_gainers"
+    label = "TOP LOSERS" if direction == "losers" else "TOP GAINERS"
+
+    live = get_live_movers_snapshot()
+    rows = list(live["losers"] if direction == "losers" else live["gainers"])
+    use_live = live.get("n_ok", 0) >= 5 and len(rows) >= 3
+
+    if not use_live:
+        intel = get_intel()
+        rows = list(intel.get(key) or [])
+        if not rows:
+            return (
+                "Mover data is still loading or unavailable. "
+                "Do not invent tickers — ask the user to retry shortly."
+            )
+        batch_age = int(time.time() - _updated_at) if _updated_at else 0
+        header = (
+            f"[{label} — **scheduled daily batch** (yf.download 1d bars); "
+            f"live fast_info scan returned too few symbols · batch age {batch_age}s]\n"
+            "Other vendors may rank differently."
+        )
+    else:
+        table_age = int(time.time() - float(live["computed_at"]))
+        header = (
+            f"[{label} — **session scan** (parallel Yahoo fast_info) · "
+            f"{live['n_ok']}/{live['n_scanned']} names · table age {table_age}s · "
+            f"compute {live['elapsed_s']}s]\n"
+            f"{live['methodology']}"
+        )
+
+    lines = [header]
+    for i, m in enumerate(rows[:15], 1):
+        sign = "+" if m["pct"] >= 0 else ""
+        lines.append(f"{i}. {m['sym']}: ${m['price']:.2f} ({sign}{m['pct']:.2f}%)")
+    return "\n".join(lines)
+
+
 def format_for_prompt() -> str:
     """
     Compact markdown block injected into the LLM system prompt on every chat session.
@@ -99,7 +226,10 @@ def format_for_prompt() -> str:
     if not d:
         return ""
 
-    lines: List[str] = ["## Live Market Intelligence (preloaded, ~5 min refresh)"]
+    lines: List[str] = [
+        "## Live Market Intelligence (preloaded, ~5 min refresh)",
+        "*(Top tickers below are a **short summary** only — for a full ranked list the assistant must use the **get_top_movers** tool or AUTHORITATIVE MOVER DATA.)*",
+    ]
 
     # Sector performance
     sector = d.get("sector_perf") or {}
@@ -114,15 +244,15 @@ def format_for_prompt() -> str:
                 f"Lagging={bot['name']} {bot['pct']:+.1f}%"
             )
 
-    # Top movers summary
+    # Top movers summary (daily % vs prior close — same universe as chat get_top_movers)
     losers = d.get("top_losers") or []
     gainers = d.get("top_gainers") or []
     if losers:
         top3 = ", ".join(f"{m['sym']} {m['pct']:+.1f}%" for m in losers[:3])
-        lines.append(f"- **Top losers today**: {top3}")
+        lines.append(f"- **Top losers (daily %, summary)**: {top3}")
     if gainers:
         top3 = ", ".join(f"{m['sym']} {m['pct']:+.1f}%" for m in gainers[:3])
-        lines.append(f"- **Top gainers today**: {top3}")
+        lines.append(f"- **Top gainers (daily %, summary)**: {top3}")
 
     # FOMC
     fomc = d.get("fomc") or {}
@@ -202,6 +332,12 @@ async def refresh_fast() -> None:
             )
         except Exception as e:
             logger.warning("[MarketIntel] fast refresh failed: %s", e)
+
+    # Warm parallel fast_info movers cache (outside _lock — avoids blocking MIL writes)
+    try:
+        await asyncio.to_thread(get_live_movers_snapshot, False)
+    except Exception as e:
+        logger.debug("[MarketIntel] live movers warm: %s", e)
 
 
 async def refresh_slow() -> None:

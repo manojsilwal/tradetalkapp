@@ -643,11 +643,17 @@ class LLMClient:
                 # Show a context-appropriate loading message per tool
                 if tool_name == "get_top_movers":
                     direction = args_dict.get("direction", "movers")
-                    yield f"\n*[Scanning real-time {direction}...]*\n\n"
+                    yield f"\n*[Loading verified S&P 500 {direction}...]*\n\n"
                 elif tool_name == "get_market_news":
                     yield f"\n*[Fetching live headlines...]*\n\n"
                 elif tool_name == "get_stock_quote" and t:
                     yield f"\n*[Fetching real-time quote for {t}...]*\n\n"
+                elif tool_name == "get_price_history":
+                    tk = args_dict.get("ticker", "")
+                    if tk:
+                        yield f"\n*[Loading historical prices for {tk}...]*\n\n"
+                    else:
+                        yield f"\n*[Fetching data...]*\n\n"
                 else:
                     yield f"\n*[Fetching data...]*\n\n"
 
