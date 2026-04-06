@@ -35,8 +35,17 @@ async function expectNoGenericFetchFailure(page) {
   await expect(page.getByText('Failed to fetch')).toHaveCount(0);
 }
 
+/**
+ * SPA routes lazy-load chunks; wait for Decision Terminal controls after navigation.
+ * @param {import('@playwright/test').Page} page
+ */
+async function waitForDecisionTerminalReady(page) {
+  await page.waitForSelector('.dt-ticker-input', { state: 'visible', timeout: 90000 });
+}
+
 module.exports = {
   dismissOnboarding,
   expectNoGenericFetchFailure,
   expectOneOf,
+  waitForDecisionTerminalReady,
 };

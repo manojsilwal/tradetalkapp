@@ -44,6 +44,9 @@ PREDICTIVE_QUERIES: List[Tuple[str, str]] = [
     ("debate", "AI investment debate verdict consensus"),
 ]
 
+# In-process only — lost on restart and not shared across uvicorn workers.
+# Use a single worker locally (default `uvicorn ...` without `--workers`) so POST /chat/session
+# and POST /chat/message hit the same process.
 _SESSIONS: Dict[str, "ChatSession"] = {}
 _SESSION_LOCK = asyncio.Lock()
 

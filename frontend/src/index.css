@@ -151,6 +151,45 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Chat assistant — typing / waiting for first token */
+@keyframes chatPulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@keyframes chatBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.chat-typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.chat-typing-indicator span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #a78bfa;
+  animation: chatPulse 1.2s ease-in-out infinite;
+}
+
+.chat-typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.chat-typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.cursor-blink {
+  animation: chatBlink 1s step-end infinite;
+}
+
 /* Shared UI Components */
 .header-section {
   display: flex;

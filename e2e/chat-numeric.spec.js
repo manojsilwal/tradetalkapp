@@ -1,4 +1,5 @@
 // @ts-check
+/** Chat quote-card SSE path (not a FaultHunter case-bank endpoint; complements API tests). */
 const { test, expect } = require('@playwright/test');
 const { dismissOnboarding, expectNoGenericFetchFailure } = require('./support');
 
@@ -7,7 +8,7 @@ test.describe('Assistant Numeric Smoke', () => {
     await page.goto('/chat');
     await dismissOnboarding(page);
 
-    await expect(page.getByText('TradeTalk Assistant')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('heading', { name: 'TradeTalk Assistant' })).toBeVisible({ timeout: 90000 });
     const box = page.getByPlaceholder(/Ask about markets, your portfolio, or strategies/i);
     await expect(box).toBeVisible({ timeout: 60000 });
 

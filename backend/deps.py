@@ -3,6 +3,8 @@ Shared application dependencies — singletons, connectors, and mutable state.
 
 Routers import from here instead of from main.py to avoid circular imports.
 """
+from . import env_bootstrap  # noqa: F401 — load backend/.env before os.environ reads below
+
 from .connectors import (
     ShortsConnector, SocialSentimentConnector, MacroHealthConnector,
     PolymarketConnector, FundamentalsConnector, InvestorMetricsConnector,

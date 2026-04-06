@@ -91,12 +91,12 @@ python3 scripts/qa_yahoo_reference.py SPY AAPL MSFT
 
 - **Trigger:** [FaultHunter → Actions](https://github.com/manojsilwal/FaultHunter/actions) → **Daily FaultHunter Report** → **Run workflow**. Optional input **`target_base_url`** overrides the **`TRADETALK_BASE_URL`** secret for that run (e.g. staging API); leave blank for production secret. CLI:  
   `gh workflow run "Daily FaultHunter Report" -R manojsilwal/FaultHunter -f target_base_url="https://…"`
-- **Local TradeTalk from your machine (not GitHub):** clone FaultHunter and run  
-  `python -m faulthunter.cli --profile smoke --report-kind manual --target-base-url http://127.0.0.1:8000`  
-  (`--target-base-url` overrides env; CI cannot hit your laptop’s localhost without a tunnel.)
+- **Local TradeTalk from your machine (not GitHub):** run TradeTalk **backend** `:8000` + **Vite** `npm run dev` `:5173` (see `frontend/vite.config.js` API proxy). Clone FaultHunter and run  
+  `python -m faulthunter.cli --profile smoke --report-kind manual --target-base-url http://127.0.0.1:5173`  
+  (default in FaultHunter is already `http://127.0.0.1:5173`; use `:8000` only if you point FaultHunter straight at FastAPI with no Vite.)
 - **Output:** Committed reports (e.g. `reports/latest.md` on the FaultHunter default branch). Use the raw URL for automation or open the file on GitHub.
 - **Read later in TradeTalk:** `python3 scripts/summarize_faulthunter_report.py /path/to/report.md --markdown`  
-Optional: set `FAULTHUNTER_REPORT_URL` in this repo and use the **FaultHunter report reminder** workflow to open a tracking issue with a summary. See [README.md](../README.md#faulthunter-integration).
+Optional: set `FAULTHUNTER_REPORT_URL` in this repo and use the **FaultHunter report reminder** workflow to refresh [`docs/FAULTHUNTER_TRIAGE.md`](../docs/FAULTHUNTER_TRIAGE.md) (or legacy: open a tracking issue). See [README.md](../README.md#faulthunter-integration).
 
 Use past reports to prioritize fixes; they are **not** a blocking gate on every deploy.
 

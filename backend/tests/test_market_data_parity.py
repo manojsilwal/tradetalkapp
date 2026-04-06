@@ -3,6 +3,9 @@
 These tests intentionally verify only falsifiable numeric fields, not LLM prose.
 They are designed for scheduled/manual execution because live market data is time-sensitive.
 
+Aligns with FaultHunter parity on ``/decision-terminal`` (e.g. case ``decision-aapl-today``,
+field ``valuation.current_price_usd`` vs Yahoo). FaultHunter runs the full case bank separately.
+
 Run (explicit):
   RUN_MARKET_PARITY=1 PYTHONPATH=. python -m unittest backend.tests.test_market_data_parity -v
 

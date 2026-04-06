@@ -1,6 +1,6 @@
-# Fetches the latest FaultHunter Markdown report and opens a GitHub Issue with a parsed summary
-# for Cursor Cloud Agent / developers. Runs on a schedule (after typical FaultHunter daily commit)
-# or manually (optionally override URL).
+# Fetches the latest FaultHunter Markdown report and either:
+#   (default) commits docs/FAULTHUNTER_TRIAGE.md — single file, no issue list
+#   (optional) opens a GitHub Issue — legacy mode
 #
 # Required repository secret (for scheduled runs):
 #   FAULTHUNTER_REPORT_URL — raw URL to reports/latest.md in the FaultHunter repo, e.g.
@@ -18,14 +18,24 @@ on:
         description: "Raw URL to FaultHunter report .md (overrides secret when set)"
         required: false
         default: ""
+      reminder_mode:
+        description: "file = commit docs/FAULTHUNTER_TRIAGE.md; issue = open GitHub Issue"
+        required: false
+        type: choice
+        options:
+          - file
+          - issue
+        default: file
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
-  open-issue:
+  remind:
     runs-on: ubuntu-latest
+    env:
+      REMINDER_MODE: ${{ github.event.inputs.reminder_mode || 'file' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,21 +59,79 @@ jobs:
           echo "Fetching report from configured URL..."
           curl -fsSL "$URL" -o /tmp/fh-report.md
           echo "SKIP=false" >> "$GITHUB_ENV"
+          echo "REPORT_URL=$URL" >> "$GITHUB_ENV"
 
-      - name: Summarize report
+      - name: Build summary and write triage file or issue body
         if: env.SKIP != 'true'
+        env:
+          REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          python3 scripts/summarize_faulthunter_report.py /tmp/fh-report.md --markdown > /tmp/issue-body.md
-          {
+          python3 scripts/summarize_faulthunter_report.py /tmp/fh-report.md --markdown > /tmp/summary.md
+
+          footer_common() {
             echo ""
             echo "---"
             echo ""
-            echo "*Automation: [.github/workflows/faulthunter-report-reminder.yml](.github/workflows/faulthunter-report-reminder.yml). Remediation: follow [AGENTS.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/AGENTS.md).*"
-          } >> /tmp/issue-body.md
+            echo "*Automation: [.github/workflows/faulthunter-report-reminder.yml](.github/workflows/faulthunter-report-reminder.yml). Remediation: follow [AGENTS.md](https://github.com/${REPO}/blob/${REF_NAME}/AGENTS.md).*"
+            echo ""
+            echo "### Cursor agent — triage"
+            echo ""
+            echo "Follow the loop in [AGENTS.md](https://github.com/${REPO}/blob/${REF_NAME}/AGENTS.md#daily-cursor-triage-faulthunter): fix → test → push → verify env."
+            echo ""
+            echo "- [ ] Map failing **test ids** to code (table in AGENTS.md)"
+            echo "- [ ] **Fix** + targeted tests (backend / \`e2e/faulthunter-api.spec.js\` / \`npm run e2e\` as needed)"
+            echo "- [ ] **Push** to \`main\` (or PR); wait for Render + Vercel"
+            echo "- [ ] **Production smoke:** \`FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e\` (or your prod URL)"
+          }
+
+          if [ "$REMINDER_MODE" = "issue" ]; then
+            footer_common >> /tmp/issue-body.md
+            {
+              echo ""
+              echo "- [ ] **Reply below** with pass/fail + PR link; close when green or track infra separately"
+            } >> /tmp/issue-body.md
+            cat /tmp/summary.md /tmp/issue-body.md > /tmp/issue-combined.md
+            mv /tmp/issue-combined.md /tmp/issue-body.md
+          else
+            {
+              echo "# FaultHunter triage (single source)"
+              echo ""
+              echo "**Snapshot (UTC):** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo ""
+              echo "**Workflow run:** [${RUN_URL}](${RUN_URL})"
+              echo ""
+              echo "**Raw report URL:** \`${REPORT_URL}\` (secret \`FAULTHUNTER_REPORT_URL\`)."
+              echo ""
+              echo "This file is **overwritten** on each successful run. For the evaluator's full Markdown, open the raw report URL above."
+              echo ""
+              echo "---"
+              echo ""
+              cat /tmp/summary.md
+              footer_common
+              echo ""
+              echo "- [ ] **Record** pass/fail + PR link in a commit message or PR when done"
+            } > docs/FAULTHUNTER_TRIAGE.md
+          fi
+
+      - name: Commit triage file
+        if: env.SKIP != 'true' && env.REMINDER_MODE != 'issue'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/FAULTHUNTER_TRIAGE.md
+          if git diff --staged --quiet; then
+            echo "No changes to docs/FAULTHUNTER_TRIAGE.md (report summary unchanged)."
+            exit 0
+          fi
+          git commit -m "docs: FaultHunter triage snapshot $(date -u +%Y-%m-%d)"
+          git push
 
       - name: Create GitHub Issue
-        if: env.SKIP != 'true'
+        if: env.SKIP != 'true' && env.REMINDER_MODE == 'issue'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

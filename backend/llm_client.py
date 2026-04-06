@@ -4,7 +4,7 @@ LLM Client — supports OpenRouter (Qwen via OpenRouter by default) and a rule-b
   1. OpenRouter — set OPENROUTER_API_KEY (optional OPENROUTER_API_KEY_2 for round-robin quota).
      Inference goes DIRECT to OpenRouter, never proxied through HF Space.
      Optional:
-       OPENROUTER_MODEL (default: qwen/qwen-3.6-plus:free)
+       OPENROUTER_MODEL (default: qwen/qwen3.6-plus:free)
        OPENROUTER_BASE_URL (default: https://openrouter.ai/api/v1)
        OPENROUTER_HTTP_REFERER
        OPENROUTER_X_TITLE
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # ── Env config ────────────────────────────────────────────────────────────────
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "qwen/qwen-3.6-plus:free")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.6-plus:free")
 OPENROUTER_MODEL_LIGHT = os.environ.get("OPENROUTER_MODEL_LIGHT", OPENROUTER_MODEL)
 OPENROUTER_HTTP_REFERER = os.environ.get("OPENROUTER_HTTP_REFERER", "")
 OPENROUTER_X_TITLE = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")

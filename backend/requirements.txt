@@ -20,3 +20,4 @@ aiofiles
 huggingface_hub
 pyarrow
 httpx<0.28
+python-dotenv>=1.0.0

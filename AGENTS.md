@@ -2,7 +2,38 @@
 
 **Unattended remediation:** use **Cursor Background / Cloud Agent** tied to this repo. Do **not** assume a developer Mac is online—run tests in the **cloud agent sandbox** or in **GitHub Actions**, not only locally.
 
-**Alarm clock:** scheduled **FaultHunter** reports are surfaced via GitHub Issues (see [`.github/workflows/faulthunter-report-reminder.yml`](.github/workflows/faulthunter-report-reminder.yml)). Point the cloud agent at the latest **FaultHunter findings** issue plus this file.
+**Alarm clock:** scheduled **FaultHunter** reports are ingested by [`.github/workflows/faulthunter-report-reminder.yml`](.github/workflows/faulthunter-report-reminder.yml). By default it **commits** [`docs/FAULTHUNTER_TRIAGE.md`](docs/FAULTHUNTER_TRIAGE.md) (one file, no issue list). Optional **legacy** mode opens a GitHub Issue instead (`reminder_mode: issue`). Point the cloud agent at **`docs/FAULTHUNTER_TRIAGE.md`** plus this file.
+
+---
+
+## Daily Cursor triage (FaultHunter)
+
+GitHub Actions **does not** start Cursor automatically.
+
+**FaultHunter** (the evaluator repo) already writes **one** Markdown report per run (e.g. `reports/latest.md`). In **TradeTalk**, the default workflow behavior is to **refresh a single triage file** in this repo — not to maintain a list of issues.
+
+### 1. Where to look (default: one file)
+
+- Open **[`docs/FAULTHUNTER_TRIAGE.md`](docs/FAULTHUNTER_TRIAGE.md)** on `main` after the scheduled workflow (~03:45 UTC). It contains the parsed summary + checklist for the report at `FAULTHUNTER_REPORT_URL`.
+- For the **full** evaluator output, use the **raw report URL** shown at the top of that file (same as FaultHunter’s `reports/latest.md`).
+
+### 2. Legacy: GitHub Issues instead of the file
+
+If you run the workflow with **`reminder_mode: issue`**, it opens an issue (title like `FaultHunter findings YYYY-MM-DD (UTC)`). Then: **Issues** → search `FaultHunter findings in:title`, or `gh issue list --search "FaultHunter findings in:title" --state open`.
+
+### 3. Start Cursor
+
+- **Background Agent:** Paste the path or URL to **`docs/FAULTHUNTER_TRIAGE.md`** (or the issue URL in legacy mode). Instruction: *“Follow `AGENTS.md` mandatory loop. Fix failures from this FaultHunter snapshot; run tests in the agent sandbox; push; then production E2E smoke as in step 6.”*
+
+### 4. Follow the same loop as every code change
+
+Use **Mandatory loop** below (steps 1–6): targeted tests → commit → deploy → **Verify** production `FRONTEND_URL`.
+
+### 5. Mark “worked on” so you do not repeat
+
+- **File mode:** Record results in the **PR** or commit message when triage is done (the triage file is overwritten on the next run).
+- **Issue mode:** Comment on the issue with summary, PR link, E2E result; close when green.
+- If only infra/config (e.g. `TRADETALK_BASE_URL` in FaultHunter secrets), note that in PR/issue — do not “fix” app code.
 
 ---
 
@@ -10,7 +41,10 @@
 
 1. **Targeted tests** — After each task, run tests for **affected** code in the cloud agent (or CI):  
    - Backend: `cd backend && pytest` with paths narrowed to changed modules when possible (e.g. `pytest tests/test_macro.py`).  
-   - E2E: `npm run e2e` with a focused file or grep when possible (see [`playwright.config.js`](playwright.config.js)).  
+   - **FaultHunter-aligned API E2E** (same cases as `faulthunter/case_bank.py`): start the API, then  
+     `E2E_API_BASE_URL=http://127.0.0.1:8000 npx playwright test e2e/faulthunter-api.spec.js`  
+     (`FH_PROFILE=smoke` for three smoke cases only).  
+   - **Browser E2E**: `npm run e2e` or a focused file (see [`playwright.config.js`](playwright.config.js)).  
    Do **not** assume a local machine.
 
 2. **Missing tests** — If behavior changed without coverage, add **unit/integration** tests under `backend/tests/` and **E2E** under [`e2e/`](e2e). Prefer stable selectors and timeouts aligned with [`playwright.config.js`](playwright.config.js) (long timeouts for backtest-heavy flows).
@@ -21,9 +55,9 @@
 
 5. **Deploy** — Pushing to the branch connected to **Render** (backend) and **Vercel** (frontend) triggers builds. Optional **explicit** hooks (if git sync lags): store **Render Deploy Hook** and **Vercel Deploy Hook** URLs as GitHub secrets `RENDER_DEPLOY_HOOK_URL` and `VERCEL_DEPLOY_HOOK_URL`, then `curl -fsS -X POST "$URL"` after push. Avoid double-deploy if pushes already trigger both.
 
-6. **Verify in production** — Run E2E smoke against the live frontend (default base URL in Playwright):  
+6. **Verify** — Local: run Vite on **:5173** (Playwright default `baseURL` is `http://localhost:5173`). Production smoke:  
    `FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e`  
-   Ensure API calls hit production backend (env vars your tests use for API base, if any). Record pass/fail in the PR or issue.
+   Ensure API calls go to the intended backend (`frontend` `.env` / `VITE_API_BASE_URL`). Record pass/fail in the PR (or the FaultHunter **issue** if you use legacy mode).
 
 **CORS:** production backend should list this origin (see [`render.yaml`](render.yaml) `CORS_ORIGINS`).
 
@@ -63,5 +97,5 @@ FaultHunter labels cases by **feature** and HTTP path. Use this to find TradeTal
 
 ## Related automation
 
-- Scheduled issue with report summary: [`.github/workflows/faulthunter-report-reminder.yml`](.github/workflows/faulthunter-report-reminder.yml)  
+- Scheduled triage (default: commit [`docs/FAULTHUNTER_TRIAGE.md`](docs/FAULTHUNTER_TRIAGE.md); optional: open issue): [`.github/workflows/faulthunter-report-reminder.yml`](.github/workflows/faulthunter-report-reminder.yml)  
 - Optional Cursor rule: [`.cursor/rules/tradetalk-release.mdc`](.cursor/rules/tradetalk-release.mdc)

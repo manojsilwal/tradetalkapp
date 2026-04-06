@@ -68,6 +68,11 @@ export default function ChatUI({ prefetch = null }) {
   const [quoteCards, setQuoteCards] = useState([])
   const bottomRef = useRef(null)
   const refreshTimer = useRef(null)
+  const sessionIdRef = useRef(null)
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId
+  }, [sessionId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -151,9 +156,31 @@ export default function ChatUI({ prefetch = null }) {
       </div>
     ) : null
 
+  const createChatSession = useCallback(async () => {
+    const data = await apiFetch(`${API_BASE_URL}/chat/session`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    return data.session_id
+  }, [])
+
   const sendMessage = useCallback(async () => {
     const text = input.trim()
-    if (!text || !sessionId || busy) return
+    if (!text || busy) return
+
+    let activeSid = sessionId
+    if (!activeSid) {
+      setErr('Opening chat session…')
+      try {
+        activeSid = await createChatSession()
+        setSessionId(activeSid)
+        setErr('')
+      } catch (e) {
+        setErr(e.message || 'Could not open chat session')
+        return
+      }
+    }
+
     setInput('')
     setErr('')
     setMessages((m) => [...m, { role: 'user', content: text }])
@@ -169,15 +196,40 @@ export default function ChatUI({ prefetch = null }) {
     const chatAbort = new AbortController()
     const chatTimer = setTimeout(() => chatAbort.abort(), 120000)
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/chat/message`, {
+    const historyPayload = messages
+
+    const postMessage = (sid) =>
+      fetch(`${API_BASE_URL}/chat/message`, {
         method: 'POST',
         headers,
         signal: chatAbort.signal,
-        body: JSON.stringify({ session_id: sessionId, message: text, history: messages }),
+        body: JSON.stringify({
+          session_id: sid,
+          message: text,
+          history: historyPayload,
+        }),
       })
+
+    try {
+      let sid = activeSid
+      let res = await postMessage(sid)
+
+      if (res.status === 404 || res.status === 410) {
+        const fresh = await createChatSession()
+        setSessionId(fresh)
+        sid = fresh
+        res = await postMessage(sid)
+      }
+
       if (!res.ok) {
-        const msg = await res.text()
+        let msg = await res.text()
+        try {
+          const j = JSON.parse(msg)
+          if (typeof j.detail === 'string') msg = j.detail
+          else if (j.detail !== undefined) msg = JSON.stringify(j.detail)
+        } catch {
+          /* keep raw */
+        }
         throw new Error(msg || `HTTP ${res.status}`)
       }
       const reader = res.body.getReader()
@@ -218,20 +270,38 @@ export default function ChatUI({ prefetch = null }) {
       clearTimeout(chatTimer)
       setBusy(false)
     }
-  }, [input, sessionId, busy, messages])
+  }, [input, sessionId, busy, messages, createChatSession])
 
   const onKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       sendMessage()
     }
-    if (sessionId) {
+    const sid = sessionIdRef.current
+    if (sid) {
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
-      refreshTimer.current = setTimeout(() => {
-        apiFetch(`${API_BASE_URL}/chat/context/refresh`, {
-          method: 'POST',
-          body: JSON.stringify({ session_id: sessionId }),
-        }).catch(() => {})
+      refreshTimer.current = setTimeout(async () => {
+        const token = getToken()
+        const headers = {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        }
+        try {
+          let res = await fetch(`${API_BASE_URL}/chat/context/refresh`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ session_id: sessionIdRef.current }),
+          })
+          if (res.status === 404 || res.status === 410) {
+            const data = await apiFetch(`${API_BASE_URL}/chat/session`, {
+              method: 'POST',
+              body: JSON.stringify({}),
+            })
+            setSessionId(data.session_id)
+          }
+        } catch {
+          /* ignore — background refresh */
+        }
       }, 800)
     }
   }
@@ -333,9 +403,24 @@ export default function ChatUI({ prefetch = null }) {
           </div>
         )}
         {busy && !streaming && (
-          <div style={{ whiteSpace: 'pre-wrap', color: '#94a3b8', fontSize: 14, fontStyle: 'italic', display: 'flex', gap: '4px', alignItems: 'center' }}>
-            <strong>Assistant:</strong> 
-            <span style={{ animation: 'pulse 1.5s infinite' }}>typing...</span>
+          <div
+            style={{
+              whiteSpace: 'pre-wrap',
+              color: '#94a3b8',
+              fontSize: 14,
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <strong style={{ color: '#c4b5fd' }}>Assistant:</strong>
+            <span style={{ color: '#94a3b8' }}>Thinking</span>
+            <span className="chat-typing-indicator" aria-hidden>
+              <span />
+              <span />
+              <span />
+            </span>
           </div>
         )}
         <div ref={bottomRef} />
@@ -349,8 +434,12 @@ export default function ChatUI({ prefetch = null }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={sessionId ? 'Ask about markets, your portfolio, or strategies…' : 'Loading…'}
-          disabled={!sessionId || busy}
+          placeholder={
+            sessionLoading && !sessionId
+              ? 'Preparing session…'
+              : 'Ask about markets, your portfolio, or strategies…'
+          }
+          disabled={busy || (sessionLoading && !sessionId)}
           rows={2}
           style={{
             flex: 1,
@@ -366,7 +455,7 @@ export default function ChatUI({ prefetch = null }) {
         <button
           type="button"
           onClick={sendMessage}
-          disabled={!sessionId || busy || !input.trim()}
+          disabled={busy || (sessionLoading && !sessionId) || !input.trim()}
           style={{
             alignSelf: 'flex-end',
             padding: '10px 18px',
@@ -376,7 +465,7 @@ export default function ChatUI({ prefetch = null }) {
             color: '#fff',
             fontWeight: 700,
             cursor: busy ? 'wait' : 'pointer',
-            opacity: !sessionId || busy ? 0.6 : 1,
+            opacity: busy || (sessionLoading && !sessionId) ? 0.6 : 1,
           }}
         >
           {busy ? '…' : 'Send'}

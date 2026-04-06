@@ -1,7 +1,10 @@
 // @ts-check
+/**
+ * Minimal prod smoke (landing, debate, strategy lab). Deeper API parity: `faulthunter-api.spec.js`.
+ */
 const { test, expect } = require('@playwright/test');
 
-const FRONTEND = process.env.FRONTEND_URL || 'https://frontend-manojsilwals-projects.vercel.app';
+const FRONTEND = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 test.describe('TradeTalkApp E2E smoke', () => {
   test('landing page loads', async ({ page }) => {

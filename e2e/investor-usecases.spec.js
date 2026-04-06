@@ -1,6 +1,15 @@
 // @ts-check
+/**
+ * End-user flows in the browser. FaultHunter-equivalent HTTP checks: `e2e/faulthunter-api.spec.js` + `faulthunter-cases.js`.
+ * Feature map: macro → `/macro`, gold → `/gold` (API `/advisor/gold`), debate → `/debate`, backtest → `/backtest`.
+ */
 const { test, expect } = require('@playwright/test');
-const { dismissOnboarding, expectNoGenericFetchFailure, expectOneOf } = require('./support');
+const {
+  dismissOnboarding,
+  expectNoGenericFetchFailure,
+  expectOneOf,
+  waitForDecisionTerminalReady,
+} = require('./support');
 
 test.describe('Investor Use Cases', () => {
   test('valuation dashboard analyzes a ticker', async ({ page }) => {
@@ -13,25 +22,27 @@ test.describe('Investor Use Cases', () => {
     await expectNoGenericFetchFailure(page);
   });
 
-  test('decision terminal returns a verdict panel', async ({ page }) => {
-    await page.goto('/decision-terminal');
+  test('decision terminal returns a verdict panel (FaultHunter: decision-aapl-today)', async ({ page }) => {
+    await page.goto('/decision-terminal', { waitUntil: 'domcontentloaded' });
     await dismissOnboarding(page);
-    await expect(page.getByPlaceholder('TICKER')).toBeVisible({ timeout: 15000 });
-    await page.getByPlaceholder('TICKER').fill('NVDA');
+    await waitForDecisionTerminalReady(page);
+    await page.locator('.dt-ticker-input').fill('AAPL');
     await page.getByRole('button', { name: 'Run analysis' }).click();
     await expectOneOf(page, ['Verdict & sentiment hub', 'Aggregate verdict', 'Future price roadmap'], 120000);
     await expectNoGenericFetchFailure(page);
   });
 
-  test('macro page loads key investor context', async ({ page }) => {
-    await page.goto('/macro');
+  test('macro page loads key investor context (FaultHunter: macro-allocation-week)', async ({ page }) => {
+    await page.goto('/macro', { waitUntil: 'domcontentloaded' });
     await dismissOnboarding(page);
-    await expect(page.getByText('Global Macroeconomic Grounding')).toBeVisible({ timeout: 30000 });
-    await expect(page.getByText('Live Sector Rotation')).toBeVisible({ timeout: 30000 });
-    await expect(page.getByText('Global Capital Flows')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('heading', { name: 'Global Macroeconomic Grounding' })).toBeVisible({
+      timeout: 60000,
+    });
+    await expect(page.getByRole('heading', { name: 'Live Sector Rotation' })).toBeVisible({ timeout: 60000 });
+    await expect(page.getByRole('heading', { name: 'Global Capital Flows' })).toBeVisible({ timeout: 60000 });
   });
 
-  test('gold advisor shows macro inputs and briefing', async ({ page }) => {
+  test('gold advisor shows macro inputs and briefing (FaultHunter: gold-hedge-week)', async ({ page }) => {
     await page.goto('/gold');
     await dismissOnboarding(page);
     await expect(page.getByText('Gold Advisor')).toBeVisible({ timeout: 30000 });
@@ -39,7 +50,7 @@ test.describe('Investor Use Cases', () => {
     await expectNoGenericFetchFailure(page);
   });
 
-  test('debate flow produces a panel verdict', async ({ page }) => {
+  test('debate flow produces a panel verdict (FaultHunter: debate-tsla-thesis)', async ({ page }) => {
     await page.goto('/debate');
     await dismissOnboarding(page);
     await expect(page.getByPlaceholder('TICKER')).toBeVisible({ timeout: 15000 });
@@ -49,7 +60,17 @@ test.describe('Investor Use Cases', () => {
     await expectNoGenericFetchFailure(page);
   });
 
-  test('strategy lab loads and accepts a backtest prompt', async ({ page }) => {
+  test('observer swarm trace loads for NVDA (FaultHunter: trace-nvda-today)', async ({ page }) => {
+    test.setTimeout(180000);
+    await page.goto('/observer');
+    await dismissOnboarding(page);
+    await page.getByPlaceholder('Ticker').fill('NVDA');
+    await page.getByRole('button', { name: /Run Trace/i }).click();
+    await expect(page.getByText('Short Sellers')).toBeVisible({ timeout: 120000 });
+    await expectNoGenericFetchFailure(page);
+  });
+
+  test('strategy lab loads and accepts a backtest prompt (FaultHunter: backtest-dual-momentum-5y)', async ({ page }) => {
     test.setTimeout(420000);
     await page.goto('/backtest');
     await dismissOnboarding(page);
