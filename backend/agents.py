@@ -63,6 +63,16 @@ class AgentPair:
             except Exception as e:
                 logger.warning("[AgentPair:%s] earnings_memory retrieval failed: %s", self.factor_name, e)
 
+        try:
+            from .coral_hub import format_swarm_prior_block
+
+            regime = market_state.market_regime.value if market_state.market_regime else ""
+            coral = format_swarm_prior_block(self.factor_name, ticker, regime)
+            if coral:
+                blocks.append(coral)
+        except Exception as e:
+            logger.warning("[AgentPair:%s] coral hub priors failed: %s", self.factor_name, e)
+
         return "".join(blocks)
 
     async def run(self, market_state: MarketState, ticker: str = "GME") -> FactorResult:

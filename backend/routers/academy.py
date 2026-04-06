@@ -31,20 +31,38 @@ async def generate_lesson(lesson_id: str, background_tasks: BackgroundTasks,
     if lesson["status"] == "generating":
         return {"status": "already_generating"}
 
-    va.set_lesson_status(lesson_id, "generating")
+    va.set_lesson_status(lesson_id, "generating", last_error="")
 
     async def _run_generation():
         from ..video_generation_agent import generate_lesson_video
+        from ..agent_policy_guardrails import redact_secrets_in_text
+
+        err_out: list[str] = []
         try:
             playlist = await generate_lesson_video(
                 lesson_id=lesson_id,
                 topic=lesson["topic"],
                 track=lesson["track"],
                 level=str(lesson["level"]),
+                error_out=err_out,
             )
-            va.set_lesson_status(lesson_id, "ready" if playlist else "failed", playlist)
-        except Exception:
-            va.set_lesson_status(lesson_id, "failed")
+            if playlist:
+                va.set_lesson_status(lesson_id, "ready", playlist, last_error="")
+            else:
+                msg = err_out[0] if err_out else "Video generation produced no scenes."
+                va.set_lesson_status(
+                    lesson_id,
+                    "failed",
+                    [],
+                    last_error=redact_secrets_in_text(msg)[:1200],
+                )
+        except Exception as ex:
+            va.set_lesson_status(
+                lesson_id,
+                "failed",
+                [],
+                last_error=redact_secrets_in_text(str(ex))[:1200],
+            )
 
     background_tasks.add_task(_run_generation)
     return {"status": "generating", "lesson_id": lesson_id,

@@ -5,9 +5,15 @@ async function expectOneOf(page, candidates, timeout = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
     for (const candidate of candidates) {
-      const locator = typeof candidate === 'string'
-        ? page.getByText(candidate, { exact: false })
-        : candidate(page);
+      /** @type {import('@playwright/test').Locator} */
+      let locator;
+      if (typeof candidate === 'string') {
+        locator = page.getByText(candidate, { exact: false });
+      } else if (candidate instanceof RegExp) {
+        locator = page.getByText(candidate);
+      } else {
+        locator = candidate(page);
+      }
       if (await locator.first().isVisible().catch(() => false)) {
         return locator.first();
       }

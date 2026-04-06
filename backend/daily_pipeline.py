@@ -253,9 +253,21 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
             id="market_l1_cache_refresh",
             replace_existing=True,
         )
+        hb_min = max(5, int(os.environ.get("CORAL_HEARTBEAT_MINUTES", "30")))
+        scheduler.add_job(
+            _coral_heartbeat_job,
+            trigger="interval",
+            minutes=hb_min,
+            args=[knowledge_store, llm_client],
+            id="coral_heartbeat",
+            replace_existing=True,
+            max_instances=1,
+        )
         scheduler.start()
         logger.info(
-            "[DailyPipeline] APScheduler started — daily 00:00 UTC + L1 market cache every 15m"
+            "[DailyPipeline] APScheduler started — daily 00:00 UTC + L1 every 15m + "
+            "CORAL heartbeat every %dm",
+            hb_min,
         )
     except Exception as e:
         logger.warning(f"[DailyPipeline] Scheduler start failed: {e}")
@@ -274,3 +286,13 @@ async def _l1_market_refresh_job() -> None:
         await refresh()
     except Exception as e:
         logger.warning(f"[DailyPipeline] L1 market refresh failed: {e}")
+
+
+async def _coral_heartbeat_job(knowledge_store, llm_client=None) -> None:
+    """Periodic CORAL hub notes from market intel (see coral_heartbeat)."""
+    try:
+        from .coral_heartbeat import run_coral_heartbeat
+
+        await run_coral_heartbeat(knowledge_store, llm_client)
+    except Exception as e:
+        logger.warning("[DailyPipeline] coral heartbeat failed: %s", e)

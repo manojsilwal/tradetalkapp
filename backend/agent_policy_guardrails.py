@@ -180,6 +180,7 @@ def redact_secrets_in_text(text: str, secret_values: Optional[Iterable[str]] = N
     values.extend(
         [
             os.environ.get("OPENROUTER_API_KEY", ""),
+            os.environ.get("OPENROUTER_API_KEY_2", ""),
             os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
             os.environ.get("GOOGLE_API_KEY", ""),
             os.environ.get("GEMINI_API_KEY", ""),

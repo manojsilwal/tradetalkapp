@@ -62,7 +62,7 @@ const LAYERS = [
     {
         id: 'intel', label: 'Intelligence Layer', icon: Brain, color: 'intel',
         nodes: [
-            { id: 'llm_client', name: 'LLMClient', file: 'backend/llm_client.py', desc: 'OpenRouter API (Nemotron Super). Role-based model tiers (heavy/light). Fallback templates.', inputs: ['Role + prompt + context'], outputs: ['LLM JSON response'] },
+            { id: 'llm_client', name: 'LLMClient', file: 'backend/llm_client.py', desc: 'OpenRouter API (Qwen). Role-based model tiers (heavy/light). Optional dual-key round-robin. Fallback templates.', inputs: ['Role + prompt + context'], outputs: ['LLM JSON response'] },
             { id: 'knowledge_store', name: 'KnowledgeStore (RAG)', file: 'backend/knowledge_store.py', desc: 'VECTOR_BACKEND selects storage: Supabase pgvector (default on Render in render.yaml) with OpenRouter embeddings when configured; local Chroma on disk; or VECTOR_BACKEND=hf snapshot from Hugging Face. Multiple named collections — see COLLECTIONS in code. Reflection memory with effectiveness scoring.', inputs: ['Query text + filters'], outputs: ['Relevant documents'] },
             { id: 'guardrails', name: 'Policy Guardrails', file: 'backend/agent_policy_guardrails.py', desc: 'Per-workload capability sandboxing. Blocks cross-workload abuse, validates outbound hosts, redacts secrets.', inputs: ['Workload + capability'], outputs: ['Allow / Deny'] },
         ]

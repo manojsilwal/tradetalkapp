@@ -102,17 +102,30 @@ export default function ChatUI({ prefetch = null }) {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      try {
-        const data = await apiFetch(`${API_BASE_URL}/chat/session`, {
-          method: 'POST',
-          body: JSON.stringify({}),
-        })
-        if (!cancelled) setSessionId(data.session_id)
-      } catch (e) {
-        if (!cancelled) setErr(e.message || 'Could not open chat session')
-      } finally {
-        if (!cancelled) setSessionLoading(false)
+      const backoffMs = [0, 1200, 2800]
+      let lastErr = null
+      for (let i = 0; i < backoffMs.length; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, backoffMs[i]))
+        if (cancelled) return
+        try {
+          const data = await apiFetch(`${API_BASE_URL}/chat/session`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+          })
+          if (!cancelled) {
+            setSessionId(data.session_id)
+            setErr('')
+          }
+          lastErr = null
+          break
+        } catch (e) {
+          lastErr = e
+        }
       }
+      if (!cancelled && lastErr) {
+        setErr(lastErr.message || 'Could not open chat session')
+      }
+      if (!cancelled) setSessionLoading(false)
     })()
     return () => {
       cancelled = true
@@ -332,6 +345,7 @@ export default function ChatUI({ prefetch = null }) {
       )}
       <div style={{ display: 'flex', gap: 8 }}>
         <textarea
+          data-testid="chat-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}

@@ -9,7 +9,7 @@ test.describe('Assistant Numeric Smoke', () => {
 
     await expect(page.getByText('TradeTalk Assistant')).toBeVisible({ timeout: 30000 });
     const box = page.getByPlaceholder(/Ask about markets, your portfolio, or strategies/i);
-    await expect(box).toBeVisible({ timeout: 30000 });
+    await expect(box).toBeVisible({ timeout: 60000 });
 
     await box.fill("What is the current price and today's % change for MSFT? Keep it short.");
     await page.getByRole('button', { name: /Send/i }).click();

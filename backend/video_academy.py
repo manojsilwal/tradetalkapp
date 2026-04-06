@@ -53,7 +53,19 @@ def init_academy_db():
         );
     """)
     conn.commit()
+    _migrate_academy_columns(conn)
     _seed_lessons()
+
+
+def _migrate_academy_columns(conn):
+    try:
+        conn.execute("ALTER TABLE academy_lessons ADD COLUMN last_error TEXT DEFAULT ''")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
+
+_NO_ERR_UPDATE = object()
 
 
 LESSON_CATALOGUE: List[Dict] = [
@@ -120,6 +132,7 @@ def get_catalogue(user_id: str, track: Optional[str] = None) -> List[Dict]:
         "status":    r["status"],
         "watched":   r["id"] in watched_ids,
         "playlist":  json.loads(r["playlist_json"]),
+        "last_error": dict(r).get("last_error") or "",
     } for r in rows]
 
 
@@ -142,6 +155,7 @@ def get_lesson(user_id: str, lesson_id: str) -> Optional[Dict]:
         "status":    r["status"],
         "watched":   bool(watched_row["watched"]) if watched_row else False,
         "playlist":  json.loads(r["playlist_json"]),
+        "last_error": dict(r).get("last_error") or "",
     }
 
 
@@ -158,12 +172,30 @@ def mark_lesson_watched(user_id: str, lesson_id: str):
     conn.commit()
 
 
-def set_lesson_status(lesson_id: str, status: str, playlist: Optional[List] = None):
+def set_lesson_status(
+    lesson_id: str,
+    status: str,
+    playlist: Optional[List] = None,
+    *,
+    last_error: Any = _NO_ERR_UPDATE,
+):
     """Shared — status and playlist apply to all users (generation is shared)."""
     conn = _get_conn()
-    if playlist is not None:
-        conn.execute("UPDATE academy_lessons SET status=?, playlist_json=? WHERE id=?",
-                     (status, json.dumps(playlist), lesson_id))
+    if playlist is not None and last_error is not _NO_ERR_UPDATE:
+        conn.execute(
+            "UPDATE academy_lessons SET status=?, playlist_json=?, last_error=? WHERE id=?",
+            (status, json.dumps(playlist), last_error or "", lesson_id),
+        )
+    elif playlist is not None:
+        conn.execute(
+            "UPDATE academy_lessons SET status=?, playlist_json=? WHERE id=?",
+            (status, json.dumps(playlist), lesson_id),
+        )
+    elif last_error is not _NO_ERR_UPDATE:
+        conn.execute(
+            "UPDATE academy_lessons SET status=?, last_error=? WHERE id=?",
+            (status, last_error or "", lesson_id),
+        )
     else:
         conn.execute("UPDATE academy_lessons SET status=? WHERE id=?", (status, lesson_id))
     conn.commit()

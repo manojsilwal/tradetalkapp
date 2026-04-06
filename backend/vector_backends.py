@@ -175,19 +175,27 @@ class SupabaseVectorBackend(VectorBackendBase):
         from supabase import create_client
 
         self._client = create_client(url, key)
-        self._embedding_client = None
+        self._embedding_pool = None
         self._embedding_model = os.environ.get("OPENROUTER_EMBEDDING_MODEL", "").strip()
 
-        if self._embedding_model and os.environ.get("OPENROUTER_API_KEY", ""):
-            try:
-                from openai import OpenAI
+        base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+        headers: Dict[str, str] = {}
+        ref = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
+        if ref:
+            headers["HTTP-Referer"] = ref
+        # Match llm_client default so the shared OpenRouter pool gets identical headers regardless of init order.
+        xt = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App").strip()
+        if xt:
+            headers["X-Title"] = xt
 
-                self._embedding_client = OpenAI(
-                    base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-                    api_key=os.environ.get("OPENROUTER_API_KEY", ""),
-                )
-            except Exception as e:
-                logger.warning(f"[SupabaseVectorBackend] Embedding client init failed: {e}")
+        if self._embedding_model:
+            from .openrouter_pool import collect_openrouter_api_keys, get_or_create_openrouter_pool
+
+            if collect_openrouter_api_keys():
+                try:
+                    self._embedding_pool = get_or_create_openrouter_pool(base_url, headers)
+                except Exception as e:
+                    logger.warning(f"[SupabaseVectorBackend] Embedding pool init failed: {e}")
 
         # Fail fast if SQL bootstrap has not been applied yet.
         try:
@@ -203,10 +211,10 @@ class SupabaseVectorBackend(VectorBackendBase):
         return
 
     def _embed(self, text: str) -> Optional[List[float]]:
-        if not self._embedding_client or not self._embedding_model:
+        if not self._embedding_pool or not self._embedding_model:
             return None
         try:
-            emb = self._embedding_client.embeddings.create(
+            emb = self._embedding_pool.next_sync().embeddings.create(
                 model=self._embedding_model,
                 input=text,
             )

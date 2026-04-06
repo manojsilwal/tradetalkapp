@@ -1,15 +1,15 @@
 """
-LLM Client — supports OpenRouter Nemotron and a rule-based fallback.
+LLM Client — supports OpenRouter (Qwen via OpenRouter by default) and a rule-based fallback.
 
-  1. OpenRouter (primary) — set OPENROUTER_API_KEY
+  1. OpenRouter — set OPENROUTER_API_KEY (optional OPENROUTER_API_KEY_2 for round-robin quota).
      Inference goes DIRECT to OpenRouter, never proxied through HF Space.
      Optional:
-       OPENROUTER_MODEL (default: nvidia/nemotron-3-super-120b-a12b:free)
+       OPENROUTER_MODEL (default: qwen/qwen-3.6-plus:free)
        OPENROUTER_BASE_URL (default: https://openrouter.ai/api/v1)
        OPENROUTER_HTTP_REFERER
        OPENROUTER_X_TITLE
 
-  2. Rule-based templates — if OPENROUTER_API_KEY is not configured.
+  2. Rule-based templates — if no OpenRouter API keys are configured.
 
 Agent policy guardrails (defense-in-depth) are enforced via
 agent_policy_guardrails when enabled.  These are in-process checks and
@@ -29,13 +29,14 @@ from .agent_policy_guardrails import (
     redact_secrets_in_text,
     workload_scope,
 )
+from .openrouter_pool import get_or_create_openrouter_pool
 
 logger = logging.getLogger(__name__)
 
 # ── Env config ────────────────────────────────────────────────────────────────
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "qwen/qwen-3.6-plus:free")
 OPENROUTER_MODEL_LIGHT = os.environ.get("OPENROUTER_MODEL_LIGHT", OPENROUTER_MODEL)
 OPENROUTER_HTTP_REFERER = os.environ.get("OPENROUTER_HTTP_REFERER", "")
 OPENROUTER_X_TITLE = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")
@@ -61,6 +62,7 @@ MODEL_TIER = {
     "swarm_analyst":      "light",
     "swarm_reflection_writer": "light",
     "video_scene_director": "light",
+    "video_veo_text_fallback": "light",
     "rag_narrative_polish": "light",
     "decision_terminal_roadmap": "light",
 }
@@ -153,8 +155,15 @@ AGENT_SYSTEM_PROMPTS = {
     "video_scene_director": (
         "You are a visual director creating short educational finance scene plans. "
         "Return ONLY valid JSON in this shape: "
-        "{\"scenes\":[{\"scene\":1,\"visual_prompt\":\"...\",\"caption\":\"...\",\"duration\":8}]}. "
+        "{\"scenes\":[{\"scene\":1,\"visual_prompt\":\"...\",\"caption\":\"...\",\"duration\":4}]}. "
+        "Each scene duration must match the user prompt (Veo allows 4, 6, or 8 seconds). "
         "No markdown fences."
+    ),
+    "video_veo_text_fallback": (
+        "Automated video (Google Veo) failed or is unavailable for this scene. "
+        "Write a short text slide for Video Academy so the learner still gets educational value. "
+        "ONLY investment and finance education. No hype, no buy/sell orders. "
+        "Respond ONLY with valid JSON: {\"caption\": \"short headline\", \"body\": \"2-4 sentences plain English\"}"
     ),
     "decision_terminal_roadmap": (
         "You output illustrative 3-year USD price scenarios for an educational dashboard only — "
@@ -193,6 +202,10 @@ FALLBACK_TEMPLATES = {
     "swarm_analyst": {"signal": 0, "rationale": "Data falls in ambiguous range; defaulting to neutral.", "confidence": 0.5},
     "swarm_reflection_writer": {"lesson": "Insufficient data to derive a clear lesson."},
     "video_scene_director": {"scenes": []},
+    "video_veo_text_fallback": {
+        "caption": "Lesson scene",
+        "body": "Video generation was unavailable. Use the topic and captions as study notes.",
+    },
     "decision_terminal_roadmap": {
         "bull_price_usd": 0,
         "base_price_usd": 0,
@@ -235,14 +248,13 @@ class LLMClient:
         self._provider = "fallback"
         self._model = ""
         self._endpoint = ""
-        self._client = None
-        self._async_client = None
+        self._openrouter_pool = None
         self._sem = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
         self._init_client()
 
     def _init_client(self):
         try:
-            from openai import OpenAI, AsyncOpenAI
+            from openai import OpenAI  # noqa: F401 — presence check
         except Exception as e:
             logger.warning("[LLMClient] openai sdk unavailable: %s", redact_secrets_in_text(str(e)))
             return
@@ -253,30 +265,21 @@ class LLMClient:
         if OPENROUTER_X_TITLE:
             headers["X-Title"] = OPENROUTER_X_TITLE
 
-        if OPENROUTER_API_KEY:
-            try:
-                if GUARDRAILS_ENABLE and policy_guardrails_enabled():
-                    guard_host("llm", OPENROUTER_BASE_URL)
-                self._client = OpenAI(
-                    base_url=OPENROUTER_BASE_URL,
-                    api_key=OPENROUTER_API_KEY,
-                    default_headers=headers,
-                )
-                self._async_client = AsyncOpenAI(
-                    base_url=OPENROUTER_BASE_URL,
-                    api_key=OPENROUTER_API_KEY,
-                    default_headers=headers,
-                )
-                self._provider = "openrouter"
-                self._backend = "openrouter"
-                self._model = OPENROUTER_MODEL
-                self._endpoint = OPENROUTER_BASE_URL
-                logger.info("[LLMClient] Backend: OpenRouter direct — model: %s", OPENROUTER_MODEL)
+        try:
+            pool = get_or_create_openrouter_pool(OPENROUTER_BASE_URL, headers)
+            if pool is None:
+                logger.warning("[LLMClient] No OPENROUTER_API_KEY configured. Using rule-based fallback.")
                 return
-            except Exception as e:
-                logger.warning("[LLMClient] OpenRouter init failed: %s", redact_secrets_in_text(str(e)))
-
-        logger.warning("[LLMClient] No OPENROUTER_API_KEY configured. Using rule-based fallback.")
+            if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                guard_host("llm", OPENROUTER_BASE_URL)
+            self._openrouter_pool = pool
+            self._provider = "openrouter"
+            self._backend = "openrouter"
+            self._model = OPENROUTER_MODEL
+            self._endpoint = OPENROUTER_BASE_URL
+            logger.info("[LLMClient] Backend: OpenRouter direct — model: %s", OPENROUTER_MODEL)
+        except Exception as e:
+            logger.warning("[LLMClient] OpenRouter init failed: %s", redact_secrets_in_text(str(e)))
 
     # ── Inference ──────────────────────────────────────────────────────────
 
@@ -285,11 +288,12 @@ class LLMClient:
         system = AGENT_SYSTEM_PROMPTS.get(role, "You are a finance analyst. Respond only in valid JSON.")
         model = _model_for_role(role)
         try:
-            if self._client is None:
+            if self._openrouter_pool is None:
                 return FALLBACK_TEMPLATES.get(role, {})
+            sync_client, _ = self._openrouter_pool.next_pair()
             if GUARDRAILS_ENABLE and policy_guardrails_enabled():
                 with workload_scope("llm", "llm_inference"):
-                    completion = self._client.chat.completions.create(
+                    completion = sync_client.chat.completions.create(
                         model=model,
                         messages=[
                             {"role": "system", "content": system},
@@ -299,7 +303,7 @@ class LLMClient:
                         max_tokens=LLM_MAX_TOKENS,
                     )
             else:
-                completion = self._client.chat.completions.create(
+                completion = sync_client.chat.completions.create(
                     model=model,
                     messages=[
                         {"role": "system", "content": system},
@@ -445,16 +449,27 @@ class LLMClient:
         )
         return await self.generate("gold_advisor", prompt)
 
-    async def generate_swarm_synthesis(self, ticker: str, factor_results: list[dict]) -> dict:
+    async def generate_swarm_synthesis(
+        self,
+        ticker: str,
+        factor_results: list[dict],
+        peer_summaries: Optional[dict] = None,
+    ) -> dict:
         """Resolve disagreements among swarm factor agents."""
         factors_str = "\n".join(
             f"- {f['factor_name']}: signal={f['trading_signal']}, confidence={f['confidence']:.2f}, "
             f"status={f['status']}, rationale={f['rationale'][:200]}"
             for f in factor_results
         )
+        peer_block = ""
+        if peer_summaries:
+            peer_block = "\nPeer factor rationale excerpts (cross-pollination):\n" + "\n".join(
+                f"  - {k}: {(v or '')[:320]}" for k, v in peer_summaries.items()
+            )
         prompt = (
             f"Ticker: {ticker.upper()}\n\n"
             f"Factor results from the swarm:\n{factors_str}\n\n"
+            f"{peer_block}\n"
             f"The factors disagree. Explain why and produce a final verdict."
         )
         return await self.generate("swarm_synthesizer", prompt)
@@ -502,11 +517,12 @@ class LLMClient:
         """Single chat completion returning raw assistant text (no JSON parse)."""
         model = OPENROUTER_MODEL_LIGHT
         try:
-            if self._client is None:
+            if self._openrouter_pool is None:
                 return user
+            sync_client, _ = self._openrouter_pool.next_pair()
             if GUARDRAILS_ENABLE and policy_guardrails_enabled():
                 with workload_scope("llm", "llm_inference"):
-                    completion = self._client.chat.completions.create(
+                    completion = sync_client.chat.completions.create(
                         model=model,
                         messages=[
                             {"role": "system", "content": system},
@@ -516,7 +532,7 @@ class LLMClient:
                         max_tokens=min(900, LLM_MAX_TOKENS),
                     )
             else:
-                completion = self._client.chat.completions.create(
+                completion = sync_client.chat.completions.create(
                     model=model,
                     messages=[
                         {"role": "system", "content": system},
@@ -549,13 +565,15 @@ class LLMClient:
         """
         mt = max_tokens if max_tokens is not None else min(2048, LLM_MAX_TOKENS)
         model = OPENROUTER_MODEL_LIGHT
-        if self._async_client is None:
+        if self._openrouter_pool is None:
             yield (
                 "Chat requires OPENROUTER_API_KEY. "
                 "Configure the API key on the server to enable live responses."
             )
             return
-        
+
+        _, async_client = self._openrouter_pool.next_pair()
+
         msgs = [{"role": "system", "content": system}]
         for m in messages:
             # Reconstruct valid message payloads, including raw tool turns if passed
@@ -584,7 +602,7 @@ class LLMClient:
                     kwargs["tools"] = tools
 
                 async with self._sem:
-                    stream = await self._async_client.chat.completions.create(**kwargs)
+                    stream = await async_client.chat.completions.create(**kwargs)
 
                     async for chunk in stream:
                         delta = chunk.choices[0].delta if chunk.choices else None
@@ -663,10 +681,10 @@ class LLMClient:
 
     async def generate_rag_polish(self, context_label: str, draft: str) -> str:
         """
-        Phase 5 — tighten data-lake summaries for embedding/RAG (Nemotron via OpenRouter).
+        Phase 5 — tighten data-lake summaries for embedding/RAG (OpenRouter chat model).
         Falls back to draft when API key missing or on error.
         """
-        if self._provider != "openrouter" or self._client is None:
+        if self._provider != "openrouter" or self._openrouter_pool is None:
             return draft
         system = (
             "You are a financial data editor. Rewrite notes into one dense factual paragraph "

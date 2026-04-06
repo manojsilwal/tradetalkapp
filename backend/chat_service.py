@@ -328,11 +328,25 @@ async def gather_message_context(
                 "stale_session": time.time() > session.expires_at,
             }
 
-        rag_block, l1_snap, uctx, fresh = await asyncio.gather(
+        async def coral_hub_task() -> str:
+            def _sync_hub() -> str:
+                from .coral_hub import format_hub_context_block
+
+                snap = market_l1_cache.get_snapshot() or {}
+                cs = snap.get("credit_stress_index")
+                reg = ""
+                if cs is not None:
+                    reg = "BULL_NORMAL" if float(cs) <= 1.1 else "BEAR_STRESS"
+                return format_hub_context_block(market_regime=reg)
+
+            return await asyncio.to_thread(_sync_hub)
+
+        rag_block, l1_snap, uctx, fresh, coral_block = await asyncio.gather(
             rag_task(),
             l1_task(),
             user_task(),
             fresh_task(),
+            coral_hub_task(),
         )
 
         # Include sticky state in meta for frontend awareness
@@ -348,8 +362,13 @@ async def gather_message_context(
         if session.sticky_state:
             sticky_block = f"## Conversation state (sticky)\n{json.dumps(session.sticky_state, default=str)[:1000]}\n"
 
+        hub_prefix = (coral_block or "").strip()
+        if hub_prefix:
+            hub_prefix = hub_prefix + "\n\n"
+
         attribution = (
-            "\n## Retrieval\n"
+            hub_prefix
+            + "\n## Retrieval\n"
             f"{rag_block}\n\n"
             f"{sticky_block}"
             "## Instructions\n"

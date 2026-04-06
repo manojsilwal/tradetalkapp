@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Eye, Zap, Film, ChevronRight, RefreshCw, CheckCircle2, Lock } from 'lucide-react';
 import { API_BASE_URL, apiFetch } from './api';
 
@@ -157,20 +157,50 @@ function LessonCard({ lesson, onWatch, onGenerate, isGenerating }) {
             borderRadius: 16,
             overflow: 'hidden',
             transition: 'transform 0.2s, border-color 0.2s',
-            cursor: 'pointer',
+            cursor: 'default',
             position: 'relative',
         }}
             onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
             onMouseLeave={e => e.currentTarget.style.transform = 'none'}
         >
-            {/* Thumbnail */}
-            <div style={{
-                height: 120,
-                background: `linear-gradient(135deg, ${tc.bg.replace('0.12', '0.3')}, rgba(0,0,0,0.4))`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 48, position: 'relative',
-            }}>
-                {lesson.thumbnail || '🎬'}
+            {/* Thumbnail — no &lt;video&gt; here: avoids loading MP4 until user opens the lesson */}
+            <div
+                role={ready ? 'button' : undefined}
+                tabIndex={ready ? 0 : undefined}
+                onClick={ready ? (e) => { e.stopPropagation(); onWatch(); } : undefined}
+                onKeyDown={ready ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onWatch(); } } : undefined}
+                style={{
+                    height: 120,
+                    background: `linear-gradient(135deg, ${tc.bg.replace('0.12', '0.3')}, rgba(0,0,0,0.45))`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 48, position: 'relative',
+                    cursor: ready ? 'pointer' : 'default',
+                    outline: 'none',
+                }}
+                aria-label={ready ? `Play lesson: ${lesson.title}` : undefined}
+            >
+                <span style={{ opacity: ready ? 0.85 : 1, userSelect: 'none' }}>{lesson.thumbnail || '🎬'}</span>
+                {ready && !isGenerating && (
+                    <div
+                        style={{
+                            position: 'absolute', inset: 0,
+                            background: 'rgba(0,0,0,0.52)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            pointerEvents: 'none',
+                        }}
+                        aria-hidden
+                    >
+                        <div style={{
+                            width: 56, height: 56, borderRadius: '50%',
+                            background: 'rgba(0,0,0,0.88)',
+                            border: '2px solid rgba(255,255,255,0.92)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            boxShadow: '0 6px 28px rgba(0,0,0,0.55)',
+                        }}>
+                            <Play size={26} color="#fff" fill="#fff" style={{ marginLeft: 4 }} />
+                        </div>
+                    </div>
+                )}
                 {lesson.watched && (
                     <div style={{
                         position: 'absolute', top: 8, right: 8,
@@ -232,15 +262,22 @@ function LessonCard({ lesson, onWatch, onGenerate, isGenerating }) {
                         </span>
                     </button>
                 ) : failed ? (
-                    <button onClick={onGenerate} style={{
-                        width: '100%', padding: '9px', borderRadius: 8,
-                        border: '1px solid rgba(239,68,68,0.3)',
-                        background: 'rgba(239,68,68,0.08)',
-                        color: '#ef4444', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    }}>
-                        <RefreshCw size={12} /> Retry Generation
-                    </button>
+                    <div>
+                        <button onClick={onGenerate} style={{
+                            width: '100%', padding: '9px', borderRadius: 8,
+                            border: '1px solid rgba(239,68,68,0.3)',
+                            background: 'rgba(239,68,68,0.08)',
+                            color: '#ef4444', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        }}>
+                            <RefreshCw size={12} /> Retry Generation
+                        </button>
+                        {lesson.last_error ? (
+                            <p style={{ margin: '10px 0 0', fontSize: 10, lineHeight: 1.45, color: '#94a3b8', wordBreak: 'break-word' }} title={lesson.last_error}>
+                                {lesson.last_error.length > 220 ? `${lesson.last_error.slice(0, 220)}…` : lesson.last_error}
+                            </p>
+                        ) : null}
+                    </div>
                 ) : isGenerating ? (
                     <div style={{ fontSize: 11, color: '#a78bfa', textAlign: 'center', padding: '8px 0' }}>
                         Generating video...
@@ -261,16 +298,34 @@ function LessonCard({ lesson, onWatch, onGenerate, isGenerating }) {
     );
 }
 
+const staticOrigin = API_BASE_URL.replace('/api', '');
+
 function VideoPlayer({ lesson, onBack, onXpGained }) {
     const [scene, setScene]     = useState(0);
+    const [playbackStarted, setPlaybackStarted] = useState(false);
     const videoRef              = useRef(null);
     const playlist              = lesson.playlist || [];
     const tc                    = TRACK_COLORS[lesson.track] || { color: '#a78bfa', border: 'rgba(124,58,237,0.3)' };
 
-    const goNext = () => setScene(s => Math.min(s + 1, playlist.length - 1));
+    const goNext = useCallback(() => {
+        setScene(s => Math.min(s + 1, playlist.length - 1));
+    }, [playlist.length]);
     const goPrev = () => setScene(s => Math.max(s - 1, 0));
 
     const currentScene = playlist[scene];
+    const isTextFallback = currentScene && (currentScene.media === 'text_fallback' || (!currentScene.url && currentScene.fallback_body));
+    const hasVideoUrl = !!(currentScene?.url && !isTextFallback);
+
+    useEffect(() => {
+        setPlaybackStarted(false);
+    }, [scene]);
+
+    useEffect(() => {
+        if (!isTextFallback || !currentScene) return undefined;
+        const sec = Math.min(60, Math.max(3, Number(currentScene.duration) || 4));
+        const t = setTimeout(goNext, sec * 1000);
+        return () => clearTimeout(t);
+    }, [scene, isTextFallback, currentScene, goNext]);
 
     return (
         <div style={{ maxWidth: 480, margin: '0 auto', padding: '0 16px' }}>
@@ -281,15 +336,72 @@ function VideoPlayer({ lesson, onBack, onXpGained }) {
             <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 20, overflow: 'hidden', border: `1px solid ${tc.border}` }}>
                 {/* Video area */}
                 <div style={{ background: '#000', aspectRatio: '9/16', position: 'relative', maxHeight: 480 }}>
-                    {currentScene ? (
-                        <video
-                            ref={videoRef}
-                            key={currentScene.url}
-                            src={`${API_BASE_URL.replace('/api', '')}${currentScene.url}`}
-                            autoPlay
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            onEnded={goNext}
-                        />
+                    {currentScene && isTextFallback ? (
+                        <div style={{
+                            width: '100%', height: '100%', minHeight: 280,
+                            display: 'flex', flexDirection: 'column', justifyContent: 'center',
+                            alignItems: 'center', padding: 20,
+                            background: 'linear-gradient(165deg, rgba(30,27,75,0.95), rgba(15,23,42,0.98))',
+                        }}>
+                            <div style={{
+                                fontSize: 10, fontWeight: 700, letterSpacing: 1.2, color: tc.color, marginBottom: 12,
+                                textTransform: 'uppercase',
+                            }}>
+                                Text slide · Veo unavailable
+                            </div>
+                            <p style={{
+                                margin: 0, fontSize: 15, lineHeight: 1.55, color: '#e2e8f0', textAlign: 'center',
+                                maxWidth: 360,
+                            }}>
+                                {currentScene.fallback_body}
+                            </p>
+                        </div>
+                    ) : hasVideoUrl ? (
+                        playbackStarted ? (
+                            <video
+                                ref={videoRef}
+                                key={currentScene.url}
+                                src={`${staticOrigin}${currentScene.url}`}
+                                preload="none"
+                                playsInline
+                                autoPlay
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                onEnded={goNext}
+                            />
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => setPlaybackStarted(true)}
+                                style={{
+                                    position: 'absolute', inset: 0, border: 'none', padding: 0, margin: 0,
+                                    cursor: 'pointer', display: 'flex', flexDirection: 'column',
+                                    alignItems: 'center', justifyContent: 'center',
+                                    background: `linear-gradient(165deg, ${tc.color}18, rgba(15,23,42,0.96))`,
+                                }}
+                                aria-label="Load and play video"
+                            >
+                                <div style={{
+                                    position: 'absolute', inset: 0,
+                                    background: 'rgba(0,0,0,0.5)',
+                                }} />
+                                <div style={{
+                                    position: 'relative', zIndex: 1,
+                                    width: 72, height: 72, borderRadius: '50%',
+                                    background: 'rgba(0,0,0,0.88)',
+                                    border: '2px solid rgba(255,255,255,0.92)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    boxShadow: '0 8px 32px rgba(0,0,0,0.55)',
+                                }}>
+                                    <Play size={34} color="#fff" fill="#fff" style={{ marginLeft: 6 }} />
+                                </div>
+                                <span style={{
+                                    position: 'relative', zIndex: 1, marginTop: 16, fontSize: 12,
+                                    color: '#94a3b8', fontWeight: 600,
+                                }}>
+                                    Tap to load &amp; play
+                                </span>
+                            </button>
+                        )
                     ) : (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
                             <div style={{ textAlign: 'center', color: '#64748b' }}>

@@ -50,7 +50,15 @@ External evaluator repo runs daily probes against the public API; reports are Ma
 
    List recent runs: `gh run list --repo manojsilwal/tradetalkapp --workflow "FaultHunter report reminder" -L 5`
 
-3. Point **Cursor Background/Cloud Agent** at the new issue and [AGENTS.md](AGENTS.md).
+3. **FaultHunter evaluator (separate repo)** — local CLI vs GitHub target URL:
+   - **Local TradeTalk:** in the [FaultHunter](https://github.com/manojsilwal/FaultHunter) repo, use  
+     `python -m faulthunter.cli --profile smoke --report-kind manual --target-base-url http://127.0.0.1:8000`  
+     (`--target-base-url` overrides `TRADETALK_BASE_URL`).
+   - **GitHub Actions:** **Actions** → **Daily FaultHunter Report** → **Run workflow** → optional **target_base_url** (leave empty to use secret `TRADETALK_BASE_URL`), or  
+     `gh workflow run "Daily FaultHunter Report" -R manojsilwal/FaultHunter -f target_base_url="https://your-api.example.com"`  
+     See [FaultHunter README — Local vs remote](https://github.com/manojsilwal/FaultHunter#local-vs-remote-tradetalk-cli).
+
+4. Point **Cursor Background/Cloud Agent** at the new issue and [AGENTS.md](AGENTS.md).
 
 ## Development
 

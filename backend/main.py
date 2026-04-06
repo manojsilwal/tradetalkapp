@@ -69,6 +69,9 @@ uprefs.init_preferences_db()
 from . import agent_memory as agent_memory_mod
 agent_memory_mod.init_agent_memory_db()
 
+from . import coral_hub as coral_hub_mod
+coral_hub_mod.init_coral_hub_db()
+
 # ── Register routers ─────────────────────────────────────────────────────────
 from .routers import (
     auth as auth_router,

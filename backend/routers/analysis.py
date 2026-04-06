@@ -27,11 +27,24 @@ from ..deps import (
     shorts_connector, social_connector, poly_connector, fund_connector,
     knowledge_store, llm_client, tool_registry, up,
 )
+from .. import coral_hub
 from .. import user_preferences as uprefs
 
 router = APIRouter(tags=["analysis"])
 
 _rl_expensive = rate_limit("expensive")
+
+
+def _peer_summaries_from_factor_results(results: list) -> dict[str, str]:
+    keys = ["short_interest", "social_sentiment", "polymarket", "fundamentals"]
+    out: dict[str, str] = {}
+    for k, r in zip(keys, results):
+        out[k] = (getattr(r, "rationale", None) or "")[:500]
+    return out
+
+
+def _format_peer_highlights(peer: dict[str, str]) -> str:
+    return "\n".join(f"- **{k}**: {(v or '')[:220]}" for k, v in peer.items())
 
 
 def _store_factor_snapshot(ks, ticker: str, factor_name: str, result, market_state):
@@ -116,6 +129,7 @@ async def _execute_swarm_trace(
         )
 
         short_res, social_res, poly_res, fund_res = results
+        peer_summaries = _peer_summaries_from_factor_results(results)
         verified = [r for r in results if r.status == "VERIFIED"]
         rejected = [r for r in results if r.status == "REJECTED"]
 
@@ -147,7 +161,9 @@ async def _execute_swarm_trace(
         if has_conflict:
             try:
                 factor_dicts = [r.model_dump() for r in results]
-                synthesis = await llm_client.generate_swarm_synthesis(ticker, factor_dicts)
+                synthesis = await llm_client.generate_swarm_synthesis(
+                    ticker, factor_dicts, peer_summaries=peer_summaries,
+                )
                 consensus_rationale = synthesis.get("consensus_rationale", "")
                 synth_verdict = synthesis.get("verdict", "").upper()
                 synth_confidence = float(synthesis.get("confidence", avg_confidence))
@@ -156,6 +172,14 @@ async def _execute_swarm_trace(
                     avg_confidence = synth_confidence
             except Exception as e:
                 consensus_rationale = f"Synthesis unavailable: {e}"
+
+        highlights = _format_peer_highlights(peer_summaries)
+        if highlights.strip():
+            peer_section = f"## Peer factor highlights\n{highlights}"
+            if consensus_rationale:
+                consensus_rationale = f"{consensus_rationale}\n\n{peer_section}"
+            else:
+                consensus_rationale = peer_section
 
         if _auth_user:
             try:
@@ -183,6 +207,16 @@ async def _execute_swarm_trace(
             knowledge_store.add_swarm_analysis(consensus)
         except Exception as e:
             print(f"[KnowledgeHook] add_swarm_analysis failed: {e}")
+
+        try:
+            coral_hub.record_attempt(
+                f"trace_{ticker.upper()}",
+                "swarm_trace",
+                float(global_signal),
+                float(avg_confidence),
+            )
+        except Exception:
+            pass
 
         # Store per-factor snapshots for granular RAG
         try:
