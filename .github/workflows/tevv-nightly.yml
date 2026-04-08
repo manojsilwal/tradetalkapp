@@ -7,6 +7,9 @@ on:
     paths:
       - "backend/eval/**"
       - "backend/chat_evidence_contract.py"
+      - "backend/chat_service.py"
+      - "backend/knowledge_store.py"
+      - "backend/rag_retrieval.py"
       - "backend/routers/chat.py"
       - "backend/tests/test_tevv_harness.py"
       - ".github/workflows/tevv-nightly.yml"
