@@ -89,6 +89,7 @@ def plan_chat_rag(
         queries.append(ChatRagQuery("stock_profiles", extra_n, {"ticker": ticker}))
         queries.append(ChatRagQuery("sp500_fundamentals_narratives", extra_n, {"ticker": ticker}))
         queries.append(ChatRagQuery("swarm_history", extra_n, {"ticker": ticker}))
+        queries.append(ChatRagQuery("yf_batch_chunks", extra_n, {"ticker": ticker}))
 
     if any(
         k in ml

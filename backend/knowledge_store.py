@@ -55,6 +55,7 @@ COLLECTIONS = [
     "sp500_fundamentals_narratives", # S&P 500 daily fundamental snapshots as text narratives
     "sp500_sector_analysis",         # S&P 500 weekly sector rotation + momentum narratives
     "chat_memories",                 # salient chat exchanges stored for cross-session recall
+    "yf_batch_chunks",               # batch ETL — yfinance profile chunks + filing metadata path
 ]
 
 class _CollectionProxy:

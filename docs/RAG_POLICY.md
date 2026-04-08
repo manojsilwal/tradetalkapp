@@ -19,6 +19,7 @@ This document describes how **TradeTalk** uses Chroma (or Supabase vector) colle
 | `earnings_memory` | Earnings events | Data lake |
 | `sp500_fundamentals_narratives` | S&P narrative snapshots | Ingestion |
 | `sp500_sector_analysis` | Sector rotation | Ingestion |
+| `yf_batch_chunks` | Batch ETL yfinance profile chunks (ticker-filtered) | `batch_etl_hf_supabase` / CI |
 
 ## TTL and retention
 
@@ -49,7 +50,7 @@ Use `redact_secrets_in_text` (and similar) before persisting LLM-generated text 
 
 ## Chat RAG (Layer 1)
 
-- **Planner:** `backend/rag_retrieval.py` builds per-message queries with optional **metadata filters** (e.g. `ticker` on `debate_history`, `price_movements`, `stock_profiles`, `sp500_fundamentals_narratives`, `swarm_history`) so the vector index searches a **narrower candidate set** when the user (or sticky session state) names a symbol.
+- **Planner:** `backend/rag_retrieval.py` builds per-message queries with optional **metadata filters** (e.g. `ticker` on `debate_history`, `price_movements`, `stock_profiles`, `sp500_fundamentals_narratives`, `swarm_history`, `yf_batch_chunks`) so the vector index searches a **narrower candidate set** when the user (or sticky session state) names a symbol.
 - **Extras:** Same planner can add `sp500_sector_analysis`, `youtube_insights`, and **earnings** rows via `query_earnings_memory` when keywords match.
 - **Fallback:** If a filtered query returns no hits, chat retries **without** the filter for that collection so sparse metadata does not blank retrieval.
 - **Debate agents:** `debate_history` / multi-collection reads use the same ticker filter where metadata supports it, with moderator fallback to unfiltered debate history if needed.

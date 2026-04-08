@@ -48,3 +48,6 @@ as $$
   order by vm.embedding <=> query_embedding
   limit greatest(match_count, 1);
 $$;
+
+-- Optional: HNSW index on ``embedding`` for production ANN performance — see
+-- ``backend/migrations/supabase/002_hnsw_vector_memory_embedding.sql``.

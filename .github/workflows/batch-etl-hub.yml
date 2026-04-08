@@ -1,0 +1,40 @@
+# Weekly batch ETL: yfinance profile chunks → HF Dataset Parquet + Supabase yf_batch_chunks.
+# Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY, OPENROUTER_EMBEDDING_MODEL
+# Optional: HF_DATASET_ID, HF_TOKEN, BATCH_ETL_TICKERS (comma-separated)
+
+name: Batch ETL (HF + Supabase)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 0"
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_EMBEDDING_MODEL: ${{ secrets.OPENROUTER_EMBEDDING_MODEL }}
+      HF_DATASET_ID: ${{ secrets.HF_DATASET_ID }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run batch ETL
+        run: |
+          TICKERS="${BATCH_ETL_TICKERS:-SPY,AAPL,MSFT}"
+          PYTHONPATH=. python backend/scripts/batch_etl_hf_supabase.py --tickers "$TICKERS"
+        env:
+          BATCH_ETL_TICKERS: ${{ vars.BATCH_ETL_TICKERS }}

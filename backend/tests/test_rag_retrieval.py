@@ -24,6 +24,7 @@ class TestPlanChatRag(unittest.TestCase):
         self.assertIn("debate_history", names)
         self.assertIn("stock_profiles", names)
         self.assertIn("swarm_history", names)
+        self.assertIn("yf_batch_chunks", names)
         dh = next(q for q in plan.queries if q.collection == "debate_history")
         self.assertEqual(dh.where, {"ticker": "AAPL"})
 
