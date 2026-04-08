@@ -148,7 +148,19 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
         )
 
     for collection in query_map.get(role, ["debate_history"]):
-        docs = ks.query(collection, f"{ticker} {role} investment analysis", n_results=2)
+        tw = {"ticker": ticker} if collection in (
+            "debate_history",
+            "price_movements",
+            "swarm_history",
+            "stock_profiles",
+            "sp500_fundamentals_narratives",
+        ) else None
+        docs = ks.query(
+            collection,
+            f"{ticker} {role} investment analysis",
+            n_results=2,
+            where=tw,
+        )
         context_docs.extend(docs)
     context = ks.format_context(context_docs)
 
@@ -214,7 +226,16 @@ async def run_moderator(ticker: str, arguments: list[DebateArgument], ks, llm) -
     Returns: (verdict_str, confidence_float, summary_str, quality_warning_or_None)
     """
     with workload_scope("debate", "knowledge_read"):
-        context_docs = ks.query("debate_history", f"{ticker} debate verdict", n_results=3)
+        context_docs = ks.query(
+            "debate_history",
+            f"{ticker} debate verdict",
+            n_results=3,
+            where={"ticker": ticker},
+        )
+        if not context_docs:
+            context_docs = ks.query(
+                "debate_history", f"{ticker} debate verdict", n_results=3
+            )
     if hasattr(ks, "query_reflections"):
         reflection_docs, _, telemetry = ks.query_reflections(
             query_text=f"{ticker} final verdict",

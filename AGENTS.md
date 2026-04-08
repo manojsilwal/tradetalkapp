@@ -40,11 +40,16 @@ Use **Mandatory loop** below (steps 1–6): targeted tests → commit → deploy
 ## Mandatory loop after every code change
 
 1. **Targeted tests** — After each task, run tests for **affected** code in the cloud agent (or CI):  
+   - Backend full smoke (`unittest`): from repo root, `./scripts/run_backend_tests.sh` — picks `python3.12` / `python3.11` / `python3.10` / `python3` and requires **Python 3.10+** (macOS system `python3` is often 3.9).  
    - Backend: `cd backend && pytest` with paths narrowed to changed modules when possible (e.g. `pytest tests/test_macro.py`).  
+   - **Phase E (TEVV):** `PYTHONPATH=. python -m backend.eval.tevv_runner` and `PYTHONPATH=. python -m unittest backend.tests.test_tevv_harness -v` — see [`docs/PHASE_E_TEVV.md`](docs/PHASE_E_TEVV.md).  
+   - **CORAL multi-agent hub:** [`docs/PHASE_CORAL_HUB.md`](docs/PHASE_CORAL_HUB.md) — `PYTHONPATH=. python -m unittest backend.tests.test_coral_hub.TestCoralAgentReflections -v`.  
+   - **Phase B (evidence memo + dreaming):** [`docs/PHASE_B_DREAMING.md`](docs/PHASE_B_DREAMING.md) — `PYTHONPATH=. python -m unittest backend.tests.test_evidence_pack backend.tests.test_coral_hub -v`.  
    - **FaultHunter-aligned API E2E** (same cases as `faulthunter/case_bank.py`): start the API, then  
      `E2E_API_BASE_URL=http://127.0.0.1:8000 npx playwright test e2e/faulthunter-api.spec.js`  
      (`FH_PROFILE=smoke` for three smoke cases only).  
-   - **Browser E2E**: `npm run e2e` or a focused file (see [`playwright.config.js`](playwright.config.js)).  
+   - **Browser E2E**: for routine checks use **`npm run e2e:smoke`** (three tests: landing, debate, strategy lab) — not the full suite. Full Playwright: `npm run e2e`. Focused files: see [`playwright.config.js`](playwright.config.js).  
+     Phase A (Layer 1 chat evidence contract): `npm run e2e -- e2e/chat-evidence-contract.spec.js` (requires Vite + API; see [`docs/PHASE_A_USECASES.md`](docs/PHASE_A_USECASES.md)).  
    Do **not** assume a local machine.
 
 2. **Missing tests** — If behavior changed without coverage, add **unit/integration** tests under `backend/tests/` and **E2E** under [`e2e/`](e2e). Prefer stable selectors and timeouts aligned with [`playwright.config.js`](playwright.config.js) (long timeouts for backtest-heavy flows).
@@ -55,9 +60,9 @@ Use **Mandatory loop** below (steps 1–6): targeted tests → commit → deploy
 
 5. **Deploy** — Pushing to the branch connected to **Render** (backend) and **Vercel** (frontend) triggers builds. Optional **explicit** hooks (if git sync lags): store **Render Deploy Hook** and **Vercel Deploy Hook** URLs as GitHub secrets `RENDER_DEPLOY_HOOK_URL` and `VERCEL_DEPLOY_HOOK_URL`, then `curl -fsS -X POST "$URL"` after push. Avoid double-deploy if pushes already trigger both.
 
-6. **Verify** — Local: run Vite on **:5173** (Playwright default `baseURL` is `http://localhost:5173`). Production smoke:  
-   `FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e`  
-   Ensure API calls go to the intended backend (`frontend` `.env` / `VITE_API_BASE_URL`). Record pass/fail in the PR (or the FaultHunter **issue** if you use legacy mode).
+6. **Verify** — Local: run Vite on **:5173** (Playwright default `baseURL` is `http://localhost:5173`). **Production user smoke** (minimal — do not run the entire E2E folder for every release):  
+   `FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e:smoke`  
+   Optional deeper coverage: `npm run e2e` (all specs) or targeted files. Ensure API calls go to the intended backend (`frontend` `.env` / `VITE_API_BASE_URL`). Record pass/fail in the PR (or the FaultHunter **issue** if you use legacy mode).
 
 **CORS:** production backend should list this origin (see [`render.yaml`](render.yaml) `CORS_ORIGINS`).
 

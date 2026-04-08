@@ -72,6 +72,9 @@ agent_memory_mod.init_agent_memory_db()
 from . import coral_hub as coral_hub_mod
 coral_hub_mod.init_coral_hub_db()
 
+from . import claim_store as claim_store_mod
+claim_store_mod.init_claim_store_db()
+
 # ── Register routers ─────────────────────────────────────────────────────────
 from .routers import (
     auth as auth_router,

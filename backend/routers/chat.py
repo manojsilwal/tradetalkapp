@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +19,8 @@ from ..auth import UserInfo, get_optional_user
 from ..deps import knowledge_store, llm_client
 from .. import agent_memory
 from .. import chat_service
+from ..chat_evidence_contract import build_evidence_contract
+from ..evidence_pack import build_chat_evidence_memo_markdown
 from .. import user_preferences as uprefs
 
 logger = logging.getLogger(__name__)
@@ -105,6 +108,10 @@ class ChatRefreshRequest(BaseModel):
     session_id: str = Field(..., min_length=8)
 
 
+class ChatEvidenceExportRequest(BaseModel):
+    session_id: str = Field(..., min_length=8)
+
+
 @router.get("/bootstrap")
 def chat_bootstrap(_user: Optional[UserInfo] = Depends(get_optional_user)):
     """Global L1 + pipeline snapshot for parallel prefetch (no session required)."""
@@ -137,6 +144,39 @@ async def chat_open_session(
         "assembled_at": sess.assembled_at,
         "expires_at": sess.expires_at,
         "preview": sess.system_prompt[:500] + ("…" if len(sess.system_prompt) > 500 else ""),
+    }
+
+
+@router.post("/evidence-export")
+def chat_evidence_export(
+    body: ChatEvidenceExportRequest,
+    _user: Optional[UserInfo] = Depends(get_optional_user),
+):
+    """
+    Export a frozen Markdown memo for the **last completed** assistant turn in this session.
+    Requires at least one finished chat response so `evidence_contract` was emitted.
+    """
+    sess = chat_service.get_session(body.session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    if _user and sess.user_id and sess.user_id != _user.id:
+        raise HTTPException(status_code=403, detail="session_mismatch")
+    if not sess.last_evidence_contract:
+        raise HTTPException(
+            status_code=400,
+            detail="no_evidence_export_complete_one_chat_turn_first",
+        )
+    md = build_chat_evidence_memo_markdown(
+        session_id=sess.session_id,
+        user_message=sess.last_user_message,
+        assistant_text=sess.last_assistant_text,
+        evidence_contract=sess.last_evidence_contract,
+        meta=sess.last_chat_meta,
+    )
+    return {
+        "markdown": md,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "schema_version": 1,
     }
 
 
@@ -682,6 +722,8 @@ async def chat_send_message(
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'meta', 'data': meta})}\n\n"
+        quote_card_tickers: list[str] = [qc_ticker] if qc_ticker else []
+        tool_trace: list[dict] = []
         if qc_ticker:
             try:
                 qbody = await get_stock_quote(qc_ticker)
@@ -692,10 +734,11 @@ async def chat_send_message(
         assistant_parts: list[str] = []
         try:
             stream_gen = llm_client.stream_chat_plain(
-                full_system, 
-                messages, 
-                tools=tools, 
-                tool_handlers=tool_handlers
+                full_system,
+                messages,
+                tools=tools,
+                tool_handlers=tool_handlers,
+                tool_trace_out=tool_trace,
             )
             async for chunk in stream_gen:
                 if chunk:
@@ -704,6 +747,22 @@ async def chat_send_message(
         except Exception as e:
             logger.warning("[Chat] stream error: %s", e)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)[:300]})}\n\n"
+
+        evidence = build_evidence_contract(
+            tool_trace=tool_trace,
+            quote_card_tickers=quote_card_tickers,
+            meta=meta,
+        )
+        assistant_text = "".join(assistant_parts).strip()
+        chat_service.update_session_last_turn(sess, user_content, assistant_text, evidence, meta)
+        logger.info(
+            "[ChatEvidence] session=%s tools=%s confidence=%s abstain=%s",
+            body.session_id,
+            evidence.get("tools_called"),
+            evidence.get("confidence_band"),
+            evidence.get("abstain_reason"),
+        )
+        yield f"data: {json.dumps({'type': 'evidence_contract', 'data': evidence})}\n\n"
         yield "data: [DONE]\n\n"
 
         # ── Post-stream: durable assistant turn + semantic embedding ───────

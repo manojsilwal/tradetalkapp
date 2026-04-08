@@ -1,7 +1,12 @@
 """
 Local / CI smoke tests — no network-heavy routes (no full debate/trace).
-Run from repo root:  python -m unittest discover -s backend/tests -p 'test_*.py' -v
+Run from repo root:  ./scripts/run_backend_tests.sh  (needs Python 3.10+)
+
+Optional slow check (full swarm+debate+terminal assembly, ~15–90s):
+  RUN_DECISION_TERMINAL_SMOKE=1 ./scripts/run_backend_tests.sh
 """
+import json
+import os
 import unittest
 
 from fastapi.testclient import TestClient
@@ -40,6 +45,20 @@ class TestSmoke(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers.get("X-Request-ID"), "smoke-test-uuid")
+
+    @unittest.skipUnless(
+        os.environ.get("RUN_DECISION_TERMINAL_SMOKE", "").strip().lower() in ("1", "true", "yes"),
+        "set RUN_DECISION_TERMINAL_SMOKE=1 to run (slow: live tools + debate)",
+    )
+    def test_decision_terminal_returns_200_and_json(self):
+        """Guards against HTTP 500 / non-JSON floats (e.g. NaN) on the decision terminal path."""
+        r = self.client.get("/decision-terminal", params={"ticker": "AAPL"})
+        self.assertEqual(r.status_code, 200, r.text[:500])
+        data = r.json()
+        self.assertEqual(data.get("ticker"), "AAPL")
+        json.dumps(data)
+        self.assertIn("valuation", data)
+        self.assertIn("verdict", data)
 
 
 if __name__ == "__main__":

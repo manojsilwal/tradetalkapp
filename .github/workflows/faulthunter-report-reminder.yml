@@ -84,7 +84,7 @@ jobs:
             echo "- [ ] Map failing **test ids** to code (table in AGENTS.md)"
             echo "- [ ] **Fix** + targeted tests (backend / \`e2e/faulthunter-api.spec.js\` / \`npm run e2e\` as needed)"
             echo "- [ ] **Push** to \`main\` (or PR); wait for Render + Vercel"
-            echo "- [ ] **Production smoke:** \`FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e\` (or your prod URL)"
+            echo "- [ ] **Production smoke:** \`FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e:smoke\` (minimal; full suite: \`npm run e2e\`)"
           }
 
           if [ "$REMINDER_MODE" = "issue" ]; then

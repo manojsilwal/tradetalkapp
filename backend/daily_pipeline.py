@@ -263,10 +263,30 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
             replace_existing=True,
             max_instances=1,
         )
+        scheduler.add_job(
+            _dreaming_job,
+            trigger="cron",
+            hour=1,
+            minute=40,
+            args=[knowledge_store, llm_client],
+            id="coral_dreaming",
+            replace_existing=True,
+            max_instances=1,
+        )
+        scheduler.add_job(
+            _meta_harness_weekly_job,
+            trigger="cron",
+            day_of_week="sun",
+            hour=3,
+            minute=10,
+            id="meta_harness_weekly",
+            replace_existing=True,
+            max_instances=1,
+        )
         scheduler.start()
         logger.info(
             "[DailyPipeline] APScheduler started — daily 00:00 UTC + L1 every 15m + "
-            "CORAL heartbeat every %dm",
+            "CORAL heartbeat every %dm + dreaming 01:40 UTC + meta-harness Sun 03:10 UTC",
             hb_min,
         )
     except Exception as e:
@@ -289,10 +309,41 @@ async def _l1_market_refresh_job() -> None:
 
 
 async def _coral_heartbeat_job(knowledge_store, llm_client=None) -> None:
-    """Periodic CORAL hub notes from market intel (see coral_heartbeat)."""
+    """Periodic CORAL hub notes: legacy heartbeat + per-agent reflections (see coral_heartbeat)."""
     try:
-        from .coral_heartbeat import run_coral_heartbeat
+        from .coral_heartbeat import run_coral_agent_reflections, run_coral_heartbeat
 
         await run_coral_heartbeat(knowledge_store, llm_client)
+        await run_coral_agent_reflections(knowledge_store, llm_client)
     except Exception as e:
         logger.warning("[DailyPipeline] coral heartbeat failed: %s", e)
+
+
+async def _dreaming_job(knowledge_store, llm_client=None) -> None:
+    """Nightly digest of handoff events into CORAL (see coral_dreaming)."""
+    try:
+        from .coral_dreaming import run_dreaming_job
+
+        await run_dreaming_job(knowledge_store, llm_client)
+    except Exception as e:
+        logger.warning("[DailyPipeline] coral dreaming failed: %s", e)
+
+
+async def _meta_harness_weekly_job() -> None:
+    """Log a JSON-shaped aggregate for operators (handoffs, attempts, claim counts) — no LLM."""
+    try:
+        from .meta_harness.report import build_meta_harness_report
+
+        rep = build_meta_harness_report(since_days=7.0)
+        he = rep.get("handoff_events") or {}
+        ca = rep.get("coral_attempts") or {}
+        cs = rep.get("claim_store") or {}
+        logger.info(
+            "[MetaHarness] weekly snapshot events=%s attempts=%s claim_entities=%s active_claims=%s",
+            he.get("count"),
+            ca.get("count"),
+            cs.get("entities"),
+            cs.get("active_claims"),
+        )
+    except Exception as e:
+        logger.warning("[DailyPipeline] meta-harness weekly job failed: %s", e)

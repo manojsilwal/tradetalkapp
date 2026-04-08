@@ -47,6 +47,13 @@ Use `redact_secrets_in_text` (and similar) before persisting LLM-generated text 
 - This app is **not** a certified HIPAA/GDPR tool by default.
 - For EU users or regulated use cases, complete a **DPA**, **data map**, and **retention schedule** before enabling broad PII ingestion.
 
+## Chat RAG (Layer 1)
+
+- **Planner:** `backend/rag_retrieval.py` builds per-message queries with optional **metadata filters** (e.g. `ticker` on `debate_history`, `price_movements`, `stock_profiles`, `sp500_fundamentals_narratives`, `swarm_history`) so the vector index searches a **narrower candidate set** when the user (or sticky session state) names a symbol.
+- **Extras:** Same planner can add `sp500_sector_analysis`, `youtube_insights`, and **earnings** rows via `query_earnings_memory` when keywords match.
+- **Fallback:** If a filtered query returns no hits, chat retries **without** the filter for that collection so sparse metadata does not blank retrieval.
+- **Debate agents:** `debate_history` / multi-collection reads use the same ticker filter where metadata supports it, with moderator fallback to unfiltered debate history if needed.
+
 ## Observability
 
 - RAG reads are traced under span name `rag.query` (when OpenTelemetry is enabled). See `backend/telemetry.py` and env vars `OTEL_*`.

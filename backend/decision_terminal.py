@@ -27,6 +27,29 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 
+# JSON (and Pydantic JSON mode) cannot encode float NaN/Inf — yfinance/heuristics sometimes yield them.
+def _strip_non_json_floats(obj: Any) -> Any:
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _strip_non_json_floats(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_non_json_floats(v) for v in obj]
+    return obj
+
+
+def _decision_terminal_payload_json_safe(payload: DecisionTerminalPayload) -> DecisionTerminalPayload:
+    """Round-trip through dict so NaN/Inf become None; restore required roadmap confidence."""
+    data = _strip_non_json_floats(payload.model_dump(mode="python"))
+    rm = data.get("roadmap") or {}
+    if rm.get("confidence_0_1") is None:
+        rm["confidence_0_1"] = 0.0
+        data["roadmap"] = rm
+    return DecisionTerminalPayload.model_validate(data)
+
+
 DISCLAIMER = (
     "Illustrative analysis only. Figures use third-party snapshots, heuristics, and AI "
     "synthesis — not audited models or investment advice."
@@ -584,15 +607,17 @@ async def build_decision_terminal_payload(
         provenance=roadmap_prov,
     )
 
-    return DecisionTerminalPayload(
-        ticker=t,
-        disclaimer=DISCLAIMER,
-        generated_at_utc=now,
-        cache_ttl_seconds=300,
-        valuation=valuation,
-        quality=quality,
-        verdict=verdict,
-        roadmap=roadmap,
+    return _decision_terminal_payload_json_safe(
+        DecisionTerminalPayload(
+            ticker=t,
+            disclaimer=DISCLAIMER,
+            generated_at_utc=now,
+            cache_ttl_seconds=300,
+            valuation=valuation,
+            quality=quality,
+            verdict=verdict,
+            roadmap=roadmap,
+        )
     )
 
 

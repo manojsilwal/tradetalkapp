@@ -4,6 +4,15 @@ name: QA dual-track
 
 on:
   workflow_dispatch:
+    inputs:
+      e2e_profile:
+        description: "Playwright — smoke (P0 landing/debate/strategy) or full e2e/"
+        required: false
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - full
   schedule:
     # 06:00 UTC daily — adjust if you prefer a quieter window
     - cron: "0 6 * * *"
@@ -54,9 +63,16 @@ jobs:
         env:
           # Optional repo variable: set FRONTEND_URL in GitHub → Settings → Variables
           FRONTEND_URL: ${{ vars.E2E_FRONTEND_URL }}
+          E2E_PROFILE: ${{ github.event.inputs.e2e_profile }}
         run: |
           if [ -z "$FRONTEND_URL" ] || [ "$FRONTEND_URL" = "" ]; then
             export FRONTEND_URL="https://frontend-manojsilwals-projects.vercel.app"
           fi
+          PROFILE="${E2E_PROFILE:-smoke}"
           echo "FRONTEND_URL=$FRONTEND_URL"
-          npm run e2e -- --reporter=line
+          echo "E2E_PROFILE=$PROFILE"
+          if [ "$PROFILE" = "full" ]; then
+            npm run e2e -- --reporter=line
+          else
+            npm run e2e:smoke -- --reporter=line
+          fi

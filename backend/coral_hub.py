@@ -6,6 +6,7 @@ exact reads and regime-tagged observations; not a replacement for embeddings.
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -160,6 +161,65 @@ def list_top_skills(n: int = 5) -> List[dict]:
         """SELECT skill_id, name, content, contributed_by, times_used, created_at
            FROM coral_skills ORDER BY times_used DESC, created_at DESC LIMIT ?""",
         (n,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def log_handoff_event(event_type: str, payload: dict[str, Any]) -> int:
+    """
+    Append a structured handoff/trace event (debate complete, swarm trace, etc.) for dreaming.
+
+    event_type examples: handoff_debate, handoff_swarm_trace
+    """
+    et = (event_type or "").strip()[:64]
+    if not et:
+        return -1
+    try:
+        blob = json.dumps(payload, default=str)[:24000]
+    except Exception:
+        blob = "{}"
+    conn = _conn()
+    cur = conn.execute(
+        """INSERT INTO coral_handoff_events (event_type, payload_json, created_at)
+           VALUES (?, ?, ?)""",
+        (et, blob, _now()),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def list_handoff_events_since(since_epoch: float) -> List[dict[str, Any]]:
+    """Events with created_at >= since_epoch, newest first."""
+    conn = _conn()
+    rows = conn.execute(
+        """SELECT id, event_type, payload_json, created_at FROM coral_handoff_events
+           WHERE created_at >= ? ORDER BY created_at DESC LIMIT 500""",
+        (float(since_epoch),),
+    ).fetchall()
+    out: List[dict[str, Any]] = []
+    for r in rows:
+        try:
+            payload = json.loads(r["payload_json"] or "{}")
+        except Exception:
+            payload = {}
+        out.append(
+            {
+                "id": r["id"],
+                "event_type": r["event_type"],
+                "payload": payload,
+                "created_at": r["created_at"],
+            }
+        )
+    return out
+
+
+def list_attempts_since(since_epoch: float) -> List[dict[str, Any]]:
+    """Swarm / trace attempts with created_at >= since_epoch (newest first)."""
+    conn = _conn()
+    rows = conn.execute(
+        """SELECT id, task_id, agent_id, signal, score, created_at FROM coral_attempts
+           WHERE created_at >= ? ORDER BY created_at DESC LIMIT 500""",
+        (float(since_epoch),),
     ).fetchall()
     return [dict(r) for r in rows]
 

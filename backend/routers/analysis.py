@@ -27,7 +27,7 @@ from ..deps import (
     shorts_connector, social_connector, poly_connector, fund_connector,
     knowledge_store, llm_client, tool_registry, up,
 )
-from .. import coral_hub
+from ..coral_agents import hub_record_attempt
 from .. import user_preferences as uprefs
 
 router = APIRouter(tags=["analysis"])
@@ -209,11 +209,28 @@ async def _execute_swarm_trace(
             print(f"[KnowledgeHook] add_swarm_analysis failed: {e}")
 
         try:
-            coral_hub.record_attempt(
+            hub_record_attempt(
                 f"trace_{ticker.upper()}",
                 "swarm_trace",
                 float(global_signal),
                 float(avg_confidence),
+            )
+        except Exception:
+            pass
+
+        try:
+            from ..coral_dreaming import EVENT_SWARM
+            from ..coral_hub import log_handoff_event
+
+            log_handoff_event(
+                EVENT_SWARM,
+                {
+                    "ticker": ticker.upper(),
+                    "global_signal": int(global_signal),
+                    "global_verdict": consensus.global_verdict,
+                    "confidence": float(avg_confidence),
+                    "rationale_excerpt": (consensus.consensus_rationale or "")[:800],
+                },
             )
         except Exception:
             pass
@@ -264,6 +281,22 @@ async def _execute_debate(
             uprefs.learn_from_action(_auth_user.id, "debate", {"ticker": ticker})
         except Exception:
             pass
+
+    try:
+        from ..coral_dreaming import EVENT_DEBATE
+        from ..coral_hub import log_handoff_event
+
+        log_handoff_event(
+            EVENT_DEBATE,
+            {
+                "ticker": result.ticker.upper(),
+                "verdict": result.verdict,
+                "consensus_confidence": float(result.consensus_confidence),
+                "moderator_excerpt": (result.moderator_summary or "")[:800],
+            },
+        )
+    except Exception:
+        pass
 
     return result
 

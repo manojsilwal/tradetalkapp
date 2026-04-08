@@ -7,7 +7,7 @@ This document is the **source of truth** for what TradeTalk verifies automatical
 
 | Track                | Purpose                                                                | When to run                                                 |
 | -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------- |
-| **A — App QA**       | End-to-end flows, UI states, no raw network failures                   | CI optional; scheduled/manual (see workflow)                |
+| **A — App QA**       | End-to-end flows, UI states, no raw network failures                   | Scheduled workflow [`.github/workflows/qa-dual-track.yml`](../.github/workflows/qa-dual-track.yml) runs **`e2e:smoke`** by default; manual dispatch can choose **full** |
 | **B — Reference QA** | Falsifiable numbers vs Yahoo (`yfinance`) for deterministic API fields | Scheduled/manual; **not** on every PR (rate limits / flake) |
 
 
@@ -34,10 +34,12 @@ This document is the **source of truth** for what TradeTalk verifies automatical
 **Commands**
 
 ```bash
-# Local (backend :8000, Vite :5173)
-FRONTEND_URL=http://127.0.0.1:5173 npm run e2e -- --reporter=line
+# P0 only — recommended for “is production usable?” (not every spec)
+FRONTEND_URL=http://127.0.0.1:5173 npm run e2e:smoke
+FRONTEND_URL=https://your-app.vercel.app npm run e2e:smoke
 
-# Production / staging
+# Full Playwright suite (all files under e2e/)
+FRONTEND_URL=http://127.0.0.1:5173 npm run e2e -- --reporter=line
 FRONTEND_URL=https://your-app.vercel.app npm run e2e -- --reporter=line
 ```
 

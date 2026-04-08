@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "description": "Phase E TEVV — 8 golden, 7 edge, 4 failure, 1 reasoning stub (20 total). Deterministic only.",
+  "cases": [
+    {
+      "id": "golden-mover-losers-01",
+      "category": "golden",
+      "axis": "direction_accuracy",
+      "check": "mover_intent",
+      "input": { "message": "What are the top losers today?" },
+      "expect": { "intent": "losers" }
+    },
+    {
+      "id": "golden-mover-gainers-01",
+      "category": "golden",
+      "axis": "direction_accuracy",
+      "check": "mover_intent",
+      "input": { "message": "Show me the best performers and top gainers right now" },
+      "expect": { "intent": "gainers" }
+    },
+    {
+      "id": "golden-macro-not-movers-01",
+      "category": "golden",
+      "axis": "direction_accuracy",
+      "check": "mover_intent",
+      "input": { "message": "Why is the market down today? Fed and tariffs" },
+      "expect": { "intent": null }
+    },
+    {
+      "id": "golden-wants-quote-01",
+      "category": "golden",
+      "axis": "direction_accuracy",
+      "check": "wants_quote",
+      "input": { "message": "What is Apple's stock price and percent change?" },
+      "expect": { "wants": true }
+    },
+    {
+      "id": "golden-wants-quote-02",
+      "category": "golden",
+      "axis": "direction_accuracy",
+      "check": "wants_quote",
+      "input": { "message": "Quote for MSFT — trading at?" },
+      "expect": { "wants": true }
+    },
+    {
+      "id": "golden-ticker-for-aapl-01",
+      "category": "golden",
+      "axis": "direction_accuracy",
+      "check": "quote_ticker",
+      "input": { "message": "What is the price for AAPL?" },
+      "expect": { "ticker": "AAPL" }
+    },
+    {
+      "id": "golden-ticker-msft-01",
+      "category": "golden",
+      "axis": "direction_accuracy",
+      "check": "quote_ticker",
+      "input": { "message": "Last close and change for MSFT please" },
+      "expect": { "ticker": "MSFT" }
+    },
+    {
+      "id": "golden-classify-success-quote-01",
+      "category": "golden",
+      "axis": "direction_accuracy",
+      "check": "classify_tool",
+      "input": {
+        "result": "**MSFT** — Full Quote Snapshot\n- Price: $400.00 | Change: +1.20% today\n- Market Cap: $3.00B"
+      },
+      "expect": { "outcome": "success" }
+    },
+    {
+      "id": "edge-mover-who-lost-01",
+      "category": "edge",
+      "axis": "direction_accuracy",
+      "check": "mover_intent",
+      "input": { "message": "Who lost the most in the S&P 500 today?" },
+      "expect": { "intent": "losers" }
+    },
+    {
+      "id": "edge-wants-quote-false-01",
+      "category": "edge",
+      "axis": "direction_accuracy",
+      "check": "wants_quote",
+      "input": { "message": "Explain macro rotation into value stocks" },
+      "expect": { "wants": false }
+    },
+    {
+      "id": "edge-no-ticker-01",
+      "category": "edge",
+      "axis": "direction_accuracy",
+      "check": "quote_ticker",
+      "input": { "message": "what today the price quote current stock" },
+      "expect": { "ticker": null }
+    },
+    {
+      "id": "edge-classify-error-01",
+      "category": "edge",
+      "axis": "direction_accuracy",
+      "check": "classify_tool",
+      "input": { "result": "Error fetching quote for ZZZBAD: network timeout" },
+      "expect": { "outcome": "error" }
+    },
+    {
+      "id": "edge-contract-medium-01",
+      "category": "edge",
+      "axis": "json_validity",
+      "check": "evidence_contract",
+      "input": {
+        "tool_trace": [],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": false, "coral_hub_nonempty": false }
+      },
+      "expect": { "confidence_band": "medium", "abstain_reason": null }
+    },
+    {
+      "id": "edge-schema-valid-01",
+      "category": "edge",
+      "axis": "json_validity",
+      "check": "evidence_schema",
+      "input": {
+        "contract": {
+          "schema_version": 1,
+          "sources_used": ["internal_kb"],
+          "tools_called": [],
+          "tool_outcomes": [],
+          "confidence_band": "medium",
+          "abstain_reason": null
+        }
+      },
+      "expect": { "valid": true }
+    },
+    {
+      "id": "failure-abstain-tools-01",
+      "category": "failure",
+      "axis": "json_validity",
+      "check": "evidence_contract",
+      "input": {
+        "tool_trace": [
+          { "name": "get_stock_quote", "outcome": "empty" },
+          { "name": "get_price_history", "outcome": "error" }
+        ],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": false, "coral_hub_nonempty": false }
+      },
+      "expect": {
+        "confidence_band": "low",
+        "abstain_reason": "all_tools_empty_or_error"
+      }
+    },
+    {
+      "id": "failure-classify-empty-01",
+      "category": "failure",
+      "axis": "direction_accuracy",
+      "check": "classify_tool",
+      "input": { "result": "" },
+      "expect": { "outcome": "empty" }
+    },
+    {
+      "id": "failure-schema-invalid-01",
+      "category": "failure",
+      "axis": "json_validity",
+      "check": "evidence_schema",
+      "input": {
+        "contract": {
+          "schema_version": 1,
+          "sources_used": [],
+          "tools_called": [],
+          "tool_outcomes": [],
+          "confidence_band": "low"
+        }
+      },
+      "expect": { "valid": false }
+    },
+    {
+      "id": "failure-mover-empty-01",
+      "category": "failure",
+      "axis": "direction_accuracy",
+      "check": "mover_intent",
+      "input": { "message": "   " },
+      "expect": { "intent": null }
+    },
+    {
+      "id": "edge-contract-sources-01",
+      "category": "edge",
+      "axis": "json_validity",
+      "check": "evidence_contract",
+      "input": {
+        "tool_trace": [{ "name": "get_stock_quote", "outcome": "success" }],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": true, "coral_hub_nonempty": true }
+      },
+      "expect": {
+        "confidence_band": "high",
+        "sources_used_contains": ["internal_kb", "coral_hub", "tool:get_stock_quote"]
+      }
+    },
+    {
+      "id": "reasoning-llm-judge-stub-01",
+      "category": "golden",
+      "axis": "reasoning_quality",
+      "check": "llm_judge",
+      "input": {},
+      "expect": {}
+    }
+  ]
+}

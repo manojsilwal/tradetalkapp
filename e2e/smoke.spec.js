@@ -1,6 +1,9 @@
 // @ts-check
 /**
- * Minimal prod smoke (landing, debate, strategy lab). Deeper API parity: `faulthunter-api.spec.js`.
+ * Minimal prod smoke (landing, debate, strategy lab).
+ * Run: `npm run e2e:smoke` (set FRONTEND_URL for production).
+ * API-only smoke: `FH_PROFILE=smoke E2E_API_BASE_URL=… npm run e2e:smoke:api`.
+ * Deeper coverage: full `npm run e2e` or `faulthunter-api.spec.js` without smoke profile.
  */
 const { test, expect } = require('@playwright/test');
 

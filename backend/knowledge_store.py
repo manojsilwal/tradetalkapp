@@ -684,8 +684,14 @@ class KnowledgeStore:
             logger.warning(f"[KnowledgeStore] get_strategy_leaderboard failed: {e}")
             return []
 
-    def query(self, collection: str, query_text: str, n_results: int = 3) -> list[str]:
-        """Semantic similarity search. Returns list of document strings."""
+    def query(
+        self,
+        collection: str,
+        query_text: str,
+        n_results: int = 3,
+        where: Optional[dict] = None,
+    ) -> list[str]:
+        """Semantic similarity search. Returns list of document strings. Optional ``where`` metadata filter."""
         try:
             from .telemetry import get_tracer
 
@@ -695,11 +701,17 @@ class KnowledgeStore:
                     span.set_attribute("rag.collection", collection)
                 except Exception:
                     pass
-                return self._query_impl(collection, query_text, n_results)
+                return self._query_impl(collection, query_text, n_results, where=where)
         except Exception:
-            return self._query_impl(collection, query_text, n_results)
+            return self._query_impl(collection, query_text, n_results, where=where)
 
-    def _query_impl(self, collection: str, query_text: str, n_results: int) -> list[str]:
+    def _query_impl(
+        self,
+        collection: str,
+        query_text: str,
+        n_results: int,
+        where: Optional[dict] = None,
+    ) -> list[str]:
         col = self._safe_col(collection)
         if not col:
             return []
@@ -708,18 +720,26 @@ class KnowledgeStore:
             if count == 0:
                 return []
             actual_n = min(n_results, count)
-            results = col.query(query_texts=[query_text], n_results=actual_n)
+            kwargs = {"query_texts": [query_text], "n_results": actual_n}
+            if where:
+                kwargs["where"] = where
+            results = col.query(**kwargs)
             return results.get("documents", [[]])[0]
         except Exception as e:
             logger.warning(f"[KnowledgeStore] query({collection}) failed: {e}")
             return []
 
     def query_with_metadata(
-        self, collection: str, query_text: str, n_results: int = 8
+        self,
+        collection: str,
+        query_text: str,
+        n_results: int = 8,
+        where: Optional[dict] = None,
     ) -> list[dict]:
         """
         Semantic search with documents, metadata, and distance per hit (for chat RAG reranking).
         Each item: {"document": str, "metadata": dict, "distance": float}.
+        Optional ``where`` filters metadata (e.g. ``{"ticker": "AAPL"}``) before ANN search.
         """
         col = self._safe_col(collection)
         if not col:
@@ -729,7 +749,10 @@ class KnowledgeStore:
             if count == 0:
                 return []
             actual_n = min(n_results, count)
-            results = col.query(query_texts=[query_text], n_results=actual_n)
+            kwargs = {"query_texts": [query_text], "n_results": actual_n}
+            if where:
+                kwargs["where"] = where
+            results = col.query(**kwargs)
             docs = results.get("documents", [[]])[0]
             metas = results.get("metadatas", [[]])[0]
             dists = results.get("distances", [[]])[0]

@@ -22,10 +22,12 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import market_l1_cache
+from .rag_retrieval import earnings_hits_as_rag_rows, plan_chat_rag
 from .telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 
+# Legacy tuple — chat RAG now uses rag_retrieval.plan_chat_rag (filtered + extra collections).
 CHAT_RAG_COLLECTIONS = (
     "macro_snapshots",
     "debate_history",
@@ -60,6 +62,11 @@ class ChatSession:
     user_id: Optional[str] = None
     rag_prewarm: Dict[str, str] = field(default_factory=dict)
     sticky_state: Dict[str, Any] = field(default_factory=dict)
+    # Last completed turn — for Phase B evidence memo export (in-process only).
+    last_user_message: str = ""
+    last_assistant_text: str = ""
+    last_evidence_contract: Optional[Dict[str, Any]] = None
+    last_chat_meta: Dict[str, Any] = field(default_factory=dict)
 
 
 def _parse_meta_date(meta: dict) -> Optional[datetime]:
@@ -103,31 +110,76 @@ def rerank_hits(hits: List[dict]) -> List[dict]:
     return [x[1] for x in scored]
 
 
-async def _query_coll(
-    ks, collection: str, query_text: str, n: int, fn: Callable[..., Any]
+def _query_rag_with_fallback(
+    ks,
+    collection: str,
+    query_text: str,
+    n: int,
+    where: Optional[dict],
 ) -> List[dict]:
-    return await asyncio.to_thread(fn, collection, query_text, n)
+    """Metadata-filtered search; if empty, retry without filter (sparse ticker rows)."""
+    fn = ks.query_with_metadata
+    hits = fn(collection, query_text, n, where=where)
+    if not hits and where:
+        hits = fn(collection, query_text, n, where=None)
+    return hits
 
 
-async def chat_rag_context(ks, user_message: str) -> str:
-    """Multi-collection RAG + recency rerank → single context block."""
+async def _query_rag_thread(
+    ks,
+    collection: str,
+    query_text: str,
+    n: int,
+    where: Optional[dict],
+) -> List[dict]:
+    return await asyncio.to_thread(
+        _query_rag_with_fallback, ks, collection, query_text, n, where
+    )
+
+
+async def chat_rag_context(
+    ks,
+    user_message: str,
+    sticky_state: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Multi-collection RAG (ticker filters + extras) + recency rerank → single context block."""
     tracer = get_tracer()
     with tracer.start_as_current_span("chat.rag_context") as span:
+        plan = plan_chat_rag(
+            user_message,
+            sticky_state,
+            oversample=RAG_OVERSAMPLE,
+            extra_n=max(4, RAG_OVERSAMPLE // 2),
+        )
         try:
             span.set_attribute("rag.query_preview", user_message[:100])
-            span.set_attribute("rag.collections", ",".join(CHAT_RAG_COLLECTIONS))
+            span.set_attribute(
+                "rag.collections",
+                ",".join(sorted({q.collection for q in plan.queries})),
+            )
+            if plan.earnings_ticker:
+                span.set_attribute("rag.earnings_ticker", plan.earnings_ticker)
         except Exception:
             pass
 
-        fn = ks.query_with_metadata
-
-        async def one(coll: str):
-            return await _query_coll(ks, coll, user_message, RAG_OVERSAMPLE, fn)
-
-        parts = await asyncio.gather(*[one(c) for c in CHAT_RAG_COLLECTIONS])
+        tasks = [
+            _query_rag_thread(ks, q.collection, user_message, q.n_results, q.where)
+            for q in plan.queries
+        ]
+        parts = await asyncio.gather(*tasks) if tasks else []
         merged: List[dict] = []
         for p in parts:
             merged.extend(p)
+
+        if plan.earnings_ticker:
+            merged.extend(
+                earnings_hits_as_rag_rows(ks, user_message, plan.earnings_ticker, n=4)
+            )
+
+        merged_cap = 72
+        if len(merged) > merged_cap:
+            merged = merged[:merged_cap]
+
         ranked = rerank_hits(merged)[:RAG_TOP_K]
 
         try:
@@ -142,7 +194,13 @@ async def chat_rag_context(ks, user_message: str) -> str:
             if not doc:
                 continue
             meta = h.get("metadata") or {}
-            src = meta.get("source") or meta.get("ticker") or meta.get("strategy_name") or "knowledge"
+            src = (
+                meta.get("source")
+                or meta.get("ticker")
+                or meta.get("strategy_name")
+                or meta.get("channel")
+                or "knowledge"
+            )
             lines.append(f"[{i}] ({src}) {doc[:1200]}")
         return "\n".join(lines) if lines else "(no relevant knowledge base hits)"
 
@@ -345,7 +403,7 @@ async def gather_message_context(
                 except Exception:
                     pass
                 return session.rag_prewarm[key]
-            return await chat_rag_context(ks, user_message)
+            return await chat_rag_context(ks, user_message, session.sticky_state)
 
         async def l1_task():
             return market_l1_cache.get_snapshot()
@@ -381,12 +439,14 @@ async def gather_message_context(
             coral_hub_task(),
         )
 
-        # Include sticky state in meta for frontend awareness
+        # Include sticky state in meta for frontend awareness + evidence contract (Layer 1)
         meta = {
             **fresh,
             "l1_keys": list((l1_snap or {}).get("quotes", {}).keys()),
             "user_ctx_nonempty": bool(uctx),
             "sticky_state": session.sticky_state,
+            "rag_nonempty": bool(rag_block and len(rag_block.strip()) > 40),
+            "coral_hub_nonempty": bool((coral_block or "").strip()),
         }
 
         # Build sticky state context if available
@@ -479,6 +539,20 @@ def update_sticky_state(
             state["last_tool_used"] = last_tool
 
     state["last_updated"] = time.time()
+
+
+def update_session_last_turn(
+    session: ChatSession,
+    user_message: str,
+    assistant_text: str,
+    evidence_contract: Dict[str, Any],
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Persist last turn for evidence memo export (in-memory session)."""
+    session.last_user_message = (user_message or "")[:12000]
+    session.last_assistant_text = (assistant_text or "")[:24000]
+    session.last_evidence_contract = dict(evidence_contract) if evidence_contract else None
+    session.last_chat_meta = dict(meta or {})
 
 
 def chat_bootstrap_payload(ks) -> dict:

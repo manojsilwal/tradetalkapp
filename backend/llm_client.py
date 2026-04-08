@@ -22,7 +22,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Optional, AsyncIterator
+from typing import Any, Optional, AsyncIterator
 from .agent_policy_guardrails import (
     guard_host,
     is_enabled as policy_guardrails_enabled,
@@ -30,6 +30,7 @@ from .agent_policy_guardrails import (
     workload_scope,
 )
 from .openrouter_pool import get_or_create_openrouter_pool
+from .chat_evidence_contract import classify_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -558,10 +559,13 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         tools: Optional[list] = None,
         tool_handlers: Optional[dict] = None,
+        tool_trace_out: Optional[list[dict[str, Any]]] = None,
     ) -> AsyncIterator[str]:
         """
         Stream assistant text tokens (plain prose, not JSON). Used by TradeTalk chat.
         Yields incremental text chunks; transparently handles autonomous tool execution if provided.
+        If ``tool_trace_out`` is a list, each executed tool appends
+        ``{name, arguments, outcome, error?}`` for logging and the evidence contract.
         """
         mt = max_tokens if max_tokens is not None else min(2048, LLM_MAX_TOKENS)
         model = OPENROUTER_MODEL_LIGHT
@@ -662,6 +666,16 @@ class LLMClient:
                     result = await func(**args_dict) if asyncio.iscoroutinefunction(func) else func(**args_dict)
                 except Exception as e:
                     result = f"Error executing {tool_name}: {e}"
+                if tool_trace_out is not None:
+                    out = classify_tool_result(str(result))
+                    row: dict[str, Any] = {
+                        "name": tool_name,
+                        "arguments": args_dict,
+                        "outcome": out,
+                    }
+                    if out == "error" or str(result).startswith("Error executing"):
+                        row["error"] = str(result)[:500]
+                    tool_trace_out.append(row)
                 
                 msgs.append({
                     "role": "assistant",

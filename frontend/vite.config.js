@@ -14,7 +14,8 @@ const API_PATH_PREFIXES = [
   '/debate',
   '/backtest',
   '/analyze',
-  '/chat',
+  // NOTE: Do not proxy `/chat` — the app route is GET /chat (SPA). Chat REST paths are
+  // called via VITE_API_BASE_URL → :8000 (see frontend/src/api.js).
   '/metrics',
   '/strategies',
   '/auth',

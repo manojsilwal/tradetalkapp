@@ -62,13 +62,19 @@ If a command fails:
 
 ## Backend smoke tests (Python API)
 
-From the repository root:
+From the repository root, use the version-aware runner (needs **Python 3.10+**; macOS `/usr/bin/python3` is often **3.9** and will fail on this codebase):
 
 ```bash
-PYTHONPATH=. python -m unittest discover -s backend/tests -p 'test_*.py' -v
+./scripts/run_backend_tests.sh
 ```
 
-Requires `backend/requirements.txt` installed. Avoids slow routes (full debate/trace).
+Equivalent manual command once `python3.12` or `python3.11` is on your `PATH`:
+
+```bash
+PYTHONPATH=. python3.12 -m unittest discover -s backend/tests -p 'test_*.py' -v
+```
+
+Requires `backend/requirements.txt` installed. Avoids slow routes (full debate/trace). A `.python-version` file (3.12) is provided for **pyenv**; **Render** uses Python 3.11 per `render.yaml`.
 
 ---
 

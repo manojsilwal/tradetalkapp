@@ -66,6 +66,8 @@ export default function ChatUI({ prefetch = null }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [quoteCards, setQuoteCards] = useState([])
+  const [evidenceContract, setEvidenceContract] = useState(null)
+  const [exportBusy, setExportBusy] = useState(false)
   const bottomRef = useRef(null)
   const refreshTimer = useRef(null)
   const sessionIdRef = useRef(null)
@@ -164,6 +166,46 @@ export default function ChatUI({ prefetch = null }) {
     return data.session_id
   }, [])
 
+  const exportEvidenceMemo = useCallback(async () => {
+    const sid = sessionIdRef.current
+    if (!sid || busy) return
+    setExportBusy(true)
+    setErr('')
+    try {
+      const token = getToken()
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      }
+      const res = await fetch(`${API_BASE_URL}/chat/evidence-export`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ session_id: sid }),
+      })
+      if (!res.ok) {
+        let msg = await res.text()
+        try {
+          const j = JSON.parse(msg)
+          if (typeof j.detail === 'string') msg = j.detail
+        } catch {
+          /* keep raw */
+        }
+        throw new Error(msg || `HTTP ${res.status}`)
+      }
+      const j = await res.json()
+      const blob = new Blob([j.markdown || ''], { type: 'text/markdown;charset=utf-8' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `tradetalk-evidence-${String(sid).slice(0, 8)}.md`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch (e) {
+      setErr(e.message || 'Export failed')
+    } finally {
+      setExportBusy(false)
+    }
+  }, [busy])
+
   const sendMessage = useCallback(async () => {
     const text = input.trim()
     if (!text || busy) return
@@ -187,6 +229,7 @@ export default function ChatUI({ prefetch = null }) {
     setBusy(true)
     setStreaming('')
     setQuoteCards([])
+    setEvidenceContract(null)
 
     const token = getToken()
     const headers = {
@@ -256,6 +299,7 @@ export default function ChatUI({ prefetch = null }) {
               setQuoteCards((qc) => [...qc, { ticker: j.ticker, body: j.body }])
             }
             if (j.type === 'error') setErr(j.message || 'Stream error')
+            if (j.type === 'evidence_contract' && j.data) setEvidenceContract(j.data)
           } catch {
             /* ignore partial */
           }
@@ -423,12 +467,61 @@ export default function ChatUI({ prefetch = null }) {
             </span>
           </div>
         )}
+        {evidenceContract && (
+          <details
+            data-testid="evidence-contract"
+            style={{
+              marginBottom: 12,
+              padding: '10px 12px',
+              borderRadius: 10,
+              border: '1px solid rgba(148,163,184,0.25)',
+              background: 'rgba(15,23,42,0.65)',
+              fontSize: 12,
+              color: '#cbd5e1',
+            }}
+          >
+            <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#94a3b8' }}>
+              Sources & confidence
+            </summary>
+            <pre
+              style={{
+                margin: '10px 0 0',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontSize: 11,
+                lineHeight: 1.45,
+                color: '#e2e8f0',
+              }}
+            >
+              {JSON.stringify(evidenceContract, null, 2)}
+            </pre>
+          </details>
+        )}
         <div ref={bottomRef} />
       </div>
       {err && (
         <div style={{ color: '#f87171', fontSize: 13, marginBottom: 8 }}>{err}</div>
       )}
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={() => exportEvidenceMemo()}
+          disabled={busy || exportBusy || sessionLoading || !sessionId || !evidenceContract}
+          title="Download Markdown memo for the last completed turn (sources + evidence contract)"
+          style={{
+            padding: '10px 14px',
+            borderRadius: 10,
+            border: '1px solid rgba(148,163,184,0.35)',
+            background: 'rgba(30,41,59,0.75)',
+            color: '#cbd5e1',
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: exportBusy ? 'wait' : 'pointer',
+            opacity: busy || !evidenceContract ? 0.5 : 1,
+          }}
+        >
+          {exportBusy ? '…' : 'Export memo'}
+        </button>
         <textarea
           data-testid="chat-input"
           value={input}

@@ -1,6 +1,9 @@
 """Knowledge store endpoints — stats, export, pipeline, S&P 500."""
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 from ..cron_auth import require_cron_secret
 from ..rate_limiter import rate_limit
@@ -9,6 +12,7 @@ from ..deps import knowledge_store
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 _rl_export = rate_limit("export")
+_rl_claims = rate_limit("expensive")
 
 
 @router.get("/stats")
@@ -76,6 +80,45 @@ async def trigger_sp500_ingestion(background_tasks: BackgroundTasks, tickers: li
 
     background_tasks.add_task(_bg_ingest)
     return {"status": "accepted", "message": "S&P 500 ingestion triggered in background"}
+
+
+class ClaimIngestRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=32)
+    claim_text: str = Field(..., min_length=1, max_length=8000)
+    source_ref: str = Field(default="", max_length=2048)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+@router.get("/claims", dependencies=[Depends(_rl_claims)])
+async def list_claims_api(symbol: str = Query(..., min_length=1), limit: int = 20):
+    """Phase C — list active claims for a ticker symbol."""
+    from .. import claim_store
+
+    lim = max(1, min(100, int(limit)))
+    rows = claim_store.list_claims_for_symbol(symbol, n=lim)
+    return {"symbol": symbol.strip().upper(), "claims": rows, "total": len(rows)}
+
+
+@router.post("/claims", dependencies=[Depends(require_cron_secret)])
+async def ingest_claim_api(body: ClaimIngestRequest):
+    """Append a claim row (cron / automation — use PIPELINE_CRON_SECRET when set)."""
+    from .. import claim_store
+
+    cid = claim_store.add_claim_for_symbol(
+        body.symbol,
+        body.claim_text,
+        source_ref=body.source_ref,
+        confidence=body.confidence,
+    )
+    return {"status": "ok", "claim_id": cid}
+
+
+@router.get("/meta-harness-snapshot", dependencies=[Depends(_rl_export)])
+async def meta_harness_snapshot(days: float = Query(7.0, ge=1.0, le=90.0)):
+    """Weekly-style aggregate over handoff events + attempts + claim stats (JSON, no LLM)."""
+    from ..meta_harness.report import build_meta_harness_report
+
+    return build_meta_harness_report(since_days=days)
 
 
 @router.get("/sp500-stats")

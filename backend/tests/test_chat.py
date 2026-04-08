@@ -36,6 +36,13 @@ class TestChatRoutes(unittest.TestCase):
         self.assertIn("session_id", data)
         self.assertIn("assembled_at", data)
 
+    def test_evidence_export_unknown_session(self):
+        r = self.client.post(
+            "/chat/evidence-export",
+            json={"session_id": "00000000-0000-0000-0000-000000000000"},
+        )
+        self.assertEqual(r.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()
