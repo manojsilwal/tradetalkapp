@@ -1,8 +1,8 @@
 # FaultHunter triage (single source)
 
-**Snapshot (UTC):** 2026-04-08T05:30:00Z
+**Snapshot (UTC):** 2026-04-09T05:30:29Z
 
-**Workflow run:** [https://github.com/manojsilwal/tradetalkapp/actions/runs/24119513938](https://github.com/manojsilwal/tradetalkapp/actions/runs/24119513938)
+**Workflow run:** [https://github.com/manojsilwal/tradetalkapp/actions/runs/24174152895](https://github.com/manojsilwal/tradetalkapp/actions/runs/24174152895)
 
 **Raw report URL:** `https://raw.githubusercontent.com/manojsilwal/FaultHunter/main/reports/latest.md` (secret `FAULTHUNTER_REPORT_URL`).
 
@@ -62,6 +62,6 @@ Follow the loop in [AGENTS.md](https://github.com/manojsilwal/tradetalkapp/blob/
 - [ ] Map failing **test ids** to code (table in AGENTS.md)
 - [ ] **Fix** + targeted tests (backend / `e2e/faulthunter-api.spec.js` / `npm run e2e` as needed)
 - [ ] **Push** to `main` (or PR); wait for Render + Vercel
-- [ ] **Production smoke:** `FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e` (or your prod URL)
+- [ ] **Production smoke:** `FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e:smoke` (minimal; full suite: `npm run e2e`)
 
 - [ ] **Record** pass/fail + PR link in a commit message or PR when done
