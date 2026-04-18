@@ -29,3 +29,39 @@ services:
       # Yahoo Finance rate-limits datacenter IPs — do not run heavy SP500 ingest at startup.
       - key: SP500_INGEST_ON_STARTUP
         value: "0"
+
+      # ── Phase C1 + C2 — SEPL-for-TOOLs rollout.
+      # Live in production with kill switch active. Safety still enforced by:
+      #   • SEPL_TOOL_MIN_MARGIN (5 pp beat required to commit)
+      #   • Tier-aware daily caps: tier-0=2, tier-1=1, tier-2+=0 (hardcoded)
+      #   • Kill switch SEPL_TOOL_ROLLBACK_MARGIN (5 pp regression → auto-restore)
+      #   • Offline fixture-only scoring (no live traffic, no LLM calls in Improve)
+      # See docs/TOOL_EVOLUTION.md for the full contract.
+      - key: SEPL_TOOL_ENABLE
+        value: "1"
+      - key: SEPL_TOOL_DRY_RUN
+        value: "0"
+      - key: SEPL_TOOL_AUTOCOMMIT
+        value: "1"
+      - key: SEPL_TOOL_INTERVAL_HOURS
+        value: "24"
+      - key: SEPL_TOOL_MIN_MARGIN
+        value: "0.05"
+      - key: SEPL_TOOL_ROLLBACK_MARGIN
+        value: "0.05"
+      - key: SEPL_TOOL_ROLLBACK_WINDOW_HOURS
+        value: "168"
+      - key: SEPL_TOOL_MAX_PER_DAY
+        value: "2"
+      - key: SEPL_TOOL_MAX_PER_DAY_TIER_0
+        value: "2"
+      - key: SEPL_TOOL_MAX_PER_DAY_TIER_1
+        value: "1"
+      - key: SEPL_TOOL_MAX_PER_DAY_TIER_2
+        value: "0"
+      - key: SEPL_TOOL_MAX_PER_DAY_TIER_3
+        value: "0"
+      - key: SEPL_TOOL_MAX_PERTURB_STEPS
+        value: "4"
+      - key: SEPL_TOOL_CANDIDATES_PER_CYCLE
+        value: "4"

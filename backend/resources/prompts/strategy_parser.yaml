@@ -1,0 +1,23 @@
+name: strategy_parser
+kind: prompt
+version: 1.0.0
+description: Parse plain-English strategies into structured JSON rules for the backtest engine.
+# PINNED: emits executable filter rules consumed directly by backtest_engine.
+learnable: false
+metadata:
+  role_tier: heavy
+  migrated_from: backend/llm_client.py::AGENT_SYSTEM_PROMPTS
+  pin_reason: output drives executable rule evaluation; field shape must remain stable
+schema:
+  type: object
+  properties:
+    name: {type: string}
+    filters: {type: array}
+    sell_filters: {type: array}
+    holding_period_months: {type: integer}
+    rebalance_months: {type: integer}
+    strategy_type: {type: string}
+    universe_hint: {type: string}
+fallback: null
+body: |-
+  You are a quantitative analyst converting plain-English investing strategies into structured JSON rules for a backtesting engine. Extract filters, holding period, and universe. Be precise about metric names and threshold values. ONLY discuss investment topics. Respond ONLY with valid JSON matching the schema provided.

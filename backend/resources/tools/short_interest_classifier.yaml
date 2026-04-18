@@ -1,0 +1,83 @@
+name: short_interest_classifier
+kind: tool
+version: 1.0.0
+description: |-
+  Pure-numeric classifier that converts live short-interest ratio (SIR) and
+  days-to-cover (DTC) data into a bullish/bearish/neutral trading signal for the
+  short-interest agent in the swarm. No I/O, no LLM calls, no side effects.
+learnable: true
+metadata:
+  tier: 0
+  pure: true
+  side_effect: read
+  cost_model:
+    call_cost_usd: 0.0
+    calls_per_hour_cap: null
+  migrated_from: backend/agents.py::ShortInterestAgentPair._analyst_step
+  parameter_ranges:
+    sir_bull_threshold:     {min: 5.0,  max: 30.0,  step: 0.5}
+    sir_ambiguous_min:      {min: 5.0,  max: 15.0,  step: 0.5}
+    sir_ambiguous_max:      {min: 15.0, max: 30.0,  step: 0.5}
+    dtc_confirm_threshold:  {min: 1.0,  max: 15.0,  step: 0.5}
+    bearish_csi_threshold:  {min: 0.8,  max: 2.0,   step: 0.05}
+  config:
+    sir_bull_threshold: 15.0
+    sir_ambiguous_min: 10.0
+    sir_ambiguous_max: 20.0
+    dtc_confirm_threshold: 5.0
+    bearish_csi_threshold: 1.1
+schema:
+  type: object
+  required:
+    - sir_bull_threshold
+    - sir_ambiguous_min
+    - sir_ambiguous_max
+    - dtc_confirm_threshold
+    - bearish_csi_threshold
+  properties:
+    sir_bull_threshold:
+      type: number
+      minimum: 5.0
+      maximum: 30.0
+      description: SIR (percent of float) above which a stand-alone bullish signal is emitted.
+    sir_ambiguous_min:
+      type: number
+      minimum: 5.0
+      maximum: 15.0
+      description: Lower bound of the ambiguous band that routes to the LLM analyst.
+    sir_ambiguous_max:
+      type: number
+      minimum: 15.0
+      maximum: 30.0
+      description: Upper bound of the ambiguous band.
+    dtc_confirm_threshold:
+      type: number
+      minimum: 1.0
+      maximum: 15.0
+      description: Days-to-cover required (in addition to SIR) on revised analysis to emit a bullish signal.
+    bearish_csi_threshold:
+      type: number
+      minimum: 0.8
+      maximum: 2.0
+      description: Credit-stress-index threshold above which the QA verifier rejects bullish signals.
+fallback:
+  sir_bull_threshold: 15.0
+  sir_ambiguous_min: 10.0
+  sir_ambiguous_max: 20.0
+  dtc_confirm_threshold: 5.0
+  bearish_csi_threshold: 1.1
+body: |-
+  # short_interest_classifier (tier 0, pure)
+  #
+  # Handler: backend/agents.py::ShortInterestAgentPair._analyst_step
+  # Reads live SIR/DTC from the connector and emits {trading_signal: 0|1}.
+  #
+  # The numeric thresholds live in metadata.config; the handler loads them via
+  # backend/tool_configs.py::get_tool_config("short_interest_classifier", ...).
+  # Classification rule (first non-memory iteration):
+  #   if SIR > sir_bull_threshold                          -> signal 1 (squeeze)
+  #   elif sir_ambiguous_min <= SIR <= sir_ambiguous_max   -> LLM-assisted
+  #   else                                                 -> signal 0
+  # Revised iteration:
+  #   signal 1 iff SIR > sir_bull_threshold AND DTC > dtc_confirm_threshold
+  # QA verifier rejects bullish when credit_stress_index > bearish_csi_threshold.

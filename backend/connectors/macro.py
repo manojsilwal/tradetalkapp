@@ -3,6 +3,15 @@ import yfinance as yf
 from typing import Dict, Any
 from .base import DataConnector
 
+# Dual-read of the tier-1 macro_vix_to_credit_stress tool. If the registry
+# is off or the resource is missing, production falls back to this exact
+# numeric default, so behaviour is byte-identical to the pre-evolution path.
+_MACRO_VIX_DEFAULTS: Dict[str, float] = {
+    "divisor": 15.0,
+    "status_threshold": 1.1,
+}
+
+
 class MacroHealthConnector(DataConnector):
     """
     Tracks the CBOE Volatility Index (^VIX) as a live measure of Macro Stress.
@@ -26,10 +35,14 @@ class MacroHealthConnector(DataConnector):
         except Exception as e:
             vix_level = 15.0
             
-        # VIX > 20 is typically elevated stress, > 30 is severe stress.
-        # We map VIX to our 0-3 Credit Stress scale (15 = 1.0, 30 = 2.0)
-        # Roughly: (VIX / 15.0) gives us a comparable stress index.
-        credit_stress_index = round(vix_level / 15.0, 2)
+        # Tier-1 learnable mapping: VIX → credit_stress_index.
+        # Divisor and stress threshold are pulled via dual-read; when the
+        # registry is disabled we use _MACRO_VIX_DEFAULTS = (15.0, 1.1).
+        from ..tool_configs import get_tool_config  # local import avoids cycles on boot
+        from ..tool_handlers import vix_to_credit_stress_value
+        macro_cfg = get_tool_config("macro_vix_to_credit_stress", _MACRO_VIX_DEFAULTS)
+        credit_stress_index = vix_to_credit_stress_value({"vix_level": vix_level}, macro_cfg)
+        stress_threshold = float(macro_cfg.get("status_threshold", 1.1))
         
         # Live k_shape divergence (mock parameter for structural health, keeping mock for now as it requires complex mixed datasets, but VIX leads)
         k_shape_divergence = 0.5 
@@ -165,5 +178,5 @@ class MacroHealthConnector(DataConnector):
             "consumer_spending": consumer_spending,
             "capital_flows": capital_flows,
             "cash_reserves": cash_reserves,
-            "status": "Stress Detected" if credit_stress_index > 1.1 else "Normal"
+            "status": "Stress Detected" if credit_stress_index > stress_threshold else "Normal"
         }

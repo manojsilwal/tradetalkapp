@@ -43,6 +43,7 @@ DEFAULT_ALLOWED_HOSTS = frozenset(
         "api.openai.com",
         "api.nvidia.com",
         "integrate.api.nvidia.com",
+        "generativelanguage.googleapis.com",
         "query1.finance.yahoo.com",
         "query2.finance.yahoo.com",
         "api.polygon.io",
@@ -66,7 +67,14 @@ def _profile_map() -> Dict[str, SandboxProfile]:
     llm_hosts = frozenset(
         h
         for h in hosts
-        if h in {"openrouter.ai", "api.openai.com", "api.nvidia.com", "integrate.api.nvidia.com"}
+        if h
+        in {
+            "openrouter.ai",
+            "api.openai.com",
+            "api.nvidia.com",
+            "integrate.api.nvidia.com",
+            "generativelanguage.googleapis.com",
+        }
     )
     market_hosts = frozenset(
         h

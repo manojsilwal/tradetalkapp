@@ -1,0 +1,21 @@
+{
+  "tool_name": "macro_vix_to_credit_stress",
+  "description": "Held-out shadow-mode fixtures for the macro_vix_to_credit_stress tool. Each entry is a historically-anchored VIX level and the expected macro status label under the canonical v1.0.0 config (divisor=15.0, status_threshold=1.1 => STRESS when VIX > 16.5). SEPL scores active vs candidate configs against these labels. expected values: \"STRESS\" or \"NORMAL\".",
+  "fixtures": [
+    {"id": "ultra_calm_2017",      "input": {"vix_level": 9.2},  "expected": "NORMAL", "weight": 1.0},
+    {"id": "post_tech_rally_calm", "input": {"vix_level": 12.0}, "expected": "NORMAL", "weight": 1.0},
+    {"id": "median_regime",        "input": {"vix_level": 15.0}, "expected": "NORMAL", "weight": 1.0},
+    {"id": "just_below_stress",    "input": {"vix_level": 16.4}, "expected": "NORMAL", "weight": 1.0},
+    {"id": "just_above_stress",    "input": {"vix_level": 17.0}, "expected": "STRESS", "weight": 1.0},
+    {"id": "mild_elevated",        "input": {"vix_level": 18.5}, "expected": "STRESS", "weight": 1.0},
+    {"id": "china_trade_2019",     "input": {"vix_level": 22.0}, "expected": "STRESS", "weight": 1.0},
+    {"id": "late_cycle_tighten",   "input": {"vix_level": 25.5}, "expected": "STRESS", "weight": 1.0},
+    {"id": "brexit_2016",          "input": {"vix_level": 28.0}, "expected": "STRESS", "weight": 1.0},
+    {"id": "svb_march_2023",       "input": {"vix_level": 30.8}, "expected": "STRESS", "weight": 1.0},
+    {"id": "volmageddon_2018",     "input": {"vix_level": 37.3}, "expected": "STRESS", "weight": 1.0},
+    {"id": "debt_ceiling_2011",    "input": {"vix_level": 48.0}, "expected": "STRESS", "weight": 1.0},
+    {"id": "covid_crash_2020",     "input": {"vix_level": 82.7}, "expected": "STRESS", "weight": 1.0},
+    {"id": "gfc_oct_2008",         "input": {"vix_level": 89.5}, "expected": "STRESS", "weight": 1.0},
+    {"id": "zero_fallback",        "input": {"vix_level": 0.0},  "expected": "NORMAL", "weight": 1.0}
+  ]
+}

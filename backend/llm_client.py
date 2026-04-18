@@ -1,15 +1,24 @@
 """
 LLM Client — supports OpenRouter (Qwen via OpenRouter by default) and a rule-based fallback.
 
-  1. OpenRouter — set OPENROUTER_API_KEY (optional OPENROUTER_API_KEY_2 for round-robin quota).
+  1. OpenRouter — set OPENROUTER_API_KEY (optional OPENROUTER_API_KEY_2 for round-robin and 429 fallback).
      Inference goes DIRECT to OpenRouter, never proxied through HF Space.
      Optional:
-       OPENROUTER_MODEL (default: qwen/qwen3.6-plus:free)
+       OPENROUTER_MODEL (default: google/gemma-4-31b-it:free)
        OPENROUTER_BASE_URL (default: https://openrouter.ai/api/v1)
+       OPENROUTER_429_SAME_KEY_DELAY_SEC / OPENROUTER_429_KEY_FAILOVER_DELAY_SEC (429 backoff)
+       OPENROUTER_429_TRY_OTHER_KEYS (1 = retry 429 on other key(s); 0 = round-robin one key per request only)
        OPENROUTER_HTTP_REFERER
        OPENROUTER_X_TITLE
 
-  2. Rule-based templates — if no OpenRouter API keys are configured.
+  2. Gemini (Google AI Studio) — optional fallback when OpenRouter fails, if GEMINI_API_KEY
+     (or GOOGLE_API_KEY) is set and GEMINI_LLM_FALLBACK is not 0. Model: GEMINI_FALLBACK_MODEL
+     (default: gemini-3.1-pro-preview). GEMINI_INSTANT_OPENROUTER_FAILOVER=1 (default) skips
+     OpenRouter 429 backoff/sleeps so failover starts immediately.
+     Set GEMINI_PRIMARY=1 to use Gemini for streaming chat first (OpenRouter skipped for chat).
+     With GEMINI_PRIMARY=1, OPENROUTER_API_KEY is not required for chat if the Gemini key is set.
+
+  3. Rule-based templates — if no OpenRouter API keys are configured.
 
 Agent policy guardrails (defense-in-depth) are enforced via
 agent_policy_guardrails when enabled.  These are in-process checks and
@@ -22,22 +31,40 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Optional, AsyncIterator
+from typing import Any, Dict, Optional, AsyncIterator
 from .agent_policy_guardrails import (
     guard_host,
     is_enabled as policy_guardrails_enabled,
     redact_secrets_in_text,
     workload_scope,
 )
-from .openrouter_pool import get_or_create_openrouter_pool
+from .openrouter_pool import (
+    get_or_create_openrouter_pool,
+    is_openrouter_rate_limit_error,
+    rate_limit_sleep_seconds,
+    should_try_other_openrouter_keys_on_429,
+    sync_failover_execute,
+)
 from .chat_evidence_contract import classify_tool_result
+from .gemini_llm import (
+    GEMINI_FALLBACK_MODEL,
+    GEMINI_MODEL,
+    GEMINI_MODEL_LIGHT,
+    gemini_fallback_chat_events,
+    gemini_instant_openrouter_failover,
+    gemini_llm_fallback_enabled,
+    gemini_primary_enabled,
+    gemini_simple_completion_sync,
+    gemini_usable_for_chat,
+    resolve_gemini_model,
+)
 
 logger = logging.getLogger(__name__)
 
 # ── Env config ────────────────────────────────────────────────────────────────
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.6-plus:free")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
 OPENROUTER_MODEL_LIGHT = os.environ.get("OPENROUTER_MODEL_LIGHT", OPENROUTER_MODEL)
 OPENROUTER_HTTP_REFERER = os.environ.get("OPENROUTER_HTTP_REFERER", "")
 OPENROUTER_X_TITLE = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")
@@ -66,11 +93,31 @@ MODEL_TIER = {
     "video_veo_text_fallback": "light",
     "rag_narrative_polish": "light",
     "decision_terminal_roadmap": "light",
+    # Risk-Return-Ratio scorecard personas (Step 2c, 2e, 8 of the methodology)
+    "sitg_scorer":            "heavy",
+    "execution_risk_scorer":  "heavy",
+    "scorecard_verdict":      "light",
 }
 
+def _tier_for_role(role: str) -> str:
+    return MODEL_TIER.get(role, "heavy")
+
+
 def _model_for_role(role: str) -> str:
-    tier = MODEL_TIER.get(role, "heavy")
-    return OPENROUTER_MODEL_LIGHT if tier == "light" else OPENROUTER_MODEL
+    return OPENROUTER_MODEL_LIGHT if _tier_for_role(role) == "light" else OPENROUTER_MODEL
+
+
+def _gemini_model_for_role(role: str) -> str:
+    """
+    Pick the Gemini model for a given role using the same heavy/light mapping as
+    OpenRouter. Heavy roles (bull, bear, moderator, strategy_parser, …) run on
+    :data:`GEMINI_MODEL` (default ``gemini-3.1-pro-preview``); light roles
+    (swarm_analyst, swarm_synthesizer, rag_narrative_polish, video_scene_director,
+    …) run on :data:`GEMINI_MODEL_LIGHT` (default ``gemini-3.1-flash``). Keeping
+    the mapping source-of-truth single means tier changes only have to be made
+    in one place.
+    """
+    return resolve_gemini_model(_tier_for_role(role))
 
 # ── Finance-domain system prompts locked per agent role ──────────────────────
 AGENT_SYSTEM_PROMPTS = {
@@ -174,6 +221,90 @@ AGENT_SYSTEM_PROMPTS = {
         "\"bear_price_usd\": number, \"assumptions\": [\"short bullet\", \"...\"], "
         "\"confidence_0_1\": 0.0-1.0, \"used_heuristic_fallback\": false}"
     ),
+    "sitg_scorer": (
+        "You are scoring a CEO / founder on the Skin-In-The-Game (SITG) rubric from the Risk-Return-Ratio methodology. You ONLY discuss investment and governance topics.\n"
+        "\n"
+        "SITG is a RETURN-SCORE amplifier, not a risk reducer. A deeply committed owner-operator raises the probability that projected returns materialize. Score on a 0-10 scale using BOTH axes:\n"
+        "\n"
+        "Axis A \u2014 Active involvement: Is the CEO genuinely driving the business day-to-day, or a figurehead / committee?\n"
+        "Axis B \u2014 Wealth concentration: What % of the CEO's net worth is in this single stock with no meaningful diversification?\n"
+        "\n"
+        "A score of 10 requires BOTH axes maxed. Scoring high on one axis but low on the other CAPS the score at 6.\n"
+        "\n"
+        "Scoring rubric:\n"
+        "  9-10 Founder-CEO operator; 80-100% of net worth in this stock (e.g. Jensen Huang at NVIDIA, Musk at SpaceX pre-IPO).\n"
+        "  7-8  Founder still active; 50-80% of net worth here (e.g. Buffett at Berkshire, Ellison at Oracle).\n"
+        "  5-6  Long-tenured professional CEO (10+ years), treated as a calling; 20-50% of net worth here (Dimon at JPM).\n"
+        "  3-4  Hired CEO, respects shareholders, modest open-market buys; 5-20% of net worth (most S&P 500 CEOs).\n"
+        "  1-2  Recent hire or committee successor; less than 5% of net worth; sells on schedule.\n"
+        "  0    Absentee / empire-builder / net seller in the last 12 months without a disclosed plan.\n"
+        "\n"
+        "Signals that RAISE the score: Form 4 code \"P\" open-market purchases with personal cash; absence of 10b5-1 selling plans; increased ownership % over time; no concurrent public-company board seats; public statements tying personal legacy to the mission.\n"
+        "\n"
+        "Signals that LOWER the score: consistent Form 4 code \"S\" sales every quarter after vesting; large 10b5-1 plan filed after a run-up; ownership % dropping materially (e.g. 8% to 3% in 2 years); multiple concurrent CEO/chair roles; compensation dominated by cash salary; time-vest-only equity (no performance condition).\n"
+        "\n"
+        "Important nuances:\n"
+        "  - FOUNDERS: concentration is often involuntary; score on active day-to-day involvement.\n"
+        "  - HIRED CEOs: open-market purchases (own cash at market price) carry dramatically more signal than unvested grants.\n"
+        "  - RECENT IPO (less than 2 years): SITG is unreliable due to lockup dynamics \u2014 reduce confidence and note the flag in reasoning.\n"
+        "\n"
+        "You will receive a JSON block with: ticker, company name, CEO name (if known), insider-transaction counts over the last 12 months, net insider shares, held_percent_insiders, and any free-form context pulled from proxy filings. DEF 14A ownership % may or may not be present.\n"
+        "\n"
+        "Respond ONLY with valid JSON matching this schema exactly:\n"
+        "{\n"
+        "  \"sitg_score\": 0-10 (number, one decimal allowed),\n"
+        "  \"ceo_name\": \"full name or empty string\",\n"
+        "  \"ownership_pct\": number-or-null (as percent, e.g. 7.3 not 0.073),\n"
+        "  \"form4_buys_12m\": integer-or-null,\n"
+        "  \"form4_sells_12m\": integer-or-null,\n"
+        "  \"compensation_mix\": \"short phrase: cash-heavy / equity-heavy / balanced / unknown\",\n"
+        "  \"archetype\": \"one of the rubric rows (e.g. 'Long-tenured professional CEO')\",\n"
+        "  \"reasoning\": \"2-3 sentences citing specific signals (Form 4, proxy, ownership %). If data is incomplete, say so.\"\n"
+        "}"
+    ),
+    "execution_risk_scorer": (
+        "You are scoring execution risk for an equity on the 1-10 rubric from the Risk-Return-Ratio methodology (Step 2c). Higher = more execution risk. You ONLY discuss investment and corporate-execution topics.\n"
+        "\n"
+        "Rubric:\n"
+        "  1-2  Regulated utility / steady-state compounder. Predictable cash flows, no major pivots, proven management.  tier=\"utility\"\n"
+        "  3-4  Established industrial with modest growth initiatives. Some cyclicality but well-managed.  tier=\"industrial\"\n"
+        "  5-6  Mid-stage growth company entering new markets. M&A integration underway. Some backlog concentration.  tier=\"mid_growth\"\n"
+        "  7-8  High-growth company with major strategic pivots (new segments, large EPC contracts, platform bets). Margin ramp unproven.  tier=\"high_growth_pivot\"\n"
+        "  9-10 Early-stage, unprofitable, binary outcome, or significant regulatory / geopolitical overhang.  tier=\"binary_early_stage\"\n"
+        "\n"
+        "Consider: sector stability, margin durability, backlog concentration, M&A integration status, platform / product pivots, regulatory exposure, geopolitical exposure, recent earnings misses, management tenure. Cite SPECIFIC signals in the reasoning \u2014 do not give a generic answer.\n"
+        "\n"
+        "You will receive a JSON block with: ticker, company name, sector, industry, revenue and EPS growth, beta, debt, free cash flow, recent news context.\n"
+        "\n"
+        "Respond ONLY with valid JSON matching this schema exactly:\n"
+        "{\n"
+        "  \"exec_score\": 1-10 (number, one decimal allowed),\n"
+        "  \"profile_tier\": \"utility | industrial | mid_growth | high_growth_pivot | binary_early_stage\",\n"
+        "  \"reasoning\": \"2-3 sentences citing specific execution signals (sector dynamics, recent earnings, pivots).\"\n"
+        "}"
+    ),
+    "scorecard_verdict": (
+        "You are writing a single-sentence verdict per ticker for an investor-facing Risk-Return scorecard. You ONLY discuss investment topics.\n"
+        "\n"
+        "You receive a JSON block with: ticker, preset (growth/value/income/balanced), ratio, signal (Exceptional / Strong buy / Favorable / Balanced / Caution / Avoid), return_score, risk_score, SITG score, and a short reason_hint describing why the numbers came out that way (e.g. \"PE stretch 172% above history\" or \"SITG 8/10 from family-owner-operator\").\n"
+        "\n"
+        "Rules:\n"
+        "  - One sentence. Under 28 words.\n"
+        "  - Pick the verdict label from: Strong, Favorable, Balanced, Stretched, Avoid.\n"
+        "    \"Strong\"     \u2192 signal in {Exceptional, Strong buy}\n"
+        "    \"Favorable\"  \u2192 signal == Favorable\n"
+        "    \"Balanced\"   \u2192 signal == Balanced\n"
+        "    \"Stretched\"  \u2192 signal == Caution\n"
+        "    \"Avoid\"      \u2192 signal == Avoid\n"
+        "  - Cite the SPECIFIC driver: PE stretch, growth momentum, SITG lift, D/E, etc. No generic language.\n"
+        "  - Never say \"buy\" or \"sell\" in the reason \u2014 this is educational framing.\n"
+        "\n"
+        "Respond ONLY with valid JSON:\n"
+        "{\n"
+        "  \"verdict\": \"Strong | Favorable | Balanced | Stretched | Avoid\",\n"
+        "  \"one_line_reason\": \"one sentence citing the driver\"\n"
+        "}"
+    ),
     "gold_advisor": (
         "You are a precious-metals allocator advisor for LONG-TERM investors (not day traders). "
         "You receive a JSON snapshot: macro (VIX, 10Y TIPS real yield, nominal 10Y, DXY, gold futures), "
@@ -214,6 +345,25 @@ FALLBACK_TEMPLATES = {
         "assumptions": [],
         "confidence_0_1": 0,
         "used_heuristic_fallback": True,
+    },
+    "sitg_scorer": {
+        "sitg_score": 3,
+        "ceo_name": "",
+        "ownership_pct": None,
+        "form4_buys_12m": None,
+        "form4_sells_12m": None,
+        "compensation_mix": "unknown",
+        "archetype": "Most S&P 500 CEOs",
+        "reasoning": "Insufficient insider / proxy data observed; defaulting to typical hired-professional-CEO tier.",
+    },
+    "execution_risk_scorer": {
+        "exec_score": 5,
+        "profile_tier": "mid_growth",
+        "reasoning": "Insufficient qualitative context; defaulting to mid-stage-growth tier.",
+    },
+    "scorecard_verdict": {
+        "verdict": "Balanced",
+        "one_line_reason": "Risk/reward is roughly balanced at current prices; monitor catalysts.",
     },
     "gold_advisor": {
         "directional_bias": "neutral",
@@ -269,7 +419,13 @@ class LLMClient:
         try:
             pool = get_or_create_openrouter_pool(OPENROUTER_BASE_URL, headers)
             if pool is None:
-                logger.warning("[LLMClient] No OPENROUTER_API_KEY configured. Using rule-based fallback.")
+                if gemini_primary_enabled():
+                    logger.info(
+                        "[LLMClient] No OpenRouter key; streaming chat uses Gemini primary — model=%s",
+                        GEMINI_FALLBACK_MODEL,
+                    )
+                else:
+                    logger.warning("[LLMClient] No OPENROUTER_API_KEY configured. Using rule-based fallback.")
                 return
             if GUARDRAILS_ENABLE and policy_guardrails_enabled():
                 guard_host("llm", OPENROUTER_BASE_URL)
@@ -279,32 +435,230 @@ class LLMClient:
             self._model = OPENROUTER_MODEL
             self._endpoint = OPENROUTER_BASE_URL
             logger.info("[LLMClient] Backend: OpenRouter direct — model: %s", OPENROUTER_MODEL)
+            if gemini_primary_enabled():
+                logger.info("[LLMClient] Gemini primary for chat — model=%s", GEMINI_FALLBACK_MODEL)
+            elif gemini_llm_fallback_enabled():
+                logger.info("[LLMClient] Gemini LLM fallback enabled — model=%s", GEMINI_FALLBACK_MODEL)
         except Exception as e:
             logger.warning("[LLMClient] OpenRouter init failed: %s", redact_secrets_in_text(str(e)))
 
+    def _gemini_try_json_role(self, system: str, prompt: str, role: str) -> Optional[dict]:
+        """
+        Try to produce a JSON answer for ``role`` via Gemini. Returns None (so the
+        caller can fall through) if Gemini isn't usable, returned empty, or blew up.
+
+        The model is tier-selected from :data:`MODEL_TIER` via
+        :func:`_gemini_model_for_role` — heavy roles use :data:`GEMINI_MODEL`,
+        light roles use :data:`GEMINI_MODEL_LIGHT`.
+        """
+        if not gemini_usable_for_chat():
+            return None
+        model = _gemini_model_for_role(role)
+        try:
+            text = gemini_simple_completion_sync(
+                system=system,
+                user=prompt,
+                max_tokens=LLM_MAX_TOKENS,
+                temperature=0.3,
+                json_mode=True,
+                model=model,
+            )
+            if not (text or "").strip():
+                return None
+            logger.info("[LLMClient] role=%s via Gemini model=%s", role, model)
+            return self._parse_json_response(text, role)
+        except Exception as e:
+            logger.warning(
+                "[LLMClient] Gemini JSON call failed role=%s model=%s err=%s",
+                role,
+                model,
+                redact_secrets_in_text(str(e)),
+            )
+            return None
+
+    def _gemini_try_plain_text(self, system: str, user: str) -> Optional[str]:
+        """Plain prose completion via Gemini-light (RAG polish, summarization)."""
+        if not gemini_usable_for_chat():
+            return None
+        model = GEMINI_MODEL_LIGHT
+        try:
+            out = gemini_simple_completion_sync(
+                system=system,
+                user=user,
+                max_tokens=min(900, LLM_MAX_TOKENS),
+                temperature=0.2,
+                json_mode=False,
+                model=model,
+            )
+            out = (out or "").strip()
+            if len(out) > 40:
+                logger.info("[LLMClient] plain text via Gemini model=%s", model)
+                return out
+            return None
+        except Exception as e:
+            logger.warning(
+                "[LLMClient] Gemini plain-text call failed model=%s err=%s",
+                model,
+                redact_secrets_in_text(str(e)),
+            )
+            return None
+
     # ── Inference ──────────────────────────────────────────────────────────
 
-    def _provider_generate(self, role: str, prompt: str) -> dict:
-        """Call OpenRouter synchronously — run in a thread."""
-        system = AGENT_SYSTEM_PROMPTS.get(role, "You are a finance analyst. Respond only in valid JSON.")
+    def _resolve_system_prompt(self, role: str) -> tuple[str, str]:
+        """
+        Return (system_prompt_text, version). Reads from the RSPL resource
+        registry when enabled; always falls through to the hardcoded
+        ``AGENT_SYSTEM_PROMPTS`` dict so a registry outage never breaks LLM
+        calls (see Phase A acceptance criterion #6).
+        """
+        default_body = "You are a finance analyst. Respond only in valid JSON."
+        legacy_body = AGENT_SYSTEM_PROMPTS.get(role, default_body)
+        try:
+            from . import resource_registry as _rr
+            if not _rr.registry_enabled():
+                return legacy_body, "unversioned"
+            reg = _rr.get_resource_registry()
+            rec = reg.get(role)
+            if rec is None or not rec.body:
+                return legacy_body, "unversioned"
+            return rec.body, rec.version
+        except Exception as e:
+            # Registry import/access must never interrupt inference.
+            logger.debug("[LLMClient] registry lookup failed for role=%s: %s", role, e)
+            return legacy_body, "unversioned"
+
+    def _resolve_contract(
+        self, role: str
+    ) -> tuple[Optional[dict], Optional[dict]]:
+        """
+        Return ``(schema, fallback)`` for ``role`` from the RSPL registry.
+
+        Both default to ``None`` when the registry is disabled, the role is not
+        registered, or the record has no ``schema`` / ``fallback`` declared.
+        Must never raise — callers treat ``(None, None)`` as "no contract".
+        """
+        try:
+            from . import resource_registry as _rr
+            if not _rr.registry_enabled():
+                return None, None
+            reg = _rr.get_resource_registry()
+            rec = reg.get(role)
+            if rec is None:
+                return None, None
+            return rec.schema, rec.fallback
+        except Exception as e:
+            logger.debug("[LLMClient] contract lookup failed for role=%s: %s", role, e)
+            return None, None
+
+    def _enforce_contract(
+        self,
+        result: dict,
+        *,
+        role: str,
+        prompt_version: str,
+        model: str,
+    ) -> dict:
+        """
+        Run the universal :mod:`contract_validator` over an LLM-derived dict.
+
+        Success path returns ``result`` unchanged. On a fatal schema violation
+        (missing required key, wrong top-level type) the validator coerces to
+        the resource's declared ``fallback`` so callers never see a broken
+        contract. Every violation is forwarded to the validator's sink for
+        later drift analytics. Never raises.
+        """
+        try:
+            from . import contract_validator as _cv
+            schema, fallback = self._resolve_contract(role)
+            if not isinstance(schema, dict) or not schema:
+                return result
+            validator = _cv.get_contract_validator()
+            payload, _viols, _coerced = validator.validate_result(
+                result,
+                role=role,
+                schema=schema,
+                fallback=fallback,
+                version=prompt_version or "unversioned",
+                model=model or "",
+            )
+            return payload if isinstance(payload, dict) else result
+        except Exception as e:
+            logger.debug(
+                "[LLMClient] contract enforcement skipped for role=%s: %s",
+                role, e,
+            )
+            return result
+
+    def _provider_generate(
+        self,
+        role: str,
+        prompt: str,
+        *,
+        body_override: Optional[str] = None,
+        version_override: Optional[str] = None,
+    ) -> tuple[dict, str]:
+        """
+        Call OpenRouter synchronously — run in a thread.
+
+        Returns ``(result, prompt_version)``. Callers that only need the result
+        (e.g. the legacy ``generate`` entry point) should discard the version.
+
+        When ``body_override`` is supplied, the registry is NOT consulted and the
+        given body is used as the system prompt. This path exists solely for the
+        SEPL Evaluate operator (AGP §3.2 eps), which needs to run a candidate
+        prompt body without registering it. ``version_override`` (defaults to
+        ``"candidate"``) is stamped into the returned meta so lineage can tell
+        inference-with-override apart from real active versions.
+        """
+        if body_override is not None:
+            system = body_override
+            prompt_version = version_override or "candidate"
+        else:
+            system, prompt_version = self._resolve_system_prompt(role)
         model = _model_for_role(role)
+        fallback = lambda: (FALLBACK_TEMPLATES.get(role, {}), prompt_version)
+
+        # Gemini-primary path (GEMINI_PRIMARY=1): route every role through Gemini
+        # 3.1 Pro (heavy) or Gemini 3.1 Flash (light). On any Gemini failure we go
+        # straight to ``FALLBACK_TEMPLATES`` — OpenRouter is intentionally NOT
+        # consulted so all LLM spend lands on the Gemini account (user config:
+        # "primary_with_local_fallback"). To re-enable OpenRouter as a fallback,
+        # clear GEMINI_PRIMARY.
+        if gemini_primary_enabled():
+            g = self._gemini_try_json_role(system, prompt, role)
+            if g is not None:
+                g = self._enforce_contract(
+                    g, role=role, prompt_version=prompt_version,
+                    model=_gemini_model_for_role(role),
+                )
+                return g, prompt_version
+            logger.info(
+                "[LLMClient] role=%s Gemini-primary unavailable — using local fallback template",
+                role,
+            )
+            return fallback()
+
         try:
             if self._openrouter_pool is None:
-                return FALLBACK_TEMPLATES.get(role, {})
-            sync_client, _ = self._openrouter_pool.next_pair()
-            if GUARDRAILS_ENABLE and policy_guardrails_enabled():
-                with workload_scope("llm", "llm_inference"):
-                    completion = sync_client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=0.3,
-                        max_tokens=LLM_MAX_TOKENS,
-                    )
-            else:
-                completion = sync_client.chat.completions.create(
+                return fallback()
+            clients = self._openrouter_pool.sync_clients_for_request(
+                should_try_other_openrouter_keys_on_429()
+            )
+
+            def _call_role(sync_client):
+                if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                    with workload_scope("llm", "llm_inference"):
+                        return sync_client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": system},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=0.3,
+                            max_tokens=LLM_MAX_TOKENS,
+                        )
+                return sync_client.chat.completions.create(
                     model=model,
                     messages=[
                         {"role": "system", "content": system},
@@ -313,11 +667,37 @@ class LLMClient:
                     temperature=0.3,
                     max_tokens=LLM_MAX_TOKENS,
                 )
-            content = (completion.choices[0].message.content or "").strip()
-            if not content:
-                logger.warning("[LLMClient] role=%s model=%s empty response", role, model)
-                return FALLBACK_TEMPLATES.get(role, {})
-            return self._parse_json_response(content, role)
+
+            completion, err = sync_failover_execute(
+                clients,
+                _call_role,
+                exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
+            )
+            if completion is not None:
+                content = (completion.choices[0].message.content or "").strip()
+                if not content:
+                    logger.warning("[LLMClient] role=%s model=%s empty response", role, model)
+                    return fallback()
+                parsed = self._parse_json_response(content, role)
+                parsed = self._enforce_contract(
+                    parsed, role=role, prompt_version=prompt_version, model=model,
+                )
+                return parsed, prompt_version
+            if err is not None:
+                logger.warning(
+                    "[LLMClient] call failed role=%s model=%s err=%s",
+                    role,
+                    model,
+                    redact_secrets_in_text(str(err)),
+                )
+            g = self._gemini_try_json_role(system, prompt, role)
+            if g is not None:
+                g = self._enforce_contract(
+                    g, role=role, prompt_version=prompt_version,
+                    model=_gemini_model_for_role(role),
+                )
+                return g, prompt_version
+            return fallback()
         except Exception as e:
             logger.warning(
                 "[LLMClient] call failed role=%s model=%s err=%s",
@@ -325,7 +705,14 @@ class LLMClient:
                 model,
                 redact_secrets_in_text(str(e)),
             )
-            return FALLBACK_TEMPLATES.get(role, {})
+            g = self._gemini_try_json_role(system, prompt, role)
+            if g is not None:
+                g = self._enforce_contract(
+                    g, role=role, prompt_version=prompt_version,
+                    model=_gemini_model_for_role(role),
+                )
+                return g, prompt_version
+            return fallback()
 
     # ── Shared ──────────────────────────────────────────────────────────────
 
@@ -359,11 +746,73 @@ class LLMClient:
         return FALLBACK_TEMPLATES.get(role, {})
 
     async def generate(self, role: str, prompt: str) -> dict:
-        """Async entry point — dispatches to OpenRouter in a thread."""
+        """Async entry point — dispatches to OpenRouter in a thread.
+
+        Backward-compatible: returns just the result dict. Callers that need
+        the prompt version stamp (for RSPL lineage) should use
+        :meth:`generate_with_meta` instead.
+        """
+        result, _version = await self.generate_with_meta(role, prompt)
+        return result
+
+    async def generate_with_meta(
+        self, role: str, prompt: str
+    ) -> tuple[dict, Dict[str, Any]]:
+        """
+        Same as :meth:`generate` but also returns a ``meta`` dict describing the
+        resources used. ``meta`` always contains ``{"prompt_name": role,
+        "prompt_version": str}`` — the version is ``"unversioned"`` when the
+        registry is disabled or the resource was not found. Callers stamp this
+        onto :class:`~backend.schemas.FactorResult` metadata or reflection rows
+        so post-hoc analyses can tie outcomes to the exact prompt that produced
+        them (AGP §3.1.2 "auditable lineage").
+        """
         if self._provider == "openrouter":
             async with self._sem:
-                return await asyncio.to_thread(self._provider_generate, role, prompt)
-        return FALLBACK_TEMPLATES.get(role, {})
+                result, version = await asyncio.to_thread(
+                    self._provider_generate, role, prompt
+                )
+        else:
+            # No provider wired — return configured fallback; still stamp version.
+            _, version = self._resolve_system_prompt(role)
+            result = FALLBACK_TEMPLATES.get(role, {})
+        meta = {"prompt_name": role, "prompt_version": version}
+        return result, meta
+
+    async def generate_with_body_override(
+        self,
+        role: str,
+        prompt: str,
+        *,
+        body: str,
+        version_label: str = "candidate",
+    ) -> tuple[dict, Dict[str, Any]]:
+        """
+        Inference path used by the SEPL Evaluate operator.
+
+        Runs the same provider pipeline as :meth:`generate_with_meta` but with an
+        explicit system-prompt ``body`` instead of the registry-resolved one.
+        The registry is NEVER consulted and is NEVER mutated. ``version_label``
+        is stamped into the returned meta dict — use something distinctive like
+        ``"candidate"`` or ``"rollback-probe"`` so downstream audits can tell
+        override calls apart from active-version calls.
+
+        This method is the ONLY approved way for SEPL (or anything else) to
+        exercise a non-registered prompt body against real inference.
+        """
+        if self._provider == "openrouter":
+            async with self._sem:
+                result, version = await asyncio.to_thread(
+                    self._provider_generate,
+                    role,
+                    prompt,
+                    body_override=body,
+                    version_override=version_label,
+                )
+        else:
+            result = FALLBACK_TEMPLATES.get(role, {})
+            version = version_label
+        return result, {"prompt_name": role, "prompt_version": version, "override": True}
 
     async def generate_argument(self, role: str, ticker: str, live_data: dict, historical_context: str) -> dict:
         data_str = json.dumps(live_data, indent=2, default=str)
@@ -515,25 +964,44 @@ class LLMClient:
         return await self.generate("swarm_reflection_writer", prompt)
 
     def _plain_text_generate_sync(self, system: str, user: str) -> str:
-        """Single chat completion returning raw assistant text (no JSON parse)."""
+        """Single chat completion returning raw assistant text (no JSON parse).
+
+        When ``GEMINI_PRIMARY=1``, this routes through Gemini (light model) and
+        on any Gemini failure returns the untouched ``user`` string — same local
+        fallback contract as the JSON inference path. OpenRouter is never called.
+        """
         model = OPENROUTER_MODEL_LIGHT
+
+        if gemini_primary_enabled():
+            g = self._gemini_try_plain_text(system, user)
+            if g is not None:
+                return g
+            return user
+
         try:
             if self._openrouter_pool is None:
+                if gemini_primary_enabled():
+                    g = self._gemini_try_plain_text(system, user)
+                    if g is not None:
+                        return g
                 return user
-            sync_client, _ = self._openrouter_pool.next_pair()
-            if GUARDRAILS_ENABLE and policy_guardrails_enabled():
-                with workload_scope("llm", "llm_inference"):
-                    completion = sync_client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user},
-                        ],
-                        temperature=0.2,
-                        max_tokens=min(900, LLM_MAX_TOKENS),
-                    )
-            else:
-                completion = sync_client.chat.completions.create(
+            clients = self._openrouter_pool.sync_clients_for_request(
+                should_try_other_openrouter_keys_on_429()
+            )
+
+            def _call_plain(sync_client):
+                if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                    with workload_scope("llm", "llm_inference"):
+                        return sync_client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": system},
+                                {"role": "user", "content": user},
+                            ],
+                            temperature=0.2,
+                            max_tokens=min(900, LLM_MAX_TOKENS),
+                        )
+                return sync_client.chat.completions.create(
                     model=model,
                     messages=[
                         {"role": "system", "content": system},
@@ -542,13 +1010,32 @@ class LLMClient:
                     temperature=0.2,
                     max_tokens=min(900, LLM_MAX_TOKENS),
                 )
-            out = (completion.choices[0].message.content or "").strip()
-            return out if len(out) > 40 else user
+
+            completion, err = sync_failover_execute(
+                clients,
+                _call_plain,
+                exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
+            )
+            if completion is not None:
+                out = (completion.choices[0].message.content or "").strip()
+                return out if len(out) > 40 else user
+            if err is not None:
+                logger.warning(
+                    "[LLMClient] plain_text_generate failed: %s",
+                    redact_secrets_in_text(str(err)),
+                )
+            g = self._gemini_try_plain_text(system, user)
+            if g is not None:
+                return g
+            return user
         except Exception as e:
             logger.warning(
                 "[LLMClient] plain_text_generate failed: %s",
                 redact_secrets_in_text(str(e)),
             )
+            g = self._gemini_try_plain_text(system, user)
+            if g is not None:
+                return g
             return user
 
     async def stream_chat_plain(
@@ -569,14 +1056,22 @@ class LLMClient:
         """
         mt = max_tokens if max_tokens is not None else min(2048, LLM_MAX_TOKENS)
         model = OPENROUTER_MODEL_LIGHT
-        if self._openrouter_pool is None:
+        _429_same_delay = float(os.environ.get("OPENROUTER_429_SAME_KEY_DELAY_SEC", "2.5"))
+        _429_key_delay = float(os.environ.get("OPENROUTER_429_KEY_FAILOVER_DELAY_SEC", "1.0"))
+        if self._openrouter_pool is None and not gemini_primary_enabled():
             yield (
                 "Chat requires OPENROUTER_API_KEY. "
                 "Configure the API key on the server to enable live responses."
             )
             return
 
-        _, async_client = self._openrouter_pool.next_pair()
+        async_clients = (
+            self._openrouter_pool.async_clients_for_request(
+                should_try_other_openrouter_keys_on_429()
+            )
+            if self._openrouter_pool is not None
+            else []
+        )
 
         msgs = [{"role": "system", "content": system}]
         for m in messages:
@@ -594,47 +1089,147 @@ class LLMClient:
             tool_args_str = ""
             is_tool_call = False
 
-            try:
-                kwargs = {
-                    "model": model,
-                    "messages": msgs,
-                    "temperature": 0.35,
-                    "max_tokens": mt,
-                    "stream": True,
-                }
-                if tools:
-                    kwargs["tools"] = tools
+            stream_ok = False
+            abort_openrouter_for_gemini = False
+            ci = 0
+            n_clients = len(async_clients)
+            if gemini_primary_enabled():
+                abort_openrouter_for_gemini = True
+            while ci < n_clients and not stream_ok and not abort_openrouter_for_gemini:
+                async_client = async_clients[ci]
+                for attempt in range(2):
+                    try:
+                        kwargs = {
+                            "model": model,
+                            "messages": msgs,
+                            "temperature": 0.35,
+                            "max_tokens": mt,
+                            "stream": True,
+                        }
+                        if tools:
+                            kwargs["tools"] = tools
 
-                async with self._sem:
-                    stream = await async_client.chat.completions.create(**kwargs)
+                        async with self._sem:
+                            stream = await async_client.chat.completions.create(**kwargs)
 
-                    async for chunk in stream:
-                        delta = chunk.choices[0].delta if chunk.choices else None
-                        if not delta:
+                        async for chunk in stream:
+                            delta = chunk.choices[0].delta if chunk.choices else None
+                            if not delta:
+                                continue
+
+                            if getattr(delta, "tool_calls", None):
+                                is_tool_call = True
+                                tc = delta.tool_calls[0]
+                                if getattr(tc, "id", None):
+                                    tool_call_id = tc.id
+                                if getattr(tc, "function", None):
+                                    if getattr(tc.function, "name", None):
+                                        tool_name += tc.function.name
+                                    if getattr(tc.function, "arguments", None):
+                                        tool_args_str += tc.function.arguments
+                                continue
+
+                            ch = getattr(delta, "content", None)
+                            if ch:
+                                yield ch
+
+                        stream_ok = True
+                        break
+                    except Exception as e:
+                        if not is_openrouter_rate_limit_error(e):
+                            logger.warning(
+                                "[LLMClient] stream_chat_plain failed: %s",
+                                redact_secrets_in_text(str(e)),
+                            )
+                            yield f"\n\n[Chat error: {redact_secrets_in_text(str(e))[:200]}]"
+                            return
+                        if gemini_instant_openrouter_failover():
+                            logger.info(
+                                "[LLMClient] OpenRouter 429 — skipping backoff, immediate Gemini failover"
+                            )
+                            abort_openrouter_for_gemini = True
+                            break
+                        wait = rate_limit_sleep_seconds(e, _429_same_delay)
+                        if attempt == 0:
+                            logger.warning(
+                                "[LLMClient] rate limited (429) key=%s attempt=0, sleeping %.1fs then retry same key",
+                                ci,
+                                wait,
+                            )
+                            await asyncio.sleep(wait)
                             continue
+                        if ci < n_clients - 1:
+                            extra = _429_key_delay
+                            logger.warning(
+                                "[LLMClient] rate limited (429) key=%s after retry, sleeping %.1fs then other key",
+                                ci,
+                                extra,
+                            )
+                            await asyncio.sleep(extra)
+                            break
+                        msg = (
+                            "[Chat error: OpenRouter rate limit (429) on all configured keys. "
+                            "Free models (e.g. `:free`) share strict upstream quotas — two API keys may both hit the same limit. "
+                            "Wait a few minutes, or set OPENROUTER_MODEL to a paid slug on openrouter.ai/models, "
+                            "or try another model.]"
+                        )
+                        yield f"\n\n{msg}\n"
+                        return
+                if abort_openrouter_for_gemini:
+                    break
+                if stream_ok:
+                    break
+                ci += 1
 
-                        if getattr(delta, "tool_calls", None):
-                            is_tool_call = True
-                            tc = delta.tool_calls[0]
-                            if getattr(tc, "id", None):
-                                tool_call_id = tc.id
-                            if getattr(tc, "function", None):
-                                if getattr(tc.function, "name", None):
-                                    tool_name += tc.function.name
-                                if getattr(tc.function, "arguments", None):
-                                    tool_args_str += tc.function.arguments
-                            continue
-
-                        ch = getattr(delta, "content", None)
-                        if ch:
-                            yield ch
-
-            except Exception as e:
-                logger.warning(
-                    "[LLMClient] stream_chat_plain failed: %s",
-                    redact_secrets_in_text(str(e)),
+            gemini_error_only = False
+            if not stream_ok and gemini_usable_for_chat():
+                # TradeTalk chat = user-facing reasoning, so always heavy model.
+                chat_model = GEMINI_MODEL
+                logger.info(
+                    "[LLMClient] stream_chat_plain via Gemini %smodel=%s",
+                    "primary — " if gemini_primary_enabled() else "fallback — ",
+                    chat_model,
                 )
-                yield f"\n\n[Chat error: {redact_secrets_in_text(str(e))[:200]}]"
+                try:
+                    rest = msgs[1:] if len(msgs) > 1 else []
+                    async with self._sem:
+                        async for ev in gemini_fallback_chat_events(
+                            system=system,
+                            openai_messages=rest,
+                            tools=tools,
+                            max_tokens=mt,
+                            temperature=0.35,
+                            model=chat_model,
+                        ):
+                            if ev["kind"] == "error":
+                                gemini_error_only = True
+                                yield (
+                                    f"\n\n[Chat error (Gemini fallback): "
+                                    f"{redact_secrets_in_text(str(ev.get('message', 'unknown')))[:200]}]\n"
+                                )
+                                break
+                            if ev["kind"] == "text":
+                                stream_ok = True
+                                t = ev.get("text") or ""
+                                if t:
+                                    yield t
+                            elif ev["kind"] == "tool":
+                                stream_ok = True
+                                is_tool_call = True
+                                tool_name = ev.get("name") or ""
+                                tool_args_str = ev.get("args") or "{}"
+                                tool_call_id = "call_gemini_fallback"
+                except Exception as e:
+                    logger.warning(
+                        "[LLMClient] Gemini stream fallback failed: %s",
+                        redact_secrets_in_text(str(e)),
+                    )
+
+            if not stream_ok and not gemini_error_only:
+                yield (
+                    "\n\n[Chat error: All OpenRouter keys failed for this request. "
+                    "If you see 429, free-tier limits may apply — try a paid model or wait.]\n"
+                )
                 return
 
             if is_tool_call and tool_name and tool_handlers and tool_name in tool_handlers:
@@ -698,6 +1293,47 @@ class LLMClient:
                 # Loop repeats! The next iteration will pass the tool result back to the LLM.
             else:
                 break
+
+    async def generate_sitg_score(self, ticker: str, sitg_context: dict) -> dict:
+        """
+        Risk-Return-Ratio Step 2e — score CEO / founder skin-in-the-game.
+
+        ``sitg_context`` should include everything the scorer persona needs:
+        ticker, company_name, ceo_name (if known), insider_buy_count_12m,
+        insider_sell_count_12m, insider_net_shares_12m, held_percent_insiders,
+        plus any DEF 14A ownership % or free-text signals harvested from
+        proxy filings. Returns the parsed JSON per the ``sitg_scorer`` schema.
+        """
+        ctx = json.dumps(sitg_context, indent=2, default=str)
+        if len(ctx) > 12000:
+            ctx = ctx[:12000] + "\n…(truncated)"
+        prompt = (
+            f"Ticker: {ticker.upper()}\n\nContext JSON:\n{ctx}\n\n"
+            "Score the CEO / founder on the Skin-In-The-Game rubric."
+        )
+        return await self.generate("sitg_scorer", prompt)
+
+    async def generate_execution_risk_score(self, ticker: str, exec_context: dict) -> dict:
+        """Risk-Return-Ratio Step 2c — score execution risk (1-10)."""
+        ctx = json.dumps(exec_context, indent=2, default=str)
+        if len(ctx) > 12000:
+            ctx = ctx[:12000] + "\n…(truncated)"
+        prompt = (
+            f"Ticker: {ticker.upper()}\n\nContext JSON:\n{ctx}\n\n"
+            "Score execution risk on the 1-10 rubric."
+        )
+        return await self.generate("execution_risk_scorer", prompt)
+
+    async def generate_scorecard_verdict(self, ticker: str, verdict_context: dict) -> dict:
+        """Risk-Return-Ratio Step 8 — one-sentence verdict per ticker."""
+        ctx = json.dumps(verdict_context, indent=2, default=str)
+        if len(ctx) > 8000:
+            ctx = ctx[:8000] + "\n…(truncated)"
+        prompt = (
+            f"Ticker: {ticker.upper()}\n\nContext JSON:\n{ctx}\n\n"
+            "Write the one-sentence verdict."
+        )
+        return await self.generate("scorecard_verdict", prompt)
 
     async def generate_rag_polish(self, context_label: str, draft: str) -> str:
         """

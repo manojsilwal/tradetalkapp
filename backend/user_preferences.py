@@ -34,7 +34,42 @@ DEFAULT_PREFERENCES: Dict[str, Any] = {
     "explain_style": "balanced",     # simple | balanced | technical
     "preferred_tools": [],           # ["debate", "backtest", "chat", "gold"]
     "watchlist": [],                 # user-curated watchlist tickers
+    # Finance profile (LLM tools + prompt framing; CORAL stays market-knowledge only)
+    "position_type": "unknown",      # long | short | flat | unknown
+    "preferred_signal_format": "balanced",  # directional | with_levels | with_reasoning | balanced
+    "alert_on_regimes": "no",       # yes | no
+    "base_currency": "USD",         # USD | GBP | EUR | other
+    "trading_style": "swing",       # intraday | swing | position
 }
+
+# Keys the chat tools may set (values validated in save_financial_preference_for_tool).
+FINANCIAL_TOOL_KEYS = frozenset(
+    {
+        "risk_tolerance",
+        "investment_horizon",
+        "explain_style",
+        "position_type",
+        "preferred_signal_format",
+        "alert_on_regimes",
+        "base_currency",
+        "trading_style",
+    }
+)
+
+_VALUE_ENUMS: Dict[str, frozenset] = {
+    "risk_tolerance": frozenset({"conservative", "moderate", "aggressive"}),
+    "investment_horizon": frozenset({"short", "medium", "long"}),
+    "explain_style": frozenset({"simple", "balanced", "technical"}),
+    "position_type": frozenset({"long", "short", "flat", "unknown"}),
+    "preferred_signal_format": frozenset(
+        {"directional", "with_levels", "with_reasoning", "balanced"}
+    ),
+    "alert_on_regimes": frozenset({"yes", "no"}),
+    "base_currency": frozenset({"USD", "GBP", "EUR", "other"}),
+    "trading_style": frozenset({"intraday", "swing", "position"}),
+}
+
+_MAX_PREF_VALUE_LEN = 256
 
 # Maximum favourite tickers / sectors to keep (rolling window)
 _MAX_FAVOURITES = 20
@@ -92,6 +127,59 @@ def get_preferences(user_id: str) -> Dict[str, Any]:
     stored = json.loads(row["preferences"])
     merged = {**DEFAULT_PREFERENCES, **stored}
     return merged
+
+
+def format_agent_memory_instructions() -> str:
+    """
+    Injected into chat system prompt for authenticated users.
+    Directs use of recall_financial_profile / save_financial_preference tools.
+    """
+    return (
+        "## User financial profile (tier-2 memory)\n"
+        "- You have tools **recall_financial_profile** and **save_financial_preference** (this user only).\n"
+        "- Early in the conversation, call **recall_financial_profile** once if tailoring or gold/macro/positioning "
+        "context may matter. Use the result to **frame** explanations (not to invent prices or facts).\n"
+        "- If the profile is still thin and the user asks about **gold, positioning, or horizon**, ask **one** "
+        "short clarifying question (e.g. position type and time horizon) before a deep analysis.\n"
+        "- When the user states a **durable** preference (risk, horizon, signal format, currency, regime alerts), "
+        "call **save_financial_preference** in the same turn with a valid key/value.\n"
+        "- CORAL/retrieval blocks are **market** priors; this profile is **the user** — do not mix them up.\n"
+    )
+
+
+def recall_financial_profile_json(user_id: str) -> str:
+    """JSON string of merged preferences for tool return (bounded size)."""
+    if not user_id:
+        return json.dumps({"error": "not_authenticated"})
+    prefs = get_preferences(user_id)
+    # Only expose tool-relevant + stable keys (no raw signal counters)
+    keys = sorted(set(FINANCIAL_TOOL_KEYS) | {"favorite_tickers", "watchlist"})
+    out = {k: prefs.get(k) for k in keys if k in prefs}
+    raw = json.dumps(out, default=str)
+    return raw[:8000]
+
+
+def save_financial_preference_for_tool(user_id: str, key: str, value: str) -> str:
+    """
+    Validate and persist one preference from chat tools.
+    Returns a short confirmation or error message for the model.
+    """
+    if not user_id:
+        return "Cannot save: user is not signed in."
+    k = (key or "").strip()
+    v = (value or "").strip()
+    if not k:
+        return "Missing key."
+    if k not in FINANCIAL_TOOL_KEYS:
+        return f"Unknown key: {k}. Allowed: {', '.join(sorted(FINANCIAL_TOOL_KEYS))}."
+    if len(v) > _MAX_PREF_VALUE_LEN:
+        return f"Value too long (max {_MAX_PREF_VALUE_LEN} characters)."
+    allowed = _VALUE_ENUMS.get(k)
+    if allowed is not None and v not in allowed:
+        return f"Invalid value for {k}. Allowed: {', '.join(sorted(allowed))}."
+    updates = {k: v}
+    update_preferences(user_id, updates)
+    return f"Saved {k} = {v}."
 
 
 def update_preferences(user_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -239,6 +327,26 @@ def format_for_system_prompt(user_id: str) -> str:
 
     if prefs.get("watchlist"):
         lines.append(f"Watchlist: {', '.join(prefs['watchlist'][:10])}")
+
+    pt = prefs.get("position_type") or "unknown"
+    if pt not in ("unknown", "", None):
+        lines.append(f"Position type: {pt}")
+
+    ts = prefs.get("trading_style") or "swing"
+    if ts != "swing":
+        lines.append(f"Trading style / horizon: {ts}")
+
+    psf = prefs.get("preferred_signal_format") or "balanced"
+    if psf != "balanced":
+        lines.append(f"Preferred signal format: {psf}")
+
+    ar = prefs.get("alert_on_regimes") or "no"
+    if ar == "yes":
+        lines.append("Alert on regime shifts: yes")
+
+    bc = prefs.get("base_currency") or "USD"
+    if bc != "USD":
+        lines.append(f"Base currency: {bc}")
 
     if not lines:
         return ""

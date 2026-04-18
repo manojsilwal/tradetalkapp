@@ -1,0 +1,69 @@
+name: debate_stance_heuristic_bull
+kind: tool
+version: 1.0.0
+description: |-
+  Numeric fallback heuristic used by the debate panel's BULL agent when the LLM
+  output does not clearly state a stance. Converts (SIR, revenue growth,
+  3-month price return) into BULLISH / BEARISH / NEUTRAL. Pure, deterministic,
+  no I/O.
+learnable: true
+metadata:
+  tier: 0
+  pure: true
+  side_effect: read
+  cost_model:
+    call_cost_usd: 0.0
+    calls_per_hour_cap: null
+  migrated_from: backend/debate_agents.py::_determine_stance (role == "bull")
+  parameter_ranges:
+    sir_bull_floor:          {min: 1.0,   max: 20.0,  step: 0.5}
+    rev_growth_bull_floor:   {min: 1.0,   max: 40.0,  step: 1.0}
+    r3m_bull_floor:          {min: 1.0,   max: 20.0,  step: 0.5}
+    sir_bear_ceiling:        {min: 0.0,   max: 8.0,   step: 0.5}
+    rev_growth_bear_ceiling: {min: -30.0, max: 10.0,  step: 1.0}
+    r3m_bear_ceiling:        {min: -30.0, max: 0.0,   step: 1.0}
+  config:
+    sir_bull_floor: 5.0
+    rev_growth_bull_floor: 15.0
+    r3m_bull_floor: 5.0
+    sir_bear_ceiling: 2.0
+    rev_growth_bear_ceiling: 0.0
+    r3m_bear_ceiling: -10.0
+schema:
+  type: object
+  required:
+    - sir_bull_floor
+    - rev_growth_bull_floor
+    - r3m_bull_floor
+    - sir_bear_ceiling
+    - rev_growth_bear_ceiling
+    - r3m_bear_ceiling
+  properties:
+    sir_bull_floor:          {type: number}
+    rev_growth_bull_floor:   {type: number}
+    r3m_bull_floor:          {type: number}
+    sir_bear_ceiling:        {type: number}
+    rev_growth_bear_ceiling: {type: number}
+    r3m_bear_ceiling:        {type: number}
+fallback:
+  sir_bull_floor: 5.0
+  rev_growth_bull_floor: 15.0
+  r3m_bull_floor: 5.0
+  sir_bear_ceiling: 2.0
+  rev_growth_bear_ceiling: 0.0
+  r3m_bear_ceiling: -10.0
+body: |-
+  # debate_stance_heuristic_bull (tier 0, pure)
+  #
+  # Handler: backend/debate_agents.py::_determine_stance, role == "bull"
+  # Input: {short_interest_ratio, revenue_growth, price_return_3m}
+  # Output: BULLISH | BEARISH | NEUTRAL
+  #
+  # Rule:
+  #   BULLISH if  sir > sir_bull_floor        OR
+  #               rev > rev_growth_bull_floor OR
+  #               r3m > r3m_bull_floor
+  #   BEARISH if  sir < sir_bear_ceiling      AND
+  #               rev < rev_growth_bear_ceiling AND
+  #               r3m < r3m_bear_ceiling
+  #   else NEUTRAL

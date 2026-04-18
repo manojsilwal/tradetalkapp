@@ -1,0 +1,15 @@
+name: rag_narrative_polish
+kind: prompt
+version: 1.0.0
+description: Narrative polishing pass over RAG-assembled context (placeholder — body lives in llm_client until dual-read PR).
+learnable: true
+metadata:
+  role_tier: light
+  migrated_from: backend/llm_client.py::MODEL_TIER
+  notes: |
+    MODEL_TIER lists this role, but no system prompt for it exists in
+    AGENT_SYSTEM_PROMPTS at the time of Phase A seeding. Registered as an
+    intentionally empty placeholder so downstream code paths that look up
+    by role name see a record and fall back gracefully. Phase B fills in
+    the body once the call site is in scope.
+body: ""

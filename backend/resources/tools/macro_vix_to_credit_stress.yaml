@@ -1,0 +1,62 @@
+name: macro_vix_to_credit_stress
+kind: tool
+version: 1.0.0
+description: |-
+  Tier-1 tool that maps the raw CBOE VIX level into (a) a unitless
+  credit_stress_index (CSI) in the 0..3 range and (b) a discrete macro status
+  label ("Normal" / "Stress Detected") consumed by the analyst+QA agents and
+  the dashboard. The external read (yfinance ^VIX) is not evolvable — only
+  the post-fetch mapping is. Handler is pure, side-effect-free, and evaluated
+  by SEPL against fixtures of historical VIX regimes.
+learnable: true
+metadata:
+  tier: 1
+  pure: true
+  side_effect: read
+  cost_model:
+    # The wrapping connector hits yfinance free-tier. SEPL doesn't call out;
+    # only the live request path does, and that is gated by the caller.
+    call_cost_usd: 0.0
+    calls_per_hour_cap: 60
+  migrated_from: backend/connectors/macro.py::MacroHealthConnector.fetch_data
+  parameter_ranges:
+    divisor:          {min: 5.0,  max: 30.0, step: 0.5}
+    status_threshold: {min: 0.5,  max: 3.0,  step: 0.05}
+  config:
+    divisor: 15.0
+    status_threshold: 1.1
+schema:
+  type: object
+  required:
+    - divisor
+    - status_threshold
+  properties:
+    divisor:
+      type: number
+      minimum: 5.0
+      maximum: 30.0
+      description: |
+        VIX level that is mapped to a credit_stress_index of exactly 1.0.
+        VIX divided by this value yields the unitless CSI.
+    status_threshold:
+      type: number
+      minimum: 0.5
+      maximum: 3.0
+      description: |
+        CSI above which the macro status flips from "Normal" to "Stress Detected".
+fallback:
+  divisor: 15.0
+  status_threshold: 1.1
+body: |-
+  # macro_vix_to_credit_stress (tier 1, pure post-fetch mapping)
+  #
+  # Handler: backend/tool_handlers.py::vix_to_credit_stress_status (label)
+  #          backend/tool_handlers.py::vix_to_credit_stress_value  (numeric)
+  # Caller:  backend/connectors/macro.py::MacroHealthConnector.fetch_data
+  #
+  # csi   = round(vix_level / divisor, 2)
+  # label = "STRESS"  if csi > status_threshold else "NORMAL"
+  #
+  # SEPL evaluates on the discrete label because the downstream swarm gates
+  # on it. The numeric value is propagated for compatibility with analyst
+  # agents that compare against their own bearish_csi_threshold.

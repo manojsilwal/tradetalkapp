@@ -79,11 +79,40 @@ def build_evidence_contract(
     else:
         confidence_band = "medium"
 
+    rag_chunk_refs_raw = meta.get("rag_chunk_refs") or []
+    rag_chunk_refs: list[dict[str, Any]] = []
+    if isinstance(rag_chunk_refs_raw, list):
+        for r in rag_chunk_refs_raw:
+            if not isinstance(r, dict):
+                continue
+            chunk_id = str(r.get("chunk_id") or "")
+            collection = str(r.get("collection") or "")
+            if not chunk_id and not collection:
+                continue
+            try:
+                rank = int(r.get("rank", 0))
+            except Exception:
+                rank = 0
+            try:
+                distance = float(r.get("distance", 1.0))
+            except Exception:
+                distance = 1.0
+            rag_chunk_refs.append(
+                {
+                    "chunk_id": chunk_id,
+                    "collection": collection,
+                    "rank": rank,
+                    "distance": distance,
+                    "ticker": str(r.get("ticker") or ""),
+                }
+            )
+
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "sources_used": sources_used,
         "tools_called": tools_called,
         "tool_outcomes": tool_outcomes,
         "confidence_band": confidence_band,
         "abstain_reason": abstain_reason,
+        "rag_chunk_refs": rag_chunk_refs,
     }

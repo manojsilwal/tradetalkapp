@@ -108,6 +108,11 @@ class ChatRefreshRequest(BaseModel):
     session_id: str = Field(..., min_length=8)
 
 
+class ChatOpenSessionRequest(BaseModel):
+    """Optional `resume_session_id` to continue after refresh (same client, same DB)."""
+    resume_session_id: Optional[str] = None
+
+
 class ChatEvidenceExportRequest(BaseModel):
     session_id: str = Field(..., min_length=8)
 
@@ -135,15 +140,31 @@ async def chat_user_context(_user: Optional[UserInfo] = Depends(get_optional_use
 
 @router.post("/session")
 async def chat_open_session(
+    body: ChatOpenSessionRequest = ChatOpenSessionRequest(),
     _user: Optional[UserInfo] = Depends(get_optional_user),
 ):
     uid = _user.id if _user else None
+    if body.resume_session_id and body.resume_session_id.strip():
+        resumed = await chat_service.resume_session(
+            knowledge_store, uid, body.resume_session_id.strip()
+        )
+        if resumed:
+            sp = resumed.system_prompt or ""
+            return {
+                "session_id": resumed.session_id,
+                "assembled_at": resumed.assembled_at,
+                "expires_at": resumed.expires_at,
+                "preview": sp[:500] + ("…" if len(sp) > 500 else ""),
+                "status": "resumed",
+            }
     sess = await chat_service.create_session(knowledge_store, uid)
+    sp = sess.system_prompt or ""
     return {
         "session_id": sess.session_id,
         "assembled_at": sess.assembled_at,
         "expires_at": sess.expires_at,
-        "preview": sess.system_prompt[:500] + ("…" if len(sess.system_prompt) > 500 else ""),
+        "preview": sp[:500] + ("…" if len(sp) > 500 else ""),
+        "status": "new",
     }
 
 
@@ -707,8 +728,55 @@ async def chat_send_message(
                     "required": ["url"]
                 }
             }
-        }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "recall_financial_profile",
+                "description": (
+                    "Load this signed-in user's saved financial preferences (risk, horizon, position type, "
+                    "signal format, currency, etc.). Call once early when personalization matters. "
+                    "Returns JSON. Not available for anonymous users."
+                ),
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "save_financial_preference",
+                "description": (
+                    "Persist one user preference key/value (durable across sessions). "
+                    "Valid keys include risk_tolerance, investment_horizon, position_type, preferred_signal_format, "
+                    "alert_on_regimes, base_currency, trading_style, explain_style. Values must match allowed enums."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {
+                            "type": "string",
+                            "description": "Preference key e.g. risk_tolerance, position_type, trading_style",
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "Allowed value for that key (e.g. moderate, long, swing, yes)",
+                        },
+                    },
+                    "required": ["key", "value"],
+                },
+            },
+        },
     ]
+
+    async def recall_financial_profile() -> str:
+        if not uid:
+            return "Sign in to recall saved financial preferences."
+        return await asyncio.to_thread(uprefs.recall_financial_profile_json, uid)
+
+    async def save_financial_preference(key: str, value: str) -> str:
+        if not uid:
+            return "Sign in to save preferences."
+        return await asyncio.to_thread(uprefs.save_financial_preference_for_tool, uid, key, value)
 
     tool_handlers = {
         "get_stock_quote": get_stock_quote,
@@ -718,6 +786,8 @@ async def chat_send_message(
         "get_deep_news": get_deep_news,
         "get_sec_filing": get_sec_filing,
         "scrape_url": scrape_url,
+        "recall_financial_profile": recall_financial_profile,
+        "save_financial_preference": save_financial_preference,
     }
 
     async def event_stream():
@@ -762,6 +832,91 @@ async def chat_send_message(
             evidence.get("confidence_band"),
             evidence.get("abstain_reason"),
         )
+
+        # ── Decision-Outcome Ledger emission (Phase 2) ────────────────
+        # One row per chat turn — lets us query which tools/routes produce
+        # the highest-confidence answers and correlate chat-turn outcomes
+        # against user preference learning. Best-effort; never raises.
+        try:
+            from .. import decision_ledger as _dl
+            st = sess.sticky_state or {}
+            active_ticker = str(st.get("active_ticker", "") or "")
+            # Mix tool-level evidence with chunk-level RAG refs so the ledger
+            # can answer "which vector row powered this answer?" via a SQL join
+            # into decision_evidence. Tool refs preserve the chat-turn
+            # attribution; RAG refs expose retrieval quality and collection
+            # coverage for (feature, regime, horizon) analytics.
+            refs = []
+            for idx, t in enumerate(tool_trace or []):
+                nm = str(t.get("name", "") or "").strip()
+                oc = str(t.get("outcome", "") or "")
+                if nm and oc == "success":
+                    refs.append(
+                        _dl.EvidenceRef(
+                            chunk_id=f"tool:{nm}",
+                            collection="chat_tool_trace",
+                            rank=idx,
+                        )
+                    )
+            for cref in (evidence.get("rag_chunk_refs") or []):
+                try:
+                    cid = str(cref.get("chunk_id") or "")
+                    if not cid:
+                        continue
+                    try:
+                        rel = max(0.0, min(1.0, 1.0 - float(cref.get("distance", 1.0))))
+                    except Exception:
+                        rel = None
+                    refs.append(
+                        _dl.EvidenceRef(
+                            chunk_id=cid,
+                            collection=str(cref.get("collection") or "rag"),
+                            rank=int(cref.get("rank", 0)),
+                            relevance=rel,
+                        )
+                    )
+                except Exception:
+                    continue
+            feats = [
+                _dl.FeatureValue(
+                    name="confidence_band",
+                    value_str=str(evidence.get("confidence_band", "") or ""),
+                ),
+                _dl.FeatureValue(
+                    name="abstain_reason",
+                    value_str=str(evidence.get("abstain_reason") or ""),
+                ),
+                _dl.FeatureValue(
+                    name="n_tools",
+                    value_num=float(len(tool_trace or [])),
+                ),
+            ]
+            _dl.emit_decision(
+                decision_type="chat_turn",
+                user_id=str(uid or ""),
+                symbol=active_ticker,
+                horizon_hint="none",
+                verdict="",
+                confidence=None,
+                output={
+                    "session_id": body.session_id,
+                    "user_message": user_content[:4000],
+                    "assistant_text": assistant_text[:8000],
+                    "evidence": evidence,
+                    "meta": {k: v for k, v in (meta or {}).items() if k in (
+                        "rag_nonempty", "coral_hub_nonempty", "model_used",
+                        "route", "elapsed_ms",
+                    )},
+                    "mover_intent": mover_intent,
+                    "quote_card_tickers": quote_card_tickers,
+                },
+                source_route="backend/routers/chat.py::chat_send_message",
+                evidence=refs,
+                features=feats,
+            )
+        except Exception as _e:  # never block the stream
+            logger.debug("[Chat] decision_ledger emit skipped: %s", _e)
+
         yield f"data: {json.dumps({'type': 'evidence_contract', 'data': evidence})}\n\n"
         yield "data: [DONE]\n\n"
 

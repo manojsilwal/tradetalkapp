@@ -1,0 +1,11 @@
+[
+  {
+    "input": "Ticker: NVDA. Context JSON:\n{\n  \"ticker\": \"NVDA\",\n  \"company_name\": \"NVIDIA Corporation\",\n  \"sector\": \"Technology\",\n  \"industry\": \"Semiconductors\",\n  \"ceo_name\": \"Jensen Huang\",\n  \"insider_buy_count_12m\": 0,\n  \"insider_sell_count_12m\": 12,\n  \"insider_net_shares_12m\": -1200000,\n  \"held_percent_insiders\": 0.033,\n  \"context_notes\": \"Founder-CEO since 1993. Est. 80%+ of net worth in NVDA stock. Sales are scheduled 10b5-1; no open-market purchases noted but no selling beyond the plan either.\"\n}\n\nScore the CEO / founder on the Skin-In-The-Game rubric."
+  },
+  {
+    "input": "Ticker: GE. Context JSON:\n{\n  \"ticker\": \"GE\",\n  \"company_name\": \"General Electric\",\n  \"sector\": \"Industrials\",\n  \"industry\": \"Aerospace\",\n  \"ceo_name\": \"Larry Culp\",\n  \"insider_buy_count_12m\": 2,\n  \"insider_sell_count_12m\": 1,\n  \"insider_net_shares_12m\": 40000,\n  \"held_percent_insiders\": 0.004,\n  \"context_notes\": \"Hired professional CEO, modest but real open-market purchases during 2023 weakness; compensation is a mix of cash salary and performance equity.\"\n}\n\nScore the CEO / founder on the Skin-In-The-Game rubric."
+  },
+  {
+    "input": "Ticker: NEWCO. Context JSON:\n{\n  \"ticker\": \"NEWCO\",\n  \"company_name\": \"NewCo Industries\",\n  \"sector\": \"Industrials\",\n  \"industry\": \"Construction\",\n  \"ceo_name\": \"\",\n  \"insider_buy_count_12m\": 0,\n  \"insider_sell_count_12m\": 0,\n  \"insider_net_shares_12m\": 0,\n  \"held_percent_insiders\": 0.0,\n  \"context_notes\": \"No Form 4 activity observed; proxy not yet filed; company IPO'd 18 months ago.\"\n}\n\nScore the CEO / founder on the Skin-In-The-Game rubric."
+  }
+]

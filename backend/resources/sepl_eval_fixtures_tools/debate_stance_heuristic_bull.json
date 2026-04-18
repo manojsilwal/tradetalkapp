@@ -1,0 +1,18 @@
+{
+  "tool_name": "debate_stance_heuristic_bull",
+  "description": "Held-out shadow-mode fixtures for the debate bull-stance heuristic. Each row is {SIR%, revenue_growth%, price_return_3m%} and the expected stance under v1.0.0 thresholds.",
+  "fixtures": [
+    {"id": "strong_bull",     "input": {"short_interest_ratio": 8.0,  "revenue_growth": 22.0, "price_return_3m": 12.0}, "expected": "BULLISH", "weight": 1.0},
+    {"id": "bull_by_sir",     "input": {"short_interest_ratio": 6.5,  "revenue_growth": 10.0, "price_return_3m": 2.0},  "expected": "BULLISH", "weight": 1.0},
+    {"id": "bull_by_rev",     "input": {"short_interest_ratio": 3.0,  "revenue_growth": 20.0, "price_return_3m": 0.0},  "expected": "BULLISH", "weight": 1.0},
+    {"id": "bull_by_r3m",     "input": {"short_interest_ratio": 1.0,  "revenue_growth": 5.0,  "price_return_3m": 8.0},  "expected": "BULLISH", "weight": 1.0},
+    {"id": "bear_by_all",     "input": {"short_interest_ratio": 1.0,  "revenue_growth": -5.0, "price_return_3m": -15.0},"expected": "BEARISH", "weight": 1.0},
+    {"id": "bear_edge",       "input": {"short_interest_ratio": 1.5,  "revenue_growth": -1.0, "price_return_3m": -12.0},"expected": "BEARISH", "weight": 1.0},
+    {"id": "neutral_low_all", "input": {"short_interest_ratio": 3.0,  "revenue_growth": 5.0,  "price_return_3m": 0.0},  "expected": "NEUTRAL", "weight": 1.0},
+    {"id": "neutral_mid",     "input": {"short_interest_ratio": 4.0,  "revenue_growth": 10.0, "price_return_3m": 3.0},  "expected": "NEUTRAL", "weight": 1.0},
+    {"id": "neutral_mixed",   "input": {"short_interest_ratio": 2.5,  "revenue_growth": 8.0,  "price_return_3m": -5.0}, "expected": "NEUTRAL", "weight": 1.0},
+    {"id": "neutral_bear_fail_r3m", "input": {"short_interest_ratio": 1.0, "revenue_growth": -5.0, "price_return_3m": -8.0},"expected": "NEUTRAL", "weight": 1.0},
+    {"id": "neutral_bear_fail_rev", "input": {"short_interest_ratio": 1.0, "revenue_growth": 1.0,  "price_return_3m": -12.0},"expected": "NEUTRAL", "weight": 1.0},
+    {"id": "mega_bull",       "input": {"short_interest_ratio": 30.0, "revenue_growth": 50.0, "price_return_3m": 30.0}, "expected": "BULLISH", "weight": 1.0}
+  ]
+}

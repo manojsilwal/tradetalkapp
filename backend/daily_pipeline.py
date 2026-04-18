@@ -213,11 +213,34 @@ async def _track_swarm_outcomes(knowledge_store, llm_client=None) -> dict:
                 except Exception:
                     pass
 
+            # RSPL lineage: attribute the reflection primarily to the ORIGINAL
+            # swarm-time versions (carried on swarm_history metadata). Also
+            # capture the version of the reflection-writer prompt active *now*.
+            prompt_versions: dict = {}
+            snapshot_id = ""
+            try:
+                import json as _json
+                raw_versions = meta.get("prompt_versions", "")
+                if raw_versions:
+                    prompt_versions = _json.loads(raw_versions) or {}
+                snapshot_id = meta.get("registry_snapshot_id", "") or ""
+            except Exception:
+                prompt_versions = {}
+            try:
+                from .deps import resource_registry as _rr
+                reflect_ver = _rr.active_version("swarm_reflection_writer")
+                if reflect_ver:
+                    prompt_versions.setdefault("swarm_reflection_writer", reflect_ver)
+            except Exception:
+                pass
+
             knowledge_store.add_swarm_reflection(
                 ticker=ticker, signal=1 if was_bullish else 0,
                 verdict=verdict, confidence=confidence,
                 price_change_pct=price_change_pct,
                 lesson=lesson, regime=regime, correct=correct,
+                prompt_versions=prompt_versions,
+                registry_snapshot_id=snapshot_id,
             )
             tracked += 1
         except Exception as e:
@@ -283,11 +306,30 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
             replace_existing=True,
             max_instances=1,
         )
+
+        # Outcome grader (Harness Engineering Phase 2) — daily 02:10 UTC. Runs
+        # AFTER the 00:00 ingest + dreaming but BEFORE the weekly meta-harness
+        # so SEPL Reflect consumers always see freshly-graded decisions. The
+        # job is a no-op when ``DECISION_LEDGER_ENABLE=0``.
+        if os.environ.get("DECISION_LEDGER_ENABLE", "1") in ("1", "true", "TRUE", "yes", "on"):
+            scheduler.add_job(
+                _outcome_grader_job,
+                trigger="cron",
+                hour=2,
+                minute=10,
+                id="outcome_grader_daily",
+                replace_existing=True,
+                max_instances=1,
+            )
+            grader_msg = " + outcome grader 02:10 UTC"
+        else:
+            grader_msg = " + outcome grader DISABLED"
+
         scheduler.start()
         logger.info(
             "[DailyPipeline] APScheduler started — daily 00:00 UTC + L1 every 15m + "
-            "CORAL heartbeat every %dm + dreaming 01:40 UTC + meta-harness Sun 03:10 UTC",
-            hb_min,
+            "CORAL heartbeat every %dm + dreaming 01:40 UTC + meta-harness Sun 03:10 UTC%s",
+            hb_min, grader_msg,
         )
     except Exception as e:
         logger.warning(f"[DailyPipeline] Scheduler start failed: {e}")
@@ -327,6 +369,22 @@ async def _dreaming_job(knowledge_store, llm_client=None) -> None:
         await run_dreaming_job(knowledge_store, llm_client)
     except Exception as e:
         logger.warning("[DailyPipeline] coral dreaming failed: %s", e)
+
+
+async def _outcome_grader_job() -> None:
+    """Grade every horizon (1d/5d/21d/63d) against SPY-relative market truth.
+
+    Harness Engineering Phase 2 — replaces ``_track_swarm_outcomes`` as the
+    primary learning signal for SEPL. Writes into ``outcome_observations``
+    so correlation queries can score every decision type (not just swarm).
+    """
+    try:
+        from .outcome_grader import run_grader_pass
+
+        result = await run_grader_pass()
+        logger.info("[DailyPipeline] outcome_grader_pass result=%s", result)
+    except Exception as e:
+        logger.warning("[DailyPipeline] outcome grader failed: %s", e)
 
 
 async def _meta_harness_weekly_job() -> None:

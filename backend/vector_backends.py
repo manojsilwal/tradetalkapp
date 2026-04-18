@@ -214,11 +214,24 @@ class SupabaseVectorBackend(VectorBackendBase):
         if not self._embedding_pool or not self._embedding_model:
             return None
         try:
-            emb = self._embedding_pool.next_sync().embeddings.create(
-                model=self._embedding_model,
-                input=text,
+            from .openrouter_pool import should_try_other_openrouter_keys_on_429, sync_failover_execute
+
+            clients = self._embedding_pool.sync_clients_for_request(
+                should_try_other_openrouter_keys_on_429()
             )
-            return emb.data[0].embedding
+
+            def _embed_one(client):
+                return client.embeddings.create(
+                    model=self._embedding_model,
+                    input=text,
+                )
+
+            emb, err = sync_failover_execute(clients, _embed_one)
+            if emb is not None:
+                return emb.data[0].embedding
+            if err is not None:
+                logger.warning(f"[SupabaseVectorBackend] Embedding generation failed: {err}")
+            return None
         except Exception as e:
             logger.warning(f"[SupabaseVectorBackend] Embedding generation failed: {e}")
             return None

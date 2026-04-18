@@ -12,6 +12,7 @@ router = APIRouter(tags=["debug"])
 @router.get("/llm/status")
 async def llm_status():
     """Show which LLM backend, model tiers, and routing all agents use."""
+    from ..gemini_llm import GEMINI_FALLBACK_MODEL, gemini_llm_fallback_enabled
     from ..llm_client import RAG_TOP_K_DEFAULT, MODEL_TIER, OPENROUTER_MODEL_LIGHT, _model_for_role
     backend = llm_client.backend
     ks_stats = knowledge_store.stats()
@@ -27,6 +28,8 @@ async def llm_status():
         "rag_top_k_default": RAG_TOP_K_DEFAULT,
         "role_model_mapping": role_models,
         "note": "Roles use heavy or light model tier based on reasoning complexity.",
+        "gemini_fallback_enabled": gemini_llm_fallback_enabled(),
+        "gemini_fallback_model": GEMINI_FALLBACK_MODEL if gemini_llm_fallback_enabled() else None,
     }
 
 

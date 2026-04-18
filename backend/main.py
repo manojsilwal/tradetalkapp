@@ -20,6 +20,7 @@ from .deps import (
     sse_clients, last_trace_data,
     news_scanner, notification_pipeline,
     knowledge_store, llm_client, db, up,
+    resource_registry,
 )
 
 app = FastAPI(
@@ -69,18 +70,43 @@ uprefs.init_preferences_db()
 from . import agent_memory as agent_memory_mod
 agent_memory_mod.init_agent_memory_db()
 
+from . import chat_session_store as chat_session_store_mod
+chat_session_store_mod.init_chat_sessions_db()
+
 from . import coral_hub as coral_hub_mod
 coral_hub_mod.init_coral_hub_db()
 
 from . import claim_store as claim_store_mod
 claim_store_mod.init_claim_store_db()
 
+# Decision-Outcome Ledger (Harness Engineering Phase 2).
+# Creating the backend here kicks the migration so the decisions.db is ready
+# before the first request hits. Installing the contract-validator sink wires
+# `backend.contract_validator` violations into `contract_violations` so
+# model-drift analytics can be answered with a SQL GROUP BY.
+try:
+    from . import decision_ledger as _decision_ledger
+    _decision_ledger.get_ledger()
+    _decision_ledger.install_contract_validator_sink()
+except Exception as _e:  # never block startup over ledger init
+    print(f"[DecisionLedger][startup] skipped (non-fatal): {_e}")
+
+# RSPL resource registry (Phase A) — schema auto-applies in resource_registry's
+# constructor; seeder reads backend/resources/prompts/*.yaml idempotently.
+try:
+    from . import resource_seeder as _resource_seeder
+    _resource_seeder.seed_on_startup()
+except Exception as _e:  # never block startup over prompt seeding
+    print(f"[ResourceSeeder][startup] skipped (non-fatal): {_e}")
+
 # ── Register routers ─────────────────────────────────────────────────────────
 from .routers import (
     auth as auth_router,
     progress, challenges, portfolio, learning, academy,
     notifications, analysis, backtest, macro, knowledge, debug, chat,
-    preferences,
+    preferences, resources as resources_router,
+    sepl as sepl_router,
+    scorecard as scorecard_router,
 )
 
 app.include_router(auth_router.router)
@@ -97,6 +123,9 @@ app.include_router(knowledge.router)
 app.include_router(debug.router)
 app.include_router(chat.router)
 app.include_router(preferences.router)
+app.include_router(resources_router.router)
+app.include_router(sepl_router.router)
+app.include_router(scorecard_router.router)
 
 # ── Serve generated video files ──────────────────────────────────────────────
 _static_videos = os.path.join(os.path.dirname(__file__), "static", "videos")
@@ -165,6 +194,125 @@ async def startup_event():
     _mil_scheduler.add_job(_mil_slow, "interval", minutes=30, id="mil_slow", max_instances=1)
     _mil_scheduler.start()
     print("[MarketIntel] APScheduler: fast=10min, slow=30min")
+
+    # ── SEPL (Autogenesis §3.2) evolution cycle, feature-flagged off by default.
+    # Even when SEPL_ENABLE=1, autocommit requires SEPL_AUTOCOMMIT=1; otherwise
+    # the scheduled cycle runs DRY-RUN only and just logs what it WOULD have
+    # done. See docs/SEPL.md for full gating semantics.
+    from .sepl import sepl_enabled as _sepl_enabled
+    if _sepl_enabled():
+        from .sepl import (
+            SEPL as _SEPL,
+            SEPLKillSwitch as _SEPLKillSwitch,
+            KnowledgeStoreReflectionSource as _KSR,
+        )
+
+        _sepl_scheduler = AsyncIOScheduler()
+
+        async def _sepl_tick():
+            try:
+                autocommit = os.environ.get("SEPL_AUTOCOMMIT", "0").strip() == "1"
+                reflection_source = _KSR(knowledge_store)
+                sepl = _SEPL(
+                    llm_client=llm_client,
+                    registry=resource_registry,
+                    reflection_source=reflection_source,
+                )
+                report = await sepl.run_cycle(dry_run=not autocommit)
+                print(
+                    f"[SEPL][tick] run={report.run_id} outcome={report.outcome.value} "
+                    f"dry_run={report.dry_run} committed={report.committed_version}"
+                )
+
+                # Kill-switch pass: run AFTER the evolution tick so a freshly
+                # committed change can't be rolled back on its own cycle. The
+                # kill switch also uses ``dry_run=not autocommit`` — it will
+                # never restore anything unless SEPL_AUTOCOMMIT=1.
+                ks = _SEPLKillSwitch(
+                    registry=resource_registry,
+                    reflection_source=reflection_source,
+                )
+                for rpt in ks.check_all(dry_run=not autocommit):
+                    print(
+                        f"[SEPL][killswitch] target={rpt.target_name} outcome={rpt.outcome.value} "
+                        f"delta={rpt.delta} post_n={rpt.post_commit_samples} restored={rpt.restored_to_version}"
+                    )
+            except Exception as e:
+                print(f"[SEPL][tick] error (non-fatal): {e}")
+
+        interval_hours = max(1, int(os.environ.get("SEPL_INTERVAL_HOURS", "24") or 24))
+        _sepl_scheduler.add_job(
+            _sepl_tick, "interval", hours=interval_hours, id="sepl_tick", max_instances=1
+        )
+        _sepl_scheduler.start()
+        print(f"[SEPL] scheduler started (interval={interval_hours}h, autocommit={os.environ.get('SEPL_AUTOCOMMIT', '0')})")
+    else:
+        print("[SEPL] disabled (set SEPL_ENABLE=1 to activate evolution loop)")
+
+    # ── SEPL-for-TOOLs (Phase C1 + C2, Autogenesis §3.2 for TOOL kind).
+    # Independent scheduler parallel to the prompt loop above. Safety layers
+    # stacked: master flag, dry-run default, min-margin, tier-aware daily cap
+    # (tier-2+ hardcoded to 0), fixture-based offline scoring, kill switch
+    # with its own autocommit gate. See docs/TOOL_EVOLUTION.md.
+    from .sepl_tool import tool_sepl_enabled as _tool_sepl_enabled
+    if _tool_sepl_enabled():
+        from .sepl_tool import (
+            SEPLTool as _SEPLTool,
+            SEPLToolKillSwitch as _SEPLToolKillSwitch,
+            tool_sepl_autocommit as _tool_sepl_autocommit,
+            tool_sepl_dry_run as _tool_sepl_dry_run,
+        )
+        from .resource_registry import ResourceKind as _ResourceKind
+
+        _sepl_tool_scheduler = AsyncIOScheduler()
+
+        async def _sepl_tool_tick():
+            try:
+                # Discover the learnable tool names at tick time so new YAML
+                # entries are picked up without a restart.
+                learnable = [
+                    r.name for r in resource_registry.list(_ResourceKind.TOOL)
+                    if r.learnable
+                ]
+                if not learnable:
+                    print("[SEPL-tool][tick] no learnable TOOL resources; skipping")
+                    return
+
+                dry = _tool_sepl_dry_run()
+                sepl = _SEPLTool(registry=resource_registry)
+                report = sepl.run_cycle(learnable)
+                print(
+                    f"[SEPL-tool][tick] run={report.run_id} target={report.tool_name} "
+                    f"outcome={report.outcome.value} dry_run={report.dry_run} "
+                    f"committed={report.committed_version}"
+                )
+
+                # Kill switch only restores when SEPL_TOOL_AUTOCOMMIT=1; absent
+                # that it reports DRY_RUN outcomes only and never mutates.
+                ks = _SEPLToolKillSwitch(registry=resource_registry)
+                for rpt in ks.check_all(dry_run=not _tool_sepl_autocommit()):
+                    print(
+                        f"[SEPL-tool][killswitch] tool={rpt.tool_name} outcome={rpt.outcome.value} "
+                        f"delta={rpt.delta} restored={rpt.restored_to_version}"
+                    )
+            except Exception as e:
+                print(f"[SEPL-tool][tick] error (non-fatal): {e}")
+
+        tool_interval_hours = max(
+            1, int(os.environ.get("SEPL_TOOL_INTERVAL_HOURS", "24") or 24)
+        )
+        _sepl_tool_scheduler.add_job(
+            _sepl_tool_tick, "interval",
+            hours=tool_interval_hours, id="sepl_tool_tick", max_instances=1,
+        )
+        _sepl_tool_scheduler.start()
+        print(
+            f"[SEPL-tool] scheduler started (interval={tool_interval_hours}h, "
+            f"dry_run={os.environ.get('SEPL_TOOL_DRY_RUN', '1')}, "
+            f"autocommit={os.environ.get('SEPL_TOOL_AUTOCOMMIT', '0')})"
+        )
+    else:
+        print("[SEPL-tool] disabled (set SEPL_TOOL_ENABLE=1 to activate tool evolution)")
 
     from .keep_alive import start_keep_alive
     start_keep_alive()

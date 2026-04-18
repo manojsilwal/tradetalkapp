@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, MessageCircle } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, MessageCircle, Scale } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -22,6 +22,7 @@ const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
 const LearningPathUI = React.lazy(() => import('./LearningPathUI'))
 const VideoAcademyUI = React.lazy(() => import('./VideoAcademyUI'))
 const ChatUI = React.lazy(() => import('./ChatUI'))
+const ScorecardUI = React.lazy(() => import('./ScorecardUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when user is not signed in.
@@ -39,6 +40,7 @@ const ROUTE_TO_KEY = {
     '/gold': 'gold',
     '/debate': 'debate',
     '/backtest': 'backtest',
+    '/scorecard': 'scorecard',
     '/observer': 'observer',
     '/systemmap': 'systemmap',
     '/challenge': 'challenge',
@@ -219,6 +221,15 @@ function App() {
                         <span>Strategy Lab</span>
                     </button>
 
+                    <button
+                        className={`nav-btn ${activeTab === 'scorecard' ? 'active' : ''}`}
+                        onClick={() => { navigate('/scorecard'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/scorecard' ? 'page' : undefined}
+                    >
+                        <Scale size={20} />
+                        <span>Risk/Return Scorecard</span>
+                    </button>
+
                     {/* --- Engagement features --- */}
                     <div style={{ fontSize: 9, color: '#475569', fontWeight: 700, letterSpacing: 1.5, padding: '12px 12px 4px' }}>
                         DAILY ENGAGEMENT
@@ -302,6 +313,7 @@ function App() {
                             <Route path="/chat" element={<ChatUI prefetch={chatPrefetch} />} />
                             <Route path="/debate" element={<DebateUI />} />
                             <Route path="/backtest" element={<BacktestUI />} />
+                            <Route path="/scorecard" element={<ScorecardUI />} />
                             <Route path="/observer" element={<ObserverUI />} />
                             <Route path="/systemmap" element={<SystemMapUI />} />
                             <Route path="/challenge" element={

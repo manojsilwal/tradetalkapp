@@ -1,0 +1,11 @@
+[
+  {
+    "input": "Ticker TICKR. Live data: price $42.10 (+6% YTD), ROE 22%, revenue growth 18% YoY, net cash position. Historical context: steady compounder in defensive sector."
+  },
+  {
+    "input": "Ticker TICKR. Live data: price $18.50, short interest 24%, recent breakout above 200-day MA, rising put/call ratio. Historical context: multiple failed rallies last 12 months."
+  },
+  {
+    "input": "Ticker TICKR. Live data: price $305, P/E 28x, forward FCF yield 3.8%, AI/capex narrative. Historical context: market leader, strong moat but rich valuation."
+  }
+]

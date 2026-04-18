@@ -35,3 +35,6 @@ playwright-report/
 # Logs
 *.log
 .env.deploy
+
+# Pytest-generated video artifacts (do not commit)
+backend/static/videos/pytest_smoke/

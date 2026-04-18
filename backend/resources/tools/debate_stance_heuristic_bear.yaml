@@ -1,0 +1,63 @@
+name: debate_stance_heuristic_bear
+kind: tool
+version: 1.0.0
+description: |-
+  Numeric fallback heuristic used by the debate panel's BEAR agent when the
+  LLM output does not clearly state a stance. Converts (P/E ratio, debt-to-
+  equity, 3-month price return) into BULLISH / BEARISH / NEUTRAL. Pure,
+  deterministic, no I/O.
+learnable: true
+metadata:
+  tier: 0
+  pure: true
+  side_effect: read
+  cost_model:
+    call_cost_usd: 0.0
+    calls_per_hour_cap: null
+  migrated_from: backend/debate_agents.py::_determine_stance (role == "bear")
+  parameter_ranges:
+    pe_bear_threshold:    {min: 20.0, max: 100.0, step: 1.0}
+    debt_eq_bear_threshold: {min: 50.0, max: 400.0, step: 5.0}
+    r3m_bear_ceiling:     {min: -40.0, max: -5.0,  step: 1.0}
+    pe_bull_ceiling:      {min: 8.0,   max: 30.0,  step: 1.0}
+    r3m_bull_floor:       {min: -5.0,  max: 15.0,  step: 1.0}
+  config:
+    pe_bear_threshold: 50.0
+    debt_eq_bear_threshold: 200.0
+    r3m_bear_ceiling: -15.0
+    pe_bull_ceiling: 20.0
+    r3m_bull_floor: 0.0
+schema:
+  type: object
+  required:
+    - pe_bear_threshold
+    - debt_eq_bear_threshold
+    - r3m_bear_ceiling
+    - pe_bull_ceiling
+    - r3m_bull_floor
+  properties:
+    pe_bear_threshold:      {type: number}
+    debt_eq_bear_threshold: {type: number}
+    r3m_bear_ceiling:       {type: number}
+    pe_bull_ceiling:        {type: number}
+    r3m_bull_floor:         {type: number}
+fallback:
+  pe_bear_threshold: 50.0
+  debt_eq_bear_threshold: 200.0
+  r3m_bear_ceiling: -15.0
+  pe_bull_ceiling: 20.0
+  r3m_bull_floor: 0.0
+body: |-
+  # debate_stance_heuristic_bear (tier 0, pure)
+  #
+  # Handler: backend/debate_agents.py::_determine_stance, role == "bear"
+  # Input: {pe_ratio, debt_to_equity, price_return_3m}
+  # Output: BULLISH | BEARISH | NEUTRAL
+  #
+  # Rule:
+  #   BEARISH if  (pe > pe_bear_threshold)         OR
+  #               (debt_eq > debt_eq_bear_threshold) OR
+  #               (r3m < r3m_bear_ceiling)
+  #   BULLISH if  (pe > 0 AND pe < pe_bull_ceiling) AND
+  #               (r3m > r3m_bull_floor)
+  #   else NEUTRAL

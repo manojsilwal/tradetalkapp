@@ -1,0 +1,18 @@
+{
+  "tool_name": "debate_stance_heuristic_bear",
+  "description": "Held-out shadow-mode fixtures for the debate bear-stance heuristic. Each row is {pe_ratio, debt_to_equity, price_return_3m%} and the expected stance under v1.0.0 thresholds.",
+  "fixtures": [
+    {"id": "bear_high_pe",       "input": {"pe_ratio": 80.0,  "debt_to_equity": 50.0,  "price_return_3m": 0.0},   "expected": "BEARISH", "weight": 1.0},
+    {"id": "bear_edge_pe",       "input": {"pe_ratio": 55.0,  "debt_to_equity": 50.0,  "price_return_3m": 2.0},   "expected": "BEARISH", "weight": 1.0},
+    {"id": "bear_high_debt",     "input": {"pe_ratio": 25.0,  "debt_to_equity": 250.0, "price_return_3m": -2.0},  "expected": "BEARISH", "weight": 1.0},
+    {"id": "bear_drawdown",      "input": {"pe_ratio": 22.0,  "debt_to_equity": 80.0,  "price_return_3m": -20.0}, "expected": "BEARISH", "weight": 1.0},
+    {"id": "bull_low_pe",        "input": {"pe_ratio": 15.0,  "debt_to_equity": 30.0,  "price_return_3m": 5.0},   "expected": "BULLISH", "weight": 1.0},
+    {"id": "bull_edge_pe",       "input": {"pe_ratio": 19.5,  "debt_to_equity": 50.0,  "price_return_3m": 3.0},   "expected": "BULLISH", "weight": 1.0},
+    {"id": "neutral_midpe_flat", "input": {"pe_ratio": 25.0,  "debt_to_equity": 80.0,  "price_return_3m": -5.0},  "expected": "NEUTRAL", "weight": 1.0},
+    {"id": "neutral_no_pe",      "input": {"pe_ratio": 0.0,   "debt_to_equity": 50.0,  "price_return_3m": 2.0},   "expected": "NEUTRAL", "weight": 1.0},
+    {"id": "neutral_mid",        "input": {"pe_ratio": 30.0,  "debt_to_equity": 100.0, "price_return_3m": 1.0},   "expected": "NEUTRAL", "weight": 1.0},
+    {"id": "neutral_bull_fail_r3m", "input": {"pe_ratio": 18.0, "debt_to_equity": 40.0, "price_return_3m": -1.0}, "expected": "NEUTRAL", "weight": 1.0},
+    {"id": "bear_all_three",     "input": {"pe_ratio": 70.0,  "debt_to_equity": 300.0, "price_return_3m": -25.0}, "expected": "BEARISH", "weight": 1.0},
+    {"id": "bull_zero_debt",     "input": {"pe_ratio": 12.0,  "debt_to_equity": 0.0,   "price_return_3m": 10.0},  "expected": "BULLISH", "weight": 1.0}
+  ]
+}

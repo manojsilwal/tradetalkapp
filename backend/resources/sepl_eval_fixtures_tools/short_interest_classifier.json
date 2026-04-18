@@ -1,0 +1,24 @@
+{
+  "tool_name": "short_interest_classifier",
+  "description": "Held-out shadow-mode fixtures. Each entry is a pair of realistic SIR/DTC observations and the expected signal under the canonical v1.0.0 config. The SEPL shadow evaluator compares active vs candidate configs against these labels to compute a margin. expected values: 1 = bullish squeeze setup, 0 = not bullish, -1 = ambiguous (LLM would be consulted in live).",
+  "fixtures": [
+    {"id": "gme_peak_2021",      "input": {"short_interest_ratio": 62.0, "days_to_cover": 7.0}, "expected": 1,  "weight": 1.0},
+    {"id": "amc_peak_2021",      "input": {"short_interest_ratio": 23.0, "days_to_cover": 6.2}, "expected": 1,  "weight": 1.0},
+    {"id": "bbby_squeeze",       "input": {"short_interest_ratio": 45.0, "days_to_cover": 9.0}, "expected": 1,  "weight": 1.0},
+    {"id": "just_above_bull",    "input": {"short_interest_ratio": 15.5, "days_to_cover": 2.0}, "expected": 1,  "weight": 1.0},
+    {"id": "mid_ambig_low_dtc",  "input": {"short_interest_ratio": 12.0, "days_to_cover": 1.2}, "expected": -1, "weight": 1.0},
+    {"id": "mid_ambig_high_dtc", "input": {"short_interest_ratio": 14.5, "days_to_cover": 4.0}, "expected": -1, "weight": 1.0},
+    {"id": "top_of_band",        "input": {"short_interest_ratio": 20.0, "days_to_cover": 5.5}, "expected": 1,  "weight": 1.0},
+    {"id": "spy_like",           "input": {"short_interest_ratio": 2.5,  "days_to_cover": 1.0}, "expected": 0,  "weight": 1.0},
+    {"id": "aapl_like",          "input": {"short_interest_ratio": 0.8,  "days_to_cover": 0.4}, "expected": 0,  "weight": 1.0},
+    {"id": "msft_like",          "input": {"short_interest_ratio": 0.5,  "days_to_cover": 0.3}, "expected": 0,  "weight": 1.0},
+    {"id": "boundary_just_below","input": {"short_interest_ratio": 9.8,  "days_to_cover": 0.9}, "expected": 0,  "weight": 1.0},
+    {"id": "amd_like",           "input": {"short_interest_ratio": 3.1,  "days_to_cover": 1.1}, "expected": 0,  "weight": 1.0},
+    {"id": "nvda_like",          "input": {"short_interest_ratio": 1.8,  "days_to_cover": 1.0}, "expected": 0,  "weight": 1.0},
+    {"id": "tsla_like",          "input": {"short_interest_ratio": 3.5,  "days_to_cover": 1.5}, "expected": 0,  "weight": 1.0},
+    {"id": "small_cap_ambig",    "input": {"short_interest_ratio": 11.0, "days_to_cover": 3.0}, "expected": -1, "weight": 1.0},
+    {"id": "high_sir_small_dtc", "input": {"short_interest_ratio": 25.0, "days_to_cover": 0.5}, "expected": 1,  "weight": 1.0},
+    {"id": "deep_bull_edge",     "input": {"short_interest_ratio": 35.0, "days_to_cover": 4.0}, "expected": 1,  "weight": 1.0},
+    {"id": "clean_no_interest",  "input": {"short_interest_ratio": 0.0,  "days_to_cover": 0.0}, "expected": 0,  "weight": 1.0}
+  ]
+}

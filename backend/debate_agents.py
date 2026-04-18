@@ -15,8 +15,27 @@ from datetime import datetime, timezone
 from .schemas import DebateArgument, DebateResult, AgentStance
 from .agent_policy_guardrails import ensure_capability, workload_scope
 from .telemetry import get_tracer
+from .tool_configs import get_tool_config
+from .tool_handlers import decide_debate_bull_stance, decide_debate_bear_stance
 
 logger = logging.getLogger(__name__)
+
+_DEBATE_BULL_STANCE_DEFAULTS: dict = {
+    "sir_bull_floor": 5.0,
+    "rev_growth_bull_floor": 15.0,
+    "r3m_bull_floor": 5.0,
+    "sir_bear_ceiling": 2.0,
+    "rev_growth_bear_ceiling": 0.0,
+    "r3m_bear_ceiling": -10.0,
+}
+
+_DEBATE_BEAR_STANCE_DEFAULTS: dict = {
+    "pe_bear_threshold": 50.0,
+    "debt_eq_bear_threshold": 200.0,
+    "r3m_bear_ceiling": -15.0,
+    "pe_bull_ceiling": 20.0,
+    "r3m_bull_floor": 0.0,
+}
 
 # ── Agent metadata ────────────────────────────────────────────────────────────
 AGENT_META = {
@@ -41,24 +60,12 @@ def _determine_stance(role: str, data: dict, llm_result: dict) -> AgentStance:
 
     # Data-driven fallback per agent
     if role == "bull":
-        sir = data.get("short_interest_ratio", 0)
-        rev = data.get("revenue_growth", 0)
-        r3m = data.get("price_return_3m", 0)
-        if sir > 5 or rev > 15 or r3m > 5:
-            return AgentStance.BULLISH
-        if sir < 2 and rev < 0 and r3m < -10:
-            return AgentStance.BEARISH
-        return AgentStance.NEUTRAL
+        cfg = get_tool_config("debate_stance_heuristic_bull", _DEBATE_BULL_STANCE_DEFAULTS)
+        return AgentStance(decide_debate_bull_stance(data, cfg))
 
     if role == "bear":
-        debt_eq = data.get("debt_to_equity") or 0
-        pe = data.get("pe_ratio") or 0
-        r3m = data.get("price_return_3m", 0)
-        if (pe and pe > 50) or (debt_eq and debt_eq > 200) or r3m < -15:
-            return AgentStance.BEARISH
-        if pe and pe < 20 and r3m > 0:
-            return AgentStance.BULLISH
-        return AgentStance.NEUTRAL
+        cfg = get_tool_config("debate_stance_heuristic_bear", _DEBATE_BEAR_STANCE_DEFAULTS)
+        return AgentStance(decide_debate_bear_stance(data, cfg))
 
     if role == "macro":
         # placeholder — macro agent uses macro state from data
@@ -91,8 +98,16 @@ def _determine_stance(role: str, data: dict, llm_result: dict) -> AgentStance:
 
 
 async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
-                     swarm_context: str = "") -> DebateArgument:
-    """Generic agent runner used by all 5 specialists."""
+                     swarm_context: str = "",
+                     *,
+                     out_refs: list | None = None) -> DebateArgument:
+    """Generic agent runner used by all 5 specialists.
+
+    If ``out_refs`` is provided, each retrieval hit used to build the RAG
+    context is appended as ``{chunk_id, collection, rank, distance, ticker,
+    agent_role}`` so callers can record per-agent evidence into the Decision
+    Ledger without widening the return type.
+    """
     ensure_capability("debate", "knowledge_read")
     query_map = {
         "bull":     [
@@ -155,12 +170,26 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
             "stock_profiles",
             "sp500_fundamentals_narratives",
         ) else None
-        docs = ks.query(
-            collection,
-            f"{ticker} {role} investment analysis",
-            n_results=2,
-            where=tw,
-        )
+        if out_refs is not None and hasattr(ks, "query_with_refs"):
+            docs, refs = ks.query_with_refs(
+                collection,
+                f"{ticker} {role} investment analysis",
+                n_results=2,
+                where=tw,
+            )
+            for r in refs:
+                try:
+                    r["agent_role"] = role
+                    out_refs.append(r)
+                except Exception:
+                    pass
+        else:
+            docs = ks.query(
+                collection,
+                f"{ticker} {role} investment analysis",
+                n_results=2,
+                where=tw,
+            )
         context_docs.extend(docs)
     context = ks.format_context(context_docs)
 
@@ -190,52 +219,95 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
 
 
 async def run_bull_agent(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
-                         swarm_context: str = "") -> DebateArgument:
+                         swarm_context: str = "",
+                         *, out_refs: list | None = None) -> DebateArgument:
     live = {**debate_data, **macro_state}
-    return await _run_agent("bull", ticker, live, ks, llm, swarm_context=swarm_context)
+    return await _run_agent(
+        "bull", ticker, live, ks, llm, swarm_context=swarm_context, out_refs=out_refs
+    )
 
 
 async def run_bear_agent(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
-                         swarm_context: str = "") -> DebateArgument:
+                         swarm_context: str = "",
+                         *, out_refs: list | None = None) -> DebateArgument:
     live = {**debate_data, **macro_state}
-    return await _run_agent("bear", ticker, live, ks, llm, swarm_context=swarm_context)
+    return await _run_agent(
+        "bear", ticker, live, ks, llm, swarm_context=swarm_context, out_refs=out_refs
+    )
 
 
 async def run_macro_agent(ticker: str, macro_state: dict, ks, llm,
-                          swarm_context: str = "") -> DebateArgument:
-    return await _run_agent("macro", ticker, macro_state, ks, llm, swarm_context=swarm_context)
+                          swarm_context: str = "",
+                          *, out_refs: list | None = None) -> DebateArgument:
+    return await _run_agent(
+        "macro", ticker, macro_state, ks, llm, swarm_context=swarm_context, out_refs=out_refs
+    )
 
 
 async def run_value_agent(ticker: str, debate_data: dict, ks, llm,
-                          swarm_context: str = "") -> DebateArgument:
-    return await _run_agent("value", ticker, debate_data, ks, llm, swarm_context=swarm_context)
+                          swarm_context: str = "",
+                          *, out_refs: list | None = None) -> DebateArgument:
+    return await _run_agent(
+        "value", ticker, debate_data, ks, llm, swarm_context=swarm_context, out_refs=out_refs
+    )
 
 
 async def run_momentum_agent(ticker: str, debate_data: dict, ks, llm,
-                             swarm_context: str = "") -> DebateArgument:
-    return await _run_agent("momentum", ticker, debate_data, ks, llm, swarm_context=swarm_context)
+                             swarm_context: str = "",
+                             *, out_refs: list | None = None) -> DebateArgument:
+    return await _run_agent(
+        "momentum", ticker, debate_data, ks, llm, swarm_context=swarm_context, out_refs=out_refs
+    )
 
 
 VALID_VERDICTS = {"STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"}
 
 
-async def run_moderator(ticker: str, arguments: list[DebateArgument], ks, llm) -> tuple:
+async def run_moderator(
+    ticker: str,
+    arguments: list[DebateArgument],
+    ks,
+    llm,
+    *,
+    out_refs: list | None = None,
+) -> tuple:
     """
     Synthesise 5 agent arguments into (verdict, confidence, summary, quality_warning).
     Validates the LLM verdict against an allowed enum. Retries once on failure.
     Returns: (verdict_str, confidence_float, summary_str, quality_warning_or_None)
+
+    ``out_refs`` (optional): see :func:`_run_agent`. Moderator refs carry
+    ``agent_role="moderator"``.
     """
     with workload_scope("debate", "knowledge_read"):
-        context_docs = ks.query(
-            "debate_history",
-            f"{ticker} debate verdict",
-            n_results=3,
-            where={"ticker": ticker},
-        )
-        if not context_docs:
-            context_docs = ks.query(
-                "debate_history", f"{ticker} debate verdict", n_results=3
+        if out_refs is not None and hasattr(ks, "query_with_refs"):
+            context_docs, refs = ks.query_with_refs(
+                "debate_history",
+                f"{ticker} debate verdict",
+                n_results=3,
+                where={"ticker": ticker},
             )
+            if not context_docs:
+                context_docs, refs = ks.query_with_refs(
+                    "debate_history", f"{ticker} debate verdict", n_results=3
+                )
+            for r in refs:
+                try:
+                    r["agent_role"] = "moderator"
+                    out_refs.append(r)
+                except Exception:
+                    pass
+        else:
+            context_docs = ks.query(
+                "debate_history",
+                f"{ticker} debate verdict",
+                n_results=3,
+                where={"ticker": ticker},
+            )
+            if not context_docs:
+                context_docs = ks.query(
+                    "debate_history", f"{ticker} debate verdict", n_results=3
+                )
     if hasattr(ks, "query_reflections"):
         reflection_docs, _, telemetry = ks.query_reflections(
             query_text=f"{ticker} final verdict",
@@ -329,12 +401,26 @@ async def run_full_debate(ticker: str, debate_data: dict, macro_state: dict, ks,
 
 async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
                                 swarm_context: str = "") -> DebateResult:
+    # Per-agent retrieval ref sinks (one per role to avoid concurrent mutation
+    # of a shared list across asyncio tasks). Merged after gather.
+    bull_refs: list = []
+    bear_refs: list = []
+    macro_refs: list = []
+    value_refs: list = []
+    momentum_refs: list = []
+    moderator_refs: list = []
+
     bull_arg, bear_arg, macro_arg, value_arg, momentum_arg = await asyncio.gather(
-        run_bull_agent(ticker, debate_data, macro_state, ks, llm, swarm_context=swarm_context),
-        run_bear_agent(ticker, debate_data, macro_state, ks, llm, swarm_context=swarm_context),
-        run_macro_agent(ticker, macro_state, ks, llm, swarm_context=swarm_context),
-        run_value_agent(ticker, debate_data, ks, llm, swarm_context=swarm_context),
-        run_momentum_agent(ticker, debate_data, ks, llm, swarm_context=swarm_context),
+        run_bull_agent(ticker, debate_data, macro_state, ks, llm,
+                       swarm_context=swarm_context, out_refs=bull_refs),
+        run_bear_agent(ticker, debate_data, macro_state, ks, llm,
+                       swarm_context=swarm_context, out_refs=bear_refs),
+        run_macro_agent(ticker, macro_state, ks, llm,
+                        swarm_context=swarm_context, out_refs=macro_refs),
+        run_value_agent(ticker, debate_data, ks, llm,
+                        swarm_context=swarm_context, out_refs=value_refs),
+        run_momentum_agent(ticker, debate_data, ks, llm,
+                           swarm_context=swarm_context, out_refs=momentum_refs),
     )
 
     arguments = [bull_arg, bear_arg, macro_arg, value_arg, momentum_arg]
@@ -351,7 +437,9 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
     else:
         heuristic_verdict = "NEUTRAL"
 
-    verdict, confidence, summary, quality_warning = await run_moderator(ticker, arguments, ks, llm)
+    verdict, confidence, summary, quality_warning = await run_moderator(
+        ticker, arguments, ks, llm, out_refs=moderator_refs
+    )
 
     if not verdict or verdict == "NEUTRAL" and heuristic_verdict != "NEUTRAL":
         verdict = heuristic_verdict
@@ -363,7 +451,7 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
     except Exception as e:
         logger.warning(f"[Debate] agent snapshot storage failed: {e}")
 
-    return DebateResult(
+    debate_result = DebateResult(
         ticker=ticker.upper(),
         arguments=arguments,
         verdict=verdict,
@@ -374,4 +462,85 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
         neutral_score=neutral_score,
         quality_warning=quality_warning,
     )
+
+    # ── Decision-Outcome Ledger emission (Harness Engineering Phase 2) ──
+    # Emits ONE row capturing the moderator-validated, override-applied,
+    # user-facing debate verdict. The 5-agent arguments ride along in
+    # output_json so the grader + correlation queries can split hits by
+    # stance composition. Best-effort — failure must not affect callers.
+    try:
+        from . import decision_ledger as _dl
+        regime = str(macro_state.get("market_regime", "") or "")
+        features = [
+            _dl.FeatureValue(name="market_regime", value_str=regime, regime=regime),
+            _dl.FeatureValue(
+                name="bull_score", value_num=float(bull_score), regime=regime,
+            ),
+            _dl.FeatureValue(
+                name="bear_score", value_num=float(bear_score), regime=regime,
+            ),
+            _dl.FeatureValue(
+                name="neutral_score", value_num=float(neutral_score), regime=regime,
+            ),
+        ]
+        credit = macro_state.get("credit_stress_index")
+        if credit is not None:
+            features.append(
+                _dl.FeatureValue(
+                    name="credit_stress_index",
+                    value_num=float(credit),
+                    regime=regime,
+                )
+            )
+        # Merge all per-agent refs → ledger evidence rows so a correlation
+        # query can split hit-rate by (agent_role, collection, regime).
+        all_refs: list[_dl.EvidenceRef] = []
+        for bucket in (bull_refs, bear_refs, macro_refs, value_refs,
+                       momentum_refs, moderator_refs):
+            for r in bucket or []:
+                try:
+                    cid = str(r.get("chunk_id") or "")
+                    if not cid:
+                        continue
+                    try:
+                        rel = max(0.0, min(1.0, 1.0 - float(r.get("distance", 1.0))))
+                    except Exception:
+                        rel = None
+                    all_refs.append(
+                        _dl.EvidenceRef(
+                            chunk_id=cid,
+                            collection=str(r.get("collection") or ""),
+                            rank=int(r.get("rank", 0)),
+                            relevance=rel,
+                        )
+                    )
+                except Exception:
+                    continue
+
+        _dl.emit_decision(
+            decision_type="debate",
+            symbol=ticker,
+            horizon_hint="5d",  # debate verdicts are graded on a multi-day window
+            verdict=verdict or "NEUTRAL",
+            confidence=float(confidence),
+            output={
+                "ticker": ticker.upper(),
+                "verdict": verdict,
+                "confidence": confidence,
+                "summary": summary,
+                "bull_score": bull_score,
+                "bear_score": bear_score,
+                "neutral_score": neutral_score,
+                "heuristic_verdict": heuristic_verdict,
+                "quality_warning": quality_warning,
+                "arguments": [a.model_dump() for a in arguments],
+            },
+            source_route="backend/debate_agents.py::_run_full_debate_impl",
+            evidence=all_refs,
+            features=features,
+        )
+    except Exception as e:
+        logger.debug("[Debate] decision_ledger emit skipped: %s", e)
+
+    return debate_result
 

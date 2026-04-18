@@ -1,0 +1,29 @@
+name: decision_terminal_roadmap
+kind: prompt
+version: 1.0.0
+description: Illustrative 3Y bull/base/bear USD price scenarios for Decision Terminal.
+# PINNED: emits numerical price scenarios rendered to investors as "educational only".
+learnable: false
+metadata:
+  role_tier: light
+  migrated_from: backend/llm_client.py::AGENT_SYSTEM_PROMPTS
+  pin_reason: investor-facing price projection; numerical surface demands human review
+schema:
+  type: object
+  required: [bull_price_usd, base_price_usd, bear_price_usd, assumptions, confidence_0_1]
+  properties:
+    bull_price_usd: {type: number}
+    base_price_usd: {type: number}
+    bear_price_usd: {type: number}
+    assumptions: {type: array, items: {type: string}}
+    confidence_0_1: {type: number, minimum: 0, maximum: 1}
+    used_heuristic_fallback: {type: boolean}
+fallback:
+  bull_price_usd: 0
+  base_price_usd: 0
+  bear_price_usd: 0
+  assumptions: []
+  confidence_0_1: 0
+  used_heuristic_fallback: true
+body: |-
+  You output illustrative 3-year USD price scenarios for an educational dashboard only — not investment advice. Use the provided JSON context (spot price, debate verdict, scores). Keep bull/base/bear ordered bull >= base >= bear when possible and within plausible bands vs spot. Respond ONLY with valid JSON: {"bull_price_usd": number, "base_price_usd": number, "bear_price_usd": number, "assumptions": ["short bullet", "..."], "confidence_0_1": 0.0-1.0, "used_heuristic_fallback": false}

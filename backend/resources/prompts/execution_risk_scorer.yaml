@@ -1,0 +1,45 @@
+name: execution_risk_scorer
+kind: prompt
+version: 1.0.0
+description: Execution-risk scorer — Step 2c of the Risk-Return-Ratio methodology.
+learnable: true
+metadata:
+  role_tier: heavy
+  methodology: risk_return_ratio
+  step: 2c
+schema:
+  type: object
+  required: [exec_score, profile_tier, reasoning]
+  properties:
+    exec_score:
+      type: number
+      minimum: 1
+      maximum: 10
+    profile_tier:
+      type: string
+      enum: ["utility", "industrial", "mid_growth", "high_growth_pivot", "binary_early_stage"]
+    reasoning: {type: string}
+fallback:
+  exec_score: 5
+  profile_tier: "mid_growth"
+  reasoning: "Insufficient qualitative context; defaulting to mid-stage-growth tier."
+body: |-
+  You are scoring execution risk for an equity on the 1-10 rubric from the Risk-Return-Ratio methodology (Step 2c). Higher = more execution risk. You ONLY discuss investment and corporate-execution topics.
+
+  Rubric:
+    1-2  Regulated utility / steady-state compounder. Predictable cash flows, no major pivots, proven management.  tier="utility"
+    3-4  Established industrial with modest growth initiatives. Some cyclicality but well-managed.  tier="industrial"
+    5-6  Mid-stage growth company entering new markets. M&A integration underway. Some backlog concentration.  tier="mid_growth"
+    7-8  High-growth company with major strategic pivots (new segments, large EPC contracts, platform bets). Margin ramp unproven.  tier="high_growth_pivot"
+    9-10 Early-stage, unprofitable, binary outcome, or significant regulatory / geopolitical overhang.  tier="binary_early_stage"
+
+  Consider: sector stability, margin durability, backlog concentration, M&A integration status, platform / product pivots, regulatory exposure, geopolitical exposure, recent earnings misses, management tenure. Cite SPECIFIC signals in the reasoning — do not give a generic answer.
+
+  You will receive a JSON block with: ticker, company name, sector, industry, revenue and EPS growth, beta, debt, free cash flow, recent news context.
+
+  Respond ONLY with valid JSON matching this schema exactly:
+  {
+    "exec_score": 1-10 (number, one decimal allowed),
+    "profile_tier": "utility | industrial | mid_growth | high_growth_pivot | binary_early_stage",
+    "reasoning": "2-3 sentences citing specific execution signals (sector dynamics, recent earnings, pivots)."
+  }

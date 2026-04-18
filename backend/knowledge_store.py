@@ -200,8 +200,21 @@ class KnowledgeStore:
 
     # ── WRITE METHODS ─────────────────────────────────────────────────────────
 
-    def add_swarm_analysis(self, consensus) -> None:
-        """Store a SwarmConsensus result after /trace."""
+    def add_swarm_analysis(
+        self,
+        consensus,
+        *,
+        prompt_versions: Optional[dict] = None,
+        agent_version: Optional[str] = None,
+        registry_snapshot_id: Optional[str] = None,
+    ) -> None:
+        """
+        Store a SwarmConsensus result after /trace.
+
+        Phase A additions (optional kwargs): ``prompt_versions`` / ``agent_version`` /
+        ``registry_snapshot_id`` stamp the exact registry state that produced the
+        consensus. Backward-compatible — legacy callers still work.
+        """
         col = self._safe_col("swarm_history")
         if not col:
             return
@@ -214,17 +227,21 @@ class KnowledgeStore:
                 f"Credit stress: {consensus.macro_state.credit_stress_index:.2f}."
             )
             entry_id = f"swarm_{consensus.ticker}_{int(time.time())}"
+            meta = {
+                "ticker": consensus.ticker,
+                "verdict": consensus.global_verdict,
+                "confidence": consensus.confidence,
+                "global_signal": consensus.global_signal,
+                "market_regime": consensus.macro_state.market_regime.value if hasattr(consensus.macro_state.market_regime, 'value') else str(consensus.macro_state.market_regime),
+                "credit_stress": consensus.macro_state.credit_stress_index,
+                "date": str(datetime.now(timezone.utc).date()),
+                "prompt_versions": json.dumps(prompt_versions or {}, sort_keys=True),
+                "agent_version": agent_version or "unversioned",
+                "registry_snapshot_id": registry_snapshot_id or "",
+            }
             col.add(
                 documents=[doc],
-                metadatas=[{
-                    "ticker": consensus.ticker,
-                    "verdict": consensus.global_verdict,
-                    "confidence": consensus.confidence,
-                    "global_signal": consensus.global_signal,
-                    "market_regime": consensus.macro_state.market_regime.value if hasattr(consensus.macro_state.market_regime, 'value') else str(consensus.macro_state.market_regime),
-                    "credit_stress": consensus.macro_state.credit_stress_index,
-                    "date": str(datetime.now(timezone.utc).date()),
-                }],
+                metadatas=[meta],
                 ids=[entry_id],
             )
         except Exception as e:
@@ -262,10 +279,34 @@ class KnowledgeStore:
         except Exception as e:
             logger.warning(f"[KnowledgeStore] add_debate failed: {e}")
 
-    def add_swarm_reflection(self, ticker: str, signal: int, verdict: str,
-                              confidence: float, price_change_pct: float,
-                              lesson: str, regime: str, correct: bool) -> None:
-        """Store a daily-outcome reflection so future swarm runs learn from results."""
+    def add_swarm_reflection(
+        self,
+        ticker: str,
+        signal: int,
+        verdict: str,
+        confidence: float,
+        price_change_pct: float,
+        lesson: str,
+        regime: str,
+        correct: bool,
+        *,
+        prompt_versions: Optional[dict] = None,
+        agent_version: Optional[str] = None,
+        registry_snapshot_id: Optional[str] = None,
+    ) -> None:
+        """
+        Store a daily-outcome reflection so future swarm runs learn from results.
+
+        Phase A additions (RSPL lineage):
+          * ``prompt_versions`` — ``{role: semver}`` of prompts active for this
+            swarm decision, JSON-serialized into Chroma metadata.
+          * ``agent_version`` — placeholder; always "unversioned" in Phase A.
+          * ``registry_snapshot_id`` — sha256-prefix of the active version set
+            at reflection time; lets SEPL correlate batched runs.
+
+        Kept optional/keyword-only so legacy callers (Phase 5 reflection loop)
+        continue working unchanged.
+        """
         col = self._safe_col("swarm_reflections")
         if not col:
             return
@@ -278,19 +319,24 @@ class KnowledgeStore:
                 f"Outcome: {outcome}. Regime: {regime}. Lesson: {lesson}"
             )
             entry_id = f"swarm_ref_{ticker}_{int(time.time())}"
+            meta = {
+                "ticker": ticker,
+                "signal": signal,
+                "verdict": verdict,
+                "confidence": confidence,
+                "price_change_pct": price_change_pct,
+                "outcome": outcome,
+                "regime": regime,
+                "effectiveness_score": effectiveness,
+                "date": str(datetime.now(timezone.utc).date()),
+                # RSPL lineage. JSON-string so Chroma metadata stays scalar/str.
+                "prompt_versions": json.dumps(prompt_versions or {}, sort_keys=True),
+                "agent_version": agent_version or "unversioned",
+                "registry_snapshot_id": registry_snapshot_id or "",
+            }
             col.add(
                 documents=[doc],
-                metadatas=[{
-                    "ticker": ticker,
-                    "signal": signal,
-                    "verdict": verdict,
-                    "confidence": confidence,
-                    "price_change_pct": price_change_pct,
-                    "outcome": outcome,
-                    "regime": regime,
-                    "effectiveness_score": effectiveness,
-                    "date": str(datetime.now(timezone.utc).date()),
-                }],
+                metadatas=[meta],
                 ids=[entry_id],
             )
         except Exception as e:
@@ -757,6 +803,7 @@ class KnowledgeStore:
             docs = results.get("documents", [[]])[0]
             metas = results.get("metadatas", [[]])[0]
             dists = results.get("distances", [[]])[0]
+            ids = results.get("ids", [[]])[0] if results.get("ids") else []
             out = []
             for i, doc in enumerate(docs):
                 dval = 1.0
@@ -767,6 +814,7 @@ class KnowledgeStore:
                         dval = 1.0
                 out.append(
                     {
+                        "id": str(ids[i]) if i < len(ids) and ids[i] is not None else "",
                         "document": doc or "",
                         "metadata": metas[i] if i < len(metas) else {},
                         "distance": dval,
@@ -776,6 +824,65 @@ class KnowledgeStore:
         except Exception as e:
             logger.warning(f"[KnowledgeStore] query_with_metadata({collection}) failed: {e}")
             return []
+
+    def query_with_refs(
+        self,
+        collection: str,
+        query_text: str,
+        n_results: int = 3,
+        where: Optional[dict] = None,
+    ) -> tuple[list[str], list[dict]]:
+        """
+        Companion to :meth:`query` that ALSO returns chunk-level refs.
+
+        Returns ``(documents, chunk_refs)`` where each chunk_ref is
+        ``{"chunk_id": str, "collection": str, "rank": int, "distance": float,
+        "ticker": Optional[str]}``. Callers that need ledger evidence rows
+        should prefer this over :meth:`query` so they can trace which vector
+        rows produced which agent decision.
+        """
+        col = self._safe_col(collection)
+        if not col:
+            return [], []
+        try:
+            count = col.count()
+            if count == 0:
+                return [], []
+            actual_n = min(n_results, count)
+            kwargs = {"query_texts": [query_text], "n_results": actual_n}
+            if where:
+                kwargs["where"] = where
+            results = col.query(**kwargs)
+            docs = results.get("documents", [[]])[0] or []
+            metas = results.get("metadatas", [[]])[0] or []
+            dists = results.get("distances", [[]])[0] or []
+            ids_raw = results.get("ids", [[]])
+            ids = ids_raw[0] if ids_raw else []
+            refs: list[dict] = []
+            for i, doc in enumerate(docs):
+                dval = 1.0
+                if dists is not None and i < len(dists):
+                    try:
+                        dval = float(dists[i])
+                    except Exception:
+                        dval = 1.0
+                meta_row = metas[i] if i < len(metas) else {}
+                ticker = ""
+                if isinstance(meta_row, dict):
+                    ticker = str(meta_row.get("ticker") or meta_row.get("symbol") or "")
+                refs.append(
+                    {
+                        "chunk_id": str(ids[i]) if i < len(ids) and ids[i] is not None else "",
+                        "collection": collection,
+                        "rank": i,
+                        "distance": dval,
+                        "ticker": ticker,
+                    }
+                )
+            return list(docs), refs
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_with_refs({collection}) failed: {e}")
+            return [], []
 
     def query_reflections(self, query_text: str, n_results: int = 5, filters: Optional[dict] = None):
         """Reflection retrieval with metadata filtering, effectiveness weighting, and recency."""

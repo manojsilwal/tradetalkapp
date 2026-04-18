@@ -1,0 +1,22 @@
+[
+  {
+    "input": "Factor: short_interest. Ticker TICKR. Short interest 12.4% of float, up from 8.1% last quarter. Days-to-cover 4.2. Borrow rate 18%. Recent price -11% over 10 sessions. Prior lesson: elevated borrow + rising SI historically preceded mean-reversion within 5 sessions.",
+    "reference_verdict": "NEUTRAL"
+  },
+  {
+    "input": "Factor: social_sentiment. Ticker TICKR. 30-day Reddit mention volume +340% with 62% bullish tone. Price +18% over same period. Prior lesson: extreme positive sentiment + price spike often marks local top.",
+    "reference_verdict": "NEUTRAL"
+  },
+  {
+    "input": "Factor: fundamentals. Ticker TICKR. ROIC 14%, FCF yield 6.2%, net debt/EBITDA 1.1, earnings next week. No prior lessons.",
+    "reference_verdict": "BUY"
+  },
+  {
+    "input": "Factor: polymarket. Ticker TICKR. Recession probability 42%, Fed cut probability 71% for next meeting, credit stress index 1.18. Prior lesson: credit stress > 1.1 + recession prob > 40% has historically been bearish in bear regimes.",
+    "reference_verdict": "SELL"
+  },
+  {
+    "input": "Factor: short_interest. Ticker TICKR. Short interest 3.1% of float. Days-to-cover 1.4. Borrow rate 0.3%. Prior lesson: baseline levels; no signal.",
+    "reference_verdict": "NEUTRAL"
+  }
+]

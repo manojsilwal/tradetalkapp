@@ -3,8 +3,18 @@ import logging
 from typing import Dict, Any, List, Optional
 from .schemas import MarketState, FactorResult, VerificationStatus
 from .connectors import ShortsConnector, SocialSentimentConnector, MacroHealthConnector
+from .tool_configs import get_tool_config
+from .tool_handlers import classify_short_interest
 
 logger = logging.getLogger(__name__)
+
+_SIR_CLASSIFIER_DEFAULTS: Dict[str, float] = {
+    "sir_bull_threshold": 15.0,
+    "sir_ambiguous_min": 10.0,
+    "sir_ambiguous_max": 20.0,
+    "dtc_confirm_threshold": 5.0,
+    "bearish_csi_threshold": 1.1,
+}
 
 
 class AgentPair:
@@ -95,7 +105,7 @@ class AgentPair:
 
             status = qa_review["status"]
             if status == VerificationStatus.VERIFIED:
-                return FactorResult(
+                result = FactorResult(
                     factor_name=self.factor_name,
                     status=status,
                     confidence=qa_review.get("confidence", 0.8),
@@ -103,8 +113,10 @@ class AgentPair:
                     trading_signal=analyst_report.get("trading_signal", 0),
                     history=history
                 )
+                self._emit_factor_decision(result, ticker, market_state)
+                return result
 
-        return FactorResult(
+        result = FactorResult(
             factor_name=self.factor_name,
             status=VerificationStatus.REJECTED,
             confidence=0.0,
@@ -112,6 +124,79 @@ class AgentPair:
             trading_signal=0,
             history=history
         )
+        self._emit_factor_decision(result, ticker, market_state)
+        return result
+
+    # ── Decision-ledger emission (Harness Engineering Phase 2) ───────────
+
+    @staticmethod
+    def _verdict_from_signal(signal: int) -> str:
+        """Map the -1/0/+1 trading signal onto a stable verdict label."""
+        if signal > 0:
+            return "BUY"
+        if signal < 0:
+            return "SELL"
+        return "NEUTRAL"
+
+    def _emit_factor_decision(
+        self,
+        result: FactorResult,
+        ticker: str,
+        market_state: MarketState,
+    ) -> None:
+        """
+        Append one row to ``decision_events`` per factor evaluation.
+
+        decision_type is ``"swarm_factor"`` so the outcome grader can roll
+        per-factor hit-rates up to the swarm level (§7 of the moat plan) and
+        SEPL can reflect on single-factor failures distinct from synthesizer
+        failures. Never raises — the ledger is best-effort.
+        """
+        try:
+            from . import decision_ledger as _dl
+            regime = (
+                market_state.market_regime.value
+                if getattr(market_state, "market_regime", None) else ""
+            )
+            features = [
+                _dl.FeatureValue(
+                    name="credit_stress_index",
+                    value_num=float(getattr(market_state, "credit_stress_index", 0.0)),
+                    regime=regime,
+                ),
+                _dl.FeatureValue(
+                    name="k_shape_divergence",
+                    value_num=float(getattr(market_state, "k_shape_spending_divergence", 0.0)),
+                    regime=regime,
+                ),
+                _dl.FeatureValue(name="market_regime", value_str=regime, regime=regime),
+                _dl.FeatureValue(
+                    name="factor_status",
+                    value_str=result.status.value if hasattr(result.status, "value") else str(result.status),
+                    regime=regime,
+                ),
+            ]
+            _dl.emit_decision(
+                decision_type="swarm_factor",
+                symbol=ticker,
+                horizon_hint="1d",
+                verdict=self._verdict_from_signal(int(result.trading_signal)),
+                confidence=float(result.confidence),
+                output={
+                    "factor_name": result.factor_name,
+                    "status": str(result.status),
+                    "rationale": result.rationale,
+                    "trading_signal": int(result.trading_signal),
+                    "metadata": dict(result.metadata or {}),
+                },
+                source_route=f"backend/agents.py::{type(self).__name__}.run",
+                features=features,
+            )
+        except Exception as e:
+            logger.debug(
+                "[AgentPair:%s] decision_ledger emit skipped: %s",
+                self.factor_name, e,
+            )
 
     async def _analyst_step(self, market_state: MarketState, ticker: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
         """Override in factor-specific subclass."""
@@ -135,14 +220,15 @@ class ShortInterestAgentPair(AgentPair):
         sir = data["short_interest_ratio"]
         dtc = data["days_to_cover"]
 
-        is_ambiguous = 10.0 <= sir <= 20.0
+        cfg = get_tool_config("short_interest_classifier", _SIR_CLASSIFIER_DEFAULTS)
         non_memory = [h for h in history if h.get("role") != "Memory"]
 
         if not non_memory:
-            if sir > 15.0:
+            initial = classify_short_interest(data, cfg, revision=False)
+            if initial == 1:
                 signal = 1
                 rationale = f"Initial Analysis: Real-time yfinance scan shows SIR at {sir}% of float. Potential short squeeze brewing."
-            elif is_ambiguous and self._llm:
+            elif initial == -1 and self._llm:
                 llm_result = await self._llm.generate_swarm_analyst_call(
                     "Short Interest", ticker,
                     {"short_interest_ratio": sir, "days_to_cover": dtc},
@@ -155,15 +241,17 @@ class ShortInterestAgentPair(AgentPair):
                 rationale = f"Initial Analysis: SIR at {sir}% is below squeeze threshold."
         else:
             rationale = f"Revised Analysis: High SIR confirmed ({sir}%). Additionally, days to cover sits at {dtc}, confirming squeeze pressure and difficulty to exit."
-            signal = 1 if (sir > 15.0 and dtc > 5.0) else 0
+            signal = classify_short_interest(data, cfg, revision=True)
 
         return {"rationale": rationale, "trading_signal": signal}
 
     async def _qa_verifier_step(self, analyst_report: Dict[str, Any], market_state: MarketState, history: List[Dict[str, str]]) -> Dict[str, Any]:
-        if analyst_report.get("trading_signal", 0) > 0 and market_state.is_bearish():
+        cfg = get_tool_config("short_interest_classifier", _SIR_CLASSIFIER_DEFAULTS)
+        bearish_csi = float(cfg["bearish_csi_threshold"])
+        if analyst_report.get("trading_signal", 0) > 0 and market_state.credit_stress_index > bearish_csi:
             return {
                 "status": VerificationStatus.REJECTED,
-                "rationale": f"Analyst signal is bullish, but MarketState indicates Credit Stress ({market_state.credit_stress_index}) > 1.1. Strategy rejected by macro grounding.",
+                "rationale": f"Analyst signal is bullish, but MarketState indicates Credit Stress ({market_state.credit_stress_index}) > {bearish_csi}. Strategy rejected by macro grounding.",
                 "confidence": 0.95
             }
         if "days to cover" not in analyst_report["rationale"].lower() and "llm-assisted" not in analyst_report["rationale"].lower():

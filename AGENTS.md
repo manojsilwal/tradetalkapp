@@ -104,3 +104,23 @@ FaultHunter labels cases by **feature** and HTTP path. Use this to find TradeTal
 
 - Scheduled triage (default: commit [`docs/FAULTHUNTER_TRIAGE.md`](docs/FAULTHUNTER_TRIAGE.md); optional: open issue): [`.github/workflows/faulthunter-report-reminder.yml`](.github/workflows/faulthunter-report-reminder.yml)  
 - Optional Cursor rule: [`.cursor/rules/tradetalk-release.mdc`](.cursor/rules/tradetalk-release.mdc)
+
+---
+
+## Decision-Outcome Ledger rule (Harness Engineering Phase 2)
+
+**Every new user-facing agent surface that produces a verdict MUST emit to the Decision-Outcome Ledger before returning to the caller.** This is how the app builds a model-agnostic moat: the ledger stores the decision, the RAG chunks that informed it, the features it saw, the prompt + model versions that produced it, and (later, via the grader) the multi-horizon market-truth outcome. Without an emit, a new surface is invisible to SEPL, to feature-correlation analytics, and to the model-swap replay harness.
+
+**Required at emit time** (see [`docs/DECISION_LEDGER.md`](docs/DECISION_LEDGER.md) §4.1 for the full checklist):
+
+1. Build a `DecisionEvent` with `decision_id = decision_ledger.new_decision_id()` and a sensible `decision_type` / `horizon_hint` (`1d` / `5d` / `21d` / `63d` / `none`).
+2. Retrieve RAG context through `knowledge_store.query_with_refs(...)` (not the legacy `query_with_metadata`) so `chunk_id`, `collection`, and `relevance = 1 - distance` thread into `EvidenceRef` objects.
+3. Record the key input features (e.g. `market_regime`, `confidence_band`) as `FeatureValue`s.
+4. Stamp `prompt_versions_json` from `resource_registry.list_active()` and `registry_snapshot_id` from `resource_registry.snapshot_id()`.
+5. Call `decision_ledger.emit_decision(...)` inside a `try/except` — **ledger failure must never break user-facing behavior**. The wrapper also dual-writes a `decision_emitted` event into the CORAL hub, so existing dreaming / meta-harness surfaces keep working without any changes.
+
+**Do not** call ledger APIs for non-user-facing scheduled jobs (ETL, cache warmers, etc.) — the ledger is the *decision* substrate, not a generic event log. Use `coral_hub.log_handoff_event` for those.
+
+**Tests must be offline.** New producers need a unit or integration test that seeds a temporary `DECISIONS_DB_PATH`, calls the producer, and asserts that a row appeared in `decision_events` (+ evidence + features). See [`backend/tests/test_decision_ledger_producers.py`](backend/tests/test_decision_ledger_producers.py) and [`backend/tests/test_model_swap_replay.py`](backend/tests/test_model_swap_replay.py) for the reference shape.
+
+**Off switch.** If the ledger misbehaves in production, flip `DECISION_LEDGER_ENABLE=0` (or `DECISION_BACKEND=none`) and redeploy. All producers and the `outcome_grader` scheduler hook become no-ops; nothing else in the platform depends on ledger return values for user-facing behavior.

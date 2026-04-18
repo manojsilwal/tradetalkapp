@@ -2,11 +2,34 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { API_BASE_URL, getToken, apiFetch } from './api'
 
+/** Persisted chat session id — survives refresh; server must still have the row (TTL). */
+const CHAT_SESSION_STORAGE_KEY = 'tradetalk_chat_session_id'
+
+function openSessionRequestBody(forceNew = false) {
+  if (forceNew) return {}
+  try {
+    const rid = localStorage.getItem(CHAT_SESSION_STORAGE_KEY)
+    if (rid && rid.length >= 8) return { resume_session_id: rid }
+  } catch {
+    /* private mode */
+  }
+  return {}
+}
+
+function rememberChatSessionId(sessionId) {
+  if (!sessionId) return
+  try {
+    localStorage.setItem(CHAT_SESSION_STORAGE_KEY, sessionId)
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Turn URLs and internal /routes into clickable links (assistant + user messages). */
 function linkifyContent(text) {
   if (!text) return null
   const re =
-    /(https?:\/\/[^\s<]+[^<>\s.,;)]*)|(\/(?:debate|backtest|decision-terminal|portfolio|macro|gold|chat|observer|challenge|learning|academy)(?:\?[^\s<]*)?)/gi
+    /(https?:\/\/[^\s<]+[^<>\s.,;)]*)|(\/(?:debate|backtest|decision-terminal|portfolio|macro|gold|chat|observer|challenge|learning|academy|scorecard)(?:\?[^\s<]*)?)/gi
   const out = []
   let last = 0
   let mi = 0
@@ -117,10 +140,11 @@ export default function ChatUI({ prefetch = null }) {
         try {
           const data = await apiFetch(`${API_BASE_URL}/chat/session`, {
             method: 'POST',
-            body: JSON.stringify({}),
+            body: JSON.stringify(openSessionRequestBody(false)),
           })
           if (!cancelled) {
             setSessionId(data.session_id)
+            rememberChatSessionId(data.session_id)
             setErr('')
           }
           lastErr = null
@@ -158,11 +182,12 @@ export default function ChatUI({ prefetch = null }) {
       </div>
     ) : null
 
-  const createChatSession = useCallback(async () => {
+  const createChatSession = useCallback(async (forceNew = false) => {
     const data = await apiFetch(`${API_BASE_URL}/chat/session`, {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify(openSessionRequestBody(forceNew)),
     })
+    if (data.session_id) rememberChatSessionId(data.session_id)
     return data.session_id
   }, [])
 
@@ -258,7 +283,12 @@ export default function ChatUI({ prefetch = null }) {
       let res = await postMessage(sid)
 
       if (res.status === 404 || res.status === 410) {
-        const fresh = await createChatSession()
+        try {
+          localStorage.removeItem(CHAT_SESSION_STORAGE_KEY)
+        } catch {
+          /* ignore */
+        }
+        const fresh = await createChatSession(true)
         setSessionId(fresh)
         sid = fresh
         res = await postMessage(sid)
@@ -337,11 +367,17 @@ export default function ChatUI({ prefetch = null }) {
             body: JSON.stringify({ session_id: sessionIdRef.current }),
           })
           if (res.status === 404 || res.status === 410) {
+            try {
+              localStorage.removeItem(CHAT_SESSION_STORAGE_KEY)
+            } catch {
+              /* ignore */
+            }
             const data = await apiFetch(`${API_BASE_URL}/chat/session`, {
               method: 'POST',
               body: JSON.stringify({}),
             })
             setSessionId(data.session_id)
+            rememberChatSessionId(data.session_id)
           }
         } catch {
           /* ignore — background refresh */
@@ -361,6 +397,7 @@ export default function ChatUI({ prefetch = null }) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
         {[
           { to: '/debate', label: 'Debate' },
+          { to: '/scorecard', label: 'Scorecard' },
           { to: '/backtest', label: 'Backtest' },
           { to: '/decision-terminal', label: 'Decision' },
           { to: '/portfolio', label: 'Portfolio' },

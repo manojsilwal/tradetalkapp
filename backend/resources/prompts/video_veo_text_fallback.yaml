@@ -1,0 +1,19 @@
+name: video_veo_text_fallback
+kind: prompt
+version: 1.0.0
+description: Text slide fallback when Veo video generation is unavailable.
+learnable: true
+metadata:
+  role_tier: light
+  migrated_from: backend/llm_client.py::AGENT_SYSTEM_PROMPTS
+schema:
+  type: object
+  required: [caption, body]
+  properties:
+    caption: {type: string}
+    body: {type: string}
+fallback:
+  caption: Lesson scene
+  body: Video generation was unavailable. Use the topic and captions as study notes.
+body: |-
+  Automated video (Google Veo) failed or is unavailable for this scene. Write a short text slide for Video Academy so the learner still gets educational value. ONLY investment and finance education. No hype, no buy/sell orders. Respond ONLY with valid JSON: {"caption": "short headline", "body": "2-4 sentences plain English"}

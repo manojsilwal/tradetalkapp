@@ -7,6 +7,7 @@ from backend.openrouter_pool import (
     OpenRouterClientPool,
     collect_openrouter_api_keys,
     get_or_create_openrouter_pool,
+    should_try_other_openrouter_keys_on_429,
 )
 
 
@@ -74,6 +75,58 @@ class TestOpenRouterClientPool(unittest.TestCase):
         pool._lock = threading.Lock()
         pool._idx = 0
         self.assertIs(pool.next_sync(), pool.next_pair()[0])
+
+    def test_next_async_returns_async_half_of_round_robin_pair(self):
+        pool = OpenRouterClientPool.__new__(OpenRouterClientPool)
+        pool._pairs = [
+            (_FakeSync("a"), _FakeAsync("a-async")),
+            (_FakeSync("b"), _FakeAsync("b-async")),
+        ]
+        pool._lock = threading.Lock()
+        pool._idx = 0
+        self.assertIs(pool.next_async(), pool._pairs[0][1])
+        self.assertIs(pool.next_async(), pool._pairs[1][1])
+
+    def test_sync_clients_for_request_strict_round_robin_one_client(self):
+        pool = OpenRouterClientPool.__new__(OpenRouterClientPool)
+        pool._pairs = [
+            (_FakeSync("a"), _FakeAsync("a")),
+            (_FakeSync("b"), _FakeAsync("b")),
+        ]
+        pool._lock = threading.Lock()
+        pool._idx = 0
+        c0 = pool.sync_clients_for_request(False)
+        c1 = pool.sync_clients_for_request(False)
+        self.assertEqual(len(c0), 1)
+        self.assertEqual(len(c1), 1)
+        self.assertEqual(c0[0].name, "a")
+        self.assertEqual(c1[0].name, "b")
+
+    def test_sync_clients_for_request_failover_matches_two_clients(self):
+        pool = OpenRouterClientPool.__new__(OpenRouterClientPool)
+        pool._pairs = [
+            (_FakeSync("a"), _FakeAsync("a")),
+            (_FakeSync("b"), _FakeAsync("b")),
+        ]
+        pool._lock = threading.Lock()
+        pool._idx = 0
+        full = pool.sync_clients_for_request(True)
+        self.assertEqual(len(full), 2)
+        self.assertEqual(full[0].name, "a")
+        self.assertEqual(full[1].name, "b")
+
+
+class TestShouldTryOtherKeys(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop("OPENROUTER_429_TRY_OTHER_KEYS", None)
+
+    def test_default_false(self):
+        os.environ.pop("OPENROUTER_429_TRY_OTHER_KEYS", None)
+        self.assertFalse(should_try_other_openrouter_keys_on_429())
+
+    def test_truthy(self):
+        os.environ["OPENROUTER_429_TRY_OTHER_KEYS"] = "1"
+        self.assertTrue(should_try_other_openrouter_keys_on_429())
 
 
 class TestGetOrCreateSingleton(unittest.TestCase):

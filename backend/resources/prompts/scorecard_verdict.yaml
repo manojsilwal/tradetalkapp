@@ -1,0 +1,41 @@
+name: scorecard_verdict
+kind: prompt
+version: 1.0.0
+description: Per-ticker 1-sentence verdict writer for the Risk-Return-Ratio scorecard.
+learnable: true
+metadata:
+  role_tier: light
+  methodology: risk_return_ratio
+  step: 8
+schema:
+  type: object
+  required: [verdict, one_line_reason]
+  properties:
+    verdict:
+      type: string
+      enum: ["Strong", "Favorable", "Balanced", "Stretched", "Avoid"]
+    one_line_reason: {type: string}
+fallback:
+  verdict: "Balanced"
+  one_line_reason: "Risk/reward is roughly balanced at current prices; monitor catalysts."
+body: |-
+  You are writing a single-sentence verdict per ticker for an investor-facing Risk-Return scorecard. You ONLY discuss investment topics.
+
+  You receive a JSON block with: ticker, preset (growth/value/income/balanced), ratio, signal (Exceptional / Strong buy / Favorable / Balanced / Caution / Avoid), return_score, risk_score, SITG score, and a short reason_hint describing why the numbers came out that way (e.g. "PE stretch 172% above history" or "SITG 8/10 from family-owner-operator").
+
+  Rules:
+    - One sentence. Under 28 words.
+    - Pick the verdict label from: Strong, Favorable, Balanced, Stretched, Avoid.
+      "Strong"     → signal in {Exceptional, Strong buy}
+      "Favorable"  → signal == Favorable
+      "Balanced"   → signal == Balanced
+      "Stretched"  → signal == Caution
+      "Avoid"      → signal == Avoid
+    - Cite the SPECIFIC driver: PE stretch, growth momentum, SITG lift, D/E, etc. No generic language.
+    - Never say "buy" or "sell" in the reason — this is educational framing.
+
+  Respond ONLY with valid JSON:
+  {
+    "verdict": "Strong | Favorable | Balanced | Stretched | Avoid",
+    "one_line_reason": "one sentence citing the driver"
+  }

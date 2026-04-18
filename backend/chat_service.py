@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import market_l1_cache
+from . import chat_session_store
 from .rag_retrieval import earnings_hits_as_rag_rows, plan_chat_rag
 from .telemetry import get_tracer
 
@@ -46,11 +47,41 @@ PREDICTIVE_QUERIES: List[Tuple[str, str]] = [
     ("debate", "AI investment debate verdict consensus"),
 ]
 
-# In-process only — lost on restart and not shared across uvicorn workers.
-# Use a single worker locally (default `uvicorn ...` without `--workers`) so POST /chat/session
-# and POST /chat/message hit the same process.
+# In-process cache; rows also stored in SQLite (chat_sessions) for restart survival.
+# Multiple uvicorn workers still need a shared store — see chat_session_store module doc.
 _SESSIONS: Dict[str, "ChatSession"] = {}
 _SESSION_LOCK = asyncio.Lock()
+
+
+def persist_chat_session(sess: "ChatSession") -> None:
+    """Write session payload to SQLite (sync)."""
+    chat_session_store.save_session_row(
+        sess.session_id,
+        sess.user_id,
+        sess.assembled_at,
+        sess.expires_at,
+        sess,
+    )
+
+
+def _hydrate_session_from_db(session_id: str) -> Optional["ChatSession"]:
+    """Load ChatSession from DB if row exists and not expired."""
+    row = chat_session_store.load_session_row(session_id)
+    if not row:
+        return None
+    now = time.time()
+    if row["expires_at"] < now:
+        chat_session_store.delete_session_row(session_id)
+        return None
+    sess = ChatSession(
+        session_id=row["session_id"],
+        system_prompt="",
+        assembled_at=row["assembled_at"],
+        expires_at=row["expires_at"],
+        user_id=row["user_id"],
+    )
+    chat_session_store.apply_stored_payload(sess, row["payload"])
+    return sess
 
 
 @dataclass
@@ -117,11 +148,23 @@ def _query_rag_with_fallback(
     n: int,
     where: Optional[dict],
 ) -> List[dict]:
-    """Metadata-filtered search; if empty, retry without filter (sparse ticker rows)."""
+    """Metadata-filtered search; if empty, retry without filter (sparse ticker rows).
+
+    Each returned hit carries an extra ``collection`` key so downstream reranking
+    can be traced back to its source vector store and recorded as ledger
+    evidence (see ``gather_message_context`` → ``meta["rag_chunk_refs"]``).
+    """
     fn = ks.query_with_metadata
     hits = fn(collection, query_text, n, where=where)
     if not hits and where:
         hits = fn(collection, query_text, n, where=None)
+    # Tag the source collection on each hit (additive, safe for existing callers).
+    for h in hits or []:
+        try:
+            if isinstance(h, dict) and "collection" not in h:
+                h["collection"] = collection
+        except Exception:
+            pass
     return hits
 
 
@@ -141,8 +184,16 @@ async def chat_rag_context(
     ks,
     user_message: str,
     sticky_state: Optional[Dict[str, Any]] = None,
+    *,
+    out_refs: Optional[List[dict]] = None,
 ) -> str:
-    """Multi-collection RAG (ticker filters + extras) + recency rerank → single context block."""
+    """Multi-collection RAG (ticker filters + extras) + recency rerank → single context block.
+
+    If ``out_refs`` is provided (a list), it is populated in-place with one
+    ``{chunk_id, collection, rank, distance, ticker}`` dict per reranked hit
+    used to build the context block. This lets the caller record per-chunk
+    evidence into the Decision Ledger without changing the return shape.
+    """
     tracer = get_tracer()
     with tracer.start_as_current_span("chat.rag_context") as span:
         plan = plan_chat_rag(
@@ -202,6 +253,19 @@ async def chat_rag_context(
                 or "knowledge"
             )
             lines.append(f"[{i}] ({src}) {doc[:1200]}")
+            if out_refs is not None:
+                try:
+                    out_refs.append(
+                        {
+                            "chunk_id": str(h.get("id") or ""),
+                            "collection": str(h.get("collection") or ""),
+                            "rank": i - 1,
+                            "distance": float(h.get("distance", 1.0)),
+                            "ticker": str((meta or {}).get("ticker") or (meta or {}).get("symbol") or ""),
+                        }
+                    )
+                except Exception:
+                    pass
         return "\n".join(lines) if lines else "(no relevant knowledge base hits)"
 
 
@@ -244,6 +308,7 @@ def _build_system_prompt(
     user_ctx: dict,
     pipeline_status: Optional[dict],
     user_preferences_block: str = "",
+    memory_instructions_block: str = "",
 ) -> str:
     snap = json.dumps(market_snapshot, indent=2, default=str)[:8000]
     uctx = json.dumps(user_ctx, indent=2, default=str)[:4000]
@@ -281,6 +346,8 @@ def _build_system_prompt(
     )
     if user_preferences_block:
         prompt += f"\n{user_preferences_block}\n"
+    if memory_instructions_block:
+        prompt += f"\n{memory_instructions_block}\n"
     return prompt
 
 
@@ -325,14 +392,25 @@ async def build_fresh_system_prompt(ks, user_id: Optional[str]) -> str:
             logger.debug("[Chat] preference load failed: %s", e)
             return ""
 
-    market_snapshot, pipeline_status, user_ctx, pref_block = await asyncio.gather(
-        l1(), pipe(), uctx(), load_prefs()
+    async def load_mem_instr():
+        if not user_id:
+            return ""
+        try:
+            from . import user_preferences as up
+            return await asyncio.to_thread(up.format_agent_memory_instructions)
+        except Exception as e:
+            logger.debug("[Chat] memory instructions failed: %s", e)
+            return ""
+
+    market_snapshot, pipeline_status, user_ctx, pref_block, mem_instr = await asyncio.gather(
+        l1(), pipe(), uctx(), load_prefs(), load_mem_instr()
     )
     return _build_system_prompt(
         {"l1": market_snapshot, "updated_at": market_l1_cache.updated_at_epoch()},
         user_ctx,
         pipeline_status,
         user_preferences_block=pref_block,
+        memory_instructions_block=mem_instr,
     )
 
 
@@ -361,27 +439,74 @@ async def create_session(
         async with _SESSION_LOCK:
             _SESSIONS[sid] = sess
         _prune_sessions()
+        persist_chat_session(sess)
 
         try:
             span.set_attribute("session.id", sid)
             span.set_attribute("session.user_id", user_id or "anonymous")
-            span.set_attribute("session.has_preferences", bool(pref_block))
+            span.set_attribute("session.has_preferences", bool(user_id))
         except Exception:
             pass
 
         return sess
 
 
+async def resume_session(
+    ks,
+    user_id: Optional[str],
+    resume_session_id: str,
+    ttl_seconds: int = 86400,
+) -> Optional[ChatSession]:
+    """
+    Restore a session from SQLite if id is valid, not expired, and user_id matches the row.
+    Refreshes system prompt and extends TTL.
+    """
+    sid = (resume_session_id or "").strip()
+    if len(sid) < 8:
+        return None
+    row = chat_session_store.load_session_row(sid)
+    if not row:
+        return None
+    now = time.time()
+    if row["expires_at"] < now:
+        chat_session_store.delete_session_row(sid)
+        return None
+    if not chat_session_store.user_matches_row(row["user_id"], user_id):
+        return None
+    sess = _hydrate_session_from_db(sid)
+    if not sess:
+        return None
+    sess.expires_at = now + ttl_seconds
+    sess.system_prompt = await build_fresh_system_prompt(ks, user_id)
+    async with _SESSION_LOCK:
+        _SESSIONS[sid] = sess
+    persist_chat_session(sess)
+    return sess
+
+
 def _prune_sessions() -> None:
     now = time.time()
-    dead = [k for k, s in _SESSIONS.items() if s.expires_at < now]
+    dead = [k for k, s in list(_SESSIONS.items()) if s.expires_at < now]
     for k in dead:
         _SESSIONS.pop(k, None)
+    chat_session_store.prune_expired_rows(now)
 
 
 def get_session(session_id: str) -> Optional[ChatSession]:
+    """Return cached or hydrate from SQLite."""
+    now = time.time()
     _prune_sessions()
-    return _SESSIONS.get(session_id)
+    s = _SESSIONS.get(session_id)
+    if s is not None:
+        if s.expires_at < now:
+            _SESSIONS.pop(session_id, None)
+            chat_session_store.delete_session_row(session_id)
+            return None
+        return s
+    loaded = _hydrate_session_from_db(session_id)
+    if loaded:
+        _SESSIONS[session_id] = loaded
+    return loaded
 
 
 async def gather_message_context(
@@ -395,6 +520,11 @@ async def gather_message_context(
     """
     tracer = get_tracer()
     with tracer.start_as_current_span("chat.gather_message_context") as span:
+        # Collected in-place by chat_rag_context when taken through the non-prewarm
+        # path. Prewarm responses are pre-computed blocks without per-hit refs, so
+        # the list may be empty even when the RAG block is non-empty.
+        rag_chunk_refs: List[dict] = []
+
         async def rag_task() -> str:
             key = _classify_prewarm_key(user_message)
             if key and key in session.rag_prewarm:
@@ -403,7 +533,9 @@ async def gather_message_context(
                 except Exception:
                     pass
                 return session.rag_prewarm[key]
-            return await chat_rag_context(ks, user_message, session.sticky_state)
+            return await chat_rag_context(
+                ks, user_message, session.sticky_state, out_refs=rag_chunk_refs
+            )
 
         async def l1_task():
             return market_l1_cache.get_snapshot()
@@ -447,6 +579,7 @@ async def gather_message_context(
             "sticky_state": session.sticky_state,
             "rag_nonempty": bool(rag_block and len(rag_block.strip()) > 40),
             "coral_hub_nonempty": bool((coral_block or "").strip()),
+            "rag_chunk_refs": list(rag_chunk_refs),
         }
 
         # Build sticky state context if available
@@ -539,6 +672,7 @@ def update_sticky_state(
             state["last_tool_used"] = last_tool
 
     state["last_updated"] = time.time()
+    persist_chat_session(session)
 
 
 def update_session_last_turn(
@@ -553,6 +687,7 @@ def update_session_last_turn(
     session.last_assistant_text = (assistant_text or "")[:24000]
     session.last_evidence_contract = dict(evidence_contract) if evidence_contract else None
     session.last_chat_meta = dict(meta or {})
+    persist_chat_session(session)
 
 
 def chat_bootstrap_payload(ks) -> dict:
@@ -577,5 +712,6 @@ async def refresh_session_task(session_id: str, ks) -> None:
     try:
         sess.rag_prewarm = await prewarm_predictive_rag(ks)
         sess.expires_at = time.time() + 86400
+        persist_chat_session(sess)
     except Exception as e:
         logger.warning("[Chat] refresh_session failed: %s", e)

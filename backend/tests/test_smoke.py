@@ -61,5 +61,57 @@ class TestSmoke(unittest.TestCase):
         self.assertIn("verdict", data)
 
 
+class TestGeminiPrimaryConfigSmoke(unittest.TestCase):
+    """
+    Offline (no-network) smoke: flipping ``GEMINI_PRIMARY=1`` must not break app
+    bootstrap or LLM routing wiring. Complements the live tests in
+    :mod:`test_gemini_live_smoke` (which require an API key) by catching
+    import-time regressions that live tests might not exercise if they're
+    skipped on a dev box.
+    """
+
+    def setUp(self):
+        self._saved_primary = os.environ.get("GEMINI_PRIMARY")
+        self._saved_key = os.environ.get("GEMINI_API_KEY")
+        # A dummy key is enough to flip ``gemini_primary_enabled()`` to True —
+        # no network call is attempted by the tests in this class.
+        os.environ["GEMINI_PRIMARY"] = "1"
+        os.environ["GEMINI_API_KEY"] = "smoke-dummy-key"
+
+    def tearDown(self):
+        for name, saved in (
+            ("GEMINI_PRIMARY", self._saved_primary),
+            ("GEMINI_API_KEY", self._saved_key),
+        ):
+            if saved is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = saved
+
+    def test_openapi_still_boots_with_gemini_primary(self):
+        """App must still expose /openapi.json with GEMINI_PRIMARY=1."""
+        client = TestClient(app)
+        r = client.get("/openapi.json")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("openapi", r.json())
+
+    def test_gemini_primary_flag_reads_true(self):
+        from backend.gemini_llm import gemini_primary_enabled
+
+        self.assertTrue(gemini_primary_enabled())
+
+    def test_role_to_gemini_model_routing(self):
+        """Heavy vs light role mapping survives the flag flip."""
+        from backend.gemini_llm import GEMINI_MODEL, GEMINI_MODEL_LIGHT
+        from backend.llm_client import _gemini_model_for_role
+
+        self.assertEqual(_gemini_model_for_role("bull"), GEMINI_MODEL)
+        self.assertEqual(_gemini_model_for_role("moderator"), GEMINI_MODEL)
+        self.assertEqual(_gemini_model_for_role("swarm_analyst"), GEMINI_MODEL_LIGHT)
+        self.assertEqual(
+            _gemini_model_for_role("video_veo_text_fallback"), GEMINI_MODEL_LIGHT
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

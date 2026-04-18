@@ -204,7 +204,20 @@ async def _execute_swarm_trace(
         )
 
         try:
-            knowledge_store.add_swarm_analysis(consensus)
+            # RSPL lineage: stamp the registry snapshot + active prompt versions
+            # of every role that contributed to this consensus. A SEPL optimizer
+            # can later correlate outcomes back to the exact versions used.
+            from ..deps import resource_registry
+            from ..resource_registry import ResourceKind
+            _prompt_versions = {
+                r.name: r.version for r in resource_registry.list(ResourceKind.PROMPT)
+            }
+            _snapshot_id = resource_registry.snapshot_id()
+            knowledge_store.add_swarm_analysis(
+                consensus,
+                prompt_versions=_prompt_versions,
+                registry_snapshot_id=_snapshot_id,
+            )
         except Exception as e:
             print(f"[KnowledgeHook] add_swarm_analysis failed: {e}")
 

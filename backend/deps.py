@@ -14,6 +14,7 @@ from .notification_agents import NotificationPipeline
 from .knowledge_store import get_knowledge_store
 from .llm_client import get_llm_client
 from .tool_registry import registry as tool_registry
+from .resource_registry import get_resource_registry
 from . import alert_store as db
 from . import user_progress as up
 
@@ -31,3 +32,4 @@ last_trace_data: dict = {}
 
 knowledge_store = get_knowledge_store()
 llm_client = get_llm_client()
+resource_registry = get_resource_registry()

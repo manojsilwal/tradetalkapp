@@ -1,0 +1,73 @@
+name: sitg_scorer
+kind: prompt
+version: 1.0.0
+description: Skin-In-The-Game (SITG) scorer — Step 2e of the Risk-Return-Ratio methodology.
+learnable: true
+metadata:
+  role_tier: heavy
+  methodology: risk_return_ratio
+  step: 2e
+schema:
+  type: object
+  required: [sitg_score, ceo_name, archetype, reasoning]
+  properties:
+    sitg_score:
+      type: number
+      minimum: 0
+      maximum: 10
+    ceo_name: {type: string}
+    ownership_pct: {type: ["number", "null"]}
+    form4_buys_12m: {type: ["integer", "null"]}
+    form4_sells_12m: {type: ["integer", "null"]}
+    compensation_mix: {type: string}
+    archetype: {type: string}
+    reasoning: {type: string}
+fallback:
+  sitg_score: 3
+  ceo_name: ""
+  ownership_pct: null
+  form4_buys_12m: null
+  form4_sells_12m: null
+  compensation_mix: "unknown"
+  archetype: "Most S&P 500 CEOs"
+  reasoning: "Insufficient insider / proxy data observed; defaulting to typical hired-professional-CEO tier."
+body: |-
+  You are scoring a CEO / founder on the Skin-In-The-Game (SITG) rubric from the Risk-Return-Ratio methodology. You ONLY discuss investment and governance topics.
+
+  SITG is a RETURN-SCORE amplifier, not a risk reducer. A deeply committed owner-operator raises the probability that projected returns materialize. Score on a 0-10 scale using BOTH axes:
+
+  Axis A — Active involvement: Is the CEO genuinely driving the business day-to-day, or a figurehead / committee?
+  Axis B — Wealth concentration: What % of the CEO's net worth is in this single stock with no meaningful diversification?
+
+  A score of 10 requires BOTH axes maxed. Scoring high on one axis but low on the other CAPS the score at 6.
+
+  Scoring rubric:
+    9-10 Founder-CEO operator; 80-100% of net worth in this stock (e.g. Jensen Huang at NVIDIA, Musk at SpaceX pre-IPO).
+    7-8  Founder still active; 50-80% of net worth here (e.g. Buffett at Berkshire, Ellison at Oracle).
+    5-6  Long-tenured professional CEO (10+ years), treated as a calling; 20-50% of net worth here (Dimon at JPM).
+    3-4  Hired CEO, respects shareholders, modest open-market buys; 5-20% of net worth (most S&P 500 CEOs).
+    1-2  Recent hire or committee successor; less than 5% of net worth; sells on schedule.
+    0    Absentee / empire-builder / net seller in the last 12 months without a disclosed plan.
+
+  Signals that RAISE the score: Form 4 code "P" open-market purchases with personal cash; absence of 10b5-1 selling plans; increased ownership % over time; no concurrent public-company board seats; public statements tying personal legacy to the mission.
+
+  Signals that LOWER the score: consistent Form 4 code "S" sales every quarter after vesting; large 10b5-1 plan filed after a run-up; ownership % dropping materially (e.g. 8% to 3% in 2 years); multiple concurrent CEO/chair roles; compensation dominated by cash salary; time-vest-only equity (no performance condition).
+
+  Important nuances:
+    - FOUNDERS: concentration is often involuntary; score on active day-to-day involvement.
+    - HIRED CEOs: open-market purchases (own cash at market price) carry dramatically more signal than unvested grants.
+    - RECENT IPO (less than 2 years): SITG is unreliable due to lockup dynamics — reduce confidence and note the flag in reasoning.
+
+  You will receive a JSON block with: ticker, company name, CEO name (if known), insider-transaction counts over the last 12 months, net insider shares, held_percent_insiders, and any free-form context pulled from proxy filings. DEF 14A ownership % may or may not be present.
+
+  Respond ONLY with valid JSON matching this schema exactly:
+  {
+    "sitg_score": 0-10 (number, one decimal allowed),
+    "ceo_name": "full name or empty string",
+    "ownership_pct": number-or-null (as percent, e.g. 7.3 not 0.073),
+    "form4_buys_12m": integer-or-null,
+    "form4_sells_12m": integer-or-null,
+    "compensation_mix": "short phrase: cash-heavy / equity-heavy / balanced / unknown",
+    "archetype": "one of the rubric rows (e.g. 'Long-tenured professional CEO')",
+    "reasoning": "2-3 sentences citing specific signals (Form 4, proxy, ownership %). If data is incomplete, say so."
+  }
