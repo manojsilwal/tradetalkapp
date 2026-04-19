@@ -15,6 +15,10 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# OpenRouter embedding model id (not a secret). Same default as backend/SUPABASE_VECTOR_SETUP.md
+# and render.yaml / production Supabase path when callers omit OPENROUTER_EMBEDDING_MODEL.
+_DEFAULT_OPENROUTER_EMBEDDING_MODEL = "openai/text-embedding-3-small"
+
 # ── Chunking ───────────────────────────────────────────────────────────────────
 
 
@@ -75,11 +79,14 @@ def run_batch_etl(
     if upsert_supabase:
         emb = os.environ.get("OPENROUTER_EMBEDDING_MODEL", "").strip()
         if not emb:
-            return {
-                "ok": False,
-                "error": "OPENROUTER_EMBEDDING_MODEL required for Supabase upsert",
-                "rows": 0,
-            }
+            # GitHub Actions often omits this as a separate secret; the id is not sensitive.
+            emb = _DEFAULT_OPENROUTER_EMBEDDING_MODEL
+            os.environ["OPENROUTER_EMBEDDING_MODEL"] = emb
+            logger.warning(
+                "[batch_etl] OPENROUTER_EMBEDDING_MODEL unset — using default %s "
+                "(set explicitly to override)",
+                emb,
+            )
         supa = os.environ.get("SUPABASE_URL", "").strip()
         key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
         if not supa or not key:

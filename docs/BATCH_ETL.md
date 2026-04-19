@@ -16,7 +16,8 @@ SEC filing ingestion can extend the same module later; v1 is yfinance-only.
 From the repository root:
 
 ```bash
-export OPENROUTER_EMBEDDING_MODEL=text-embedding-3-small
+# Optional — batch ETL defaults to openai/text-embedding-3-small when unset (same as production docs).
+# export OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 export SUPABASE_URL=...
 export SUPABASE_SERVICE_ROLE_KEY=...
 export HF_DATASET_ID=your-org/your-dataset   # optional
@@ -38,4 +39,4 @@ After bootstrap, apply **`backend/migrations/supabase/002_hnsw_vector_memory_emb
 
 ## GitHub Actions
 
-Workflow **`.github/workflows/batch-etl-hub.yml`** runs weekly (and on manual dispatch). Configure repository secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`, `OPENROUTER_EMBEDDING_MODEL`, and optionally `HF_DATASET_ID`, `HF_TOKEN`. Optional repository variable **`BATCH_ETL_TICKERS`** (comma-separated symbols; if unset, the workflow defaults to `SPY,AAPL,MSFT`).
+Workflow **`.github/workflows/batch-etl-hub.yml`** runs weekly (and on manual dispatch). Configure repository secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`. **`OPENROUTER_EMBEDDING_MODEL` is optional** — if the secret is missing or empty, the workflow and `backend/batch_etl/pipeline.py` default to `openai/text-embedding-3-small` (set the secret only when you want a different OpenRouter embedding model). Optionally: `HF_DATASET_ID`, `HF_TOKEN`. Optional repository variable **`BATCH_ETL_TICKERS`** (comma-separated symbols; if unset, the workflow defaults to `SPY,AAPL,MSFT`).

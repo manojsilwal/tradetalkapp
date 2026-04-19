@@ -1,5 +1,6 @@
 # Weekly batch ETL: yfinance profile chunks → HF Dataset Parquet + Supabase yf_batch_chunks.
-# Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY, OPENROUTER_EMBEDDING_MODEL
+# Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY
+# Optional secret: OPENROUTER_EMBEDDING_MODEL (defaults to openai/text-embedding-3-small if unset)
 # Optional: HF_DATASET_ID, HF_TOKEN, BATCH_ETL_TICKERS (comma-separated)
 
 name: Batch ETL (HF + Supabase)
@@ -35,6 +36,8 @@ jobs:
       - name: Run batch ETL
         run: |
           TICKERS="${BATCH_ETL_TICKERS:-SPY,AAPL,MSFT}"
+          # Missing secret yields empty env; bash :- supplies the same default as batch_etl.pipeline.
+          export OPENROUTER_EMBEDDING_MODEL="${OPENROUTER_EMBEDDING_MODEL:-openai/text-embedding-3-small}"
           PYTHONPATH=. python backend/scripts/batch_etl_hf_supabase.py --tickers "$TICKERS"
         env:
           BATCH_ETL_TICKERS: ${{ vars.BATCH_ETL_TICKERS }}

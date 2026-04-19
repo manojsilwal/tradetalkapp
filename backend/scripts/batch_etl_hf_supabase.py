@@ -7,7 +7,8 @@ Usage (from repo root)::
     PYTHONPATH=. python backend/scripts/batch_etl_hf_supabase.py --tickers AAPL,MSFT,GOOGL
 
 Environment:
-  OPENROUTER_EMBEDDING_MODEL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (required for vectors)
+  SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY (required for vectors).
+  OPENROUTER_EMBEDDING_MODEL optional (defaults to openai/text-embedding-3-small).
   HF_DATASET_ID, HF_TOKEN (optional — archive Parquet to Hub)
 """
 from __future__ import annotations
