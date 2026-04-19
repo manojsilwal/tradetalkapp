@@ -39,6 +39,8 @@ After bootstrap, apply **`backend/migrations/supabase/002_hnsw_vector_memory_emb
 
 ## GitHub Actions
 
+**One-time Supabase setup:** In the Supabase project, open **SQL Editor** and run the full contents of [`backend/supabase_pgvector_bootstrap.sql`](../backend/supabase_pgvector_bootstrap.sql). That creates `public.vector_memory` and `match_vector_memory`. Without this, batch ETL fails with `PGRST205` / “table … vector_memory … not found”. The workflow’s **Wait for Supabase** step now checks for this table and prints `::error::` with the same hint before running ETL.
+
 Workflow **`.github/workflows/batch-etl-hub.yml`** runs weekly (and on manual dispatch). Configure repository secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`. **`OPENROUTER_EMBEDDING_MODEL` is optional** — if the secret is missing or empty, the workflow and `backend/batch_etl/pipeline.py` default to `openai/text-embedding-3-small` (set the secret only when you want a different OpenRouter embedding model). Optionally: `HF_DATASET_ID`, `HF_TOKEN`. Optional repository variable **`BATCH_ETL_TICKERS`** (comma-separated symbols; if unset, the workflow defaults to `SPY,AAPL,MSFT`).
 
 ### Troubleshooting: `SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY required`

@@ -201,10 +201,13 @@ class SupabaseVectorBackend(VectorBackendBase):
         try:
             self._client.table("vector_memory").select("id").limit(1).execute()
         except Exception as e:
-            raise RuntimeError(
-                "Supabase vector schema missing. Run backend/supabase_pgvector_bootstrap.sql "
-                "in Supabase SQL editor before enabling VECTOR_BACKEND=supabase."
-            ) from e
+            hint = (
+                "Supabase vector schema missing (public.vector_memory not found — often HTTP 404 / "
+                "PGRST205 from PostgREST). One-time fix: open Supabase Dashboard → SQL Editor, "
+                "run the full contents of backend/supabase_pgvector_bootstrap.sql from this repo, "
+                "then retry. Required before VECTOR_BACKEND=supabase or batch ETL upserts."
+            )
+            raise RuntimeError(hint) from e
 
     def ensure_collection(self, name: str) -> None:
         # No-op: collection is represented by a table field.

@@ -52,14 +52,16 @@ jobs:
           fi
           exit "${missing}"
 
-      # Free-tier Supabase projects pause when idle; first requests may 5xx until the
-      # project resumes. Poll before ETL so scheduled runs self-heal without manual clicks.
+      # Free-tier: wake paused project, then verify public.vector_memory exists (pgvector bootstrap).
+      # If bootstrap SQL was never run, this step fails with ::error:: pointing at supabase_pgvector_bootstrap.sql.
       - name: Wait for Supabase project to wake (free tier)
         run: PYTHONPATH=. python backend/scripts/wait_for_supabase.py
         env:
           # Optional repo variable: max seconds to poll (default 900 = 15 min in script).
           WAIT_MAX_SECONDS: ${{ vars.SUPABASE_WAKE_MAX_SECONDS }}
           WAIT_INTERVAL_SECONDS: ${{ vars.SUPABASE_WAKE_INTERVAL_SECONDS }}
+          # Set to 1 only if you intentionally skip vector_memory check (not normal for this workflow).
+          SKIP_VECTOR_MEMORY_CHECK: ${{ vars.SUPABASE_SKIP_VECTOR_MEMORY_CHECK }}
 
       - name: Run batch ETL
         run: |
