@@ -53,3 +53,16 @@ That JSON means the Actions job did not receive those environment variables. The
 **Forks:** workflows triggered from a fork do not get the parent repo’s secrets; run the workflow on the **main repo** or copy secrets to the fork (not recommended for production keys).
 
 The workflow includes a **Verify Supabase + OpenRouter secrets** step that fails fast with `::error::` lines pointing here if any of the three are missing.
+
+### Free-tier Supabase is paused
+
+Paused projects often return **5xx** or connection errors until they finish waking. The workflow runs **`backend/scripts/wait_for_supabase.py`** after installing dependencies: it polls `GET {SUPABASE_URL}/rest/v1/` with your service role key until it gets a non-5xx response (or **401** if the key is wrong, which fails immediately).
+
+Tune with optional **repository variables** (Settings → Secrets and variables → **Actions** → **Variables**):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `SUPABASE_WAKE_MAX_SECONDS` | `900` | Max total wait (~15 minutes) |
+| `SUPABASE_WAKE_INTERVAL_SECONDS` | `20` | Sleep between attempts |
+
+If the job still times out, open the [Supabase dashboard](https://supabase.com/dashboard) for the project once (manual wake), then re-run the workflow.

@@ -52,6 +52,15 @@ jobs:
           fi
           exit "${missing}"
 
+      # Free-tier Supabase projects pause when idle; first requests may 5xx until the
+      # project resumes. Poll before ETL so scheduled runs self-heal without manual clicks.
+      - name: Wait for Supabase project to wake (free tier)
+        run: PYTHONPATH=. python backend/scripts/wait_for_supabase.py
+        env:
+          # Optional repo variable: max seconds to poll (default 900 = 15 min in script).
+          WAIT_MAX_SECONDS: ${{ vars.SUPABASE_WAKE_MAX_SECONDS }}
+          WAIT_INTERVAL_SECONDS: ${{ vars.SUPABASE_WAKE_INTERVAL_SECONDS }}
+
       - name: Run batch ETL
         run: |
           TICKERS="${BATCH_ETL_TICKERS:-SPY,AAPL,MSFT}"
