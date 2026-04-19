@@ -51,6 +51,11 @@ def main() -> int:
         upsert_supabase=not args.no_supabase,
     )
     print(json.dumps(out, indent=2))
+    if not out.get("ok") and out.get("error") == "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY required":
+        logger.error(
+            "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (e.g. GitHub Actions: "
+            "Settings → Secrets and variables → Actions). Use --no-supabase to skip vectors only."
+        )
     return 0 if out.get("ok") else 1
 
 

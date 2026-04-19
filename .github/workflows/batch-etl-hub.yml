@@ -33,6 +33,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
+      # Secrets are empty if never configured (or on forks without secrets). Fail fast with a
+      # clear pointer — the Python pipeline only returns JSON and exit 1 otherwise.
+      - name: Verify Supabase + OpenRouter secrets
+        run: |
+          missing=0
+          if [ -z "${SUPABASE_URL}" ]; then
+            echo "::error::SUPABASE_URL is not set. Add it under GitHub → Settings → Secrets and variables → Actions (repository secret)."
+            missing=1
+          fi
+          if [ -z "${SUPABASE_SERVICE_ROLE_KEY}" ]; then
+            echo "::error::SUPABASE_SERVICE_ROLE_KEY is not set. Add the Supabase service role key under Actions secrets (same page as SUPABASE_URL)."
+            missing=1
+          fi
+          if [ -z "${OPENROUTER_API_KEY}" ]; then
+            echo "::error::OPENROUTER_API_KEY is not set. Batch ETL needs it for embeddings before Supabase upsert. Add it under Actions secrets."
+            missing=1
+          fi
+          exit "${missing}"
+
       - name: Run batch ETL
         run: |
           TICKERS="${BATCH_ETL_TICKERS:-SPY,AAPL,MSFT}"

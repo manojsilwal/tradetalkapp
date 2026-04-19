@@ -40,3 +40,16 @@ After bootstrap, apply **`backend/migrations/supabase/002_hnsw_vector_memory_emb
 ## GitHub Actions
 
 Workflow **`.github/workflows/batch-etl-hub.yml`** runs weekly (and on manual dispatch). Configure repository secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`. **`OPENROUTER_EMBEDDING_MODEL` is optional** — if the secret is missing or empty, the workflow and `backend/batch_etl/pipeline.py` default to `openai/text-embedding-3-small` (set the secret only when you want a different OpenRouter embedding model). Optionally: `HF_DATASET_ID`, `HF_TOKEN`. Optional repository variable **`BATCH_ETL_TICKERS`** (comma-separated symbols; if unset, the workflow defaults to `SPY,AAPL,MSFT`).
+
+### Troubleshooting: `SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY required`
+
+That JSON means the Actions job did not receive those environment variables. They must exist as **repository** secrets (same names), not only in Render or `.env` on your laptop:
+
+1. GitHub repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+2. Add **`SUPABASE_URL`** (from Supabase Project Settings → API → Project URL)
+3. Add **`SUPABASE_SERVICE_ROLE_KEY`** (service role secret — never commit it)
+4. Add **`OPENROUTER_API_KEY`** (required for embeddings before upsert)
+
+**Forks:** workflows triggered from a fork do not get the parent repo’s secrets; run the workflow on the **main repo** or copy secrets to the fork (not recommended for production keys).
+
+The workflow includes a **Verify Supabase + OpenRouter secrets** step that fails fast with `::error::` lines pointing here if any of the three are missing.
