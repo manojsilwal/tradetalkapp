@@ -8,7 +8,7 @@ on:
       e2e_profile:
         description: "Playwright — smoke (P0 landing/debate/strategy) or full e2e/"
         required: false
-        default: smoke
+        default: full
         type: choice
         options:
           - smoke
@@ -64,11 +64,12 @@ jobs:
           # Optional repo variable: set FRONTEND_URL in GitHub → Settings → Variables
           FRONTEND_URL: ${{ vars.E2E_FRONTEND_URL }}
           E2E_PROFILE: ${{ github.event.inputs.e2e_profile }}
+          RUN_DECISION_TERMINAL_DATA_AUDIT: "1"
         run: |
           if [ -z "$FRONTEND_URL" ] || [ "$FRONTEND_URL" = "" ]; then
             export FRONTEND_URL="https://frontend-manojsilwals-projects.vercel.app"
           fi
-          PROFILE="${E2E_PROFILE:-smoke}"
+          PROFILE="${E2E_PROFILE:-full}"
           echo "FRONTEND_URL=$FRONTEND_URL"
           echo "E2E_PROFILE=$PROFILE"
           if [ "$PROFILE" = "full" ]; then
@@ -94,4 +95,5 @@ jobs:
         env:
           FINCRAWLER_URL: ${{ vars.FINCRAWLER_URL }}
           FINCRAWLER_KEY: ${{ secrets.FINCRAWLER_KEY }}
+          FINCRAWLER_POLYMARKET_E2E: "1"
         run: npm run e2e:fincrawler -- --reporter=line
