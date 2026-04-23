@@ -71,11 +71,16 @@ class FinCrawlerClient:
         return self._enabled
 
     def _headers(self) -> Dict[str, str]:
-        return {
+        # FinCrawler `/v1/*` accepts Bearer or x-api-key; native `/scrape` uses X-Api-Key only.
+        # Send both so either route works when API_KEY is configured.
+        h: Dict[str, str] = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "User-Agent": "TradeTalk/1.0",
         }
+        if self.api_key:
+            h["X-Api-Key"] = self.api_key
+        return h
 
     async def _get(self, path: str, params: Optional[Dict] = None) -> Any:
         """Raw GET, returns parsed JSON. Raises on error."""
@@ -110,8 +115,20 @@ class FinCrawlerClient:
                 return cached
 
         try:
-            data = await self._post("/scrape", {"url": url})
-            text = data.get("text") or data.get("content") or ""
+            # Firecrawl-compatible JSON body + Bearer auth (see FinCrawler `firecrawl_compat.py`).
+            data = await self._post(
+                "/v1/scrape",
+                {"url": url, "formats": ["markdown"]},
+            )
+            text = ""
+            if data.get("success") is False:
+                logger.warning("[FinCrawler] scrape_text failed: %s", data.get("error"))
+                return ""
+            if data.get("success") and isinstance(data.get("data"), dict):
+                inner = data["data"]
+                text = inner.get("markdown") or inner.get("content") or ""
+            else:
+                text = data.get("text") or data.get("content") or ""
             if use_cache:
                 _cache_set(cache_key, text)
             return text
@@ -210,6 +227,25 @@ class FinCrawlerClient:
             return True
         except Exception:
             return False
+
+    async def get_quote_price(self, ticker: str) -> Optional[float]:
+        """
+        Spot price via FinCrawler GET /quote (Yahoo quote page scrape on the crawler host).
+        Returns None if disabled, unreachable, or parse fails.
+        """
+        if not self.enabled:
+            return None
+        ticker = ticker.upper().strip()
+        if not ticker:
+            return None
+        try:
+            data = await self._get("/quote", params={"ticker": ticker})
+            if data.get("ok") and data.get("price") is not None:
+                p = float(data["price"])
+                return p if p > 0 else None
+        except Exception as e:
+            logger.warning("[FinCrawler] get_quote_price failed for %s: %s", ticker, e)
+        return None
 
 
 # Module-level singleton — import and use everywhere

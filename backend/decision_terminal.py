@@ -144,6 +144,10 @@ def _sync_extended_snapshot(ticker: str) -> dict:
             "returnOnEquity": info.get("returnOnEquity"),
             "grossMargins": info.get("grossMargins"),
             "freeCashflow": info.get("freeCashflow"),
+            "regularMarketPrice": info.get("regularMarketPrice"),
+            "currentPrice": info.get("currentPrice"),
+            "previousClose": info.get("previousClose")
+            or info.get("regularMarketPreviousClose"),
             "longName": info.get("longName") or info.get("shortName") or ticker.upper(),
         }
     except Exception as e:
@@ -336,7 +340,31 @@ async def build_decision_terminal_payload(
     t = ticker.upper()
     now = datetime.now(timezone.utc).isoformat()
     price = debate_data.get("current_price")
-    price_f = float(price) if price is not None else None
+    try:
+        price_f = float(price) if price is not None else None
+    except (TypeError, ValueError):
+        price_f = None
+    if price_f is not None and price_f <= 0:
+        price_f = None
+
+    market_data_degraded = bool(debate_data.get("market_data_degraded"))
+    spot_price_source = debate_data.get("spot_price_source")
+
+    if price_f is None:
+        for key in ("regularMarketPrice", "currentPrice", "previousClose"):
+            raw = ext.get(key)
+            if raw is None:
+                continue
+            try:
+                pf = float(raw)
+                if pf > 0:
+                    price_f = pf
+                    market_data_degraded = True
+                    if not spot_price_source:
+                        spot_price_source = "yfinance_info"
+                    break
+            except (TypeError, ValueError):
+                continue
 
     hist_quality = _get_historical_quality_metrics(t)
     hist_cagr = _get_historical_cagr_3y(t)
@@ -617,6 +645,8 @@ async def build_decision_terminal_payload(
             quality=quality,
             verdict=verdict,
             roadmap=roadmap,
+            market_data_degraded=market_data_degraded,
+            spot_price_source=spot_price_source,
         )
     )
 

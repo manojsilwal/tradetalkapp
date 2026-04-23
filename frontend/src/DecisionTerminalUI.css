@@ -169,6 +169,12 @@
   margin-bottom: 12px;
 }
 
+.dt-market-degraded {
+  background: rgba(250, 204, 21, 0.07);
+  border-color: rgba(250, 204, 21, 0.22);
+  color: rgba(226, 232, 240, 0.92);
+}
+
 .dt-error-banner {
   color: #fca5a5;
   font-size: 0.8rem;

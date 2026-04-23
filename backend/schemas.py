@@ -348,3 +348,11 @@ class DecisionTerminalPayload(BaseModel):
     quality: TerminalQualityPanel
     verdict: TerminalVerdictPanel
     roadmap: TerminalRoadmapPanel
+    market_data_degraded: bool = Field(
+        default=False,
+        description="True when Yahoo history/momentum may be incomplete (fallback spot used).",
+    )
+    spot_price_source: Optional[str] = Field(
+        default=None,
+        description="yfinance_history | yfinance_info | stooq | fincrawler | merged_from_info",
+    )

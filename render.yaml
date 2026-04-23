@@ -30,6 +30,12 @@ services:
       - key: SP500_INGEST_ON_STARTUP
         value: "0"
 
+      # FinCrawler (optional): FINCRAWLER_KEY must match FinCrawler service API_KEY (set in Dashboard).
+      - key: FINCRAWLER_URL
+        value: https://fincrawler.onrender.com
+      - key: FINCRAWLER_KEY
+        sync: false
+
       # ── Phase C1 + C2 — SEPL-for-TOOLs rollout.
       # Live in production with kill switch active. Safety still enforced by:
       #   • SEPL_TOOL_MIN_MARGIN (5 pp beat required to commit)

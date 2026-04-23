@@ -6,30 +6,25 @@ import react from '@vitejs/plugin-react'
 // Requires: backend on VITE_DEV_PROXY_TARGET (default http://127.0.0.1:8000) and `npm run dev` on 5173.
 const API_TARGET = process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:8000'
 
+// Only paths that are NOT React Router `<Route path>` entries. If a prefix matches an SPA
+// route (same first segment), full navigation to e.g. /decision-terminal returns JSON from
+// FastAPI instead of index.html — client calls still use VITE_API_BASE_URL → :8000 (api.js).
 const API_PATH_PREFIXES = [
-  '/decision-terminal',
-  '/macro',
   '/advisor',
   '/trace',
-  '/debate',
-  '/backtest',
   '/analyze',
-  // NOTE: Do not proxy `/chat` — the app route is GET /chat (SPA). Chat REST paths are
-  // called via VITE_API_BASE_URL → :8000 (see frontend/src/api.js).
   '/metrics',
   '/strategies',
   '/auth',
   '/knowledge',
-  '/portfolio',
   '/progress',
-  '/challenges',
-  '/learning',
-  '/academy',
   '/notifications',
   '/debug',
   '/preferences',
   '/openapi.json',
   '/docs',
+  '/sepl',
+  '/resources',
 ]
 
 // https://vite.dev/config/

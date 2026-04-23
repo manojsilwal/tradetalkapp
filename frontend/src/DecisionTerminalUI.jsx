@@ -177,7 +177,7 @@ export default function DecisionTerminalUI() {
   );
 
   const roadmapChartData =
-    r && v?.current_price_usd != null
+    r && v?.current_price_usd != null && Number(v.current_price_usd) > 0
       ? [
           {
             t: `Now ($${Number(v.current_price_usd).toFixed(2)})`,
@@ -245,6 +245,14 @@ export default function DecisionTerminalUI() {
         )}
 
         {payload?.disclaimer && <div className="dt-disclaimer">{payload.disclaimer}</div>}
+        {(payload?.market_data_degraded ||
+          (payload?.spot_price_source &&
+            payload.spot_price_source !== 'yfinance_history')) && (
+          <div className="dt-disclaimer dt-market-degraded">
+            Spot price uses a fallback source ({payload?.spot_price_source || 'unknown'}). Momentum and
+            some metrics may be incomplete versus a full Yahoo history pull.
+          </div>
+        )}
         {error && <div className="dt-error-banner">{error}</div>}
 
         {!hasData && !loading && !error && (
