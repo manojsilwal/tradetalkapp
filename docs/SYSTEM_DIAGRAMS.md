@@ -152,10 +152,10 @@ flowchart TD
         Spaces["HF Spaces\n(Optional Hosting)"]
     end
 
-    Backend -- "1. Remote Embeddings\n(If Chroma on Render)" --> Inference
-    Backend -- "2. Read-only RAG\n(VECTOR_BACKEND=hf)" --> Datasets
-    Backend -- "3. Data Lake Sync\n(Historical Prices)" --> Datasets
-    Backend -.-> "4. Keep-alive ping" -.-> Spaces
+    Backend -->|"1. Remote Embeddings\n(If Chroma on Render)"| Inference
+    Backend -->|"2. Read-only RAG\n(VECTOR_BACKEND=hf)"| Datasets
+    Backend -->|"3. Data Lake Sync\n(Historical Prices)"| Datasets
+    Backend -.->|4. Keep-alive ping| Spaces
 ```
 
 ## 5. Agent Swarm & Debate Architecture

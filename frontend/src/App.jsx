@@ -17,6 +17,7 @@ const DebateUI = React.lazy(() => import('./DebateUI'))
 const BacktestUI = React.lazy(() => import('./BacktestUI'))
 const ObserverUI = React.lazy(() => import('./ObserverUI'))
 const SystemMapUI = React.lazy(() => import('./SystemMapUI'))
+const SystemDiagramsUI = React.lazy(() => import('./SystemDiagramsUI'))
 const DailyChallengeUI = React.lazy(() => import('./DailyChallengeUI'))
 const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
 const LearningPathUI = React.lazy(() => import('./LearningPathUI'))
@@ -298,6 +299,15 @@ function App() {
                         <Network size={20} />
                         <span>System Map</span>
                     </button>
+
+                    <button
+                        className={`nav-btn ${activeTab === 'systemdiagrams' ? 'active' : ''}`}
+                        onClick={() => { navigate('/system-diagrams'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/system-diagrams' ? 'page' : undefined}
+                    >
+                        <Network size={20} />
+                        <span>System Diagrams</span>
+                    </button>
                 </nav>
             </aside>
 
@@ -316,6 +326,7 @@ function App() {
                             <Route path="/scorecard" element={<ScorecardUI />} />
                             <Route path="/observer" element={<ObserverUI />} />
                             <Route path="/systemmap" element={<SystemMapUI />} />
+                            <Route path="/system-diagrams" element={<SystemDiagramsUI />} />
                             <Route path="/challenge" element={
                                 <GamificationTab user={user} featureName="Daily Challenges" featureIcon="⚡">
                                     <DailyChallengeUI onXpGained={handleXpGained} />

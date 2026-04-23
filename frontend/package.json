@@ -14,8 +14,10 @@
   "dependencies": {
     "@react-oauth/google": "^0.13.4",
     "lucide-react": "^0.575.0",
+    "mermaid": "^11.14.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.13.2",
     "recharts": "^3.7.0"
   },
