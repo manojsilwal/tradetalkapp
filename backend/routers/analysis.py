@@ -396,6 +396,14 @@ async def analyze_ticker_post(body: AnalyzeIngressRequest, _auth_user=Depends(ge
 async def decision_terminal_get(
     ticker: str = Query("AAPL", description="Stock ticker for the decision terminal."),
     credit_stress: float = Query(None, description="Optional credit stress override (same as /analyze)."),
+    provider_audit: bool = Query(
+        False,
+        description="Include provider_audit (which data families filled each block).",
+    ),
+    audit: Optional[int] = Query(
+        None,
+        description="Alias: set to 1 to include provider_audit.",
+    ),
     _auth_user=Depends(get_optional_user),
 ):
     """
@@ -405,6 +413,7 @@ async def decision_terminal_get(
     from ..decision_terminal import run_decision_terminal_request
 
     t = validate_ticker_query(ticker)
+    want_audit = bool(provider_audit or (audit == 1))
     return await run_decision_terminal_request(
         t,
         credit_stress,
@@ -413,6 +422,7 @@ async def decision_terminal_get(
         tool_registry=tool_registry,
         poly_connector=poly_connector,
         llm_client=llm_client,
+        provider_audit=want_audit,
     )
 
 
@@ -422,6 +432,7 @@ async def decision_terminal_post(body: AnalyzeIngressRequest, _auth_user=Depends
     from ..decision_terminal import run_decision_terminal_request
 
     t = validate_ticker_query(body.ticker)
+    want_audit = bool(body.provider_audit or (body.audit == 1))
     return await run_decision_terminal_request(
         t,
         body.credit_stress,
@@ -430,4 +441,5 @@ async def decision_terminal_post(body: AnalyzeIngressRequest, _auth_user=Depends
         tool_registry=tool_registry,
         poly_connector=poly_connector,
         llm_client=llm_client,
+        provider_audit=want_audit,
     )

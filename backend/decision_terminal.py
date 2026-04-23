@@ -328,6 +328,80 @@ def _heuristic_roadmap(current_price: float, hist_cagr_3y: Optional[float] = Non
     return round(u, 2), round(b, 2), round(e, 2), round(cagr_b, 2), assumptions
 
 
+def _build_provider_audit(
+    *,
+    ticker: str,
+    debate_data: dict,
+    poly_raw: dict,
+    debate_spot_price_source: Optional[str],
+    terminal_spot_price_source: Optional[str],
+    market_data_degraded: bool,
+    filled_spot_from_ext: bool,
+    hist_cagr_present: bool,
+    hist_quality_nonempty: bool,
+    roadmap: TerminalRoadmapPanel,
+) -> Dict[str, Any]:
+    """
+    Documentation-oriented map of which upstream families feed each terminal block.
+    Not a telemetry pipeline — omit from responses unless explicitly requested.
+    """
+    spot = terminal_spot_price_source or "none"
+    spot_family = (
+        "stooq"
+        if spot == "stooq"
+        else "fincrawler"
+        if spot == "fincrawler"
+        else "yfinance"
+        if spot in ("yfinance_history", "yfinance_info", "merged_from_info") or filled_spot_from_ext
+        else "none"
+    )
+    return {
+        "schema_version": 1,
+        "ticker": ticker.upper(),
+        "debate_market_pipeline": {
+            "connector": "debate_data (yfinance → Stooq → FinCrawler for spot)",
+            "debate_spot_price_source": debate_spot_price_source,
+            "terminal_spot_price_source": terminal_spot_price_source,
+            "spot_provider_family": spot_family,
+            "market_data_degraded": market_data_degraded,
+            "filled_terminal_spot_from_yfinance_ext": filled_spot_from_ext,
+        },
+        "valuation": {
+            "panel": "valuation",
+            "spot_and_momentum_inputs": spot_family,
+            "extended_snapshot_for_multiples_and_quality": "yfinance_ticker_info",
+            "fair_value_models": {
+                "DCF": "not_implemented",
+                "Graham": "yfinance",
+                "Multiples": "heuristic",
+            },
+            "historical_cagr_from_data_lake": hist_cagr_present,
+        },
+        "quality": {
+            "panel": "quality",
+            "fundamentals_and_ratios": "yfinance_via_debate_data_and_ext",
+            "historical_quarterly_fallback": "data_lake_parquet" if hist_quality_nonempty else "none",
+        },
+        "verdict": {
+            "panel": "verdict",
+            "expert_stance_and_headline_fusion": "internal_swarm_and_debate_llm",
+            "prediction_market": {
+                "provider": "polymarket",
+                "api_surface": "gamma-api.polymarket.com",
+                "connector_label": poly_raw.get("source"),
+                "keyword_resolution": poly_raw.get("keyword_resolution") or "unknown",
+                "event_count": len(poly_raw.get("events") or []),
+                "has_relevant_data": bool(poly_raw.get("has_relevant_data")),
+            },
+        },
+        "roadmap": {
+            "panel": "roadmap",
+            "scenario_prices_source": roadmap.provenance.source or "unknown",
+            "used_heuristic_fallback": roadmap.used_heuristic_fallback,
+        },
+    }
+
+
 async def build_decision_terminal_payload(
     ticker: str,
     swarm: SwarmConsensus,
@@ -336,9 +410,13 @@ async def build_decision_terminal_payload(
     poly_raw: dict,
     ext: dict,
     llm_client: Any,
+    *,
+    include_provider_audit: bool = False,
 ) -> DecisionTerminalPayload:
     t = ticker.upper()
     now = datetime.now(timezone.utc).isoformat()
+    debate_spot_price_source = debate_data.get("spot_price_source")
+    filled_spot_from_ext = False
     price = debate_data.get("current_price")
     try:
         price_f = float(price) if price is not None else None
@@ -348,7 +426,7 @@ async def build_decision_terminal_payload(
         price_f = None
 
     market_data_degraded = bool(debate_data.get("market_data_degraded"))
-    spot_price_source = debate_data.get("spot_price_source")
+    spot_price_source = debate_spot_price_source
 
     if price_f is None:
         for key in ("regularMarketPrice", "currentPrice", "previousClose"):
@@ -359,6 +437,7 @@ async def build_decision_terminal_payload(
                 pf = float(raw)
                 if pf > 0:
                     price_f = pf
+                    filled_spot_from_ext = True
                     market_data_degraded = True
                     if not spot_price_source:
                         spot_price_source = "yfinance_info"
@@ -635,6 +714,25 @@ async def build_decision_terminal_payload(
         provenance=roadmap_prov,
     )
 
+    provider_audit: Optional[Dict[str, Any]] = None
+    if include_provider_audit:
+        provider_audit = _build_provider_audit(
+            ticker=t,
+            debate_data=debate_data,
+            poly_raw=poly_raw,
+            debate_spot_price_source=debate_spot_price_source
+            if isinstance(debate_spot_price_source, str)
+            else None,
+            terminal_spot_price_source=spot_price_source
+            if isinstance(spot_price_source, str)
+            else None,
+            market_data_degraded=market_data_degraded,
+            filled_spot_from_ext=filled_spot_from_ext,
+            hist_cagr_present=hist_cagr is not None,
+            hist_quality_nonempty=bool(hist_quality),
+            roadmap=roadmap,
+        )
+
     return _decision_terminal_payload_json_safe(
         DecisionTerminalPayload(
             ticker=t,
@@ -647,6 +745,7 @@ async def build_decision_terminal_payload(
             roadmap=roadmap,
             market_data_degraded=market_data_degraded,
             spot_price_source=spot_price_source,
+            provider_audit=provider_audit,
         )
     )
 
@@ -660,6 +759,7 @@ async def run_decision_terminal_request(
     tool_registry: Any,
     poly_connector: Any,
     llm_client: Any,
+    provider_audit: bool = False,
 ) -> DecisionTerminalPayload:
     """
     Run full analyze (swarm + debate) in parallel with extra market fetches, then assemble payload.
@@ -690,4 +790,5 @@ async def run_decision_terminal_request(
         poly_raw,
         ext,
         llm_client,
+        include_provider_audit=provider_audit,
     )

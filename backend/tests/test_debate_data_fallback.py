@@ -57,6 +57,49 @@ class TestDebateDataFallback(unittest.TestCase):
         self.assertFalse(data["market_data_degraded"])
         mock_fb.assert_not_called()
 
+    @patch("backend.connectors.debate_data.time.sleep")
+    @patch("backend.connectors.quote_fallbacks.fetch_us_equity_spot")
+    @patch("yfinance.Ticker")
+    def test_empty_history_uses_fincrawler_when_fallback_returns_fincrawler(
+        self, mock_ticker_cls, mock_fb, _sleep
+    ):
+        mock_fb.return_value = (301.5, "fincrawler")
+
+        hist_empty = MagicMock()
+        hist_empty.empty = True
+
+        inst = MagicMock()
+        inst.history.return_value = hist_empty
+        inst.info = {}
+        inst.fast_info = {}
+        mock_ticker_cls.return_value = inst
+
+        from backend.connectors.debate_data import fetch_debate_data
+
+        data = asyncio.run(fetch_debate_data("AAPL"))
+        self.assertEqual(data["current_price"], 301.5)
+        self.assertEqual(data["spot_price_source"], "fincrawler")
+        self.assertTrue(data["market_data_degraded"])
+
+    @patch("backend.connectors.debate_data.time.sleep")
+    @patch("backend.connectors.quote_fallbacks.fetch_us_equity_spot")
+    @patch("yfinance.Ticker")
+    def test_yfinance_exception_still_calls_stooq_fincrawler_chain(
+        self, mock_ticker_cls, mock_fb, _sleep
+    ):
+        """When yfinance raises (blocked IP, outage), still recover spot via quote_fallbacks."""
+        mock_ticker_cls.side_effect = RuntimeError("Yahoo rate limit / empty session")
+
+        mock_fb.return_value = (144.0, "fincrawler")
+
+        from backend.connectors.debate_data import fetch_debate_data
+
+        data = asyncio.run(fetch_debate_data("MSFT"))
+        self.assertEqual(data["current_price"], 144.0)
+        self.assertEqual(data["spot_price_source"], "fincrawler")
+        self.assertTrue(data["market_data_degraded"])
+        mock_fb.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

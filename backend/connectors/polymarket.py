@@ -35,7 +35,9 @@ class PolymarketConnector(DataConnector):
 
         # 1. Resolve keywords: static map first, then yfinance fallback
         keywords = TICKER_KEYWORDS.get(ticker_upper)
+        keyword_resolution = "static_map"
         if not keywords:
+            keyword_resolution = "yfinance"
             try:
                 info = await asyncio.to_thread(lambda: yf.Ticker(ticker_upper).info)
                 company_name = info.get("shortName") or info.get("longName") or ""
@@ -88,6 +90,7 @@ class PolymarketConnector(DataConnector):
 
         result = {
             "source": "Polymarket Gamma API (Live)",
+            "keyword_resolution": keyword_resolution,
             "ticker": ticker_upper,
             "events": relevant_events,
             "has_relevant_data": len(relevant_events) > 0

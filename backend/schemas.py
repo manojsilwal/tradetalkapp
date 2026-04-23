@@ -356,3 +356,10 @@ class DecisionTerminalPayload(BaseModel):
         default=None,
         description="yfinance_history | yfinance_info | stooq | fincrawler | merged_from_info",
     )
+    provider_audit: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "When requested (provider_audit / audit=1), maps each Decision Terminal block to "
+            "upstream data families: yfinance, Stooq, FinCrawler, Polymarket, heuristics, LLM, data lake."
+        ),
+    )

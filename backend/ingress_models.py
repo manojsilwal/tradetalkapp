@@ -60,6 +60,14 @@ class AnalyzeIngressRequest(BaseModel):
         None,
         description="Optional override for credit stress index (testing).",
     )
+    provider_audit: bool = Field(
+        False,
+        description="When true, POST /decision-terminal includes provider_audit metadata.",
+    )
+    audit: Optional[int] = Field(
+        None,
+        description="Alias for provider_audit: set to 1 to include provider_audit on decision-terminal.",
+    )
 
     @field_validator("ticker", mode="before")
     @classmethod

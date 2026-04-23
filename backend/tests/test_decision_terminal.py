@@ -8,6 +8,7 @@ from backend.decision_terminal import (
     _graham_fair_value,
     _strip_non_json_floats,
     _decision_terminal_payload_json_safe,
+    _build_provider_audit,
 )
 from backend.schemas import (
     DebateResult,
@@ -93,6 +94,35 @@ class TestGraham(unittest.TestCase):
         g = _graham_fair_value(5.0, 20.0)
         self.assertIsNotNone(g)
         self.assertGreater(g, 0)
+
+
+class TestProviderAudit(unittest.TestCase):
+    def test_maps_blocks_and_spot_family(self):
+        audit = _build_provider_audit(
+            ticker="AAPL",
+            debate_data={"spot_price_source": "stooq"},
+            poly_raw={
+                "source": "Polymarket Gamma API (Live)",
+                "keyword_resolution": "static_map",
+                "events": [{"title": "x"}],
+                "has_relevant_data": True,
+            },
+            debate_spot_price_source="stooq",
+            terminal_spot_price_source="stooq",
+            market_data_degraded=True,
+            filled_spot_from_ext=False,
+            hist_cagr_present=False,
+            hist_quality_nonempty=True,
+            roadmap=TerminalRoadmapPanel(
+                confidence_0_1=0.2,
+                used_heuristic_fallback=True,
+                provenance=TerminalFieldProvenance(source="heuristic"),
+            ),
+        )
+        self.assertEqual(audit["debate_market_pipeline"]["spot_provider_family"], "stooq")
+        self.assertEqual(audit["valuation"]["spot_and_momentum_inputs"], "stooq")
+        self.assertEqual(audit["verdict"]["prediction_market"]["provider"], "polymarket")
+        self.assertEqual(audit["roadmap"]["scenario_prices_source"], "heuristic")
 
 
 class TestVerdictFusion(unittest.TestCase):

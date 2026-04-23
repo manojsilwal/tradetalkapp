@@ -226,6 +226,18 @@ def _sync_fetch(ticker: str) -> dict:
         return _empty_data(t_up)
     except Exception as e:
         logger.warning("[DebateDataConnector] Failed for %s: %s", t_up, e)
+        # yfinance can throw or return unusable data from blocked IPs; still try Stooq / FinCrawler.
+        try:
+            fb: Optional[Tuple[float, str]] = fetch_us_equity_spot(t_up)
+            if fb:
+                spot, label = fb
+                return _build_spot_only_record(t_up, {}, spot, spot_source=label)
+        except Exception as e2:
+            logger.warning(
+                "[DebateDataConnector] Spot fallback after yfinance error failed for %s: %s",
+                t_up,
+                e2,
+            )
         return _empty_data(t_up)
 
 
