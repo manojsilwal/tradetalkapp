@@ -76,7 +76,7 @@ export default function ConsumerUI() {
             setMetricsData(metricsJson.metrics);
             addAnalysis(ticker.toUpperCase(), { trace: traceData, metrics: metricsJson.metrics });
         } catch (err) {
-            setError(err.message);
+            setError(typeof err.message === 'string' ? err.message : JSON.stringify(err.message));
         } finally {
             setLoadingStep('');
             setLoading(false);

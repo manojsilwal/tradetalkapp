@@ -35,7 +35,7 @@ export async function apiFetch(url, options = {}) {
     let errMsg = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      errMsg = body.detail || body.error || errMsg;
+      errMsg = typeof body.detail === 'string' ? body.detail : (body.detail?.message || body.error || errMsg);
     } catch { /* ignore json parse errors */ }
     throw new Error(errMsg);
   }
