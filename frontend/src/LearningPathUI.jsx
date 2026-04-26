@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, CheckCircle2, Lock, ChevronRight, Star, Zap, Award } from 'lucide-react';
+import { BookOpen, CheckCircle2, Lock, ChevronRight, Star, Zap, Award, Film, Play } from 'lucide-react';
+import VideoPlayer from './VideoPlayer';
 import { API_BASE_URL, apiFetch } from './api';
 
 export default function LearningPathUI({ onXpGained }) {
@@ -8,8 +9,17 @@ export default function LearningPathUI({ onXpGained }) {
     const [moduleDetail, setModuleDetail] = useState(null);
     const [quizState, setQuizState]   = useState(null);   // {answers: {}, submitted: bool, score: int}
     const [loading, setLoading]       = useState(true);
+    const [generating, setGenerating] = useState(false);
+    const [showVideo, setShowVideo]   = useState(false);
+    const [pollInterval, setPollInterval] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError]           = useState(null);
+
+    useEffect(() => {
+        return () => {
+            if (pollInterval) clearInterval(pollInterval);
+        };
+    }, [pollInterval]);
 
     useEffect(() => {
         apiFetch(`${API_BASE_URL}/learning/curriculum`)
@@ -22,10 +32,50 @@ export default function LearningPathUI({ onXpGained }) {
     }, []);
 
     const openModule = async (modId) => {
+        if (pollInterval) clearInterval(pollInterval);
+        setShowVideo(false);
         setActiveModule(modId);
         setQuizState({ answers: {}, submitted: false, score: 0 });
         const data = await apiFetch(`${API_BASE_URL}/learning/module/${modId}`);
         setModuleDetail(data);
+
+        if (data?.lesson?.status === 'generating') {
+            startPolling(modId);
+        }
+    };
+
+    const startPolling = (modId) => {
+        const interval = setInterval(async () => {
+            const data = await apiFetch(`${API_BASE_URL}/learning/module/${modId}`);
+            setModuleDetail(data);
+            if (data?.lesson?.status !== 'generating') {
+                clearInterval(interval);
+                setPollInterval(null);
+            }
+        }, 5000);
+        setPollInterval(interval);
+    };
+
+    const handleGenerateVideo = async () => {
+        if (!moduleDetail?.lesson?.id) return;
+        setGenerating(true);
+        try {
+            await apiFetch(`${API_BASE_URL}/academy/lesson/${moduleDetail.lesson.id}/generate`, { method: 'POST' });
+            const data = await apiFetch(`${API_BASE_URL}/learning/module/${activeModule}`);
+            setModuleDetail(data);
+            startPolling(activeModule);
+        } finally {
+            setGenerating(false);
+        }
+    };
+
+    const handleWatchVideo = async () => {
+        if (!moduleDetail?.lesson?.id) return;
+        setShowVideo(true);
+        if (!moduleDetail.lesson.watched) {
+            const data = await apiFetch(`${API_BASE_URL}/academy/lesson/${moduleDetail.lesson.id}/watch`, { method: 'POST' });
+            if (data.progress && onXpGained) onXpGained(data.progress);
+        }
     };
 
     const handleQuizAnswer = (qIdx, aIdx) => {
@@ -101,6 +151,57 @@ export default function LearningPathUI({ onXpGained }) {
                         </div>
                     )}
                 </div>
+
+                {/* Video Module */}
+                {moduleDetail.lesson && (
+                    <div style={{ marginBottom: 24, padding: '20px 24px', background: 'rgba(255,255,255,0.02)', borderRadius: 16, border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showVideo ? 20 : 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <Film size={20} color="#a78bfa" />
+                                <h3 style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Video Lesson</h3>
+                            </div>
+
+                            {!showVideo && (
+                                <div>
+                                    {moduleDetail.lesson.status === 'ready' ? (
+                                        <button onClick={handleWatchVideo} style={{
+                                            padding: '8px 16px', borderRadius: 8, border: 'none',
+                                            background: 'linear-gradient(135deg, #10b981, #059669)',
+                                            color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                                            display: 'flex', alignItems: 'center', gap: 6,
+                                        }}>
+                                            <Play size={14} fill="#fff" /> Watch Video
+                                        </button>
+                                    ) : moduleDetail.lesson.status === 'generating' ? (
+                                        <div style={{ fontSize: 13, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <div style={{ width: 14, height: 14, border: '2px solid rgba(245,158,11,0.2)', borderTopColor: '#f59e0b', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                                            Generating...
+                                        </div>
+                                    ) : (
+                                        <button onClick={handleGenerateVideo} disabled={generating} style={{
+                                            padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(124,58,237,0.3)',
+                                            background: 'rgba(124,58,237,0.1)',
+                                            color: '#a78bfa', fontSize: 13, fontWeight: 700, cursor: generating ? 'not-allowed' : 'pointer',
+                                            display: 'flex', alignItems: 'center', gap: 6,
+                                        }}>
+                                            <Zap size={14} /> {generating ? 'Starting...' : 'Generate Lesson'}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {showVideo && (
+                            <div style={{ margin: '0 -24px -20px' }}>
+                                <VideoPlayer
+                                    lesson={moduleDetail.lesson}
+                                    onXpGained={onXpGained}
+                                    onBack={() => setShowVideo(false)}
+                                />
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Guided steps */}
                 {moduleDetail.guided_steps?.length > 0 && (

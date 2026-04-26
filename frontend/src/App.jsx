@@ -21,7 +21,6 @@ const SystemDiagramsUI = React.lazy(() => import('./SystemDiagramsUI'))
 const DailyChallengeUI = React.lazy(() => import('./DailyChallengeUI'))
 const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
 const LearningPathUI = React.lazy(() => import('./LearningPathUI'))
-const VideoAcademyUI = React.lazy(() => import('./VideoAcademyUI'))
 const ChatUI = React.lazy(() => import('./ChatUI'))
 const ScorecardUI = React.lazy(() => import('./ScorecardUI'))
 
@@ -47,7 +46,6 @@ const ROUTE_TO_KEY = {
     '/challenge': 'challenge',
     '/portfolio': 'portfolio',
     '/learning': 'learning',
-    '/academy': 'academy',
     '/chat': 'chat',
 }
 
@@ -267,16 +265,6 @@ function App() {
                         <BookOpen size={20} />
                         <span>Learning Path</span>
                     </button>
-
-                    <button
-                        className={`nav-btn ${activeTab === 'academy' ? 'active' : ''}`}
-                        onClick={() => { navigate('/academy'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/academy' ? 'page' : undefined}
-                    >
-                        <Film size={20} />
-                        <span>Video Academy</span>
-                    </button>
-
                     {/* --- Developer --- */}
                     <div style={{ fontSize: 9, color: '#475569', fontWeight: 700, letterSpacing: 1.5, padding: '12px 12px 4px' }}>
                         DEVELOPER
@@ -340,11 +328,6 @@ function App() {
                             <Route path="/learning" element={
                                 <GamificationTab user={user} featureName="Learning Path" featureIcon="📚">
                                     <LearningPathUI onXpGained={handleXpGained} />
-                                </GamificationTab>
-                            } />
-                            <Route path="/academy" element={
-                                <GamificationTab user={user} featureName="Video Academy" featureIcon="🎬">
-                                    <VideoAcademyUI onXpGained={handleXpGained} />
                                 </GamificationTab>
                             } />
                         </Routes>
