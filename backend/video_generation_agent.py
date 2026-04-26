@@ -56,15 +56,16 @@ def _veo_duration_seconds() -> int:
 
 
 def _scene_system_prompt(duration: int) -> str:
-    return f"""You are a visual director for a TikTok-style finance education channel.
-Your job: break a lesson topic into exactly 8 cinematic scenes for an animated explainer video.
-Each scene is {duration} seconds. The style is modern 2D motion graphics — clean, colourful, fast-paced.
+    return f"""You are a visual director for a high-quality finance education channel.
+Your job: break a lesson topic into exactly 8 continuous cinematic scenes for a highly animated explainer video.
+Each scene is {duration} seconds. The style must be true moving video showing live examples, moving diagrams, fluid animations, and real-time transitions (NOT a static slideshow).
 
 Rules:
-- Each visual_prompt must be self-contained and describe ONLY what to animate visually
-- No people, no real company logos — use abstract charts, numbers, icons, motion graphics
-- Keep captions short (1 sentence max)
-- Vary the visual style between scenes for variety
+- Each visual_prompt must explicitly describe continuous motion, fluid transitions, moving diagrams, or live animated examples.
+- Do NOT describe static slides. Every scene must have dynamic movement.
+- Use abstract animated charts, flowing numbers, kinetic typography, and moving motion graphics. No people or real logos.
+- Keep captions short (1 sentence max).
+- Ensure visual flow feels like a continuous video rather than disjointed slides.
 
 Return ONLY a valid JSON array — no markdown fences, no extra text."""
 
