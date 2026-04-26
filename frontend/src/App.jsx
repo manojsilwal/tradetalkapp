@@ -9,7 +9,7 @@ import { useAuth } from './AuthContext'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
 import { API_BASE_URL, getToken } from './api'
 
-const ConsumerUI = React.lazy(() => import('./ConsumerUI'))
+const ConsumerUI = React.lazy(() => import('./UnifiedDashboardUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
 const MacroUI = React.lazy(() => import('./MacroUI'))
 const GoldAdvisorUI = React.lazy(() => import('./GoldAdvisorUI'))
@@ -165,17 +165,10 @@ function App() {
                         aria-current={location.pathname === '/' ? 'page' : undefined}
                     >
                         <LayoutDashboard size={20} />
-                        <span>Valuation Dashboard</span>
+                        <span>Dashboard</span>
                     </button>
 
-                    <button
-                        className={`nav-btn ${activeTab === 'decision_terminal' ? 'active' : ''}`}
-                        onClick={() => { navigate('/decision-terminal'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/decision-terminal' ? 'page' : undefined}
-                    >
-                        <Gauge size={20} />
-                        <span>Decision Terminal</span>
-                    </button>
+
 
                     <button
                         className={`nav-btn ${activeTab === 'macro' ? 'active' : ''}`}
