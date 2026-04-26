@@ -68,7 +68,7 @@ def _register(pid: str, builder):
 def _ff_qmj():
     return _base(
         preset_id="ff_quality_value",
-        name="Fama-French Quality + Value (proxy)",
+        name="Fama-French Quality + Value",
         description=(
             "Quality gates (ROE, gross margin, leverage) then rank by low P/B. "
             "Inspired by QMJ + HML; see Fama-French & Asness quality literature."
@@ -109,7 +109,7 @@ def _mom_12_1():
 def _low_vol():
     return _base(
         preset_id="low_volatility",
-        name="Low Volatility Anomaly",
+        name="Low Volatility",
         description=(
             "Hold the lowest 252-day realized-vol names (Baker, Bradley & Wurgler 2011 style). "
             "Lower vol = better."
@@ -127,7 +127,7 @@ def _low_vol():
 def _magic_formula():
     return _base(
         preset_id="magic_formula",
-        name="Magic Formula (Greenblatt proxy)",
+        name="Magic Formula",
         description=(
             "Earnings yield + quality heuristic; excludes common financials. "
             "Annual rebalance; see Greenblatt, The Little Book That Beats the Market."
@@ -146,7 +146,7 @@ def _magic_formula():
 def _dual_momentum():
     return _base(
         preset_id="dual_momentum",
-        name="Dual Momentum (Antonacci proxy)",
+        name="Dual Momentum",
         description=(
             "Absolute vs T-bills (SHY) then relative SPY vs EFA; holds one ETF. "
             "See Antonacci, Dual Momentum."
@@ -183,7 +183,7 @@ def _dogs_dow():
 def _week52_high():
     return _base(
         preset_id="week52_high",
-        name="52-Week High Momentum",
+        name="52-Week High",
         description=(
             "Stocks closest to 52-week highs (George & Hwang 2004). "
             "Score = price / 52w high (higher = stronger)."
@@ -201,7 +201,7 @@ def _week52_high():
 def _shareholder_yield():
     return _base(
         preset_id="shareholder_yield",
-        name="Shareholder Yield (proxy)",
+        name="Shareholder Yield",
         description=(
             "Ranks by dividend yield (buybacks not in free data — scaled proxy). "
             "Meb Faber / shareholder yield literature."
@@ -219,7 +219,7 @@ def _shareholder_yield():
 def _value_mom_combo():
     return _base(
         preset_id="value_momentum_aqr",
-        name="Value + Momentum (AQR-style blend)",
+        name="Value + Momentum",
         description=(
             "Combined value + 12-1 momentum score (AQR multi-factor spirit). "
             "Monthly rebalance."
@@ -237,7 +237,7 @@ def _value_mom_combo():
 def _buffett_garp():
     return _base(
         preset_id="buffett_garp",
-        name="ROIC + Growth + Cheap (Buffett-quant proxy)",
+        name="Quality GARP",
         description=(
             "ROE > 15%, revenue growth > 8% YoY, then cheapest by P/E. "
             "Semi-annual rebalance; GARP / compounder screen."
