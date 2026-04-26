@@ -409,35 +409,53 @@ async def chat_send_message(
                 lines += [f"• {h}" for h in headlines[:20]]
                 return "\n".join(lines)
 
-            # 3. Live RSS fallback
-            def _fetch():
-                import urllib.request, xml.etree.ElementTree as ET, yfinance as yf
-                heads = []
-                rss_urls = [
-                    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US",
-                    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY&region=US&lang=en-US",
-                ]
-                for url in rss_urls:
-                    try:
-                        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                        with urllib.request.urlopen(req, timeout=6) as r:
-                            for item in ET.parse(r).findall(".//item")[:8]:
-                                t = item.findtext("title", "").strip()
-                                if t:
-                                    heads.append(t)
-                    except Exception:
-                        pass
+            # 3. Live RSS fallback - Parallelized
+            def _fetch_rss(url: str) -> list[str]:
+                import urllib.request, xml.etree.ElementTree as ET
+                titles = []
                 try:
-                    for n in (yf.Ticker("^GSPC").news or [])[:8]:
-                        t = n.get("title", "").strip()
-                        if t and t not in heads:
-                            heads.append(t)
+                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=6) as r:
+                        for item in ET.parse(r).findall(".//item")[:8]:
+                            t = item.findtext("title", "").strip()
+                            if t:
+                                titles.append(t)
                 except Exception:
                     pass
-                if not heads:
-                    return "No live news headlines available at this time."
-                return "[Live market headlines]\n" + "\n".join(f"• {h}" for h in heads[:16])
-            return await asyncio.to_thread(_fetch)
+                return titles
+
+            def _fetch_yf_news(symbol: str) -> list[str]:
+                import yfinance as yf
+                titles = []
+                try:
+                    for n in (yf.Ticker(symbol).news or [])[:8]:
+                        t = n.get("title", "").strip()
+                        if t:
+                            titles.append(t)
+                except Exception:
+                    pass
+                return titles
+
+            rss_urls = [
+                "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US",
+                "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY&region=US&lang=en-US",
+            ]
+            # Concurrent fetch to avoid sequential blocking wait
+            tasks = [asyncio.to_thread(_fetch_rss, url) for url in rss_urls]
+            tasks.append(asyncio.to_thread(_fetch_yf_news, "^GSPC"))
+            results = await asyncio.gather(*tasks)
+
+            heads = []
+            seen = set()
+            for titles in results:
+                for t in titles:
+                    if t and t not in seen:
+                        heads.append(t)
+                        seen.add(t)
+
+            if not heads:
+                return "No live news headlines available at this time."
+            return "[Live market headlines]\n" + "\n".join(f"• {h}" for h in heads[:16])
         except Exception as e:
             return f"Error fetching news: {e}"
 
