@@ -46,7 +46,7 @@ export default function VideoPlayer({ lesson, onBack, onXpGained }) {
     }, [scene, isTextFallback, currentScene, goNext]);
 
     return (
-        <div style={{ maxWidth: 480, margin: '0 auto', padding: '0 16px' }}>
+        <div style={{ maxWidth: '100%', margin: '0 auto' }}>
             {onBack && (
                 <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#a78bfa', fontSize: 13, cursor: 'pointer', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
                     ← Back to Module
@@ -55,7 +55,7 @@ export default function VideoPlayer({ lesson, onBack, onXpGained }) {
 
             <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 20, overflow: 'hidden', border: `1px solid ${tc.border}` }}>
                 {/* Video area */}
-                <div style={{ background: '#000', aspectRatio: '9/16', position: 'relative', maxHeight: 480 }}>
+                <div style={{ background: '#000', aspectRatio: '16/9', position: 'relative', maxHeight: 600 }}>
                     {currentScene && isTextFallback ? (
                         <div style={{
                             width: '100%', height: '100%', minHeight: 280,
