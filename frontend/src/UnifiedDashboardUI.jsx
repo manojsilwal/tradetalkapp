@@ -148,7 +148,7 @@ export default function UnifiedDashboardUI() {
       const [traceRes, metricsRes, decisionRes] = await Promise.all([
         apiFetch(`${API_BASE_URL}/trace?ticker=${overrideTicker}`),
         apiFetch(`${API_BASE_URL}/metrics/${overrideTicker}`),
-        apiFetch(`${API_BASE_URL}/dt-val/${overrideTicker}`).catch(() => null)
+        apiFetch(`${API_BASE_URL}/decision-terminal?ticker=${overrideTicker}`).catch(() => null)
       ]);
 
       setTraceData(traceRes);
