@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import time
 import requests
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from typing import Dict, Any, List
 from .base import DataConnector
 

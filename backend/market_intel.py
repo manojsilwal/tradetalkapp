@@ -473,7 +473,7 @@ def _fetch_headlines() -> List[str]:
     Returns a deduped list of headline strings.
     """
     import urllib.request
-    import xml.etree.ElementTree as ET
+    import defusedxml.ElementTree as ET
     import yfinance as yf
 
     headlines: List[str] = []
