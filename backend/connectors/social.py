@@ -1,7 +1,7 @@
 import asyncio
 import urllib.request
 import urllib.parse
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from typing import Dict, Any, List
 from .base import DataConnector
 from ..connector_cache import get_cached, set_cached

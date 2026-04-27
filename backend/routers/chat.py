@@ -411,7 +411,7 @@ async def chat_send_message(
 
             # 3. Live RSS fallback - Parallelized
             def _fetch_rss(url: str) -> list[str]:
-                import urllib.request, xml.etree.ElementTree as ET
+                import urllib.request, defusedxml.ElementTree as ET
                 titles = []
                 try:
                     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
