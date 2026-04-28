@@ -34,6 +34,24 @@ class HfInferenceRouterEmbeddingFunction:
         return out
 
 
+class GeminiEmbeddingFunction:
+    """Embedding function for Chroma using google-genai SDK."""
+
+    def __init__(self, api_key: str, model_name: str = "text-embedding-004"):
+        from google import genai
+        self._client = genai.Client(api_key=api_key)
+        self._model_name = model_name
+
+    def __call__(self, input: List[str]) -> List[List[float]]:
+        # text_embedding-004 supports batching up to 2048 texts.
+        response = self._client.models.embed_content(
+            model=self._model_name,
+            contents=input,
+            config={"task_type": "RETRIEVAL_DOCUMENT"}
+        )
+        return [list(emb.values) for emb in response.embeddings]
+
+
 class VectorBackendBase:
     def ensure_collection(self, name: str) -> None:
         raise NotImplementedError
@@ -99,6 +117,20 @@ class ChromaVectorBackend(VectorBackendBase):
                     )
                 except Exception as e:
                     logger.warning(f"[ChromaVectorBackend] Failed to init remote embedding function: {e}")
+
+        # Gemini Embedding 2 (text-embedding-004) support
+        if os.environ.get("USE_GEMINI_EMBEDDING", "0").strip().lower() in ("1", "true", "yes"):
+            gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+            if gemini_key:
+                try:
+                    model_name = os.environ.get("GEMINI_EMBEDDING_MODEL", "text-embedding-004").strip() or "text-embedding-004"
+                    self._embedding_function = GeminiEmbeddingFunction(
+                        api_key=gemini_key,
+                        model_name=model_name,
+                    )
+                    logger.info("[ChromaVectorBackend] Configured GeminiEmbeddingFunction (%s).", model_name)
+                except Exception as e:
+                    logger.warning(f"[ChromaVectorBackend] Failed to init Gemini embedding function: {e}")
 
     def ensure_collection(self, name: str) -> None:
         if self._embedding_function:
@@ -214,6 +246,24 @@ class SupabaseVectorBackend(VectorBackendBase):
         return
 
     def _embed(self, text: str) -> Optional[List[float]]:
+        # Try Gemini if enabled
+        if os.environ.get("USE_GEMINI_EMBEDDING", "0").strip().lower() in ("1", "true", "yes"):
+            gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+            if gemini_key:
+                try:
+                    from google import genai
+                    client = genai.Client(api_key=gemini_key)
+                    model_name = os.environ.get("GEMINI_EMBEDDING_MODEL", "text-embedding-004").strip() or "text-embedding-004"
+                    response = client.models.embed_content(
+                        model=model_name,
+                        contents=text,
+                        config={"task_type": "RETRIEVAL_QUERY"}
+                    )
+                    if response.embeddings:
+                        return list(response.embeddings[0].values)
+                except Exception as e:
+                    logger.warning(f"[SupabaseVectorBackend] Gemini embedding failed: {e}")
+
         if not self._embedding_pool or not self._embedding_model:
             return None
         try:
