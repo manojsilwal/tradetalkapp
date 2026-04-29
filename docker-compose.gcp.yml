@@ -1,0 +1,46 @@
+# TradeTalk Backend on GCP (frontend stays on Vercel)
+# Deploy: docker compose -f docker-compose.gcp.yml up -d --build
+
+services:
+  tradetalk-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "5050:8080"
+    env_file: .env.gcp
+    environment:
+      PORT: "8080"
+      PYTHON_VERSION: "3.11.0"
+      GUARDRAILS_ENABLE: "1"
+      GUARDRAILS_STRICT_STARTUP: "0"
+      VECTOR_BACKEND: supabase
+      SP500_INGEST_ON_STARTUP: "0"
+      CORS_ORIGINS: "https://frontend-manojsilwals-projects.vercel.app,http://34.57.42.63:5050"
+      # SEPL tool evolution
+      SEPL_TOOL_ENABLE: "1"
+      SEPL_TOOL_DRY_RUN: "0"
+      SEPL_TOOL_AUTOCOMMIT: "1"
+      SEPL_TOOL_INTERVAL_HOURS: "24"
+      SEPL_TOOL_MIN_MARGIN: "0.05"
+      SEPL_TOOL_ROLLBACK_MARGIN: "0.05"
+      SEPL_TOOL_ROLLBACK_WINDOW_HOURS: "168"
+      SEPL_TOOL_MAX_PER_DAY: "2"
+      SEPL_TOOL_MAX_PER_DAY_TIER_0: "2"
+      SEPL_TOOL_MAX_PER_DAY_TIER_1: "1"
+      SEPL_TOOL_MAX_PER_DAY_TIER_2: "0"
+      SEPL_TOOL_MAX_PER_DAY_TIER_3: "0"
+      SEPL_TOOL_MAX_PERTURB_STEPS: "4"
+      SEPL_TOOL_CANDIDATES_PER_CYCLE: "4"
+    volumes:
+      - tradetalk-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/llm/status')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
+
+volumes:
+  tradetalk-data:
