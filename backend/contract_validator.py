@@ -124,6 +124,8 @@ def _observed_type(value: Any) -> str:
 
 
 def _matches_type(value: Any, expected: str) -> bool:
+    if not isinstance(expected, str):
+        return True
     expected = (expected or "").strip().lower()
     allowed = _JSON_TYPE_ALIASES.get(expected)
     if allowed is None:
@@ -196,14 +198,14 @@ def _validate_node(
                 code="type_mismatch",
                 message=f"expected one of {expected_type}, got '{_observed_type(value)}'",
                 observed=value,
-                expected=",".join(expected_type),
+                expected=",".join(str(x) for x in expected_type),
             )
             return
 
     # enum
     if "enum" in schema:
-        allowed = schema["enum"] or []
-        if value not in allowed:
+        allowed = schema["enum"]
+        if isinstance(allowed, (list, tuple)) and value not in allowed:
             _append(
                 out,
                 resource_name=resource_name,
@@ -217,43 +219,46 @@ def _validate_node(
 
     # number bounds
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if "minimum" in schema and value < schema["minimum"]:
+        min_val = schema.get("minimum")
+        if isinstance(min_val, (int, float)) and not isinstance(min_val, bool) and value < min_val:
             _append(
                 out,
                 resource_name=resource_name,
                 resource_version=resource_version,
                 path=path,
                 code="below_minimum",
-                message=f"value {value} < minimum {schema['minimum']}",
+                message=f"value {value} < minimum {min_val}",
                 observed=value,
-                expected=f">={schema['minimum']}",
+                expected=f">={min_val}",
             )
-        if "maximum" in schema and value > schema["maximum"]:
+        max_val = schema.get("maximum")
+        if isinstance(max_val, (int, float)) and not isinstance(max_val, bool) and value > max_val:
             _append(
                 out,
                 resource_name=resource_name,
                 resource_version=resource_version,
                 path=path,
                 code="above_maximum",
-                message=f"value {value} > maximum {schema['maximum']}",
+                message=f"value {value} > maximum {max_val}",
                 observed=value,
-                expected=f"<={schema['maximum']}",
+                expected=f"<={max_val}",
             )
 
     # object properties + required
     if isinstance(value, dict):
-        required = schema.get("required") or []
-        for key in required:
-            if key not in value:
-                _append(
-                    out,
-                    resource_name=resource_name,
-                    resource_version=resource_version,
-                    path=f"{path}.{key}" if path else key,
-                    code="missing_required",
-                    message=f"required key '{key}' is missing",
-                    expected="present",
-                )
+        required = schema.get("required")
+        if isinstance(required, (list, tuple)):
+            for key in required:
+                if isinstance(key, str) and key not in value:
+                    _append(
+                        out,
+                        resource_name=resource_name,
+                        resource_version=resource_version,
+                        path=f"{path}.{key}" if path else key,
+                        code="missing_required",
+                        message=f"required key '{key}' is missing",
+                        expected="present",
+                    )
         properties = schema.get("properties") or {}
         if isinstance(properties, dict):
             for key, subschema in properties.items():

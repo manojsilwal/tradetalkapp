@@ -300,5 +300,18 @@ class TestContractValidatorSingleton(_ValidatorBase):
         self.assertIsNot(a, b)
 
 
+class TestValidatorBugPrevention(_ValidatorBase):
+    def test_schema_with_invalid_types_does_not_crash(self):
+        # We simulate invalid schemas that previously crashed the validator
+        cv.validate({"a": 1}, {"type": ["string", 123]})
+        cv.validate(1, {"enum": "not_a_list"})
+        cv.validate(1, {"enum": 123})
+        cv.validate({"a": 1}, {"type": "object", "properties": {"a": {"type": "integer", "minimum": "not_a_number"}}})
+        cv.validate({"a": 1}, {"type": "object", "properties": {"a": {"type": "integer", "maximum": "not_a_number"}}})
+        cv.validate({"a": 1}, {"type": "object", "required": "not_a_list"})
+
+        # Test just to ensure that the above didn't crash
+        self.assertTrue(True)
+
 if __name__ == "__main__":
     unittest.main()
