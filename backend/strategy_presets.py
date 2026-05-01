@@ -310,4 +310,4 @@ def get_preset_rules(preset_id: str, start_date: str, end_date: str) -> Strategy
     if not builder:
         raise KeyError(f"Unknown preset_id: {preset_id}")
     rules: StrategyRules = builder()
-    return rules.copy(update={"start_date": start_date, "end_date": end_date})
+    return rules.model_copy(update={"start_date": start_date, "end_date": end_date})
