@@ -12,6 +12,27 @@
     "e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
-    "@playwright/test": "^1.59.1"
-  }
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
+  },
+  "version": "1.0.0",
+  "description": "AI-assisted market analysis application: FastAPI backend (Render), React frontend (Vercel).",
+  "main": "playwright.config.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manojsilwal/tradetalkapp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/manojsilwal/tradetalkapp/issues"
+  },
+  "homepage": "https://github.com/manojsilwal/tradetalkapp#readme"
 }

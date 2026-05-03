@@ -1,0 +1,93 @@
+{
+  "/": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/macro": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/macro"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/gold": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/gold"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/chat": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/chat"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/debate": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/debate"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/backtest": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/backtest"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/scorecard": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/scorecard"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/challenge": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/challenge"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/portfolio": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/portfolio"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/learning": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/learning"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/observer": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/observer"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/systemmap": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/systemmap"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  },
+  "/system-diagrams": {
+    "examples": [
+      "https://frontend-manojsilwals-projects.vercel.app/system-diagrams"
+    ],
+    "requires_auth": false,
+    "page_title": "TradeTalk App"
+  }
+}
