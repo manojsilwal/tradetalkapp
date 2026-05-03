@@ -18,12 +18,27 @@ async function fetchYahooFinancePrice(ticker: string): Promise<number | null> {
 }
 
 test.describe('DATA PARITY - External Validation', () => {
+
+  // Ensure the test does not time out waiting for locators if a tour blocks it.
+test.beforeEach(async ({ page }) => {
+    await page.goto(APP_URL);
+    try {
+       const skipBtn = page.getByRole('button', { name: /Skip tour/i });
+       if (await skipBtn.isVisible({ timeout: 2000 })) {
+         await skipBtn.click();
+         await page.waitForTimeout(500);
+       }
+    } catch (e) {
+       // no tour to skip
+    }
+  });
+
   test('PARITY-001 — VIX Volatility index matches Yahoo Finance', async ({ page }) => {
     // Navigate to Global Macro page where VIX is displayed
     await page.goto(`${APP_URL}/macro`);
 
     // Wait for the specific data element to load. Based on our crawl: "CBOE ^VIX Volatility 16.99"
-    await page.waitForTimeout(3000); // Allow real-time fetches to settle
+    await page.waitForSelector('text=CBOE ^VIX Volatility', { timeout: 15000 });
 
     // Attempt to locate the VIX price value. We search for text nearby "VIX Volatility"
     const vixCard = page.locator('text=CBOE ^VIX Volatility').locator('..').locator('..');
@@ -50,7 +65,7 @@ test.describe('DATA PARITY - External Validation', () => {
 
   test('PARITY-002 — Sector ETFs match Yahoo Finance', async ({ page }) => {
     await page.goto(`${APP_URL}/macro`);
-    await page.waitForTimeout(3000);
+    await page.waitForSelector('text=XLK', { timeout: 15000 });
 
     // Pick a sector that is on the page, like XLK (Technology)
     const xlkCard = page.locator('text=XLK').locator('..').locator('..');
