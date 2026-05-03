@@ -7,7 +7,8 @@ from unittest.mock import MagicMock
 mock_modules = [
     "pydantic", "fastapi", "yfinance", "requests", "openai", "supabase",
     "google.genai", "jwt", "pandas", "apscheduler", "aiofiles",
-    "huggingface_hub", "pyarrow", "httpx", "python-dotenv", "yaml"
+    "huggingface_hub", "pyarrow", "httpx", "python-dotenv", "yaml",
+    "defusedxml", "defusedxml.ElementTree"
 ]
 for mod in mock_modules:
     sys.modules[mod] = MagicMock()
@@ -18,7 +19,7 @@ class MockBaseModel:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
-    def copy(self, update=None):
+    def model_copy(self, update=None):
         import copy
         new_obj = copy.copy(self)
         if update:

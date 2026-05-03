@@ -8,6 +8,7 @@ are illustrative, not full-index reproduction.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from .schemas import FilterRule, StrategyRules
@@ -25,36 +26,38 @@ DOW_30 = [
 ]
 
 
-def _base(
-    *,
-    name: str,
-    description: str,
-    universe: list[str],
-    filters: list[FilterRule],
-    rank_by_metric: str | None = None,
-    rank_higher_is_better: bool = True,
-    select_top_n: int = 12,
-    rebalance_months: int = 3,
-    strategy_type: str = "mixed",
-    strategy_category: str = "Factor",
-    preset_id: str = "",
-) -> StrategyRules:
+@dataclass
+class StrategyConfig:
+    name: str
+    description: str
+    universe: list[str]
+    filters: list[FilterRule]
+    rank_by_metric: str | None = None
+    rank_higher_is_better: bool = True
+    select_top_n: int = 12
+    rebalance_months: int = 3
+    strategy_type: str = "mixed"
+    strategy_category: str = "Factor"
+    preset_id: str = ""
+
+
+def _base(config: StrategyConfig) -> StrategyRules:
     return StrategyRules(
-        name=name,
-        description=description,
-        filters=filters,
+        name=config.name,
+        description=config.description,
+        filters=config.filters,
         sell_filters=[],
-        holding_period_months=max(12, rebalance_months),
-        rebalance_months=rebalance_months,
-        universe=universe,
+        holding_period_months=max(12, config.rebalance_months),
+        rebalance_months=config.rebalance_months,
+        universe=config.universe,
         start_date="2010-01-01",
         end_date="2024-01-01",
-        strategy_type=strategy_type,
-        rank_by_metric=rank_by_metric,
-        rank_higher_is_better=rank_higher_is_better,
-        select_top_n=select_top_n,
-        strategy_category=strategy_category,
-        preset_id=preset_id or None,
+        strategy_type=config.strategy_type,
+        rank_by_metric=config.rank_by_metric,
+        rank_higher_is_better=config.rank_higher_is_better,
+        select_top_n=config.select_top_n,
+        strategy_category=config.strategy_category,
+        preset_id=config.preset_id or None,
     )
 
 
@@ -66,7 +69,7 @@ def _register(pid: str, builder):
 
 
 def _ff_qmj():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="ff_quality_value",
         name="Fama-French Quality + Value",
         description=(
@@ -84,11 +87,11 @@ def _ff_qmj():
         select_top_n=8,
         rebalance_months=3,
         strategy_category="Factor",
-    )
+    ))
 
 
 def _mom_12_1():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="momentum_12_1",
         name="Momentum (12-1 month)",
         description=(
@@ -103,11 +106,11 @@ def _mom_12_1():
         rebalance_months=1,
         strategy_type="momentum",
         strategy_category="Momentum",
-    )
+    ))
 
 
 def _low_vol():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="low_volatility",
         name="Low Volatility",
         description=(
@@ -121,11 +124,11 @@ def _low_vol():
         select_top_n=8,
         rebalance_months=1,
         strategy_category="Factor",
-    )
+    ))
 
 
 def _magic_formula():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="magic_formula",
         name="Magic Formula",
         description=(
@@ -140,11 +143,11 @@ def _magic_formula():
         rebalance_months=12,
         strategy_type="fundamental",
         strategy_category="Value",
-    )
+    ))
 
 
 def _dual_momentum():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="dual_momentum",
         name="Dual Momentum",
         description=(
@@ -159,11 +162,11 @@ def _dual_momentum():
         rebalance_months=1,
         strategy_type="momentum",
         strategy_category="Macro",
-    )
+    ))
 
 
 def _dogs_dow():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="dogs_of_the_dow",
         name="Dogs of the Dow",
         description=(
@@ -177,11 +180,11 @@ def _dogs_dow():
         select_top_n=10,
         rebalance_months=12,
         strategy_category="Income",
-    )
+    ))
 
 
 def _week52_high():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="week52_high",
         name="52-Week High",
         description=(
@@ -195,11 +198,11 @@ def _week52_high():
         select_top_n=10,
         rebalance_months=1,
         strategy_category="Momentum",
-    )
+    ))
 
 
 def _shareholder_yield():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="shareholder_yield",
         name="Shareholder Yield",
         description=(
@@ -213,11 +216,11 @@ def _shareholder_yield():
         select_top_n=10,
         rebalance_months=3,
         strategy_category="Value",
-    )
+    ))
 
 
 def _value_mom_combo():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="value_momentum_aqr",
         name="Value + Momentum",
         description=(
@@ -231,11 +234,11 @@ def _value_mom_combo():
         select_top_n=10,
         rebalance_months=1,
         strategy_category="Blended",
-    )
+    ))
 
 
 def _buffett_garp():
-    return _base(
+    return _base(StrategyConfig(
         preset_id="buffett_garp",
         name="Quality GARP",
         description=(
@@ -253,7 +256,7 @@ def _buffett_garp():
         rebalance_months=6,
         strategy_type="fundamental",
         strategy_category="Quality",
-    )
+    ))
 
 
 _register("ff_quality_value", _ff_qmj)
