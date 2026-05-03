@@ -36,7 +36,9 @@ export function AuthProvider({ children }) {
                 try {
                     await login('dev');
                 } catch (e) {
-                    console.error('Auto dev login failed', e);
+                    if (!e.message?.includes('Failed to fetch')) {
+                        console.error('Auto dev login failed', e);
+                    }
                 } finally {
                     setLoading(false);
                 }
