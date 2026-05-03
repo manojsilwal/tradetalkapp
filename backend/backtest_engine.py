@@ -334,7 +334,8 @@ def _passes_filters(
 
 def _momentum_12_1_pct(prices: list, as_of: date) -> Optional[float]:
     """Jegadeesh-Titman style ~11-month return ending ~1 month before as_of (trading days)."""
-    before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+    as_of_str = str(as_of)
+    before = [p for p in prices if p["date"] <= as_of_str]
     if len(before) < 253:
         return None
     end_p = before[-22]["close"]
@@ -345,7 +346,8 @@ def _momentum_12_1_pct(prices: list, as_of: date) -> Optional[float]:
 
 
 def _realized_vol_annualized_pct(prices: list, as_of: date) -> Optional[float]:
-    before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+    as_of_str = str(as_of)
+    before = [p for p in prices if p["date"] <= as_of_str]
     if len(before) < 253:
         return None
     recent = before[-252:]
@@ -361,7 +363,8 @@ def _realized_vol_annualized_pct(prices: list, as_of: date) -> Optional[float]:
 
 
 def _price_to_52w_high_pct(prices: list, as_of: date) -> Optional[float]:
-    before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+    as_of_str = str(as_of)
+    before = [p for p in prices if p["date"] <= as_of_str]
     if len(before) < 20:
         return None
     window = before[-252:] if len(before) >= 252 else before
@@ -439,7 +442,8 @@ def _metric(
     }
     if metric in period_map:
         periods = period_map[metric]
-        before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+        as_of_str = str(as_of)
+        before = [p for p in prices if p["date"] <= as_of_str]
         if len(before) < periods + 1:
             return None
         end_p   = before[-1]["close"]
@@ -449,7 +453,8 @@ def _metric(
     # ── Moving average metrics ────────────────────────────────────────────
     if metric in ("above_ma_200", "above_ma_50"):
         window = 200 if "200" in metric else 50
-        before = [p for p in prices if _parse_date(p["date"]) <= as_of]
+        as_of_str = str(as_of)
+        before = [p for p in prices if p["date"] <= as_of_str]
         if len(before) < window:
             return None
         ma = sum(p["close"] for p in before[-window:]) / window
@@ -547,8 +552,9 @@ def _trailing_pe(prices: list, quarterly_eps: list, as_of: date, info: dict) -> 
         return None
 
     # Get 4 most recent quarters of EPS reported before or on as_of
+    as_of_str = str(as_of)
     available = sorted(
-        [q for q in quarterly_eps if _parse_date(q["date"]) <= as_of],
+        [q for q in quarterly_eps if q["date"] <= as_of_str],
         key=lambda q: q["date"]
     )[-4:]
 
@@ -593,7 +599,8 @@ def _price_on(data: dict, target: date) -> Optional[float]:
 
 
 def _price_from_list(prices: list, target: date) -> Optional[float]:
-    candidates = [p for p in prices if _parse_date(p["date"]) <= target]
+    target_str = str(target)
+    candidates = [p for p in prices if p["date"] <= target_str]
     if not candidates:
         return None
     return candidates[-1]["close"]
