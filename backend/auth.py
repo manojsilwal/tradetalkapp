@@ -30,9 +30,9 @@ JWT_ALGO         = "HS256"
 JWT_EXPIRY_SECS  = 7 * 24 * 3600   # 7 days
 DEV_MODE         = os.environ.get("DEV_MODE", "false").lower() == "true" or not GOOGLE_CLIENT_ID or GOOGLE_CLIENT_ID == "PLACEHOLDER_SET_AFTER_GOOGLE_SETUP"
 
-# Fail-loud: warn if JWT_SECRET is the default in non-dev environments
+# Fail-loud: raise error if JWT_SECRET is the default in non-dev environments
 if not DEV_MODE and JWT_SECRET == "dev-secret-change-in-prod":
-    logger.critical(
+    raise RuntimeError(
         "[Auth] JWT_SECRET is the default 'dev-secret-change-in-prod' in production mode! "
         "Set JWT_SECRET environment variable to a strong random secret."
     )
