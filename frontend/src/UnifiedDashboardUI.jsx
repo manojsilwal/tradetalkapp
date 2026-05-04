@@ -171,13 +171,13 @@ export default function UnifiedDashboardUI() {
   const z = decisionData?.verdict;
   const r = decisionData?.roadmap;
 
-  const valFill = valuationArcRatio(v?.spot_vs_average_pct);
-  const pmFill = polymarketArcRatio(z?.prediction_market_bullish_pct);
+  const valFill = valuationArcRatio(v?.pct_vs_average);
+  const pmFill = z?.polymarket_gated_out ? 0.35 : polymarketArcRatio(z?.prediction_market_bullish_pct);
 
-  const expertPct = z?.expert_consensus_bullish_pct;
-  const expertBullish = expertPct != null && expertPct >= 50;
+  const expertPct = z?.expert_bullish_pct;
+  const expertBullish = expertPct != null && expertPct >= 55;
 
-  const spot = v?.spot_price_usd;
+  const spot = v?.current_price_usd;
   const dotLeft = sliderPosition(spot, r?.bear_price_usd, r?.bull_price_usd);
 
   const roadmapChartData = useMemo(() => {
@@ -387,7 +387,12 @@ export default function UnifiedDashboardUI() {
                 <div className="dt-slider-knob" style={{ width: '12px', height: '12px', background: '#fff', borderRadius: '50%', position: 'absolute', top: '50%', transform: 'translate(-50%, -50%)', left: `${dotLeft}%`, boxShadow: '0 0 10px rgba(0,0,0,0.5)' }} title="Vs bear–bull scenario band" />
               </div>
               {hasDecisionData && spot != null && (
-                <div className="dt-slider-price" style={{ position: 'absolute', left: `${dotLeft}%`, transform: 'translateX(-50%)', top: '30px', fontSize: '12px', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap' }}>
+                <div
+                  className="dt-slider-price"
+                  data-testid="dashboard-current-price"
+                  data-symbol={decisionData?.ticker || searchUpper}
+                  style={{ position: 'absolute', left: `${dotLeft}%`, transform: 'translateX(-50%)', top: '30px', fontSize: '12px', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap' }}
+                >
                   Current price: ${Number(spot).toFixed(2)}
                 </div>
               )}
@@ -405,7 +410,7 @@ export default function UnifiedDashboardUI() {
               {Object.entries(traceData.factors || {}).map(([key, factorData], idx) => {
                  const isPositive = factorData.trading_signal > 0;
                  return (
-                   <div key={key} style={{ padding: '20px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px' }}>
+                   <div key={key} data-testid={`dashboard-factor-${key}`} style={{ padding: '20px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px' }}>
                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                        <span style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, color: '#94a3b8' }}>
                          {key.replace('_', ' ')}

@@ -8,6 +8,10 @@ function fmt(v) {
   return String(v);
 }
 
+function metricTestId(label) {
+  return `gold-metric-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+}
+
 export default function GoldAdvisorUI() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -136,9 +140,9 @@ export default function GoldAdvisorUI() {
               ['10Y nominal %', fmt(data.context?.macro?.ten_year_nominal_treasury_pct)],
               ['VIX', fmt(data.context?.macro?.vix)],
             ].map(([label, val]) => (
-              <div key={label} className="dash-card glass-panel fade-in" style={{ padding: 18, borderRadius: 14 }}>
+              <div key={label} className="dash-card glass-panel fade-in" data-testid={metricTestId(label)} style={{ padding: 18, borderRadius: 14 }}>
                 <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6 }}>{label}</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: '#f8fafc' }}>{val}</div>
+                <div data-testid={`${metricTestId(label)}-value`} style={{ fontSize: 22, fontWeight: 700, color: '#f8fafc' }}>{val}</div>
               </div>
             ))}
           </div>

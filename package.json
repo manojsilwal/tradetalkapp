@@ -3,12 +3,14 @@
   "private": true,
   "scripts": {
     "e2e": "playwright test",
-    "e2e:ui-tour": "playwright test e2e/ui-manual-tour.spec.js",
-    "e2e:ui-tour:headed": "playwright test e2e/ui-manual-tour.spec.js --headed",
-    "e2e:fincrawler": "playwright test e2e/fincrawler-integration.spec.js",
-    "e2e:dt-audit": "playwright test e2e/decision-terminal-data-audit.spec.js",
-    "e2e:smoke": "playwright test e2e/smoke.spec.js",
-    "e2e:smoke:api": "FH_PROFILE=smoke playwright test e2e/faulthunter-api.spec.js",
+    "e2e:ui-tour": "playwright test e2e/ui-manual-tour.spec.js --config=playwright.config.js",
+    "e2e:ui-tour:headed": "playwright test e2e/ui-manual-tour.spec.js --config=playwright.config.js --headed",
+    "e2e:fincrawler": "playwright test e2e/fincrawler-integration.spec.js --config=playwright.config.js",
+    "e2e:dt-audit": "playwright test e2e/decision-terminal-data-audit.spec.js --config=playwright.config.js",
+    "e2e:prod-parity": "playwright test tests/e2e/parity.spec.ts --config=playwright.config.ts --project=chromium --reporter=line",
+    "e2e:prod-qa": "playwright test tests/e2e/llm-production-qa.spec.ts --config=playwright.config.ts --project=chromium --reporter=line",
+    "e2e:smoke": "playwright test e2e/smoke.spec.js --config=playwright.config.js",
+    "e2e:smoke:api": "FH_PROFILE=smoke playwright test e2e/faulthunter-api.spec.js --config=playwright.config.js",
     "e2e:ui": "playwright test --ui"
   },
   "devDependencies": {

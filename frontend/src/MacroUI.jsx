@@ -79,12 +79,12 @@ export default function MacroUI() {
 
             {/* Top Level KPIs */}
             <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '24px', marginBottom: '24px' }}>
-                <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px' }}>
+                <div className="dash-card glass-panel fade-in" data-testid="macro-vix-card" style={{ padding: '24px', borderRadius: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                         <Globe color="var(--accent-blue)" />
                         <h3 style={{ margin: 0 }}>CBOE ^VIX Volatility</h3>
                     </div>
-                    <h1 style={{ fontSize: '2.5rem', margin: 0 }}>{data.vix_level}</h1>
+                    <h1 data-testid="macro-vix-value" style={{ fontSize: '2.5rem', margin: 0 }}>{data.vix_level}</h1>
                     <p style={{ color: 'var(--text-muted)', margin: '8px 0 0 0' }}>Market Expectation of near-term risk</p>
                 </div>
 
@@ -190,12 +190,16 @@ export default function MacroUI() {
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, justifyContent: 'space-around' }}>
                         {data.sectors.map(sector => (
-                            <div key={sector.symbol} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
+                            <div
+                                key={sector.symbol}
+                                data-testid={`macro-sector-${sector.symbol}`}
+                                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}
+                            >
                                 <div>
                                     <strong style={{ display: 'block', fontSize: '1.1rem' }}>{sector.name}</strong>
                                     <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{sector.symbol}</span>
                                 </div>
-                                <div style={{
+                                <div data-testid={`macro-sector-${sector.symbol}-change`} style={{
                                     color: sector.daily_change_pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)',
                                     fontWeight: 'bold',
                                     fontSize: '1.2rem'
@@ -267,7 +271,7 @@ export default function MacroUI() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
                     {data.capital_flows.map(flow => (
-                        <div key={flow.asset} style={{
+                        <div key={flow.asset} data-testid={`macro-flow-${flow.asset}`} style={{
                             padding: '16px',
                             background: 'rgba(255,255,255,0.03)',
                             borderRadius: '12px',
@@ -278,7 +282,7 @@ export default function MacroUI() {
                                     <strong style={{ display: 'block', fontSize: '1.2rem' }}>{flow.asset}</strong>
                                     <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{flow.category}</span>
                                 </div>
-                                <div style={{
+                                <div data-testid={`macro-flow-${flow.asset}-change`} style={{
                                     color: flow.daily_change_pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)',
                                     fontWeight: 'bold',
                                     fontSize: '1.3rem'

@@ -78,6 +78,55 @@ jobs:
             npm run e2e:smoke -- --reporter=line
           fi
 
+  playwright-yahoo-parity:
+    name: Track B — Yahoo UI parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install root devDependencies (Playwright)
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+      - name: Run production Yahoo UI parity
+        env:
+          APP_URL: https://frontend-manojsilwals-projects.vercel.app
+        run: npm run e2e:prod-parity
+
+  playwright-llm-prod-qa:
+    name: Track C — LLM production UI QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install root devDependencies (Playwright)
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+      - name: Run LLM production UI QA
+        env:
+          APP_URL: https://frontend-manojsilwals-projects.vercel.app
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_QA_MODEL: ${{ vars.LLM_QA_MODEL }}
+        run: npm run e2e:prod-qa
+      - name: Upload LLM QA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-llm-prod-qa
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+
   fincrawler-http:
     name: Optional — FinCrawler HTTP (deployed URL)
     runs-on: ubuntu-latest

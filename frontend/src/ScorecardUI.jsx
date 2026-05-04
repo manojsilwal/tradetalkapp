@@ -344,7 +344,16 @@ export default function ScorecardUI() {
                     const sigColor = SIGNAL_COLORS[r.signal] || '#94a3b8'
                     const verdictColor = VERDICT_COLORS[r.verdict] || '#94a3b8'
                     return (
-                      <tr key={r.ticker} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+                      <tr
+                        key={r.ticker}
+                        data-testid={`scorecard-row-${r.ticker}`}
+                        data-current-price={r.inputs?.current_price ?? ''}
+                        data-beta={r.inputs?.beta ?? ''}
+                        data-forward-pe={r.inputs?.forward_pe ?? ''}
+                        data-revenue-growth-pct={r.inputs?.revenue_growth_pct ?? ''}
+                        data-eps-growth-pct={r.inputs?.eps_growth_pct ?? ''}
+                        style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}
+                      >
                         <td style={{ padding: '8px 10px', fontWeight: 700 }}>
                           {r.ticker}
                           {r.ceo_name && (
