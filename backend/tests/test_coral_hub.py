@@ -70,6 +70,66 @@ class TestCoralHub(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_list_handoff_events_filtering_and_ordering(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            path = f.name
+        try:
+            coral_hub.DB_PATH = path
+            coral_hub.init_coral_hub_db()
+
+            with patch("backend.coral_hub._now") as mock_now:
+                mock_now.return_value = 1000.0
+                coral_hub.log_handoff_event("event_1", {"msg": "first"})
+
+                mock_now.return_value = 2000.0
+                coral_hub.log_handoff_event("event_2", {"msg": "second"})
+
+                mock_now.return_value = 3000.0
+                coral_hub.log_handoff_event("event_3", {"msg": "third"})
+
+            # Filter since 1500: should get event_3 and event_2
+            rows = coral_hub.list_handoff_events_since(1500.0)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["event_type"], "event_3")
+            self.assertEqual(rows[1]["event_type"], "event_2")
+
+            # Filter since 2500: should get only event_3
+            rows = coral_hub.list_handoff_events_since(2500.0)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["event_type"], "event_3")
+
+            # Filter since 4000: should get nothing
+            rows = coral_hub.list_handoff_events_since(4000.0)
+            self.assertEqual(len(rows), 0)
+        finally:
+            os.unlink(path)
+
+    def test_list_handoff_events_invalid_json(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            path = f.name
+        try:
+            coral_hub.DB_PATH = path
+            coral_hub.init_coral_hub_db()
+
+            # Manually insert an event with invalid JSON
+            conn = coral_hub._conn()
+            conn.execute(
+                "INSERT INTO coral_handoff_events (event_type, payload_json, created_at) VALUES (?, ?, ?)",
+                ("bad_json_event", "{invalid: json}", 1234.5),
+            )
+            conn.commit()
+
+            rows = coral_hub.list_handoff_events_since(1000.0)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["event_type"], "bad_json_event")
+            self.assertEqual(rows[0]["payload"], {})
+        finally:
+            os.unlink(path)
+
 
 class TestCoralHeartbeat(unittest.TestCase):
     def test_intel_one_liner(self):
