@@ -8,6 +8,7 @@ const {
   dismissOnboarding,
   expectNoGenericFetchFailure,
   expectOneOf,
+  runUnifiedLandingAnalyze,
   waitForDecisionTerminalReady,
 } = require('./support');
 
@@ -16,9 +17,9 @@ test.describe('Investor Use Cases', () => {
     await page.goto('/');
     await dismissOnboarding(page);
     await expect(page.getByRole('heading', { name: 'TradeTalk', exact: true })).toBeVisible({ timeout: 15000 });
-    await page.getByPlaceholder('Ticker').fill('AAPL');
-    await page.getByRole('button', { name: 'Analyze' }).click();
-    await expectOneOf(page, ['Overall Verdict', 'Elite Investor Valuation Profile', 'Margin of Safety'], 90000);
+    await runUnifiedLandingAnalyze(page, 'AAPL');
+    await expect(page.getByTestId('dashboard-current-price')).toBeVisible({ timeout: 240000 });
+    await expect(page.getByText('Verdict & Sentiment Hub')).toBeVisible();
     await expectNoGenericFetchFailure(page);
   });
 

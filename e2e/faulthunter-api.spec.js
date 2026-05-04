@@ -33,20 +33,36 @@ test.describe.configure({ mode: 'serial' });
 test.describe(`FaultHunter API parity (profile=${PROFILE})`, () => {
   for (const c of CASES) {
     test(`${c.id} — ${c.method} ${c.path}`, async ({ request }) => {
-      const budget = Math.max(c.slowLatencyMs + 5000, 120000);
-      test.setTimeout(Math.max(budget, c.id.includes('backtest') ? 360000 : budget));
+      const budget = Math.max(
+        c.slowLatencyMs + 5000,
+        c.path === '/decision-terminal' ? 240000 : 120000,
+      );
+      // Extra slack for deployed APIs (Render cold start / macro sub-fetch 504) + one retry round-trip.
+      test.setTimeout(
+        c.id.includes('backtest')
+          ? 420000
+          : c.path === '/decision-terminal'
+            ? 540000
+            : budget + 120000,
+      );
 
       const url = `${API_BASE}${c.path}`;
       /** @type {import('@playwright/test').APIResponse} */
       let res;
-      if (c.method === 'GET') {
-        res = await request.get(url, { params: c.params || {}, timeout: budget });
-      } else {
-        res = await request.post(url, {
+      const fetchOnce = async () => {
+        if (c.method === 'GET') {
+          return request.get(url, { params: c.params || {}, timeout: budget });
+        }
+        return request.post(url, {
           data: c.params || {},
           headers: { 'Content-Type': 'application/json' },
           timeout: budget,
         });
+      };
+      res = await fetchOnce();
+      if ([502, 503, 504].includes(res.status())) {
+        await new Promise((r) => setTimeout(r, 5000));
+        res = await fetchOnce();
       }
 
       if (!res.ok()) {

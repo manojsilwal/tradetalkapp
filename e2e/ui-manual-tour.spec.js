@@ -17,7 +17,7 @@
 const { test, expect } = require('@playwright/test');
 const { dismissOnboarding } = require('./support');
 
-test.describe.configure({ mode: 'serial' });
+test.describe.configure({ mode: 'serial', timeout: 420000 });
 
 test.describe('UI manual tour (all routes)', () => {
   test.beforeEach(async ({ page }) => {
@@ -46,7 +46,7 @@ test.describe('UI manual tour (all routes)', () => {
     await page.goto('/macro');
     await dismissOnboarding(page);
     await expect(page.getByRole('heading', { name: /Global Macroeconomic Grounding/i })).toBeVisible({
-      timeout: 60000,
+      timeout: 120000,
     });
   });
 
@@ -120,10 +120,10 @@ test.describe('UI manual tour (all routes)', () => {
     });
   });
 
-  test('14 Video Academy (AuthGate when logged out)', async ({ page }) => {
-    await page.goto('/academy');
+  test('14 System Diagrams', async ({ page }) => {
+    await page.goto('/system-diagrams');
     await dismissOnboarding(page);
-    await expect(page.getByRole('heading', { name: /Unlock Video Academy/i })).toBeVisible({
+    await expect(page.getByRole('heading', { name: /TradeTalk System Diagrams/i })).toBeVisible({
       timeout: 30000,
     });
   });

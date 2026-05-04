@@ -235,9 +235,10 @@ test.describe('Production Yahoo parity', () => {
       bySymbol.get('^VIX') as YahooQuote,
       'Gold Advisor VIX',
     );
+    // Yahoo ^TNX `regularMarketPrice` is already quoted in yield percent (e.g. ~4.37), same units as the Gold UI.
     expectMacroClose(
       await textNumber(page.getByTestId('gold-metric-10y-nominal-value')),
-      { ...(bySymbol.get('^TNX') as YahooQuote), price: (bySymbol.get('^TNX') as YahooQuote).price / 10 },
+      bySymbol.get('^TNX') as YahooQuote,
       'Gold Advisor 10Y nominal',
     );
   });

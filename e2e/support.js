@@ -43,9 +43,20 @@ async function waitForDecisionTerminalReady(page) {
   await page.waitForSelector('.dt-ticker-input', { state: 'visible', timeout: 90000 });
 }
 
+/**
+ * Unified landing (`/`) — UnifiedDashboardUI uses `.dt-search-input` (not legacy `placeholder="Ticker"`).
+ */
+async function runUnifiedLandingAnalyze(page, ticker) {
+  const input = page.locator('.dt-search-input');
+  await expect(input).toBeVisible({ timeout: 120000 });
+  await input.fill(ticker);
+  await page.getByRole('button', { name: /^Analyze$/i }).click();
+}
+
 module.exports = {
   dismissOnboarding,
   expectNoGenericFetchFailure,
   expectOneOf,
   waitForDecisionTerminalReady,
+  runUnifiedLandingAnalyze,
 };

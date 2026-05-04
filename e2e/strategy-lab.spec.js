@@ -11,6 +11,7 @@ test.describe('Strategy Lab', () => {
   });
 
   test('positive: runs backtest', async ({ page }) => {
+    test.setTimeout(360000);
     await expect(page.getByText('Strategy Lab')).toBeVisible();
 
     const strategyInput = page.getByPlaceholder('e.g. "Buy Mag7 stocks when PE ratio is below 25, sell when PE exceeds 35"');
@@ -18,7 +19,6 @@ test.describe('Strategy Lab', () => {
 
     await page.getByRole('button', { name: 'Run Backtest' }).click();
 
-    // Check loading and results
-    await expect(page.getByText('Portfolio Summary')).toBeVisible({ timeout: 120000 });
+    await expect(page.getByText('Portfolio Summary')).toBeVisible({ timeout: 300000 });
   });
 });

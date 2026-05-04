@@ -29,11 +29,9 @@ test.describe('Decision Terminal', () => {
   test('negative: handles invalid ticker input gracefully', async ({ page }) => {
     const tickerInput = page.locator('.dt-ticker-input');
     await tickerInput.fill('INVALIDTICKER123');
-    await page.getByRole('button', { name: 'Run analysis' }).click();
-
-    // The UI should show an error state instead of hanging
-    await expect(page.locator('.dt-error-banner, .error-banner')).toBeVisible({ timeout: 60000 });
-    await expect(page.locator('.dt-error-banner, .error-banner')).toContainText(/Ticker must be 1–5 Latin letters/i);
+    await expect(page.getByRole('button', { name: 'Run analysis' })).toBeDisabled();
+    await expect(page.locator('.dt-error-banner')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('.dt-error-banner')).toContainText(/Incorrect ticker \(not in S&P 500\)/i);
   });
 
   test('negative: handles empty ticker submission', async ({ page }) => {
