@@ -1,8 +1,8 @@
 # FaultHunter triage (single source)
 
-**Snapshot (UTC):** 2026-05-07T06:25:23Z
+**Snapshot (UTC):** 2026-05-08T05:47:29Z
 
-**Workflow run:** [https://github.com/manojsilwal/tradetalkapp/actions/runs/25479648865](https://github.com/manojsilwal/tradetalkapp/actions/runs/25479648865)
+**Workflow run:** [https://github.com/manojsilwal/tradetalkapp/actions/runs/25539276122](https://github.com/manojsilwal/tradetalkapp/actions/runs/25539276122)
 
 **Raw report URL:** `https://raw.githubusercontent.com/manojsilwal/FaultHunter/main/reports/latest.md` (secret `FAULTHUNTER_REPORT_URL`).
 
