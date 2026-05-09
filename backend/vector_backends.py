@@ -9,6 +9,34 @@ logger = logging.getLogger(__name__)
 # https://api-inference.huggingface.co — use InferenceClient (router) instead.
 _DEFAULT_HF_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
+# Gemini API (AI Studio key): use embedContent-supported ids — e.g. gemini-embedding-001, text-embedding-004.
+# Vertex-only ids like text-multilingual-embedding-002 will 404 on AI Studio; set GEMINI_EMBEDDING_MODEL explicitly for Vertex.
+_DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+
+
+def _gemini_embedding_api_key() -> str:
+    return os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+
+
+def google_embeddings_enabled() -> bool:
+    """
+    Use Google (Gemini API) embeddings instead of OpenRouter.
+
+    Default: True when GEMINI_API_KEY or GOOGLE_API_KEY is set.
+    Set VECTOR_EMBEDDING_PROVIDER=openrouter to force OpenRouter embeddings instead.
+    """
+    if not _gemini_embedding_api_key():
+        return False
+    prov = os.environ.get("VECTOR_EMBEDDING_PROVIDER", "").strip().lower()
+    if prov == "openrouter":
+        return False
+    if prov in ("google", "gemini", "gemini_api"):
+        return True
+    # auto / unset — prefer Google whenever a key exists
+    if prov in ("", "auto"):
+        return True
+    return False
+
 
 class HfInferenceRouterEmbeddingFunction:
     """Embedding function for Chroma using huggingface_hub InferenceClient (router.huggingface.co)."""
@@ -37,17 +65,22 @@ class HfInferenceRouterEmbeddingFunction:
 class GeminiEmbeddingFunction:
     """Embedding function for Chroma using google-genai SDK."""
 
-    def __init__(self, api_key: str, model_name: str = "text-embedding-004"):
+    def __init__(self, api_key: str, model_name: Optional[str] = None):
         from google import genai
+
+        self._model_name = (
+            (model_name or "").strip()
+            or os.environ.get("GEMINI_EMBEDDING_MODEL", "").strip()
+            or _DEFAULT_GEMINI_EMBEDDING_MODEL
+        )
         self._client = genai.Client(api_key=api_key)
-        self._model_name = model_name
 
     def __call__(self, input: List[str]) -> List[List[float]]:
-        # text_embedding-004 supports batching up to 2048 texts.
+        # Batch up to provider limits; Chroma passes lists of texts.
         response = self._client.models.embed_content(
             model=self._model_name,
             contents=input,
-            config={"task_type": "RETRIEVAL_DOCUMENT"}
+            config={"task_type": "RETRIEVAL_DOCUMENT"},
         )
         return [list(emb.values) for emb in response.embeddings]
 
@@ -102,7 +135,27 @@ class ChromaVectorBackend(VectorBackendBase):
         # Use remote HF Embedding Function on Render instead of heavy local ONNX model
         self._embedding_function = None
         render = os.environ.get("RENDER", "").strip().lower()
-        if render in ("true", "1", "yes"):
+
+        # Google Gemini embeddings (default when GEMINI_API_KEY / GOOGLE_API_KEY is set).
+        if google_embeddings_enabled():
+            gemini_key = _gemini_embedding_api_key()
+            try:
+                model_name = (
+                    os.environ.get("GEMINI_EMBEDDING_MODEL", "").strip()
+                    or _DEFAULT_GEMINI_EMBEDDING_MODEL
+                )
+                self._embedding_function = GeminiEmbeddingFunction(
+                    api_key=gemini_key,
+                    model_name=model_name,
+                )
+                logger.info(
+                    "[ChromaVectorBackend] Configured GeminiEmbeddingFunction (%s).",
+                    model_name,
+                )
+            except Exception as e:
+                logger.warning(f"[ChromaVectorBackend] Failed to init Gemini embedding function: {e}")
+
+        if self._embedding_function is None and render in ("true", "1", "yes"):
             hf_token = os.environ.get("HF_TOKEN")
             if hf_token:
                 try:
@@ -118,17 +171,27 @@ class ChromaVectorBackend(VectorBackendBase):
                 except Exception as e:
                     logger.warning(f"[ChromaVectorBackend] Failed to init remote embedding function: {e}")
 
-        # Gemini Embedding 2 (text-embedding-004) support
-        if os.environ.get("USE_GEMINI_EMBEDDING", "0").strip().lower() in ("1", "true", "yes"):
-            gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+        # Legacy: USE_GEMINI_EMBEDDING=1 when VECTOR_EMBEDDING_PROVIDER forces OpenRouter off elsewhere
+        if self._embedding_function is None and os.environ.get("USE_GEMINI_EMBEDDING", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            gemini_key = _gemini_embedding_api_key()
             if gemini_key:
                 try:
-                    model_name = os.environ.get("GEMINI_EMBEDDING_MODEL", "text-embedding-004").strip() or "text-embedding-004"
+                    model_name = (
+                        os.environ.get("GEMINI_EMBEDDING_MODEL", "").strip()
+                        or _DEFAULT_GEMINI_EMBEDDING_MODEL
+                    )
                     self._embedding_function = GeminiEmbeddingFunction(
                         api_key=gemini_key,
                         model_name=model_name,
                     )
-                    logger.info("[ChromaVectorBackend] Configured GeminiEmbeddingFunction (%s).", model_name)
+                    logger.info(
+                        "[ChromaVectorBackend] Configured GeminiEmbeddingFunction (%s) via USE_GEMINI_EMBEDDING.",
+                        model_name,
+                    )
                 except Exception as e:
                     logger.warning(f"[ChromaVectorBackend] Failed to init Gemini embedding function: {e}")
 
@@ -220,7 +283,9 @@ class SupabaseVectorBackend(VectorBackendBase):
         if xt:
             headers["X-Title"] = xt
 
-        if self._embedding_model:
+        # OpenRouter embeddings only when explicitly chosen or no Google key (legacy).
+        use_or_embeddings = not google_embeddings_enabled() and bool(self._embedding_model)
+        if use_or_embeddings:
             from .openrouter_pool import collect_openrouter_api_keys, get_or_create_openrouter_pool
 
             if collect_openrouter_api_keys():
@@ -228,6 +293,16 @@ class SupabaseVectorBackend(VectorBackendBase):
                     self._embedding_pool = get_or_create_openrouter_pool(base_url, headers)
                 except Exception as e:
                     logger.warning(f"[SupabaseVectorBackend] Embedding pool init failed: {e}")
+            else:
+                logger.warning(
+                    "[SupabaseVectorBackend] OPENROUTER_EMBEDDING_MODEL set but no OPENROUTER_API_KEY — "
+                    "embeddings will fail unless Google API key is configured."
+                )
+        elif self._embedding_model and google_embeddings_enabled():
+            logger.info(
+                "[SupabaseVectorBackend] Using Google embeddings (%s); ignoring OPENROUTER_EMBEDDING_MODEL.",
+                os.environ.get("GEMINI_EMBEDDING_MODEL", "").strip() or _DEFAULT_GEMINI_EMBEDDING_MODEL,
+            )
 
         # Fail fast if SQL bootstrap has not been applied yet.
         try:
@@ -245,24 +320,29 @@ class SupabaseVectorBackend(VectorBackendBase):
         # No-op: collection is represented by a table field.
         return
 
-    def _embed(self, text: str) -> Optional[List[float]]:
-        # Try Gemini if enabled
-        if os.environ.get("USE_GEMINI_EMBEDDING", "0").strip().lower() in ("1", "true", "yes"):
-            gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
-            if gemini_key:
-                try:
-                    from google import genai
-                    client = genai.Client(api_key=gemini_key)
-                    model_name = os.environ.get("GEMINI_EMBEDDING_MODEL", "text-embedding-004").strip() or "text-embedding-004"
-                    response = client.models.embed_content(
-                        model=model_name,
-                        contents=text,
-                        config={"task_type": "RETRIEVAL_QUERY"}
-                    )
-                    if response.embeddings:
-                        return list(response.embeddings[0].values)
-                except Exception as e:
-                    logger.warning(f"[SupabaseVectorBackend] Gemini embedding failed: {e}")
+    def _embed(self, text: str, *, task_type: str = "RETRIEVAL_QUERY") -> Optional[List[float]]:
+        gemini_key = _gemini_embedding_api_key()
+        use_gemini = google_embeddings_enabled() or (
+            os.environ.get("USE_GEMINI_EMBEDDING", "0").strip().lower() in ("1", "true", "yes") and gemini_key
+        )
+        if use_gemini and gemini_key:
+            try:
+                from google import genai
+
+                client = genai.Client(api_key=gemini_key)
+                model_name = (
+                    os.environ.get("GEMINI_EMBEDDING_MODEL", "").strip()
+                    or _DEFAULT_GEMINI_EMBEDDING_MODEL
+                )
+                response = client.models.embed_content(
+                    model=model_name,
+                    contents=text,
+                    config={"task_type": task_type},
+                )
+                if response.embeddings:
+                    return list(response.embeddings[0].values)
+            except Exception as e:
+                logger.warning(f"[SupabaseVectorBackend] Google embedding failed: {e}")
 
         if not self._embedding_pool or not self._embedding_model:
             return None
@@ -302,7 +382,7 @@ class SupabaseVectorBackend(VectorBackendBase):
             if embeddings and i < len(embeddings) and embeddings[i] is not None:
                 row["embedding"] = embeddings[i]
             else:
-                embedding = self._embed(doc)
+                embedding = self._embed(doc, task_type="RETRIEVAL_DOCUMENT")
                 if embedding is not None:
                     row["embedding"] = embedding
             rows.append(row)

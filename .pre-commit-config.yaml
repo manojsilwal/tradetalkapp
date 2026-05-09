@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: tradetalk-context-index
+        name: Generate TradeTalk context index
+        entry: python3 scripts/generate_context_index.py
+        language: system
+        pass_filenames: false
+        files: ^(backend/|frontend/src/|docs/|README\.md|AGENTS\.md|CLAUDE\.md|scripts/generate_context_index\.py)

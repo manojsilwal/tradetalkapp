@@ -1,0 +1,31 @@
+name: MCP Context Freshness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  context-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate context index
+        run: python3 scripts/generate_context_index.py
+
+      - name: Check generated index is committed
+        run: git diff --exit-code .tradetalk/context-index.json
+
+      - name: Validate MCP action registry
+        run: python3 scripts/validate_mcp_actions.py
+
+      - name: MCP package unit tests
+        run: |
+          pip install -r requirements-mcp.txt
+          PYTHONPATH=. python -m unittest discover -s tradetalk_mcp/tests -v

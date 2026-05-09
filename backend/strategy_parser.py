@@ -19,6 +19,7 @@ SUPPORTED_METRICS = [
     "above_ma_200", "above_ma_50",
     "dividend_yield", "gross_margins",
 ]
+SUPPORTED_OPS = {">", "<", ">=", "<="}
 
 # Metric aliases — normalise common user phrasings to canonical names
 METRIC_ALIASES = {
@@ -91,7 +92,9 @@ def _parse_filter_list(raw: list) -> list:
         if not isinstance(f, dict):
             continue
         metric = METRIC_ALIASES.get(str(f.get("metric", "")).lower(), str(f.get("metric", "")).lower())
-        op     = str(f.get("op", ">"))
+        op     = str(f.get("op", ">")).strip()
+        if op not in SUPPORTED_OPS:
+            continue
         try:
             value = float(f.get("value", 0))
         except (TypeError, ValueError):
@@ -103,8 +106,12 @@ def _parse_filter_list(raw: list) -> list:
 
 def _parse_llm_output(result: dict, strategy_text: str, start: str, end: str) -> Optional[StrategyRules]:
     try:
+        if not isinstance(result, dict):
+            return None
         filters      = _parse_filter_list(result.get("filters", []))
         sell_filters = _parse_filter_list(result.get("sell_filters", []))
+        if not filters:
+            return None
 
         holding_months   = int(result.get("holding_period_months", 12))
         rebalance_months = int(result.get("rebalance_months", 12))
@@ -116,7 +123,7 @@ def _parse_llm_output(result: dict, strategy_text: str, start: str, end: str) ->
         if sell_filters:
             rebalance_months = 1
 
-        universe = _resolve_universe(universe_hint, strategy_text)
+        universe = _resolve_universe(universe_hint, strategy_text)[:100]
 
         return StrategyRules(
             name=name,

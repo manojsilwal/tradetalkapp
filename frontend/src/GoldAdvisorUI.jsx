@@ -8,6 +8,23 @@ function fmt(v) {
   return String(v);
 }
 
+/** Spot / futures USD quotes — avoid long float artifacts in UI and QA screenshots. */
+function fmtUsd(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return String(v);
+}
+
+function fmtPct(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    return `${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+  }
+  return String(v);
+}
+
 function metricTestId(label) {
   return `gold-metric-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
 }
@@ -134,10 +151,10 @@ export default function GoldAdvisorUI() {
 
           <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 20 }}>
             {[
-              ['Gold (GC=F last)', fmt(data.context?.macro?.gold_futures_last_usd)],
-              ['DXY', fmt(data.context?.macro?.dxy_spot)],
-              ['10Y TIPS real yield %', fmt(data.context?.macro?.ten_year_tips_real_yield_pct)],
-              ['10Y nominal %', fmt(data.context?.macro?.ten_year_nominal_treasury_pct)],
+              ['Gold (GC=F last)', fmtUsd(data.context?.macro?.gold_futures_last_usd)],
+              ['DXY', fmtUsd(data.context?.macro?.dxy_spot)],
+              ['10Y TIPS real yield %', fmtPct(data.context?.macro?.ten_year_tips_real_yield_pct)],
+              ['10Y nominal %', fmtPct(data.context?.macro?.ten_year_nominal_treasury_pct)],
               ['VIX', fmt(data.context?.macro?.vix)],
             ].map(([label, val]) => (
               <div key={label} className="dash-card glass-panel fade-in" data-testid={metricTestId(label)} style={{ padding: 18, borderRadius: 14 }}>

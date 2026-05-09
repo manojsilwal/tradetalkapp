@@ -1,24 +1,20 @@
 """
-LLM Client — supports OpenRouter (Qwen via OpenRouter by default) and a rule-based fallback.
+LLM Client — OpenAI-compatible HTTP inference (NVIDIA Build or OpenRouter), optional Gemini, rule-based fallback.
 
-  1. OpenRouter — set OPENROUTER_API_KEY (optional OPENROUTER_API_KEY_2 for round-robin and 429 fallback).
-     Inference goes DIRECT to OpenRouter, never proxied through HF Space.
-     Optional:
-       OPENROUTER_MODEL (default: google/gemma-4-31b-it:free)
-       OPENROUTER_BASE_URL (default: https://openrouter.ai/api/v1)
-       OPENROUTER_429_SAME_KEY_DELAY_SEC / OPENROUTER_429_KEY_FAILOVER_DELAY_SEC (429 backoff)
-       OPENROUTER_429_TRY_OTHER_KEYS (1 = retry 429 on other key(s); 0 = round-robin one key per request only)
-       OPENROUTER_HTTP_REFERER
-       OPENROUTER_X_TITLE
+  1. NVIDIA Build (preferred when ``NVIDIA_API_KEY`` is set, or ``LLM_HTTP_PROVIDER=nvidia``) —
+     OpenAI-compatible ``https://integrate.api.nvidia.com/v1``.
+     Chat order: ``NVIDIA_LLM_MODEL_PRO`` (DeepSeek v4 Pro) → ``NVIDIA_LLM_MODEL_FLASH`` (DeepSeek v4 Flash)
+     → ``GEMINI_MODEL`` (Gemini 3.1 Pro) when a Gemini key is configured.
+     JSON / swarm roles: heavy → Pro, light → Flash on NVIDIA; final fallback Gemini when enabled.
+     Embeddings and batch ETL can still use ``OPENROUTER_*`` separately.
 
-  2. Gemini (Google AI Studio) — optional fallback when OpenRouter fails, if GEMINI_API_KEY
-     (or GOOGLE_API_KEY) is set and GEMINI_LLM_FALLBACK is not 0. Model: GEMINI_FALLBACK_MODEL
-     (default: gemini-3.1-pro-preview). GEMINI_INSTANT_OPENROUTER_FAILOVER=1 (default) skips
-     OpenRouter 429 backoff/sleeps so failover starts immediately.
-     Set GEMINI_PRIMARY=1 to use Gemini for streaming chat first (OpenRouter skipped for chat).
-     With GEMINI_PRIMARY=1, OPENROUTER_API_KEY is not required for chat if the Gemini key is set.
+  2. OpenRouter — when ``LLM_HTTP_PROVIDER=openrouter`` or no NVIDIA keys: ``OPENROUTER_API_KEY``,
+     ``OPENROUTER_MODEL`` / ``OPENROUTER_MODEL_LIGHT``, etc. Chat can use ``GEMINI_PRIMARY=1`` to try
+     Gemini before OpenRouter.
 
-  3. Rule-based templates — if no OpenRouter API keys are configured.
+  3. Gemini (Google AI Studio) — last step in the NVIDIA chat stack, or fallback / primary per flags.
+
+  4. Rule-based templates — if no HTTP keys are configured.
 
 Agent policy guardrails (defense-in-depth) are enforced via
 agent_policy_guardrails when enabled.  These are in-process checks and
@@ -31,6 +27,8 @@ import asyncio
 import json
 import logging
 import os
+import threading
+import time
 from typing import Any, Dict, Optional, AsyncIterator
 from .agent_policy_guardrails import (
     guard_host,
@@ -39,9 +37,12 @@ from .agent_policy_guardrails import (
     workload_scope,
 )
 from .openrouter_pool import (
+    collect_nvidia_llm_api_keys,
+    get_or_create_llm_openai_compatible_pool,
     get_or_create_openrouter_pool,
     is_openrouter_rate_limit_error,
     rate_limit_sleep_seconds,
+    resolve_llm_http_provider,
     should_try_other_openrouter_keys_on_429,
     sync_failover_execute,
 )
@@ -68,6 +69,21 @@ OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemma-4-31b-it:fre
 OPENROUTER_MODEL_LIGHT = os.environ.get("OPENROUTER_MODEL_LIGHT", OPENROUTER_MODEL)
 OPENROUTER_HTTP_REFERER = os.environ.get("OPENROUTER_HTTP_REFERER", "")
 OPENROUTER_X_TITLE = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")
+
+# NVIDIA Build — OpenAI-compatible; used when resolve_llm_http_provider() == "nvidia".
+def _nvidia_llm_base_url() -> str:
+    u = os.environ.get("NVIDIA_LLM_BASE_URL", "").strip().rstrip("/")
+    if u:
+        return u
+    if os.environ.get("LLM_HTTP_PROVIDER", "").strip().lower() == "nvidia":
+        u2 = os.environ.get("OPENAI_BASE_URL", "").strip().rstrip("/")
+        if u2:
+            return u2
+    return "https://integrate.api.nvidia.com/v1"
+
+
+NVIDIA_LLM_MODEL_PRO = os.environ.get("NVIDIA_LLM_MODEL_PRO", "deepseek-ai/deepseek-v4-pro").strip()
+NVIDIA_LLM_MODEL_FLASH = os.environ.get("NVIDIA_LLM_MODEL_FLASH", "deepseek-ai/deepseek-v4-flash").strip()
 GUARDRAILS_ENABLE = os.environ.get("GUARDRAILS_ENABLE", "1").strip() != "0"
 LLM_MAX_CONCURRENCY = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "2")))
 LLM_MAX_TOKENS = max(256, int(os.environ.get("LLM_MAX_TOKENS", "1500")))
@@ -105,6 +121,13 @@ def _tier_for_role(role: str) -> str:
 
 def _model_for_role(role: str) -> str:
     return OPENROUTER_MODEL_LIGHT if _tier_for_role(role) == "light" else OPENROUTER_MODEL
+
+
+def _http_openai_model_for_role(provider: str, role: str) -> str:
+    """OpenAI-compatible chat model for JSON / sync paths (NVIDIA vs OpenRouter)."""
+    if provider == "nvidia":
+        return NVIDIA_LLM_MODEL_FLASH if _tier_for_role(role) == "light" else NVIDIA_LLM_MODEL_PRO
+    return _model_for_role(role)
 
 
 def _gemini_model_for_role(role: str) -> str:
@@ -388,8 +411,7 @@ FALLBACK_TEMPLATES = {
 
 class LLMClient:
     """
-    Async LLM wrapper — sends inference DIRECT to OpenRouter.
-    The HF Space is an agent runtime, NOT an inference proxy.
+    Async LLM wrapper — OpenAI-compatible HTTP (NVIDIA Build or OpenRouter) + optional Gemini.
     Policy guardrails (in-process, defense-in-depth) are enforced when enabled.
     Uses asyncio.to_thread for all blocking HTTP calls.
     """
@@ -397,13 +419,28 @@ class LLMClient:
     def __init__(self):
         self._backend = "fallback"
         self._provider = "fallback"
+        self._llm_http_provider = "fallback"
         self._model = ""
         self._endpoint = ""
         self._openrouter_pool = None
-        self._sem = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
+        # One semaphore per running event loop — ``asyncio.run`` in tests closes loops;
+        # Starlette uses a different loop for TestClient/production requests.
+        self._sem_by_loop: dict[int, asyncio.Semaphore] = {}
+        self._sem_lock = threading.Lock()
         self._init_client()
 
+    def _sem_for_current_loop(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        key = id(loop)
+        with self._sem_lock:
+            sem = self._sem_by_loop.get(key)
+            if sem is None:
+                sem = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
+                self._sem_by_loop[key] = sem
+            return sem
+
     def _init_client(self):
+        self._llm_http_provider = "fallback"
         try:
             from openai import OpenAI  # noqa: F401 — presence check
         except Exception as e:
@@ -416,7 +453,46 @@ class LLMClient:
         if OPENROUTER_X_TITLE:
             headers["X-Title"] = OPENROUTER_X_TITLE
 
+        provider = resolve_llm_http_provider()
         try:
+            if provider == "none":
+                if gemini_primary_enabled():
+                    logger.info(
+                        "[LLMClient] No HTTP LLM key; streaming chat uses Gemini primary — model=%s",
+                        GEMINI_FALLBACK_MODEL,
+                    )
+                else:
+                    logger.warning(
+                        "[LLMClient] No NVIDIA_API_KEY or OPENROUTER_API_KEY. Using rule-based fallback."
+                    )
+                return
+
+            if provider == "nvidia":
+                keys = collect_nvidia_llm_api_keys()
+                base = _nvidia_llm_base_url()
+                pool = get_or_create_llm_openai_compatible_pool(base, headers, keys)
+                if pool is None:
+                    logger.warning("[LLMClient] NVIDIA LLM pool could not be created (missing keys).")
+                    return
+                if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                    guard_host("llm", base)
+                self._openrouter_pool = pool
+                self._llm_http_provider = "nvidia"
+                self._provider = "nvidia"
+                self._backend = "nvidia"
+                self._model = NVIDIA_LLM_MODEL_PRO
+                self._endpoint = base
+                logger.info(
+                    "[LLMClient] Backend: NVIDIA Build — chat order: %s → %s → Gemini last | role tiers: %s / %s",
+                    NVIDIA_LLM_MODEL_PRO,
+                    NVIDIA_LLM_MODEL_FLASH,
+                    NVIDIA_LLM_MODEL_PRO,
+                    NVIDIA_LLM_MODEL_FLASH,
+                )
+                if gemini_primary_enabled() or gemini_llm_fallback_enabled():
+                    logger.info("[LLMClient] Gemini available in chat stack — model=%s", GEMINI_MODEL)
+                return
+
             pool = get_or_create_openrouter_pool(OPENROUTER_BASE_URL, headers)
             if pool is None:
                 if gemini_primary_enabled():
@@ -430,6 +506,7 @@ class LLMClient:
             if GUARDRAILS_ENABLE and policy_guardrails_enabled():
                 guard_host("llm", OPENROUTER_BASE_URL)
             self._openrouter_pool = pool
+            self._llm_http_provider = "openrouter"
             self._provider = "openrouter"
             self._backend = "openrouter"
             self._model = OPENROUTER_MODEL
@@ -440,7 +517,7 @@ class LLMClient:
             elif gemini_llm_fallback_enabled():
                 logger.info("[LLMClient] Gemini LLM fallback enabled — model=%s", GEMINI_FALLBACK_MODEL)
         except Exception as e:
-            logger.warning("[LLMClient] OpenRouter init failed: %s", redact_secrets_in_text(str(e)))
+            logger.warning("[LLMClient] LLM HTTP init failed: %s", redact_secrets_in_text(str(e)))
 
     def _gemini_try_json_role(self, system: str, prompt: str, role: str) -> Optional[dict]:
         """
@@ -616,7 +693,7 @@ class LLMClient:
             prompt_version = version_override or "candidate"
         else:
             system, prompt_version = self._resolve_system_prompt(role)
-        model = _model_for_role(role)
+        model = _http_openai_model_for_role(self._provider, role)
         fallback = lambda: (FALLBACK_TEMPLATES.get(role, {}), prompt_version)
 
         # Gemini-primary path (GEMINI_PRIMARY=1): route every role through Gemini
@@ -719,7 +796,64 @@ class LLMClient:
     def _parse_json_response(self, content: str, role: str) -> dict:
         """Strip markdown fences and parse JSON. Return fallback on failure."""
         # Remove <think>...</think> blocks if the model includes reasoning tags.
+        import ast
         import re
+
+        def _extract_first_balanced_json_object(text: str) -> Optional[str]:
+            start = text.find("{")
+            if start < 0:
+                return None
+            depth = 0
+            in_str = False
+            esc = False
+            for i, ch in enumerate(text[start:], start=start):
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                    continue
+                if ch == '"':
+                    in_str = True
+                    continue
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return text[start : i + 1]
+            return None
+
+        def _try_json_parse(candidate: str) -> Optional[dict]:
+            c = (candidate or "").strip()
+            if not c:
+                return None
+            try:
+                out = json.loads(c)
+                return out if isinstance(out, dict) else None
+            except Exception:
+                pass
+            # Repair common LLM JSON defects.
+            repaired = c
+            repaired = repaired.replace("\u201c", '"').replace("\u201d", '"')
+            repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+            try:
+                out = json.loads(repaired)
+                return out if isinstance(out, dict) else None
+            except Exception:
+                pass
+            # Last-ditch: Python literal-esque dicts using single quotes.
+            try:
+                py_like = repaired.replace("null", "None").replace("true", "True").replace("false", "False")
+                out = ast.literal_eval(py_like)
+                if isinstance(out, dict):
+                    return json.loads(json.dumps(out))
+            except Exception:
+                return None
+            return None
+
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
         # Strip markdown code fences
         if "```" in content:
@@ -728,20 +862,17 @@ class LLMClient:
                 part = part.strip()
                 if part.startswith("json"):
                     part = part[4:].strip()
-                try:
-                    return json.loads(part)
-                except Exception:
-                    continue
-        try:
-            return json.loads(content)
-        except Exception:
-            # Try extracting first JSON object from the text
-            match = re.search(r"\{.*\}", content, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group())
-                except Exception:
-                    pass
+                parsed = _try_json_parse(part)
+                if parsed is not None:
+                    return parsed
+        parsed = _try_json_parse(content)
+        if parsed is not None:
+            return parsed
+        candidate = _extract_first_balanced_json_object(content)
+        if candidate:
+            parsed = _try_json_parse(candidate)
+            if parsed is not None:
+                return parsed
         logger.warning(f"[LLMClient] JSON parse failed for role={role}. Raw: {content[:200]}")
         return FALLBACK_TEMPLATES.get(role, {})
 
@@ -767,8 +898,8 @@ class LLMClient:
         so post-hoc analyses can tie outcomes to the exact prompt that produced
         them (AGP §3.1.2 "auditable lineage").
         """
-        if self._provider == "openrouter":
-            async with self._sem:
+        if self._provider in ("openrouter", "nvidia"):
+            async with self._sem_for_current_loop():
                 result, version = await asyncio.to_thread(
                     self._provider_generate, role, prompt
                 )
@@ -800,8 +931,8 @@ class LLMClient:
         This method is the ONLY approved way for SEPL (or anything else) to
         exercise a non-registered prompt body against real inference.
         """
-        if self._provider == "openrouter":
-            async with self._sem:
+        if self._provider in ("openrouter", "nvidia"):
+            async with self._sem_for_current_loop():
                 result, version = await asyncio.to_thread(
                     self._provider_generate,
                     role,
@@ -970,7 +1101,11 @@ class LLMClient:
         on any Gemini failure returns the untouched ``user`` string — same local
         fallback contract as the JSON inference path. OpenRouter is never called.
         """
-        model = OPENROUTER_MODEL_LIGHT
+        model = (
+            NVIDIA_LLM_MODEL_FLASH
+            if self._provider == "nvidia"
+            else OPENROUTER_MODEL_LIGHT
+        )
 
         if gemini_primary_enabled():
             g = self._gemini_try_plain_text(system, user)
@@ -1047,21 +1182,39 @@ class LLMClient:
         tools: Optional[list] = None,
         tool_handlers: Optional[dict] = None,
         tool_trace_out: Optional[list[dict[str, Any]]] = None,
+        trace_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> AsyncIterator[str]:
         """
         Stream assistant text tokens (plain prose, not JSON). Used by TradeTalk chat.
         Yields incremental text chunks; transparently handles autonomous tool execution if provided.
-        If ``tool_trace_out`` is a list, each executed tool appends
-        ``{name, arguments, outcome, error?}`` for logging and the evidence contract.
+        If ``tool_trace_out`` is a list, each executed tool appends an enriched
+        ``TrajectoryStep v2`` row (see :mod:`backend.chat_tool_telemetry`):
+        canonical ``tool_family``, ``execution_status`` vs ``evidence_quality``,
+        per-step ``source_refs``, and the running fatal counters
+        (``consecutive_tool_errors_after_step``,
+        ``fatal_streak_start_step_index``, ``fatal_trigger_step_index``). The
+        legacy keys ``name``/``arguments``/``outcome``/``error`` are preserved
+        for backward compatibility with existing consumers.
         """
+        # Phase A1: per-turn trajectory accumulator (only when caller wants traces).
+        trajectory_acc = None
+        if tool_trace_out is not None:
+            from .chat_tool_telemetry import TrajectoryAccumulator
+
+            trajectory_acc = TrajectoryAccumulator(
+                trace_id=trace_id,
+                session_id=session_id,
+                message_id=message_id,
+            )
         mt = max_tokens if max_tokens is not None else min(2048, LLM_MAX_TOKENS)
-        model = OPENROUTER_MODEL_LIGHT
         _429_same_delay = float(os.environ.get("OPENROUTER_429_SAME_KEY_DELAY_SEC", "2.5"))
         _429_key_delay = float(os.environ.get("OPENROUTER_429_KEY_FAILOVER_DELAY_SEC", "1.0"))
-        if self._openrouter_pool is None and not gemini_primary_enabled():
+        if self._openrouter_pool is None and not gemini_usable_for_chat():
             yield (
-                "Chat requires OPENROUTER_API_KEY. "
-                "Configure the API key on the server to enable live responses."
+                "Chat requires NVIDIA_API_KEY, OPENROUTER_API_KEY, or a Gemini key "
+                "(GEMINI_API_KEY / GOOGLE_API_KEY with GEMINI_PRIMARY or GEMINI_LLM_FALLBACK)."
             )
             return
 
@@ -1090,140 +1243,183 @@ class LLMClient:
             is_tool_call = False
 
             stream_ok = False
-            abort_openrouter_for_gemini = False
-            ci = 0
-            n_clients = len(async_clients)
-            if gemini_primary_enabled():
-                abort_openrouter_for_gemini = True
-            while ci < n_clients and not stream_ok and not abort_openrouter_for_gemini:
-                async_client = async_clients[ci]
-                for attempt in range(2):
-                    try:
-                        kwargs = {
-                            "model": model,
-                            "messages": msgs,
-                            "temperature": 0.35,
-                            "max_tokens": mt,
-                            "stream": True,
-                        }
-                        if tools:
-                            kwargs["tools"] = tools
+            gemini_error_only = False
+            chat_phases: list[str] = []
+            nvidia_http = self._llm_http_provider == "nvidia"
+            has_http = self._openrouter_pool is not None
+            gemini_ok = gemini_usable_for_chat()
 
-                        async with self._sem:
-                            stream = await async_client.chat.completions.create(**kwargs)
+            if nvidia_http and has_http:
+                chat_phases.extend(["nvidia_pro", "nvidia_flash"])
+            elif has_http:
+                if gemini_primary_enabled() and gemini_ok:
+                    chat_phases.append("gemini_chat")
+                chat_phases.append("openrouter")
+            elif gemini_primary_enabled() and gemini_ok:
+                chat_phases.append("gemini_chat")
 
-                        async for chunk in stream:
-                            delta = chunk.choices[0].delta if chunk.choices else None
-                            if not delta:
-                                continue
+            if gemini_ok and "gemini_chat" not in chat_phases:
+                if nvidia_http and has_http:
+                    chat_phases.append("gemini_chat")
+                elif has_http and not gemini_primary_enabled():
+                    chat_phases.append("gemini_chat")
+                elif not has_http and gemini_llm_fallback_enabled():
+                    chat_phases.append("gemini_chat")
 
-                            if getattr(delta, "tool_calls", None):
-                                is_tool_call = True
-                                tc = delta.tool_calls[0]
-                                if getattr(tc, "id", None):
-                                    tool_call_id = tc.id
-                                if getattr(tc, "function", None):
-                                    if getattr(tc.function, "name", None):
-                                        tool_name += tc.function.name
-                                    if getattr(tc.function, "arguments", None):
-                                        tool_args_str += tc.function.arguments
-                                continue
+            if not chat_phases:
+                yield (
+                    "Chat requires a model provider: set NVIDIA_API_KEY, OPENROUTER_API_KEY, "
+                    "or GEMINI_API_KEY (with GEMINI_PRIMARY or GEMINI_LLM_FALLBACK)."
+                )
+                return
 
-                            ch = getattr(delta, "content", None)
-                            if ch:
-                                yield ch
-
-                        stream_ok = True
-                        break
-                    except Exception as e:
-                        if not is_openrouter_rate_limit_error(e):
-                            logger.warning(
-                                "[LLMClient] stream_chat_plain failed: %s",
-                                redact_secrets_in_text(str(e)),
-                            )
-                            yield f"\n\n[Chat error: {redact_secrets_in_text(str(e))[:200]}]"
-                            return
-                        if gemini_instant_openrouter_failover():
-                            logger.info(
-                                "[LLMClient] OpenRouter 429 — skipping backoff, immediate Gemini failover"
-                            )
-                            abort_openrouter_for_gemini = True
-                            break
-                        wait = rate_limit_sleep_seconds(e, _429_same_delay)
-                        if attempt == 0:
-                            logger.warning(
-                                "[LLMClient] rate limited (429) key=%s attempt=0, sleeping %.1fs then retry same key",
-                                ci,
-                                wait,
-                            )
-                            await asyncio.sleep(wait)
-                            continue
-                        if ci < n_clients - 1:
-                            extra = _429_key_delay
-                            logger.warning(
-                                "[LLMClient] rate limited (429) key=%s after retry, sleeping %.1fs then other key",
-                                ci,
-                                extra,
-                            )
-                            await asyncio.sleep(extra)
-                            break
-                        msg = (
-                            "[Chat error: OpenRouter rate limit (429) on all configured keys. "
-                            "Free models (e.g. `:free`) share strict upstream quotas — two API keys may both hit the same limit. "
-                            "Wait a few minutes, or set OPENROUTER_MODEL to a paid slug on openrouter.ai/models, "
-                            "or try another model.]"
-                        )
-                        yield f"\n\n{msg}\n"
-                        return
-                if abort_openrouter_for_gemini:
-                    break
+            for phase in chat_phases:
                 if stream_ok:
                     break
-                ci += 1
+                if phase in ("openrouter", "nvidia_pro", "nvidia_flash"):
+                    gemini_error_only = False
+                    if phase == "openrouter":
+                        phase_model = OPENROUTER_MODEL_LIGHT
+                    elif phase == "nvidia_pro":
+                        phase_model = NVIDIA_LLM_MODEL_PRO
+                    else:
+                        phase_model = NVIDIA_LLM_MODEL_FLASH
+                    ci = 0
+                    n_clients = len(async_clients)
+                    abort_http_for_gemini = False
+                    while ci < n_clients and not stream_ok and not abort_http_for_gemini:
+                        async_client = async_clients[ci]
+                        for attempt in range(2):
+                            try:
+                                kwargs = {
+                                    "model": phase_model,
+                                    "messages": msgs,
+                                    "temperature": 0.35,
+                                    "max_tokens": mt,
+                                    "stream": True,
+                                }
+                                if tools:
+                                    kwargs["tools"] = tools
 
-            gemini_error_only = False
-            if not stream_ok and gemini_usable_for_chat():
-                # TradeTalk chat = user-facing reasoning, so always heavy model.
-                chat_model = GEMINI_MODEL
-                logger.info(
-                    "[LLMClient] stream_chat_plain via Gemini %smodel=%s",
-                    "primary — " if gemini_primary_enabled() else "fallback — ",
-                    chat_model,
-                )
-                try:
-                    rest = msgs[1:] if len(msgs) > 1 else []
-                    async with self._sem:
-                        async for ev in gemini_fallback_chat_events(
-                            system=system,
-                            openai_messages=rest,
-                            tools=tools,
-                            max_tokens=mt,
-                            temperature=0.35,
-                            model=chat_model,
-                        ):
-                            if ev["kind"] == "error":
-                                gemini_error_only = True
-                                yield (
-                                    f"\n\n[Chat error (Gemini fallback): "
-                                    f"{redact_secrets_in_text(str(ev.get('message', 'unknown')))[:200]}]\n"
-                                )
+                                async with self._sem_for_current_loop():
+                                    stream = await async_client.chat.completions.create(**kwargs)
+
+                                async for chunk in stream:
+                                    delta = chunk.choices[0].delta if chunk.choices else None
+                                    if not delta:
+                                        continue
+
+                                    if getattr(delta, "tool_calls", None):
+                                        is_tool_call = True
+                                        tc = delta.tool_calls[0]
+                                        if getattr(tc, "id", None):
+                                            tool_call_id = tc.id
+                                        if getattr(tc, "function", None):
+                                            if getattr(tc.function, "name", None):
+                                                tool_name += tc.function.name
+                                            if getattr(tc.function, "arguments", None):
+                                                tool_args_str += tc.function.arguments
+                                        continue
+
+                                    ch = getattr(delta, "content", None)
+                                    if ch:
+                                        yield ch
+
+                                stream_ok = True
                                 break
-                            if ev["kind"] == "text":
-                                stream_ok = True
-                                t = ev.get("text") or ""
-                                if t:
-                                    yield t
-                            elif ev["kind"] == "tool":
-                                stream_ok = True
-                                is_tool_call = True
-                                tool_name = ev.get("name") or ""
-                                tool_args_str = ev.get("args") or "{}"
-                                tool_call_id = "call_gemini_fallback"
-                except Exception as e:
-                    logger.warning(
-                        "[LLMClient] Gemini stream fallback failed: %s",
-                        redact_secrets_in_text(str(e)),
+                            except Exception as e:
+                                if not is_openrouter_rate_limit_error(e):
+                                    logger.warning(
+                                        "[LLMClient] stream_chat_plain failed: %s",
+                                        redact_secrets_in_text(str(e)),
+                                    )
+                                    yield f"\n\n[Chat error: {redact_secrets_in_text(str(e))[:200]}]"
+                                    return
+                                if gemini_instant_openrouter_failover():
+                                    logger.info(
+                                        "[LLMClient] HTTP LLM 429 — skipping backoff, immediate Gemini failover"
+                                    )
+                                    abort_http_for_gemini = True
+                                    break
+                                wait = rate_limit_sleep_seconds(e, _429_same_delay)
+                                if attempt == 0:
+                                    logger.warning(
+                                        "[LLMClient] rate limited (429) key=%s attempt=0, sleeping %.1fs then retry same key",
+                                        ci,
+                                        wait,
+                                    )
+                                    await asyncio.sleep(wait)
+                                    continue
+                                if ci < n_clients - 1:
+                                    extra = _429_key_delay
+                                    logger.warning(
+                                        "[LLMClient] rate limited (429) key=%s after retry, sleeping %.1fs then other key",
+                                        ci,
+                                        extra,
+                                    )
+                                    await asyncio.sleep(extra)
+                                    break
+                                if self._llm_http_provider == "openrouter":
+                                    msg = (
+                                        "[Chat error: OpenRouter rate limit (429) on all configured keys. "
+                                        "Free models (e.g. `:free`) share strict upstream quotas — two API keys may both hit the same limit. "
+                                        "Wait a few minutes, or set OPENROUTER_MODEL to a paid slug on openrouter.ai/models, "
+                                        "or try another model.]"
+                                    )
+                                else:
+                                    msg = (
+                                        "[Chat error: LLM API rate limit (429) on all configured keys. "
+                                        "Wait and retry, or add NVIDIA_API_KEY_2 for failover.]"
+                                    )
+                                yield f"\n\n{msg}\n"
+                                return
+                        if abort_http_for_gemini:
+                            break
+                        if stream_ok:
+                            break
+                        ci += 1
+
+                elif phase == "gemini_chat":
+                    gemini_error_only = False
+                    chat_model = GEMINI_MODEL
+                    logger.info(
+                        "[LLMClient] stream_chat_plain via Gemini model=%s",
+                        chat_model,
                     )
+                    try:
+                        rest = msgs[1:] if len(msgs) > 1 else []
+                        async with self._sem_for_current_loop():
+                            async for ev in gemini_fallback_chat_events(
+                                system=system,
+                                openai_messages=rest,
+                                tools=tools,
+                                max_tokens=mt,
+                                temperature=0.35,
+                                model=chat_model,
+                            ):
+                                if ev["kind"] == "error":
+                                    gemini_error_only = True
+                                    yield (
+                                        f"\n\n[Chat error (Gemini): "
+                                        f"{redact_secrets_in_text(str(ev.get('message', 'unknown')))[:200]}]\n"
+                                    )
+                                    break
+                                if ev["kind"] == "text":
+                                    stream_ok = True
+                                    t = ev.get("text") or ""
+                                    if t:
+                                        yield t
+                                elif ev["kind"] == "tool":
+                                    stream_ok = True
+                                    is_tool_call = True
+                                    tool_name = ev.get("name") or ""
+                                    tool_args_str = ev.get("args") or "{}"
+                                    tool_call_id = "call_gemini_fallback"
+                    except Exception as e:
+                        logger.warning(
+                            "[LLMClient] Gemini stream failed: %s",
+                            redact_secrets_in_text(str(e)),
+                        )
 
             if not stream_ok and not gemini_error_only:
                 yield (
@@ -1256,20 +1452,37 @@ class LLMClient:
                 else:
                     yield f"\n*[Fetching data...]*\n\n"
 
+                _tool_t0 = time.perf_counter()
+                _tool_error_type: Optional[str] = None
                 try:
                     func = tool_handlers[tool_name]
                     result = await func(**args_dict) if asyncio.iscoroutinefunction(func) else func(**args_dict)
                 except Exception as e:
                     result = f"Error executing {tool_name}: {e}"
+                    _tool_error_type = type(e).__name__
+                _tool_latency_ms = int((time.perf_counter() - _tool_t0) * 1000)
                 if tool_trace_out is not None:
                     out = classify_tool_result(str(result))
-                    row: dict[str, Any] = {
-                        "name": tool_name,
-                        "arguments": args_dict,
-                        "outcome": out,
-                    }
-                    if out == "error" or str(result).startswith("Error executing"):
-                        row["error"] = str(result)[:500]
+                    if _tool_error_type is None and (
+                        out == "error" or str(result).startswith("Error executing")
+                    ):
+                        _tool_error_type = "ToolHandlerError"
+                    if trajectory_acc is None:  # defensive: should always be set above
+                        from .chat_tool_telemetry import TrajectoryAccumulator
+
+                        trajectory_acc = TrajectoryAccumulator(
+                            trace_id=trace_id,
+                            session_id=session_id,
+                            message_id=message_id,
+                        )
+                    row = trajectory_acc.record(
+                        tool_name=tool_name,
+                        arguments=args_dict,
+                        result=str(result),
+                        outcome=out,
+                        latency_ms=_tool_latency_ms,
+                        error_type=_tool_error_type,
+                    )
                     tool_trace_out.append(row)
                 
                 msgs.append({
@@ -1340,7 +1553,7 @@ class LLMClient:
         Phase 5 — tighten data-lake summaries for embedding/RAG (OpenRouter chat model).
         Falls back to draft when API key missing or on error.
         """
-        if self._provider != "openrouter" or self._openrouter_pool is None:
+        if self._provider not in ("openrouter", "nvidia") or self._openrouter_pool is None:
             return draft
         system = (
             "You are a financial data editor. Rewrite notes into one dense factual paragraph "
@@ -1348,7 +1561,7 @@ class LLMClient:
             "Plain prose only — no JSON, no markdown headings, no bullet lists."
         )
         user = f"Label: {context_label}\n\nDRAFT:\n{draft[:12000]}\n\nOutput one improved paragraph:"
-        async with self._sem:
+        async with self._sem_for_current_loop():
             return await asyncio.to_thread(self._plain_text_generate_sync, system, user)
 
     @property

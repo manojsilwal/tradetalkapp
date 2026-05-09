@@ -1,0 +1,264 @@
+{
+  "generated_at": "2026-05-09T20:23:35.916744Z",
+  "backend": {
+    "entrypoint": "backend/main.py",
+    "include_router_hints": [
+      "academy.router",
+      "analysis.router",
+      "auth_router.router",
+      "backtest.router",
+      "challenges.router",
+      "chat.router",
+      "debug.router",
+      "knowledge.router",
+      "learning.router",
+      "macro.router",
+      "notifications.router",
+      "portfolio.router",
+      "preferences.router",
+      "progress.router",
+      "provider_smoke.router",
+      "resources_router.router",
+      "scorecard_router.router",
+      "sepl_router.router"
+    ],
+    "routers": [
+      {
+        "file": "backend/routers/academy.py",
+        "prefix": "/academy",
+        "endpoints": [
+          "GET /academy/catalogue",
+          "GET /academy/lesson/{lesson_id}",
+          "GET /academy/tracks",
+          "POST /academy/lesson/{lesson_id}/generate",
+          "POST /academy/lesson/{lesson_id}/watch"
+        ]
+      },
+      {
+        "file": "backend/routers/analysis.py",
+        "prefix": "/",
+        "endpoints": [
+          "GET /analyze",
+          "GET /debate",
+          "GET /decision-terminal",
+          "GET /trace",
+          "POST /analyze",
+          "POST /debate",
+          "POST /decision-terminal",
+          "POST /trace"
+        ]
+      },
+      {
+        "file": "backend/routers/auth.py",
+        "prefix": "/auth",
+        "endpoints": [
+          "GET /auth/me",
+          "POST /auth/google",
+          "POST /auth/logout"
+        ]
+      },
+      {
+        "file": "backend/routers/backtest.py",
+        "prefix": "/",
+        "endpoints": [
+          "GET /strategies/leaderboard",
+          "GET /strategies/presets",
+          "POST /backtest",
+          "POST /backtest/validate"
+        ]
+      },
+      {
+        "file": "backend/routers/challenges.py",
+        "prefix": "/challenge",
+        "endpoints": [
+          "GET /challenge/today",
+          "GET /challenge/yesterday",
+          "POST /challenge/answer"
+        ]
+      },
+      {
+        "file": "backend/routers/chat.py",
+        "prefix": "/chat",
+        "endpoints": [
+          "GET /chat/bootstrap",
+          "GET /chat/user-context",
+          "POST /chat/context/refresh",
+          "POST /chat/evidence-export",
+          "POST /chat/message",
+          "POST /chat/session"
+        ]
+      },
+      {
+        "file": "backend/routers/debug.py",
+        "prefix": "/",
+        "endpoints": [
+          "DELETE /cache/flush",
+          "GET /cache/stats",
+          "GET /llm/status",
+          "GET /query/route",
+          "GET /runtime/policy-check"
+        ]
+      },
+      {
+        "file": "backend/routers/knowledge.py",
+        "prefix": "/knowledge",
+        "endpoints": [
+          "GET /knowledge/claims",
+          "GET /knowledge/export",
+          "GET /knowledge/meta-harness-snapshot",
+          "GET /knowledge/pipeline-status",
+          "GET /knowledge/reflections",
+          "GET /knowledge/sp500-stats",
+          "GET /knowledge/stats",
+          "POST /knowledge/claims",
+          "POST /knowledge/pipeline-run",
+          "POST /knowledge/sp500-ingest"
+        ]
+      },
+      {
+        "file": "backend/routers/learning.py",
+        "prefix": "/learning",
+        "endpoints": [
+          "GET /learning/curriculum",
+          "GET /learning/module/{module_id}",
+          "POST /learning/module/{module_id}/complete"
+        ]
+      },
+      {
+        "file": "backend/routers/macro.py",
+        "prefix": "/",
+        "endpoints": [
+          "GET /advisor/gold",
+          "GET /macro",
+          "GET /metrics/{ticker}"
+        ]
+      },
+      {
+        "file": "backend/routers/notifications.py",
+        "prefix": "/notifications",
+        "endpoints": [
+          "GET /notifications/history",
+          "GET /notifications/stream",
+          "GET /notifications/trace",
+          "POST /notifications/dismiss/{alert_id}",
+          "POST /notifications/mark-seen",
+          "POST /notifications/scan"
+        ]
+      },
+      {
+        "file": "backend/routers/portfolio.py",
+        "prefix": "/portfolio",
+        "endpoints": [
+          "GET /portfolio/performance",
+          "GET /portfolio/positions",
+          "POST /portfolio/close/{position_id}",
+          "POST /portfolio/position"
+        ]
+      },
+      {
+        "file": "backend/routers/preferences.py",
+        "prefix": "/preferences",
+        "endpoints": [
+          "GET /preferences",
+          "PUT /preferences"
+        ]
+      },
+      {
+        "file": "backend/routers/progress.py",
+        "prefix": "/progress",
+        "endpoints": [
+          "GET /progress",
+          "GET /progress/history",
+          "POST /progress/award"
+        ]
+      },
+      {
+        "file": "backend/routers/provider_smoke.py",
+        "prefix": "/health/smoke",
+        "endpoints": [
+          "GET /health/smoke/status",
+          "POST /health/smoke/google/embedding",
+          "POST /health/smoke/nvidia/chat"
+        ]
+      },
+      {
+        "file": "backend/routers/resources.py",
+        "prefix": "/resources",
+        "endpoints": [
+          "GET /resources/",
+          "GET /resources/summary",
+          "GET /resources/{name}",
+          "GET /resources/{name}/lineage",
+          "GET /resources/{name}/versions"
+        ]
+      },
+      {
+        "file": "backend/routers/scorecard.py",
+        "prefix": "/scorecard",
+        "endpoints": [
+          "GET /scorecard/presets",
+          "GET /scorecard/{ticker}",
+          "POST /scorecard/compare"
+        ]
+      },
+      {
+        "file": "backend/routers/sepl.py",
+        "prefix": "/sepl",
+        "endpoints": [
+          "GET /sepl/kill-switch/preview",
+          "GET /sepl/select/preview",
+          "GET /sepl/status",
+          "POST /sepl/kill-switch/run",
+          "POST /sepl/run"
+        ]
+      }
+    ]
+  },
+  "frontend": {
+    "framework": "vite/react",
+    "routes": [
+      "/",
+      "/backtest",
+      "/challenge",
+      "/chat",
+      "/debate",
+      "/decision-terminal",
+      "/gold",
+      "/learning",
+      "/macro",
+      "/observer",
+      "/portfolio",
+      "/scorecard",
+      "/system-diagrams",
+      "/systemmap"
+    ]
+  },
+  "docs": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/BATCH_ETL.md",
+    "docs/CRON.md",
+    "docs/DECISION_LEDGER.md",
+    "docs/FAULTHUNTER_TRIAGE.md",
+    "docs/PHASE_A_USECASES.md",
+    "docs/PHASE_B_DREAMING.md",
+    "docs/PHASE_CORAL_HUB.md",
+    "docs/PHASE_E_TEVV.md",
+    "docs/QA_TEST_MATRIX.md",
+    "docs/RAG_POLICY.md",
+    "docs/RESOURCE_REGISTRY.md",
+    "docs/SEPL.md",
+    "docs/SYSTEM_DIAGRAMS.md",
+    "docs/TOOL_EVOLUTION.md"
+  ],
+  "services": [
+    "knowledge_store",
+    "llm_client",
+    "market_intel",
+    "daily_pipeline",
+    "backtest_engine"
+  ],
+  "openapi_hint": null
+}

@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
 import time
 import uuid
@@ -24,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from . import market_l1_cache
 from . import chat_session_store
 from .rag_retrieval import earnings_hits_as_rag_rows, plan_chat_rag
+from .swarm_reliability.retrieval_fusion import fuse_and_cap_hits
 from .telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ CHAT_RAG_COLLECTIONS = (
 RECENCY_LAMBDA_HOURS = float(__import__("os").environ.get("CHAT_RAG_RECENCY_LAMBDA", "0.02"))
 RAG_TOP_K = 12
 RAG_OVERSAMPLE = 8
+CHAT_RAG_RRF_ON = os.environ.get("CHAT_RAG_RRF", "1").strip().lower() in ("1", "true", "yes", "on")
 
 PREDICTIVE_QUERIES: List[Tuple[str, str]] = [
     ("macro", "stock market macro outlook interest rates VIX"),
@@ -218,20 +221,28 @@ async def chat_rag_context(
             for q in plan.queries
         ]
         parts = await asyncio.gather(*tasks) if tasks else []
+        channel_hits: Dict[str, List[dict]] = {}
         merged: List[dict] = []
-        for p in parts:
-            merged.extend(p)
+        for q, p in zip(plan.queries, parts):
+            channel_hits.setdefault(q.collection, []).extend(p or [])
+            merged.extend(p or [])
 
         if plan.earnings_ticker:
-            merged.extend(
-                earnings_hits_as_rag_rows(ks, user_message, plan.earnings_ticker, n=4)
+            earnings = earnings_hits_as_rag_rows(ks, user_message, plan.earnings_ticker, n=4)
+            channel_hits.setdefault("earnings_memory", []).extend(earnings)
+            merged.extend(earnings)
+
+        if CHAT_RAG_RRF_ON:
+            ranked = fuse_and_cap_hits(
+                channel_hits,
+                rrf_k=int(os.environ.get("CHAT_RAG_RRF_K", "60")),
+                max_records=RAG_TOP_K,
             )
-
-        merged_cap = 72
-        if len(merged) > merged_cap:
-            merged = merged[:merged_cap]
-
-        ranked = rerank_hits(merged)[:RAG_TOP_K]
+        else:
+            merged_cap = 72
+            if len(merged) > merged_cap:
+                merged = merged[:merged_cap]
+            ranked = rerank_hits(merged)[:RAG_TOP_K]
 
         try:
             span.set_attribute("rag.merged_count", len(merged))

@@ -6,6 +6,7 @@ AI-assisted market analysis application: FastAPI backend (Render), React fronten
 
 - **[AGENTS.md](AGENTS.md)** — Release and **FaultHunter** remediation loop (mandatory test/deploy steps, **Cursor Cloud Agent** instructions, feature → code map).
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — System architecture.
+- **[docs/MCP.md](docs/MCP.md)** — **Model Context Protocol** server for agents (Cursor, VS Code, Claude, etc.): context tools, allowlisted API actions, env vars, testing.
 
 ## FaultHunter integration
 

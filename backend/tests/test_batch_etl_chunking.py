@@ -27,13 +27,15 @@ class TestBatchEtlChunking(unittest.TestCase):
         self.assertIn("b", joined)
 
     def test_default_openrouter_embedding_model_when_unset(self):
-        """Supabase upsert no longer fails when OPENROUTER_EMBEDDING_MODEL secret is missing."""
+        """Without a Google API key, batch ETL still defaults OPENROUTER_EMBEDDING_MODEL."""
         base = {
             "SUPABASE_URL": "https://x.supabase.co",
             "SUPABASE_SERVICE_ROLE_KEY": "test-key",
             "OPENROUTER_API_KEY": "or-key",
         }
         with patch.dict(os.environ, base, clear=False):
+            for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+                os.environ.pop(k, None)
             os.environ.pop("OPENROUTER_EMBEDDING_MODEL", None)
             with patch(
                 "backend.batch_etl.pipeline._yfinance_profile_blob",
@@ -49,6 +51,30 @@ class TestBatchEtlChunking(unittest.TestCase):
                 os.environ.get("OPENROUTER_EMBEDDING_MODEL"),
                 _DEFAULT_OPENROUTER_EMBEDDING_MODEL,
             )
+            mock_cls.assert_called_once_with("https://x.supabase.co", "test-key")
+            inst.add.assert_called_once()
+
+    def test_google_key_skips_openrouter_embedding_default(self):
+        """With GEMINI_API_KEY set, batch ETL does not inject OpenRouter embedding defaults."""
+        base = {
+            "SUPABASE_URL": "https://x.supabase.co",
+            "SUPABASE_SERVICE_ROLE_KEY": "test-key",
+            "GEMINI_API_KEY": "g-key",
+        }
+        with patch.dict(os.environ, base, clear=False):
+            os.environ.pop("OPENROUTER_EMBEDDING_MODEL", None)
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            with patch(
+                "backend.batch_etl.pipeline._yfinance_profile_blob",
+                return_value=("word " * 200).strip(),
+            ):
+                mock_cls = MagicMock()
+                inst = MagicMock()
+                mock_cls.return_value = inst
+                with patch("backend.vector_backends.SupabaseVectorBackend", mock_cls):
+                    result = run_batch_etl(["SPY"], upload_hf=False, upsert_supabase=True)
+            self.assertTrue(result.get("ok"), msg=result)
+            self.assertIsNone(os.environ.get("OPENROUTER_EMBEDDING_MODEL"))
             mock_cls.assert_called_once_with("https://x.supabase.co", "test-key")
             inst.add.assert_called_once()
 

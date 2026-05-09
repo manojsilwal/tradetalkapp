@@ -63,8 +63,11 @@ test.describe('FinCrawler integration (optional)', () => {
     } catch {
       throw new Error(`Expected JSON body, got: ${text.slice(0, 200)}`);
     }
+    if (r.status() === 401 && !FINCRAWLER_KEY) {
+      test.skip(true, 'FinCrawler returned 401 — set FINCRAWLER_KEY to match the service API_KEY');
+    }
     if (r.status() === 401) {
-      throw new Error('Unauthorized — set FINCRAWLER_KEY to match FinCrawler API_KEY');
+      throw new Error('Unauthorized — FINCRAWLER_KEY does not match FinCrawler API_KEY');
     }
     if (r.status() === 200) {
       expect(j.ok).toBe(true);

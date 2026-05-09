@@ -1,9 +1,35 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
+import { Agent, fetch as undiciFetch } from 'undici';
+
+/** Large payloads + slow models (e.g. NVIDIA DeepSeek) exceed Node fetch (undici) default headers/body timeouts. */
+const qaLlmDispatcher = new Agent({
+  headersTimeout: 600_000,
+  bodyTimeout: 600_000,
+  connectTimeout: 120_000,
+});
 
 const APP_URL = (process.env.APP_URL ?? 'https://frontend-manojsilwals-projects.vercel.app').replace(/\/$/, '');
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '');
-const LLM_QA_MODEL = process.env.LLM_QA_MODEL || 'gpt-4o-mini';
+/** OpenAI-compatible key (OpenAI, Azure OpenAI, NVIDIA Build `integrate.api.nvidia.com`, etc.) */
+const QA_LLM_API_KEY = (process.env.OPENAI_API_KEY || process.env.NVIDIA_API_KEY || '').trim();
+const _explicitBase = (
+  process.env.OPENAI_BASE_URL ||
+  process.env.LLM_QA_OPENAI_BASE_URL ||
+  process.env.NVIDIA_OPENAI_BASE_URL ||
+  ''
+).replace(/\/$/, '');
+const _nvidiaDefault =
+  process.env.LLM_QA_PROVIDER === 'nvidia' ||
+  process.env.LLM_QA_USE_NVIDIA === '1' ||
+  /nvidia\.com/i.test(_explicitBase) ||
+  (!!process.env.NVIDIA_API_KEY && !_explicitBase);
+const OPENAI_BASE_URL = (
+  _explicitBase || (_nvidiaDefault ? 'https://integrate.api.nvidia.com/v1' : 'https://api.openai.com/v1')
+).replace(/\/$/, '');
+const LLM_QA_MODEL =
+  process.env.LLM_QA_MODEL ||
+  (_nvidiaDefault ? 'deepseek-ai/deepseek-v4-flash' : 'gpt-4o-mini');
+/** Some OpenAI-compatible hosts reject `response_format`; set LLM_QA_NO_RESPONSE_FORMAT=1 to omit it. */
+const LLM_QA_USE_RESPONSE_FORMAT = process.env.LLM_QA_NO_RESPONSE_FORMAT !== '1';
 const LLM_QA_TICKER = (process.env.LLM_QA_TICKER ?? 'AAPL').trim().toUpperCase();
 const DEBATE_TICKER = (process.env.LLM_QA_DEBATE_TICKER ?? 'SPY').trim().toUpperCase();
 const SCORECARD_TICKERS = (process.env.LLM_QA_SCORECARD_TICKERS ?? 'SPY,QQQ')
@@ -194,16 +220,17 @@ function extractJsonObject(text: string): unknown {
 }
 
 async function askQaLlm(report: unknown): Promise<any> {
-  const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+  const response = await undiciFetch(`${OPENAI_BASE_URL}/chat/completions`, {
     method: 'POST',
+    dispatcher: qaLlmDispatcher,
     headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${QA_LLM_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       model: LLM_QA_MODEL,
       temperature: 0,
-      response_format: { type: 'json_object' },
+      ...(LLM_QA_USE_RESPONSE_FORMAT ? { response_format: { type: 'json_object' } } : {}),
       messages: [
         {
           role: 'system',
@@ -253,11 +280,14 @@ test.describe.configure({ mode: 'serial' });
 
 test.describe('LLM production UI QA', () => {
   test.beforeEach(() => {
-    test.setTimeout(420_000);
+    test.setTimeout(900_000);
   });
 
   test('LLM reviews production user flows against browser-visible evidence and Yahoo references', async ({ page }, testInfo: TestInfo) => {
-    test.skip(!OPENAI_API_KEY, 'Set OPENAI_API_KEY to run the LLM production QA reviewer.');
+    test.skip(
+      !QA_LLM_API_KEY,
+      'Set OPENAI_API_KEY (or NVIDIA_API_KEY) for the OpenAI-compatible QA reviewer. For NVIDIA Build, set LLM_QA_PROVIDER=nvidia or OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1 and LLM_QA_MODEL if not using the default DeepSeek v4 flash slug.',
+    );
 
     const browserEvents: BrowserEvent[] = [];
     let currentFeature = 'startup';

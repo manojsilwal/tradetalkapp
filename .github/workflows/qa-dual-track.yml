@@ -39,7 +39,6 @@ jobs:
         run: pip install "httpx>=0.27,<0.28"
       - name: Run market data parity tests
         env:
-          RUN_MARKET_PARITY: "1"
           MARKET_PARITY_TICKERS: SPY,AAPL,MSFT
           # Skip SP500 ingest / heavy startup paths if any
           SP500_INGEST_ON_STARTUP: "0"
@@ -115,7 +114,13 @@ jobs:
         env:
           APP_URL: https://frontend-manojsilwals-projects.vercel.app
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          LLM_QA_OPENAI_BASE_URL: ${{ vars.LLM_QA_OPENAI_BASE_URL }}
           LLM_QA_MODEL: ${{ vars.LLM_QA_MODEL }}
+          LLM_QA_PROVIDER: ${{ vars.LLM_QA_PROVIDER }}
+          LLM_QA_USE_NVIDIA: ${{ vars.LLM_QA_USE_NVIDIA }}
+          LLM_QA_NO_RESPONSE_FORMAT: ${{ vars.LLM_QA_NO_RESPONSE_FORMAT }}
         run: npm run e2e:prod-qa
       - name: Upload LLM QA artifacts
         if: always()

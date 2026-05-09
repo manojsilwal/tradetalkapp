@@ -4,6 +4,8 @@ __pycache__
 .env
 venv/
 .venv/
+.venv-*
+env/
 alerts.db
 .chroma_db/
 *.log

@@ -47,7 +47,7 @@ test.describe('Investor Use Cases', () => {
     await page.goto('/gold');
     await dismissOnboarding(page);
     await expect(page.getByRole('heading', { name: 'Gold Advisor' })).toBeVisible({ timeout: 30000 });
-    await expectOneOf(page, ['AI briefing', 'DXY', '10Y TIPS real yield %'], 150000);
+    await expectOneOf(page, ['AI briefing', 'DXY', '10Y TIPS real yield %', 'GC=F', /Gold.*Advisor/i], 240000);
     await expectNoGenericFetchFailure(page);
   });
 

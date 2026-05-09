@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+from pydantic import BaseModel, Field, ValidationError
 
 from .fred_series import fetch_fred_latest_sync
 from .gold_technicals import compute_gold_technicals
@@ -19,6 +20,31 @@ logger = logging.getLogger(__name__)
 
 GOLD_FUTURES = "GC=F"  # COMEX gold front month — common retail proxy
 DXY_TICKER = "DX-Y.NYB"
+
+
+class GoldAdvisorBriefing(BaseModel):
+    directional_bias: str = Field(pattern="^(constructive|neutral|caution)$")
+    summary: str
+    key_drivers: List[str]
+    levels_to_watch: str
+    risk_factors: List[str]
+    confidence_0_1: float = Field(ge=0.0, le=1.0)
+
+
+def _safe_gold_briefing(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        try:
+            return GoldAdvisorBriefing.model_validate(raw).model_dump()
+        except ValidationError as e:
+            logger.warning("[GoldAdvisor] invalid briefing schema, fallback used: %s", e)
+    return {
+        "directional_bias": "neutral",
+        "summary": "Gold briefing unavailable due to invalid model output shape.",
+        "key_drivers": [],
+        "levels_to_watch": "",
+        "risk_factors": ["Model output validation failed."],
+        "confidence_0_1": 0.2,
+    }
 
 
 def _keyword_sentiment(headlines: List[str]) -> float:
@@ -155,7 +181,8 @@ async def build_gold_advisor_payload(macro_connector) -> Dict[str, Any]:
 
 async def run_gold_advisor(macro_connector, llm_client) -> Dict[str, Any]:
     context = await build_gold_advisor_payload(macro_connector)
-    briefing = await llm_client.generate_gold_briefing(context)
+    briefing_raw = await llm_client.generate_gold_briefing(context)
+    briefing = _safe_gold_briefing(briefing_raw)
     return {
         "context": context,
         "briefing": briefing,

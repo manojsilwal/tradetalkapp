@@ -440,7 +440,7 @@ class TestChatEvidenceContractCarriesRagChunkRefs(unittest.TestCase):
             quote_card_tickers=[],
             meta=meta,
         )
-        self.assertEqual(ev["schema_version"], 2)
+        self.assertEqual(ev["schema_version"], 4)
         refs = ev["rag_chunk_refs"]
         self.assertEqual(len(refs), 2)
         self.assertEqual(refs[0]["chunk_id"], "x1")

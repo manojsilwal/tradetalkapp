@@ -1,0 +1,25 @@
+{
+  "servers": {
+    "tradetalk-context": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "tradetalk_mcp"],
+      "env": {
+        "TRADETALK_ROOT": "${workspaceFolder}",
+        "TRADETALK_MCP_MODE": "context"
+      }
+    },
+    "tradetalk-actions": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "tradetalk_mcp"],
+      "env": {
+        "TRADETALK_ROOT": "${workspaceFolder}",
+        "TRADETALK_MCP_MODE": "full",
+        "TRADETALK_API_BASE_URL": "http://127.0.0.1:8000",
+        "TRADETALK_OPENAPI_URL": "http://127.0.0.1:8000/openapi.json",
+        "TRADETALK_MCP_ACTIONS_ENABLED": "false"
+      }
+    }
+  }
+}

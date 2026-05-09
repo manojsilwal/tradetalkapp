@@ -1,5 +1,6 @@
 """Analysis endpoints — swarm trace, AI debate, deep analyze."""
 import asyncio
+import os
 import time as _time
 from datetime import datetime as _dt2, timezone as _tz2
 from typing import Optional
@@ -28,6 +29,7 @@ from ..deps import (
     knowledge_store, llm_client, tool_registry, up,
 )
 from ..coral_agents import hub_record_attempt
+from ..swarm_reliability.schemas import EvidenceArtifact, EvidenceManifest, parse_iso_datetime
 from .. import user_preferences as uprefs
 
 router = APIRouter(tags=["analysis"])
@@ -103,6 +105,8 @@ async def _execute_swarm_trace(
 ) -> SwarmConsensus:
     tracer = get_tracer()
     with tracer.start_as_current_span("swarm.trace"):
+        cycle_id = f"trace-{ticker.upper()}-{int(_time.time())}"
+        trace_manifest = EvidenceManifest(cycle_id=cycle_id)
         try:
             macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=45.0)
         except asyncio.TimeoutError:
@@ -110,6 +114,29 @@ async def _execute_swarm_trace(
                 status_code=504,
                 detail={"error": "timeout", "tool": "macro_fetch", "message": "Macro data fetch timed out"},
             ) from None
+        ind = macro_data.get("indicators") or {}
+        macro_as_of = (
+            ind.get("fred_fetched_at")
+            or ind.get("as_of")
+            or macro_data.get("as_of")
+            or macro_data.get("fetched_at")
+        )
+        trace_manifest.inputs["macro"] = [
+            EvidenceArtifact(
+                artifact_id=f"macro-fetch-{ticker.upper()}",
+                source="macro_fetch",
+                as_of=str(macro_as_of) if macro_as_of else None,
+                metadata={"cycle_id": cycle_id},
+            )
+        ]
+        macro_stale = False
+        max_age_h = int(os.environ.get("SWARM_TRACE_MACRO_MAX_AGE_HOURS", "24"))
+        dt = parse_iso_datetime(str(macro_as_of) if macro_as_of else None)
+        if dt is not None:
+            age_h = (_dt2.now(_tz2.utc) - dt).total_seconds() / 3600.0
+            macro_stale = age_h > float(max_age_h)
+        elif os.environ.get("SWARM_TRACE_REQUIRE_MACRO_ASOF", "0").strip().lower() in ("1", "true", "yes", "on"):
+            macro_stale = True
 
         live_credit_stress = macro_data["indicators"]["credit_stress_index"]
         actual_stress = credit_stress if credit_stress is not None else live_credit_stress
@@ -159,19 +186,25 @@ async def _execute_swarm_trace(
         signals = [r.trading_signal for r in verified]
         has_conflict = len(set(signals)) > 1 and len(verified) >= 2
         if has_conflict:
-            try:
-                factor_dicts = [r.model_dump() for r in results]
-                synthesis = await llm_client.generate_swarm_synthesis(
-                    ticker, factor_dicts, peer_summaries=peer_summaries,
+            if macro_stale and os.environ.get("SWARM_TRACE_STALE_GATE", "1").strip().lower() in ("1", "true", "yes", "on"):
+                consensus_rationale = (
+                    "Synthesis blocked by stale macro evidence gate; "
+                    "returning weighted factor verdict."
                 )
-                consensus_rationale = synthesis.get("consensus_rationale", "")
-                synth_verdict = synthesis.get("verdict", "").upper()
-                synth_confidence = float(synthesis.get("confidence", avg_confidence))
-                if synth_verdict in ("STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"):
-                    global_verdict = synth_verdict
-                    avg_confidence = synth_confidence
-            except Exception as e:
-                consensus_rationale = f"Synthesis unavailable: {e}"
+            else:
+                try:
+                    factor_dicts = [r.model_dump() for r in results]
+                    synthesis = await llm_client.generate_swarm_synthesis(
+                        ticker, factor_dicts, peer_summaries=peer_summaries,
+                    )
+                    consensus_rationale = synthesis.get("consensus_rationale", "")
+                    synth_verdict = synthesis.get("verdict", "").upper()
+                    synth_confidence = float(synthesis.get("confidence", avg_confidence))
+                    if synth_verdict in ("STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"):
+                        global_verdict = synth_verdict
+                        avg_confidence = synth_confidence
+                except Exception as e:
+                    consensus_rationale = f"Synthesis unavailable: {e}"
 
         highlights = _format_peer_highlights(peer_summaries)
         if highlights.strip():

@@ -107,6 +107,7 @@ from .routers import (
     preferences, resources as resources_router,
     sepl as sepl_router,
     scorecard as scorecard_router,
+    provider_smoke,
 )
 
 app.include_router(auth_router.router)
@@ -126,6 +127,7 @@ app.include_router(preferences.router)
 app.include_router(resources_router.router)
 app.include_router(sepl_router.router)
 app.include_router(scorecard_router.router)
+app.include_router(provider_smoke.router)
 
 # ── Serve generated video files ──────────────────────────────────────────────
 _static_videos = os.path.join(os.path.dirname(__file__), "static", "videos")

@@ -1,0 +1,55 @@
+name: Chat parity QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_url:
+        description: "Frontend URL to test (defaults to production URL)"
+        required: false
+        default: "https://frontend-manojsilwals-projects.vercel.app"
+  schedule:
+    - cron: "30 6 * * *"
+
+concurrency:
+  group: chat-parity-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chat-parity:
+    name: Chat quote parity (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Run chat parity test
+        env:
+          FRONTEND_URL: ${{ github.event.inputs.frontend_url }}
+          PARITY_TICKER: AAPL
+        run: |
+          if [ -z "$FRONTEND_URL" ] || [ "$FRONTEND_URL" = "" ]; then
+            export FRONTEND_URL="https://frontend-manojsilwals-projects.vercel.app"
+          fi
+          echo "FRONTEND_URL=$FRONTEND_URL"
+          npx playwright test e2e/chat-assistant-parity.spec.js --config=playwright.config.js --reporter=line
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-parity-qa
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore

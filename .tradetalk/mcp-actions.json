@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "name": "health_check_backend",
+      "method": "GET",
+      "path": "/knowledge/stats",
+      "enabled": true,
+      "mutates": false,
+      "requires_actions_enabled": false
+    },
+    {
+      "name": "get_service_status",
+      "method": "GET",
+      "path": "/knowledge/pipeline-status",
+      "enabled": true,
+      "mutates": false,
+      "requires_actions_enabled": false
+    },
+    {
+      "name": "refresh_macro_read",
+      "method": "GET",
+      "path": "/macro",
+      "enabled": true,
+      "mutates": false,
+      "requires_actions_enabled": false
+    },
+    {
+      "name": "run_backtest",
+      "method": "POST",
+      "path": "/backtest",
+      "enabled": true,
+      "mutates": true,
+      "requires_actions_enabled": true
+    }
+  ]
+}

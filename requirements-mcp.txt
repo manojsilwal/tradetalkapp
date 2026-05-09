@@ -1,0 +1,3 @@
+# TradeTalk MCP server (stdio). Install separately from backend API deps.
+# Usage: python -m venv .venv-mcp && .venv-mcp/bin/pip install -r requirements-mcp.txt
+mcp>=1.8.0,<2

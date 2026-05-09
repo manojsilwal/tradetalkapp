@@ -1,9 +1,10 @@
 """
 Run TEVV chat eval cases from case_bank.json (deterministic; no live LLM required).
 
-Three scoring axes (reported in JSON):
+Four scoring axes (reported in JSON):
   - direction_accuracy — routing/intent/tool outcome alignment
   - json_validity — evidence contract shape and expected fields
+  - shortcut_resistance — Phase B anti-shortcut family/coverage assertions
   - reasoning_quality — optional LLM-as-judge (skipped unless TEVV_LLM_JUDGE=1)
 
 Usage:
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.chat_evidence_contract import build_evidence_contract, classify_tool_result
+from backend.chat_tool_telemetry import summarize_trace
 from backend.routers.chat import (
     _extract_quote_ticker,
     _mover_query_intent,
@@ -30,12 +32,31 @@ CASE_BANK_PATH = Path(__file__).resolve().parent / "case_bank.json"
 
 REQUIRED_EVIDENCE_KEYS = frozenset(
     {
+        # Legacy (v2) keys preserved for backward compatibility.
         "schema_version",
         "sources_used",
         "tools_called",
         "tool_outcomes",
         "confidence_band",
         "abstain_reason",
+        # Phase A2 (v3) summary fields — Phase B anti-shortcut hard gate.
+        "trace_id",
+        "tool_families_used",
+        "trajectory_step_count",
+        "valid_prefix_steps",
+        "fatal_detected",
+        "fatal_trigger_step_index",
+        "fatal_streak_start_step_index",
+        # Phase E0 (v4) skill + phase + namespace surface.
+        "skill_name",
+        "skill_tier",
+        "expected_tool_families",
+        "investigation_step_count",
+        "synthesis_step_index",
+        "answer_grounded_to_investigation",
+        "memory_namespaces_touched",
+        "artifact_types_used",
+        "source_refs_v2",
     }
 )
 
@@ -105,13 +126,179 @@ def _execute_check(case: dict[str, Any]) -> None:
         contract = dict(inp.get("contract") or {})
         _validate_evidence_schema(contract, expect_valid=exp.get("valid", True))
 
+    elif check == "anti_shortcut":
+        _execute_anti_shortcut_check(inp, exp)
+
     elif check == "llm_judge":
         if os.environ.get("TEVV_LLM_JUDGE", "").strip().lower() not in ("1", "true", "yes"):
             raise _SkipCase("TEVV_LLM_JUDGE not enabled")
-        raise _SkipCase("llm_judge stub — no scoring in harness v1")
+        _execute_llm_judge_check(inp, exp)
 
     else:
         raise ValueError(f"unknown check type: {check!r}")
+
+
+def _execute_anti_shortcut_check(inp: dict[str, Any], exp: dict[str, Any]) -> None:
+    """Phase B: assert tool-family coverage / shortcut detection on a synthetic trace.
+
+    The case provides a synthetic ``tool_trace`` (and optional
+    ``quote_card_tickers`` / ``meta``); we route it through the live
+    ``summarize_trace`` + ``build_evidence_contract`` so the assertions match
+    the production behaviour exactly. ``tool_family`` is resolved through the
+    canonical :mod:`backend.chat_tool_family` registry.
+    """
+    tool_trace = list(inp.get("tool_trace") or [])
+    quote_card_tickers = list(inp.get("quote_card_tickers") or [])
+    meta = dict(inp.get("meta") or {})
+
+    summary = summarize_trace(
+        tool_trace,
+        trace_id=inp.get("trace_id"),
+        session_id=inp.get("session_id"),
+        message_id=inp.get("message_id"),
+        quote_card_tickers=quote_card_tickers,
+    )
+    contract = build_evidence_contract(
+        tool_trace=tool_trace,
+        quote_card_tickers=quote_card_tickers,
+        meta=meta,
+        trajectory_summary=summary,
+    )
+
+    families = list(contract.get("tool_families_used") or [])
+    fams_set = set(families)
+
+    if "source_families_min" in exp:
+        for fam in exp["source_families_min"]:
+            assert fam in fams_set, (
+                f"missing required source family {fam!r}; got {sorted(fams_set)}"
+            )
+
+    if "min_tool_calls" in exp:
+        n = len(contract.get("tools_called") or [])
+        assert n >= int(exp["min_tool_calls"]), (
+            f"min_tool_calls={exp['min_tool_calls']}, got {n}"
+        )
+
+    if exp.get("disallow_single_family_answer"):
+        assert len(fams_set) > 1, (
+            f"single-family answer detected: {sorted(fams_set)}"
+        )
+
+    if "fail_if_only" in exp:
+        bad = set(exp["fail_if_only"])
+        assert fams_set != bad, (
+            f"agent collapsed to a single family {sorted(bad)}; got {sorted(fams_set)}"
+        )
+
+    if exp.get("required_evidence_refs"):
+        nonempty = bool(
+            (contract.get("rag_chunk_refs") or [])
+            or any(s.startswith("tool:") for s in (contract.get("sources_used") or []))
+            or any(s.startswith("quote_card:") for s in (contract.get("sources_used") or []))
+        )
+        assert nonempty, "required_evidence_refs but contract has none"
+
+    if "fatal_detected" in exp:
+        got_fatal = bool(contract.get("fatal_detected"))
+        assert got_fatal == bool(exp["fatal_detected"]), (
+            f"fatal_detected: want {exp['fatal_detected']!r}, got {got_fatal!r}"
+        )
+
+    if "tool_families_eq" in exp:
+        assert sorted(fams_set) == sorted(exp["tool_families_eq"]), (
+            f"tool_families: want {sorted(exp['tool_families_eq'])}, got {sorted(fams_set)}"
+        )
+
+    if "collapse_detected" in exp:
+        got_collapse = len(fams_set) <= 1
+        assert got_collapse == bool(exp["collapse_detected"]), (
+            f"collapse_detected: want {exp['collapse_detected']!r}, got {got_collapse!r}"
+        )
+
+    if "skill_name_detected" in exp:
+        got_skill = str(contract.get("skill_name") or "")
+        assert got_skill == str(exp["skill_name_detected"]), (
+            f"skill_name_detected: want {exp['skill_name_detected']!r}, got {got_skill!r}"
+        )
+
+    if exp.get("risk_family_present"):
+        assert "risk" in fams_set, f"risk family missing; got {sorted(fams_set)}"
+
+    if "answer_grounded_to_investigation" in exp:
+        got_grounded = bool(contract.get("answer_grounded_to_investigation"))
+        assert got_grounded == bool(exp["answer_grounded_to_investigation"]), (
+            "answer_grounded_to_investigation: "
+            f"want {exp['answer_grounded_to_investigation']!r}, got {got_grounded!r}"
+        )
+
+    if exp.get("phase_boundary_respected"):
+        inv = int(contract.get("investigation_step_count") or 0)
+        synth = int(contract.get("synthesis_step_index") or 0)
+        total = int(contract.get("trajectory_step_count") or 0)
+        assert inv == total, (
+            f"phase boundary invalid: investigation_step_count={inv}, total={total}"
+        )
+        assert synth == inv, (
+            f"phase boundary invalid: synthesis_step_index={synth}, investigation={inv}"
+        )
+
+
+def _execute_llm_judge_check(inp: dict[str, Any], exp: dict[str, Any]) -> None:
+    """Phase C: dispatch to the trajectory or answer judge.
+
+    Cases set ``input.kind`` to ``trajectory`` or ``answer``. The judge calls
+    are gated by ``TEVV_LLM_JUDGE=1`` (handled by the caller); this function
+    additionally honors ``TEVV_LLM_JUDGE_DRY=1`` for hermetic CI runs that
+    must not call any external LLM. Dry-run mode validates only that the
+    pinned prompt files load and that the case fixtures expose the required
+    inputs.
+    """
+    from backend.eval import judge as _judge
+
+    kind = str(inp.get("kind") or "trajectory").strip().lower()
+    if kind not in ("trajectory", "answer"):
+        raise _SkipCase(f"unknown llm_judge kind {kind!r}")
+
+    dry = os.environ.get("TEVV_LLM_JUDGE_DRY", "0").strip().lower() in ("1", "true", "yes")
+    if dry:
+        prompt = _judge.load_prompt(kind)
+        assert prompt and "JSON" in prompt, "judge prompt missing or malformed"
+        # Validate fixture shape so live runs won't trip later.
+        if kind == "trajectory":
+            assert "tool_trace" in inp and "user_message" in inp, (
+                "trajectory judge fixture must include tool_trace and user_message"
+            )
+        else:
+            assert "final_answer" in inp and "user_message" in inp, (
+                "answer judge fixture must include final_answer and user_message"
+            )
+        return
+
+    if kind == "trajectory":
+        result = _judge.score_trajectory(
+            user_message=str(inp.get("user_message") or ""),
+            tool_trace=list(inp.get("tool_trace") or []),
+            evidence_contract=dict(inp.get("evidence_contract") or {}),
+        )
+    else:
+        result = _judge.score_answer(
+            user_message=str(inp.get("user_message") or ""),
+            final_answer=str(inp.get("final_answer") or ""),
+            source_refs=list(inp.get("source_refs") or []),
+            evidence_contract=dict(inp.get("evidence_contract") or {}),
+        )
+
+    # The judge's score is non-deterministic; a fixture may pin a minimum to
+    # catch obvious regressions on calibrated rubrics.
+    if "min_score" in exp:
+        score_key = (
+            "trajectory_quality_score" if kind == "trajectory" else "answer_quality_score"
+        )
+        got = float(result.get(score_key) or 0.0)
+        assert got >= float(exp["min_score"]), (
+            f"{score_key} {got} below min_score {exp['min_score']}"
+        )
 
 
 class _SkipCase(Exception):
@@ -155,6 +342,7 @@ def run_all(path: Path | None = None) -> tuple[list[dict[str, Any]], dict[str, A
     axes_template: dict[str, dict[str, int]] = {
         "direction_accuracy": {"passed": 0, "failed": 0, "skipped": 0, "total": 0},
         "json_validity": {"passed": 0, "failed": 0, "skipped": 0, "total": 0},
+        "shortcut_resistance": {"passed": 0, "failed": 0, "skipped": 0, "total": 0},
         "reasoning_quality": {"passed": 0, "failed": 0, "skipped": 0, "total": 0},
     }
 

@@ -10,14 +10,20 @@
     "e2e:prod-parity": "playwright test tests/e2e/parity.spec.ts --config=playwright.config.ts --project=chromium --reporter=line",
     "e2e:ts-chromium": "playwright test --config=playwright.config.ts --project=chromium --reporter=line",
     "e2e:prod-qa": "playwright test tests/e2e/llm-production-qa.spec.ts --config=playwright.config.ts --project=chromium --reporter=line",
+    "e2e:provider-smoke": "playwright test --config=playwright.provider-smoke.config.ts",
     "e2e:smoke": "playwright test e2e/smoke.spec.js --config=playwright.config.js",
     "e2e:smoke:api": "FH_PROFILE=smoke playwright test e2e/faulthunter-api.spec.js --config=playwright.config.js",
+    "e2e:local:api:smoke": "E2E_API_BASE_URL=http://127.0.0.1:8000 FH_PROFILE=smoke playwright test e2e/faulthunter-api.spec.js --config=playwright.config.js",
+    "e2e:local": "bash scripts/run_local_e2e.sh",
+    "e2e:local:smoke": "E2E_LOCAL_PROFILE=smoke bash scripts/run_local_e2e.sh",
+    "e2e:local:optional": "bash scripts/run_local_optional_e2e.sh",
     "e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@types/node": "^25.6.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "undici": "^6.25.0"
   },
   "version": "1.0.0",
   "description": "AI-assisted market analysis application: FastAPI backend (Render), React frontend (Vercel).",

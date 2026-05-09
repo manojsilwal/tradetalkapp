@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "tradetalk-context": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv-mcp/bin/python",
+      "args": ["-m", "tradetalk_mcp"],
+      "env": {
+        "TRADETALK_ROOT": "${workspaceFolder}",
+        "TRADETALK_MCP_MODE": "context",
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    }
+  }
+}

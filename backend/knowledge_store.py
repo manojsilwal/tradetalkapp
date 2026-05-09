@@ -50,6 +50,7 @@ COLLECTIONS = [
     "macro_snapshots",               # daily pipeline — FRED indicators
     "youtube_insights",              # daily pipeline — finance channel videos
     "strategy_reflections",          # post-backtest lessons learned memory
+    "ohlcv_patterns",                # Phase E5 — normalized OHLCV structural patterns
     "stock_profiles",                # data lake — 15yr per-ticker narrative profiles
     "earnings_memory",               # data lake — earnings events with price reactions
     "sp500_fundamentals_narratives", # S&P 500 daily fundamental snapshots as text narratives

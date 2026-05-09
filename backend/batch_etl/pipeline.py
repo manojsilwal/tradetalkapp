@@ -15,8 +15,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# OpenRouter embedding model id (not a secret). Same default as backend/SUPABASE_VECTOR_SETUP.md
-# and render.yaml / production Supabase path when callers omit OPENROUTER_EMBEDDING_MODEL.
+# OpenRouter embedding model id — used only when VECTOR_EMBEDDING_PROVIDER=openrouter (or no Google API key).
 _DEFAULT_OPENROUTER_EMBEDDING_MODEL = "openai/text-embedding-3-small"
 
 # ── Chunking ───────────────────────────────────────────────────────────────────
@@ -70,23 +69,32 @@ def run_batch_etl(
 ) -> Dict[str, Any]:
     """
     For each ticker: chunk profile text → optional Parquet upload to HF Dataset →
-    upsert into Supabase collection ``yf_batch_chunks`` with OpenRouter embeddings.
+    upsert into Supabase collection ``yf_batch_chunks`` with embeddings (Google by default when configured).
     """
     tickers = [x.strip().upper() for x in tickers if x and str(x).strip()]
     if not tickers:
         return {"ok": False, "error": "no_tickers", "rows": 0}
 
     if upsert_supabase:
-        emb = os.environ.get("OPENROUTER_EMBEDDING_MODEL", "").strip()
-        if not emb:
-            # GitHub Actions often omits this as a separate secret; the id is not sensitive.
-            emb = _DEFAULT_OPENROUTER_EMBEDDING_MODEL
-            os.environ["OPENROUTER_EMBEDDING_MODEL"] = emb
-            logger.warning(
-                "[batch_etl] OPENROUTER_EMBEDDING_MODEL unset — using default %s "
-                "(set explicitly to override)",
-                emb,
+        google_key = (
+            os.environ.get("GEMINI_API_KEY", "").strip()
+            or os.environ.get("GOOGLE_API_KEY", "").strip()
+        )
+        if google_key:
+            os.environ.setdefault("USE_GEMINI_EMBEDDING", "1")
+            logger.info(
+                "[batch_etl] Google/Gemini API key present — embeddings use GEMINI_EMBEDDING_MODEL "
+                "(default gemini-embedding-001). OPENROUTER_API_KEY not required for upsert."
             )
+        else:
+            emb = os.environ.get("OPENROUTER_EMBEDDING_MODEL", "").strip()
+            if not emb:
+                emb = _DEFAULT_OPENROUTER_EMBEDDING_MODEL
+                os.environ["OPENROUTER_EMBEDDING_MODEL"] = emb
+                logger.warning(
+                    "[batch_etl] No Google API key; OPENROUTER_EMBEDDING_MODEL unset — using default %s",
+                    emb,
+                )
         supa = os.environ.get("SUPABASE_URL", "").strip()
         key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
         if not supa or not key:

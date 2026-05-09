@@ -13,13 +13,21 @@ function MermaidChart({ chart }) {
     const chartRef = useRef(null);
 
     useEffect(() => {
-        if (chartRef.current && chart) {
-            mermaid.render(`mermaid-${Math.random().toString(36).substring(7)}`, chart).then((result) => {
-                chartRef.current.innerHTML = result.svg;
-            }).catch((err) => {
-                console.error("Mermaid error", err);
-            });
-        }
+        if (!chart) return;
+        const el = chartRef.current;
+        if (!el) return;
+        const id = `mermaid-${Math.random().toString(36).substring(7)}`;
+        let cancelled = false;
+        mermaid.render(id, chart).then((result) => {
+            if (!cancelled && chartRef.current === el) {
+                el.innerHTML = result.svg;
+            }
+        }).catch((err) => {
+            console.error("Mermaid error", err);
+        });
+        return () => {
+            cancelled = true;
+        };
     }, [chart]);
 
     return (

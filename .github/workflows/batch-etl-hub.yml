@@ -1,6 +1,6 @@
 # Weekly batch ETL: yfinance profile chunks → HF Dataset Parquet + Supabase yf_batch_chunks.
-# Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY
-# Optional secret: OPENROUTER_EMBEDDING_MODEL (defaults to openai/text-embedding-3-small if unset)
+# Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# Embeddings: GEMINI_API_KEY or GOOGLE_API_KEY (Google — default in app) OR OPENROUTER_API_KEY + OPENROUTER_EMBEDDING_MODEL
 # Optional: HF_DATASET_ID, HF_TOKEN, BATCH_ETL_TICKERS (comma-separated)
 
 name: Batch ETL (HF + Supabase)
@@ -18,6 +18,8 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENROUTER_EMBEDDING_MODEL: ${{ secrets.OPENROUTER_EMBEDDING_MODEL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       HF_DATASET_ID: ${{ secrets.HF_DATASET_ID }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
@@ -35,7 +37,7 @@ jobs:
 
       # Secrets are empty if never configured (or on forks without secrets). Fail fast with a
       # clear pointer — the Python pipeline only returns JSON and exit 1 otherwise.
-      - name: Verify Supabase + OpenRouter secrets
+      - name: Verify Supabase + embedding provider secrets
         run: |
           missing=0
           if [ -z "${SUPABASE_URL}" ]; then
@@ -46,8 +48,8 @@ jobs:
             echo "::error::SUPABASE_SERVICE_ROLE_KEY is not set. Add the Supabase service role key under Actions secrets (same page as SUPABASE_URL)."
             missing=1
           fi
-          if [ -z "${OPENROUTER_API_KEY}" ]; then
-            echo "::error::OPENROUTER_API_KEY is not set. Batch ETL needs it for embeddings before Supabase upsert. Add it under Actions secrets."
+          if [ -z "${GEMINI_API_KEY}" ] && [ -z "${GOOGLE_API_KEY}" ] && [ -z "${OPENROUTER_API_KEY}" ]; then
+            echo "::error::Batch ETL needs embeddings: set GEMINI_API_KEY or GOOGLE_API_KEY (Google), or OPENROUTER_API_KEY for OpenRouter embeddings."
             missing=1
           fi
           exit "${missing}"
@@ -66,8 +68,10 @@ jobs:
       - name: Run batch ETL
         run: |
           TICKERS="${BATCH_ETL_TICKERS:-SPY,AAPL,MSFT}"
-          # Missing secret yields empty env; bash :- supplies the same default as batch_etl.pipeline.
-          export OPENROUTER_EMBEDDING_MODEL="${OPENROUTER_EMBEDDING_MODEL:-openai/text-embedding-3-small}"
+          # OpenRouter default only when using OpenRouter (pipeline skips this when Google keys are set).
+          if [ -n "${OPENROUTER_API_KEY}" ] && [ -z "${GEMINI_API_KEY}" ] && [ -z "${GOOGLE_API_KEY}" ]; then
+            export OPENROUTER_EMBEDDING_MODEL="${OPENROUTER_EMBEDDING_MODEL:-openai/text-embedding-3-small}"
+          fi
           PYTHONPATH=. python backend/scripts/batch_etl_hf_supabase.py --tickers "$TICKERS"
         env:
           BATCH_ETL_TICKERS: ${{ vars.BATCH_ETL_TICKERS }}

@@ -1,13 +1,13 @@
 """Tests for authentication — JWT, dev mode, user management."""
 import os
 import unittest
-import time
+from unittest.mock import patch
 
 os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
 
 from backend.auth import (
     _issue_jwt, _decode_jwt, upsert_user, get_user,
-    login_with_google, DEV_MODE, init_users_db,
+    login_with_google, init_users_db,
 )
 
 
@@ -36,18 +36,16 @@ class TestDevModeLogin(unittest.TestCase):
     def setUp(self):
         init_users_db()
 
-    def test_dev_login_returns_token(self):
-        if not DEV_MODE:
-            self.skipTest("Not in DEV_MODE")
+    @patch("backend.auth.DEV_MODE", True)
+    def test_dev_login_returns_token(self) -> None:
         result = login_with_google("dev")
         self.assertIn("token", result)
         self.assertEqual(result["user_id"], "dev_user_001")
         self.assertEqual(result["email"], "dev@tradetalk.local")
         self.assertTrue(result["dev_mode"])
 
-    def test_dev_login_token_is_decodable(self):
-        if not DEV_MODE:
-            self.skipTest("Not in DEV_MODE")
+    @patch("backend.auth.DEV_MODE", True)
+    def test_dev_login_token_is_decodable(self) -> None:
         result = login_with_google("dev")
         user_id = _decode_jwt(result["token"])
         self.assertEqual(user_id, "dev_user_001")

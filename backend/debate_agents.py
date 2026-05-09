@@ -9,10 +9,12 @@ Each agent:
 Moderator synthesises all 5 arguments into a final DebateResult.
 """
 import asyncio
+import os
 import logging
 import time
 from datetime import datetime, timezone
 from .schemas import DebateArgument, DebateResult, AgentStance
+from .swarm_reliability.retrieval_fusion import fuse_and_cap_hits
 from .agent_policy_guardrails import ensure_capability, workload_scope
 from .telemetry import get_tracer
 from .tool_configs import get_tool_config
@@ -162,6 +164,7 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
             f"reflection_hits={telemetry.get('reflection_hits', 0)}"
         )
 
+    channel_hits: dict[str, list[dict]] = {}
     for collection in query_map.get(role, ["debate_history"]):
         tw = {"ticker": ticker} if collection in (
             "debate_history",
@@ -170,7 +173,16 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
             "stock_profiles",
             "sp500_fundamentals_narratives",
         ) else None
-        if out_refs is not None and hasattr(ks, "query_with_refs"):
+        if hasattr(ks, "query_with_metadata"):
+            hits = ks.query_with_metadata(
+                collection,
+                f"{ticker} {role} investment analysis",
+                n_results=4,
+                where=tw,
+            )
+            if hits:
+                channel_hits[collection] = list(hits)
+        elif out_refs is not None and hasattr(ks, "query_with_refs"):
             docs, refs = ks.query_with_refs(
                 collection,
                 f"{ticker} {role} investment analysis",
@@ -183,14 +195,32 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
                     out_refs.append(r)
                 except Exception:
                     pass
+            context_docs.extend(docs)
         else:
-            docs = ks.query(
-                collection,
-                f"{ticker} {role} investment analysis",
-                n_results=2,
-                where=tw,
-            )
-        context_docs.extend(docs)
+            docs = ks.query(collection, f"{ticker} {role} investment analysis", n_results=2, where=tw)
+            context_docs.extend(docs)
+
+    if channel_hits:
+        fused = fuse_and_cap_hits(channel_hits, max_records=10)
+        for i, h in enumerate(fused):
+            doc = str((h or {}).get("document") or "").strip()
+            if doc:
+                context_docs.append(doc)
+            if out_refs is not None:
+                try:
+                    meta = (h or {}).get("metadata") or {}
+                    out_refs.append(
+                        {
+                            "chunk_id": str(h.get("id") or ""),
+                            "collection": str(h.get("collection") or ""),
+                            "rank": i,
+                            "distance": float(h.get("distance", 1.0)),
+                            "ticker": str(meta.get("ticker") or ticker or ""),
+                            "agent_role": role,
+                        }
+                    )
+                except Exception:
+                    pass
     context = ks.format_context(context_docs)
 
     with workload_scope("debate", "llm_inference"):
@@ -263,6 +293,23 @@ async def run_momentum_agent(ticker: str, debate_data: dict, ks, llm,
 VALID_VERDICTS = {"STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"}
 
 
+def _is_recent_meta(meta: dict, *, max_age_hours: int) -> bool:
+    raw = meta.get("date") or meta.get("ingested_at") or meta.get("timestamp") or meta.get("run_date")
+    if not raw:
+        return False
+    try:
+        s = str(raw)
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s[:32]) if "T" in s else datetime.strptime(s[:10], "%Y-%m-%d")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        age_h = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+        return age_h <= float(max_age_hours)
+    except Exception:
+        return False
+
+
 async def run_moderator(
     ticker: str,
     arguments: list[DebateArgument],
@@ -279,6 +326,7 @@ async def run_moderator(
     ``out_refs`` (optional): see :func:`_run_agent`. Moderator refs carry
     ``agent_role="moderator"``.
     """
+    moderator_meta_rows: list[dict] = []
     with workload_scope("debate", "knowledge_read"):
         if out_refs is not None and hasattr(ks, "query_with_refs"):
             context_docs, refs = ks.query_with_refs(
@@ -308,6 +356,16 @@ async def run_moderator(
                 context_docs = ks.query(
                     "debate_history", f"{ticker} debate verdict", n_results=3
                 )
+        if hasattr(ks, "query_with_metadata"):
+            try:
+                moderator_meta_rows = ks.query_with_metadata(
+                    "debate_history",
+                    f"{ticker} debate verdict",
+                    n_results=4,
+                    where={"ticker": ticker},
+                )
+            except Exception:
+                moderator_meta_rows = []
     if hasattr(ks, "query_reflections"):
         reflection_docs, _, telemetry = ks.query_reflections(
             query_text=f"{ticker} final verdict",
@@ -320,9 +378,17 @@ async def run_moderator(
             f"reflection_hits={telemetry.get('reflection_hits', 0)}"
         )
     context = ks.format_context(context_docs)
-
     args_dicts = [a.model_dump() for a in arguments]
     avg_confidence = sum(a.confidence for a in arguments) / len(arguments) if arguments else 0.5
+    # Optional staleness gate for moderator synthesis.
+    if os.environ.get("DEBATE_MODERATOR_FRESHNESS_GATE", "1").strip().lower() in ("1", "true", "yes", "on"):
+        max_age_h = int(os.environ.get("DEBATE_MODERATOR_MAX_CONTEXT_AGE_HOURS", "168"))
+        if moderator_meta_rows:
+            fresh = any(_is_recent_meta((r or {}).get("metadata") or {}, max_age_hours=max_age_h) for r in moderator_meta_rows)
+            if not fresh:
+                warning = "Moderator synthesis blocked: debate context is stale."
+                logger.warning("[Moderator] %s", warning)
+                return "NEUTRAL", round(avg_confidence, 3), "Stale debate evidence; synthesis blocked.", warning
 
     quality_warning = None
     max_attempts = 2

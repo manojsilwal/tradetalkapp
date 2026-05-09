@@ -5,6 +5,10 @@ __pycache__/
 *.pyd
 venv/
 .venv/
+.venv-mcp/
+# Named local venvs only (e.g. .venv-py312); bare .venv/ is ignored above
+.venv-*
+env/
 *.egg-info/
 
 # Databases & local data
@@ -20,6 +24,7 @@ output.json
 .env.local
 .env.gcp
 .env.*.local
+.env.e2e.local
 
 # Node / Frontend
 node_modules/
@@ -28,7 +33,8 @@ frontend/dist/
 test-results/
 playwright-report/
 .playwright/
-.cursor/
+.cursor/*
+!.cursor/mcp.json
 
 # macOS
 .DS_Store

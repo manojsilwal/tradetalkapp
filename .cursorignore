@@ -1,0 +1,20 @@
+# Heavy or generated dirs — speeds indexing; does not affect git
+node_modules/
+frontend/node_modules/
+frontend/dist/
+venv/
+.venv/
+.venv-*
+env/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+chroma_db/
+.chroma_db/
+data_lake_output/
+test-results/
+playwright-report/
+.playwright/
+backend/static/videos/pytest_smoke/
+*.egg-info/

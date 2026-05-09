@@ -18,6 +18,9 @@ services:
       # Set SUPABASE_SERVICE_ROLE_KEY in Render Dashboard → Environment (secret).
       - key: VECTOR_BACKEND
         value: supabase
+      # Google embeddings default when GEMINI_API_KEY / GOOGLE_API_KEY is set in the Dashboard (secret).
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
       - key: SUPABASE_URL
         value: https://bvhdrwyxzjcoyqzmtean.supabase.co
       # Comma-separated list of allowed CORS origins (your Vercel URL goes here)

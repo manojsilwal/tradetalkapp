@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "description": "Phase E TEVV — 8 golden, 7 edge, 4 failure, 1 reasoning stub (20 total). Deterministic only.",
+  "schema_version": 3,
+  "description": "Phase E TEVV — 8 golden, 7 edge, 4 failure, 4 anti-shortcut, 1 reasoning stub (24 total). Deterministic only.",
   "cases": [
     {
       "id": "golden-mover-losers-01",
@@ -119,12 +119,28 @@
       "check": "evidence_schema",
       "input": {
         "contract": {
-          "schema_version": 1,
+          "schema_version": 4,
           "sources_used": ["internal_kb"],
           "tools_called": [],
           "tool_outcomes": [],
           "confidence_band": "medium",
-          "abstain_reason": null
+          "abstain_reason": null,
+          "trace_id": null,
+          "tool_families_used": [],
+          "trajectory_step_count": 0,
+          "valid_prefix_steps": 0,
+          "fatal_detected": false,
+          "fatal_trigger_step_index": null,
+          "fatal_streak_start_step_index": null,
+          "skill_name": null,
+          "skill_tier": null,
+          "expected_tool_families": [],
+          "investigation_step_count": 0,
+          "synthesis_step_index": 0,
+          "answer_grounded_to_investigation": false,
+          "memory_namespaces_touched": [],
+          "artifact_types_used": [],
+          "source_refs_v2": []
         }
       },
       "expect": { "valid": true }
@@ -192,6 +208,165 @@
       "expect": {
         "confidence_band": "high",
         "sources_used_contains": ["internal_kb", "coral_hub", "tool:get_stock_quote"]
+      }
+    },
+    {
+      "id": "anti-shortcut-simple-quote-only-01",
+      "category": "anti_shortcut",
+      "axis": "shortcut_resistance",
+      "check": "anti_shortcut",
+      "label": "simple",
+      "input": {
+        "tool_trace": [
+          { "name": "get_stock_quote", "outcome": "success", "tool_family": "quote" }
+        ],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": false, "coral_hub_nonempty": false }
+      },
+      "expect": {
+        "min_tool_calls": 1,
+        "source_families_min": ["quote"],
+        "fatal_detected": false,
+        "required_evidence_refs": true
+      }
+    },
+    {
+      "id": "anti-shortcut-medium-quote-news-01",
+      "category": "anti_shortcut",
+      "axis": "shortcut_resistance",
+      "check": "anti_shortcut",
+      "label": "medium",
+      "input": {
+        "tool_trace": [
+          { "name": "get_stock_quote", "outcome": "success", "tool_family": "quote" },
+          { "name": "get_market_news", "outcome": "success", "tool_family": "news" }
+        ],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": false, "coral_hub_nonempty": false }
+      },
+      "expect": {
+        "min_tool_calls": 2,
+        "source_families_min": ["quote", "news"],
+        "disallow_single_family_answer": true,
+        "fatal_detected": false,
+        "required_evidence_refs": true
+      }
+    },
+    {
+      "id": "anti-shortcut-full-chain-quote-news-chart-01",
+      "category": "anti_shortcut",
+      "axis": "shortcut_resistance",
+      "check": "anti_shortcut",
+      "label": "full_chain",
+      "input": {
+        "tool_trace": [
+          { "name": "get_stock_quote", "outcome": "success", "tool_family": "quote" },
+          { "name": "get_deep_news", "outcome": "success", "tool_family": "news" },
+          { "name": "get_price_history", "outcome": "success", "tool_family": "chart" }
+        ],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": true, "coral_hub_nonempty": false }
+      },
+      "expect": {
+        "min_tool_calls": 3,
+        "source_families_min": ["quote", "news", "chart"],
+        "disallow_single_family_answer": true,
+        "fatal_detected": false,
+        "required_evidence_refs": true
+      }
+    },
+    {
+      "id": "anti-shortcut-full-chain-collapse-quote-only-01",
+      "category": "anti_shortcut",
+      "axis": "shortcut_resistance",
+      "check": "anti_shortcut",
+      "label": "full_chain_collapse_demo",
+      "input": {
+        "tool_trace": [
+          { "name": "get_stock_quote", "outcome": "success", "tool_family": "quote" }
+        ],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": false, "coral_hub_nonempty": false }
+      },
+      "expect": {
+        "tool_families_eq": ["quote"],
+        "collapse_detected": true,
+        "fatal_detected": false
+      }
+    },
+    {
+      "id": "anti-shortcut-risk-check-xauusd-01",
+      "category": "anti_shortcut",
+      "axis": "shortcut_resistance",
+      "check": "anti_shortcut",
+      "label": "trade_setup",
+      "skill_name": "risk_check",
+      "skill_tier": "full_chain",
+      "input": {
+        "tool_trace": [
+          { "name": "get_stock_quote", "outcome": "success", "tool_family": "quote", "skill_name": "risk_check", "skill_tier": "full_chain" },
+          { "name": "get_price_history", "outcome": "success", "tool_family": "technical_analysis", "skill_name": "risk_check", "skill_tier": "full_chain" },
+          { "name": "get_risk_assessment", "outcome": "success", "tool_family": "risk", "skill_name": "risk_check", "skill_tier": "full_chain" }
+        ],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": false, "coral_hub_nonempty": false }
+      },
+      "expect": {
+        "source_families_min": ["quote", "technical_analysis", "risk"],
+        "risk_family_present": true,
+        "disallow_single_family_answer": true,
+        "fatal_detected": false
+      }
+    },
+    {
+      "id": "anti-shortcut-what-if-backtest-01",
+      "category": "anti_shortcut",
+      "axis": "shortcut_resistance",
+      "check": "anti_shortcut",
+      "label": "deep_research",
+      "skill_name": "what_if_backtest",
+      "skill_tier": "deep_research",
+      "input": {
+        "tool_trace": [
+          { "name": "get_stock_quote", "outcome": "success", "tool_family": "quote" },
+          { "name": "run_what_if_backtest", "outcome": "success", "tool_family": "backtest" },
+          { "name": "get_risk_assessment", "outcome": "success", "tool_family": "risk" }
+        ],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": false, "coral_hub_nonempty": false }
+      },
+      "expect": {
+        "source_families_min": ["quote", "backtest", "risk"],
+        "risk_family_present": true,
+        "disallow_single_family_answer": true,
+        "fatal_detected": false
+      }
+    },
+    {
+      "id": "anti-shortcut-deep-research-pattern-match-01",
+      "category": "anti_shortcut",
+      "axis": "shortcut_resistance",
+      "check": "anti_shortcut",
+      "label": "deep_research",
+      "skill_name": "deep_research",
+      "skill_tier": "deep_research",
+      "input": {
+        "tool_trace": [
+          { "name": "get_stock_quote", "outcome": "success", "tool_family": "quote" },
+          { "name": "get_market_news", "outcome": "success", "tool_family": "news" },
+          { "name": "get_risk_assessment", "outcome": "success", "tool_family": "risk" },
+          { "name": "find_similar_setups", "outcome": "success", "tool_family": "market_data" }
+        ],
+        "quote_card_tickers": [],
+        "meta": { "rag_nonempty": true, "coral_hub_nonempty": false }
+      },
+      "expect": {
+        "min_tool_calls": 4,
+        "source_families_min": ["quote", "news", "risk", "market_data"],
+        "risk_family_present": true,
+        "disallow_single_family_answer": true,
+        "required_evidence_refs": true,
+        "fatal_detected": false
       }
     },
     {

@@ -6,8 +6,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -20,12 +22,39 @@ from ..deps import knowledge_store, llm_client
 from .. import agent_memory
 from .. import chat_service
 from ..chat_evidence_contract import build_evidence_contract
+from ..chat_tool_family import EXPECTED_CHAT_TOOL_NAMES
 from ..evidence_pack import build_chat_evidence_memo_markdown
+from ..swarm_reliability.artifacts import write_chat_cycle_artifacts
+from ..swarm_reliability.stale_gate import evaluate_chat_staleness
 from .. import user_preferences as uprefs
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+# Names of tools registered as ``tool_handlers`` in ``chat_send_message``.
+# Kept in sync with :data:`backend.chat_tool_family.CHAT_TOOL_FAMILY_BY_NAME` —
+# ``test_chat_tool_family.py`` enforces equality so renaming a tool without
+# updating the family map fails the build.
+CHAT_TOOL_NAMES: frozenset[str] = frozenset({
+    "get_stock_quote",
+    "get_price_history",
+    "get_top_movers",
+    "get_market_news",
+    "get_deep_news",
+    "get_sec_filing",
+    "scrape_url",
+    "recall_financial_profile",
+    "save_financial_preference",
+    "get_risk_assessment",
+    "run_what_if_backtest",
+    "find_similar_setups",
+})
+
+assert CHAT_TOOL_NAMES == EXPECTED_CHAT_TOOL_NAMES, (
+    "Chat tool name set drifted from chat_tool_family.CHAT_TOOL_FAMILY_BY_NAME; "
+    "update both in lockstep."
+)
 
 _QUOTE_TICKER_STOP = frozenset({
     "THE", "AND", "FOR", "ARE", "WAS", "WHAT", "TODAY", "CHANGE", "PRICE", "QUOTE", "CURRENT",
@@ -292,6 +321,19 @@ async def chat_send_message(
                 messages.append({"role": m["role"], "content": str(m["content"])})
 
     messages.append({"role": "user", "content": user_content})
+    from ..chat_skill_classifier import classify_skill as _classify_skill_pre
+    _pre_skill_name, _pre_skill_tier = _classify_skill_pre(
+        user_message=user_content,
+        tool_families_used=[],
+    )
+    cycle_id = f"chat-{body.session_id}-{int(time.time())}"
+    stale_report = evaluate_chat_staleness(
+        cycle_id=cycle_id,
+        meta=meta,
+        skill_tier=getattr(_pre_skill_tier, "value", str(_pre_skill_tier)),
+    )
+    if stale_report is not None:
+        meta["stale_data_report"] = stale_report.model_dump()
 
     async def get_stock_quote(ticker: str) -> str:
         """
@@ -386,6 +428,22 @@ async def chat_send_message(
         Return market news headlines + optional full-article summaries.
         Priority: FinCrawler (rich text) → MIL cache (RSS headlines) → live Yahoo RSS fallback.
         """
+        def _compact_news_payload(text: str, max_lines: int = 8, max_chars: int = 1800) -> str:
+            lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+            out: list[str] = []
+            for ln in lines:
+                if ln.startswith("["):
+                    if not out:
+                        out.append(ln[:180])
+                    continue
+                if ln.startswith("•"):
+                    out.append(ln[:220])
+                else:
+                    out.append(f"• {ln[:220]}")
+                if len(out) >= max_lines:
+                    break
+            return "\n".join(out)[:max_chars]
+
         try:
             from ..fincrawler_client import fc
 
@@ -393,10 +451,11 @@ async def chat_send_message(
             if fc.enabled and query.lower() not in ("market", ""):
                 fc_news = await fc.get_stock_news("SPY" if query in ("market", "") else query, limit=6)
                 if fc_news:
-                    return (
+                    raw = (
                         f"[Deep news via FinCrawler — topic: {query}]\n"
                         + "\n".join(f"• {item}" for item in fc_news)
                     )
+                    return _compact_news_payload(raw)
 
             # 2. MIL preloaded RSS cache
             from .. import market_intel
@@ -407,7 +466,7 @@ async def chat_send_message(
                 data_age = int(_t.time() - market_intel.updated_at_epoch())
                 lines = [f"[Live market headlines, data age: {data_age}s]"]
                 lines += [f"• {h}" for h in headlines[:20]]
-                return "\n".join(lines)
+                return _compact_news_payload("\n".join(lines))
 
             # 3. Live RSS fallback - Parallelized
             def _fetch_rss(url: str) -> list[str]:
@@ -455,7 +514,7 @@ async def chat_send_message(
 
             if not heads:
                 return "No live news headlines available at this time."
-            return "[Live market headlines]\n" + "\n".join(f"• {h}" for h in heads[:16])
+            return _compact_news_payload("[Live market headlines]\n" + "\n".join(f"• {h}" for h in heads[:16]))
         except Exception as e:
             return f"Error fetching news: {e}"
 
@@ -468,15 +527,28 @@ async def chat_send_message(
         sym = ticker.upper().strip()
         if not sym:
             return "Please provide a ticker symbol."
+        def _compact_deep_news(text: str) -> str:
+            lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+            out: list[str] = []
+            for ln in lines:
+                if ln.startswith("["):
+                    if not out:
+                        out.append(ln[:180])
+                    continue
+                out.append((ln if ln.startswith("•") else f"• {ln}")[:260])
+                if len(out) >= 8:
+                    break
+            return "\n".join(out)[:2200]
         try:
             from ..fincrawler_client import fc
             if fc.enabled:
                 articles = await fc.get_stock_news(sym, limit=6)
                 if articles:
-                    return (
+                    raw = (
                         f"[Deep news for {sym} via FinCrawler]\n"
                         + "\n\n".join(f"• {a}" for a in articles)
                     )
+                    return _compact_deep_news(raw)
             # Fallback to yfinance news titles
             def _yf_news():
                 import yfinance as yf
@@ -489,7 +561,7 @@ async def chat_send_message(
                     title = n.get("title", "").strip()
                     if title:
                         lines.append(f"• {title}")
-                return "\n".join(lines)
+                return _compact_deep_news("\n".join(lines))
             return await asyncio.to_thread(_yf_news)
         except Exception as e:
             return f"Error fetching deep news for {sym}: {e}"
@@ -589,6 +661,215 @@ async def chat_send_message(
             return await asyncio.to_thread(_sync)
         except Exception as e:
             return f"Error fetching history for {sym}: {e}"
+
+    async def get_risk_assessment(ticker: str) -> str:
+        """
+        Return a compact risk snapshot for one ticker:
+        - realized volatility (30d)
+        - ATR volatility context
+        - regime classification (ranging / trending / crisis)
+        - event-risk flags (FOMC/NFP/CPI windows)
+        - stop-distance and position-size caution hints
+        """
+        sym = ticker.upper().strip()
+        if not sym or len(sym) > 12:
+            return "Invalid ticker."
+        try:
+            from ..connectors.risk_assessment import compute_risk_assessment
+
+            payload = await compute_risk_assessment(sym)
+            if payload.get("error"):
+                return f"Risk assessment unavailable for {sym}: {payload['error']}"
+            # Decision-Outcome Ledger (best-effort): risk surface verdict emit.
+            try:
+                from .. import decision_ledger as _dl
+
+                _dl.emit_decision(
+                    decision_type="risk_assessment",
+                    user_id=str(uid or ""),
+                    symbol=sym,
+                    horizon_hint="5d",
+                    side="none",
+                    confidence=0.0,
+                    rationale=f"regime={payload.get('regime')} caution={payload.get('position_size_caution')}",
+                    expected_return_bps=None,
+                    expected_vol_bps=None,
+                    max_drawdown_bps=None,
+                    prompt_versions_json="{}",
+                    model_version=(os.getenv("OPENROUTER_MODEL") or ""),
+                    prompt_hash=None,
+                    model_hash=None,
+                    registry_snapshot_id=None,
+                    evidence_refs=[],
+                    feature_values=[],
+                    metadata_json={
+                        "source": "chat_risk_tool",
+                        "vix_level": payload.get("vix_level"),
+                        "event_risk_flags": payload.get("event_risk_flags"),
+                    },
+                )
+            except Exception:
+                pass
+            flags = payload.get("event_risk_flags") or []
+            flags_str = ", ".join(flags) if flags else "none"
+            return (
+                f"[Risk assessment for {sym}]\n"
+                f"- Regime: {payload.get('regime', 'unknown')}\n"
+                f"- Realized vol (30d): {float(payload.get('realized_vol_30d', 0.0)) * 100:.2f}%\n"
+                f"- ATR(14) % of price: {float(payload.get('atr_14_pct', 0.0)) * 100:.2f}%\n"
+                f"- VIX level: {payload.get('vix_level', 'N/A')}\n"
+                f"- Event-risk flags (48h window): {flags_str}\n"
+                f"- Stop-distance hint: {float(payload.get('stop_distance_pct_hint', 0.0)) * 100:.2f}%\n"
+                f"- Position-size caution: {payload.get('position_size_caution', 'unknown')}"
+            )
+        except Exception as e:
+            return f"Error running risk assessment for {sym}: {e}"
+
+    async def run_what_if_backtest(preset_id: str, lookback_months: int = 12) -> str:
+        """
+        Run a bounded preset backtest for chat.
+        Guardrail: preset_id only (no free-form strategy text in chat tool).
+        """
+        pid = (preset_id or "").strip()
+        if not pid:
+            return "Please provide a preset_id."
+        lookback_months = max(1, min(int(lookback_months or 12), 60))
+        try:
+            from datetime import date, timedelta
+            from ..backtest_engine import run_backtest
+            from ..strategy_presets import get_preset_rules, list_preset_summaries
+
+            valid_ids = {str(p.get("id", "")).strip() for p in list_preset_summaries()}
+            if pid not in valid_ids:
+                return (
+                    f"Unknown preset_id '{pid}'. Available presets: "
+                    + ", ".join(sorted(x for x in valid_ids if x)[:12])
+                )
+            end = date.today()
+            start = end - timedelta(days=30 * lookback_months)
+            rules = get_preset_rules(pid, start.isoformat(), end.isoformat())
+            result = await run_backtest(rules, llm_client, knowledge_store)
+
+            metrics = getattr(result, "metrics", None)
+            win_rate = None
+            total_trades = None
+            avg_r = None
+            if metrics is not None:
+                win_rate = getattr(metrics, "win_rate", None)
+                total_trades = getattr(metrics, "total_trades", None)
+                avg_r = getattr(metrics, "avg_r", None)
+            expectancy = None
+            try:
+                expectancy = (
+                    getattr(result, "total_return_pct", None)
+                    if hasattr(result, "total_return_pct")
+                    else None
+                )
+            except Exception:
+                expectancy = None
+
+            # Decision-Outcome Ledger (best-effort)
+            try:
+                from .. import decision_ledger as _dl
+                _dl.emit_decision(
+                    decision_type="what_if_backtest",
+                    user_id=str(uid or ""),
+                    symbol="",
+                    horizon_hint="21d",
+                    side="none",
+                    confidence=0.0,
+                    rationale=f"preset={pid} lookback_months={lookback_months}",
+                    expected_return_bps=None,
+                    expected_vol_bps=None,
+                    max_drawdown_bps=None,
+                    prompt_versions_json="{}",
+                    model_version=(os.getenv("OPENROUTER_MODEL") or ""),
+                    prompt_hash=None,
+                    model_hash=None,
+                    registry_snapshot_id=None,
+                    evidence_refs=[],
+                    feature_values=[],
+                    metadata_json={
+                        "source": "chat_backtest_tool",
+                        "preset_id": pid,
+                        "lookback_months": lookback_months,
+                    },
+                )
+            except Exception:
+                pass
+
+            return (
+                f"[What-if backtest — preset={pid} | window={start.isoformat()}→{end.isoformat()}]\n"
+                f"- Trades: {total_trades if total_trades is not None else 'N/A'}\n"
+                f"- Win rate: {f'{float(win_rate)*100:.1f}%' if win_rate is not None else 'N/A'}\n"
+                f"- Avg R: {f'{float(avg_r):.2f}' if avg_r is not None else 'N/A'}\n"
+                f"- Expectancy/Return proxy: {f'{float(expectancy):+.2f}%' if expectancy is not None else 'N/A'}"
+            )
+        except Exception as e:
+            return f"Error running what-if backtest for preset '{pid}': {e}"
+
+    async def find_similar_setups(ticker: str, lookback_bars: int = 5) -> str:
+        """
+        Find historical pattern analogs from normalized OHLCV descriptors.
+        """
+        sym = (ticker or "").upper().strip()
+        if not sym:
+            return "Please provide a ticker symbol."
+        lb = max(3, min(int(lookback_bars or 5), 20))
+        try:
+            import yfinance as yf
+            from ..data_lake.ohlcv_normalizer import OHLCVBar, describe_window, normalize_bar
+
+            def _fetch():
+                hist = yf.Ticker(sym).history(period="6mo", interval="1d", auto_adjust=True)
+                if hist is None or hist.empty:
+                    return []
+                rows = []
+                for _, row in hist.tail(lb + 25).iterrows():
+                    rows.append(
+                        OHLCVBar(
+                            open=float(row["Open"]),
+                            high=float(row["High"]),
+                            low=float(row["Low"]),
+                            close=float(row["Close"]),
+                            volume=float(row["Volume"]),
+                        )
+                    )
+                return rows
+
+            bars = await asyncio.to_thread(_fetch)
+            if len(bars) < lb + 1:
+                return f"Not enough OHLCV history for {sym}."
+            window = bars[-lb:]
+            vol_window = [b.volume for b in bars[-25:]]
+            normalized: list[dict[str, float]] = []
+            prev_close = bars[-lb - 1].close
+            for b in window:
+                normalized.append(normalize_bar(b, prev_close=prev_close, volume_window=vol_window))
+                prev_close = b.close
+            query_text = describe_window(normalized)
+            docs, refs = await asyncio.to_thread(
+                knowledge_store.query_with_refs,
+                "ohlcv_patterns",
+                query_text,
+                10,
+                {"ticker": sym},
+            )
+            if not docs:
+                return (
+                    f"[Pattern match for {sym}] No stored analogs yet in ohlcv_patterns.\n"
+                    f"- Query descriptor: {query_text}\n"
+                    "- Populate collection via Phase E5 backfill to enable analog lookups."
+                )
+            lines = [f"[Pattern match for {sym} | top_k={len(docs)}]", f"- Query: {query_text}"]
+            for i, (d, r) in enumerate(zip(docs[:5], refs[:5]), start=1):
+                rid = r.get("chunk_id") or f"pattern_{i}"
+                lines.append(
+                    f"- #{i} {rid} | distance={float(r.get('distance', 1.0)):.3f} | {str(d)[:140]}"
+                )
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error finding similar setups for {sym}: {e}"
 
 
     tools = [
@@ -784,6 +1065,76 @@ async def chat_send_message(
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_risk_assessment",
+                "description": (
+                    "Risk snapshot for one ticker: realized volatility, ATR context, regime classification, "
+                    "event-risk flags (FOMC/NFP/CPI windows), and stop-distance / position-size caution."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker": {
+                            "type": "string",
+                            "description": "Exact uppercase ticker symbol e.g. AAPL NVDA XAUUSD",
+                        }
+                    },
+                    "required": ["ticker"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "run_what_if_backtest",
+                "description": (
+                    "Run a bounded what-if backtest using a known preset_id only (no free-form strategy text). "
+                    "Returns trades, win-rate, average R, and expectancy proxy."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "preset_id": {
+                            "type": "string",
+                            "description": "Preset strategy id from /strategies/presets",
+                        },
+                        "lookback_months": {
+                            "type": "integer",
+                            "description": "Backtest lookback window in months (1..60)",
+                            "default": 12,
+                        },
+                    },
+                    "required": ["preset_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "find_similar_setups",
+                "description": (
+                    "Find historical analog setups by matching normalized OHLCV structure "
+                    "against the ohlcv_patterns vector collection."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker": {
+                            "type": "string",
+                            "description": "Exact uppercase ticker symbol e.g. NVDA",
+                        },
+                        "lookback_bars": {
+                            "type": "integer",
+                            "description": "Number of recent daily bars to encode (3..20)",
+                            "default": 5,
+                        },
+                    },
+                    "required": ["ticker"],
+                },
+            },
+        },
     ]
 
     async def recall_financial_profile() -> str:
@@ -806,12 +1157,58 @@ async def chat_send_message(
         "scrape_url": scrape_url,
         "recall_financial_profile": recall_financial_profile,
         "save_financial_preference": save_financial_preference,
+        "get_risk_assessment": get_risk_assessment,
+        "run_what_if_backtest": run_what_if_backtest,
+        "find_similar_setups": find_similar_setups,
     }
+
+    # Phase A1: stable per-turn identifiers for trajectory telemetry.
+    message_id = uuid.uuid4().hex
+    trace_id = f"chat:{body.session_id}:{message_id}"
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'meta', 'data': meta})}\n\n"
         quote_card_tickers: list[str] = [qc_ticker] if qc_ticker else []
         tool_trace: list[dict] = []
+        if stale_report is not None:
+            stale_payload = stale_report.model_dump()
+            stale_text = stale_payload.get("message") or "Required evidence is stale."
+            yield f"data: {json.dumps({'type': 'token', 'text': stale_text})}\n\n"
+            evidence = build_evidence_contract(
+                tool_trace=[],
+                quote_card_tickers=[],
+                meta=meta,
+                trajectory_summary={
+                    "trace_id": trace_id,
+                    "skill_name": getattr(_pre_skill_name, "value", str(_pre_skill_name)),
+                    "skill_tier": getattr(_pre_skill_tier, "value", str(_pre_skill_tier)),
+                    "trajectory_step_count": 0,
+                    "valid_prefix_steps": 0,
+                    "investigation_step_count": 0,
+                    "synthesis_step_index": 0,
+                    "answer_grounded_to_investigation": False,
+                    "fatal_detected": False,
+                    "tool_families_used": [],
+                },
+                trajectory_steps=[],
+            )
+            evidence["status"] = "STALE_DATA"
+            evidence["stale_data_report"] = stale_payload
+            evidence["abstain_reason"] = "stale_data_blocked"
+            chat_service.update_session_last_turn(sess, user_content, stale_text, evidence, meta)
+            try:
+                write_chat_cycle_artifacts(
+                    cycle_id=cycle_id,
+                    meta={**meta, "session_id": body.session_id},
+                    evidence=evidence,
+                    tool_trace=[],
+                    stale_data_report=stale_payload,
+                )
+            except Exception as _artifact_err:
+                logger.debug("[Chat] artifact write skipped (stale): %s", _artifact_err)
+            yield f"data: {json.dumps({'type': 'evidence_contract', 'data': evidence})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
         if qc_ticker:
             try:
                 qbody = await get_stock_quote(qc_ticker)
@@ -827,6 +1224,9 @@ async def chat_send_message(
                 tools=tools,
                 tool_handlers=tool_handlers,
                 tool_trace_out=tool_trace,
+                trace_id=trace_id,
+                session_id=body.session_id,
+                message_id=message_id,
             )
             async for chunk in stream_gen:
                 if chunk:
@@ -836,10 +1236,54 @@ async def chat_send_message(
             logger.warning("[Chat] stream error: %s", e)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)[:300]})}\n\n"
 
+        # Phase A2: turn-level trajectory summary feeds the evidence contract
+        # (B-hard-gate fields) and the handoff_chat_trace persistence row.
+        from .. import chat_tool_telemetry as _ctt
+        from ..chat_skill_classifier import classify_skill as _classify_skill
+
+        # Phase E1 — heuristic skill classification runs *after* the tool
+        # loop so we can use the actually-touched family set as evidence.
+        # Quote-card prefetch contributes the ``quote`` family to the
+        # classifier even when no quote tool was called explicitly.
+        _families_for_classifier: list[str] = []
+        _seen_for_classifier: set[str] = set()
+        if quote_card_tickers:
+            _families_for_classifier.append("quote")
+            _seen_for_classifier.add("quote")
+        for _row in tool_trace or []:
+            _fam = str(_row.get("tool_family") or "")
+            if _fam and _fam not in _seen_for_classifier:
+                _families_for_classifier.append(_fam)
+                _seen_for_classifier.add(_fam)
+        try:
+            _skill_name, _skill_tier = _classify_skill(
+                user_message=user_content,
+                tool_families_used=_families_for_classifier,
+            )
+        except Exception as e:
+            logger.warning("[Chat] skill classification failed: %s", e)
+            from ..chat_tool_family import SkillName as _SN, SkillTier as _ST
+            _skill_name, _skill_tier = _SN.UNKNOWN, _ST.SIMPLE
+
+        _final_answer_text = "".join(assistant_parts)
+
+        trajectory_summary = _ctt.summarize_trace(
+            tool_trace,
+            trace_id=trace_id,
+            session_id=body.session_id,
+            message_id=message_id,
+            quote_card_tickers=quote_card_tickers,
+            skill_name=_skill_name,
+            skill_tier=_skill_tier,
+            final_answer_text=_final_answer_text,
+        )
+        evidence_steps_for_sse = _ctt.trajectory_steps_for_sse(tool_trace)
         evidence = build_evidence_contract(
             tool_trace=tool_trace,
             quote_card_tickers=quote_card_tickers,
             meta=meta,
+            trajectory_summary=trajectory_summary,
+            trajectory_steps=evidence_steps_for_sse,
         )
         assistant_text = "".join(assistant_parts).strip()
         chat_service.update_session_last_turn(sess, user_content, assistant_text, evidence, meta)
@@ -934,6 +1378,28 @@ async def chat_send_message(
             )
         except Exception as _e:  # never block the stream
             logger.debug("[Chat] decision_ledger emit skipped: %s", _e)
+
+        try:
+            write_chat_cycle_artifacts(
+                cycle_id=cycle_id,
+                meta={**meta, "session_id": body.session_id},
+                evidence=evidence,
+                tool_trace=tool_trace,
+                stale_data_report=meta.get("stale_data_report"),
+            )
+        except Exception as _artifact_err:
+            logger.debug("[Chat] artifact write skipped: %s", _artifact_err)
+
+        # Phase A1: best-effort persistence of the bounded trajectory payload.
+        # Failures are logged at DEBUG so the user-facing stream never breaks.
+        try:
+            _ctt.log_chat_trace_event(
+                summary=trajectory_summary,
+                trajectory_steps=tool_trace,
+                evidence_contract=evidence,
+            )
+        except Exception as _e:  # pragma: no cover - safety net
+            logger.debug("[Chat] handoff_chat_trace skipped: %s", _e)
 
         yield f"data: {json.dumps({'type': 'evidence_contract', 'data': evidence})}\n\n"
         yield "data: [DONE]\n\n"

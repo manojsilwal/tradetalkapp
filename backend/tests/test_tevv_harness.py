@@ -1,6 +1,5 @@
-"""Phase E — TEVV case bank integration (runner exit 0)."""
+"""Phase E + Phase B — TEVV case bank integration (runner exit 0)."""
 import unittest
-from pathlib import Path
 
 from backend.eval.tevv_runner import CASE_BANK_PATH, run_all
 
@@ -17,8 +16,16 @@ class TestTevvHarness(unittest.TestCase):
             msg=f"TEVV failures: {summary.get('failures')}",
         )
         self.assertGreaterEqual(summary["passed"], 1)
-        # 20 cases: one reasoning_quality stub is skipped
-        self.assertEqual(summary["total_cases"], 20)
+        # 20 base + 7 anti-shortcut = 27 cases (one reasoning stub skipped).
+        self.assertEqual(summary["total_cases"], 27)
+
+    def test_shortcut_resistance_axis_runs(self):
+        _results, summary = run_all()
+        axes = summary["axes"]
+        self.assertIn("shortcut_resistance", axes)
+        self.assertGreaterEqual(axes["shortcut_resistance"]["total"], 7)
+        self.assertEqual(axes["shortcut_resistance"]["failed"], 0)
+        self.assertGreaterEqual(axes["shortcut_resistance"]["passed"], 7)
 
 
 if __name__ == "__main__":

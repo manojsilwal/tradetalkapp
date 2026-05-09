@@ -2,12 +2,13 @@
 Local / CI smoke tests — no network-heavy routes (no full debate/trace).
 Run from repo root:  ./scripts/run_backend_tests.sh  (needs Python 3.10+)
 
-Optional slow check (full swarm+debate+terminal assembly, ~15–90s):
-  RUN_DECISION_TERMINAL_SMOKE=1 ./scripts/run_backend_tests.sh
+Includes decision-terminal JSON smoke (can be slower when live tools/debate run).
 """
 import json
 import os
 import unittest
+
+os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
 
 from fastapi.testclient import TestClient
 from backend.main import app
@@ -16,6 +17,11 @@ from backend.main import app
 class TestSmoke(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        import backend.rate_limiter as rl
+
+        rl.RATE_LIMIT_ENABLED = False
+        with rl._lock:
+            rl._hits.clear()
         cls.client = TestClient(app)
 
     def test_openapi(self):
@@ -46,10 +52,6 @@ class TestSmoke(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers.get("X-Request-ID"), "smoke-test-uuid")
 
-    @unittest.skipUnless(
-        os.environ.get("RUN_DECISION_TERMINAL_SMOKE", "").strip().lower() in ("1", "true", "yes"),
-        "set RUN_DECISION_TERMINAL_SMOKE=1 to run (slow: live tools + debate)",
-    )
     def test_decision_terminal_returns_200_and_json(self):
         """Guards against HTTP 500 / non-JSON floats (e.g. NaN) on the decision terminal path."""
         r = self.client.get("/decision-terminal", params={"ticker": "AAPL"})

@@ -4,6 +4,16 @@ import unittest
 
 
 class TestGeminiFlags(unittest.TestCase):
+    def setUp(self):
+        # Hermetic tests: shell/user env may set GOOGLE_API_KEY and make primary appear enabled.
+        for k in (
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_PRIMARY",
+            "GEMINI_LLM_FALLBACK",
+        ):
+            os.environ.pop(k, None)
+
     def tearDown(self):
         for k in (
             "GEMINI_API_KEY",
