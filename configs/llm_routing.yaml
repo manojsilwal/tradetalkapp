@@ -1,0 +1,23 @@
+# LLM routing for the stock-predictor agent.
+#
+# Phase 0 contract: synthesizer and reviewer MUST be from different model
+# families. Enforced by tests/test_predictor_reviewer_independence.py.
+#
+# Phase 1 ships with these models referenced ONLY through configuration —
+# the synthesizer / reviewer modules are mocked in Phase 1 and do not call
+# the network. Phase 6 wires real OpenRouter calls behind these slugs.
+#
+# Vendor-prefix is the part before "/" in the slug. Different prefixes
+# imply different model families for the independence check.
+
+predictor:
+  synthesis:
+    primary: "openai/gpt-5.5"          # ChatGPT 5.5 via OpenRouter (planning model)
+    fallback: "openai/gpt-5-mini"
+    temperature: 0.2
+    max_tokens: 1500
+  reviewer:
+    primary: "google/gemini-3-flash"   # MUST be a different family from synthesis
+    fallback: "anthropic/claude-opus-4.6"
+    temperature: 0.0
+    max_tokens: 800

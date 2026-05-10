@@ -1,0 +1,21 @@
+# Locked TimesFM 2.5 ForecastConfig for the predictor microservice.
+# Tracks the field names from google-research/timesfm 2.5 PyTorch impl.
+#
+# This file is read by:
+#   - backend/predictor/timesfm_constants.py (sanity-check shape on boot)
+#   - tradetalk-timesfm/app.py (Phase 2 microservice — applies via model.compile)
+
+max_context: 1024
+max_horizon: 256
+normalize_inputs: true
+per_core_batch_size: 32
+use_continuous_quantile_head: true
+force_flip_invariance: true
+
+# Equity log-returns can be negative -> infer_is_positive must be false.
+# A second pass (price-level, infer_is_positive=true) runs in parallel
+# inside backend/predictor/agent.py for the consensus check.
+infer_is_positive: false
+
+fix_quantile_crossing: true
+return_backcast: false

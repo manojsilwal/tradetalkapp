@@ -1,0 +1,37 @@
+# Quality / cost / freshness gates for the predictor agent.
+#
+# All thresholds are overridable via environment variables — see
+# backend/.env.example for the canonical names and defaults.
+
+calibration:
+  # Empirical coverage of the q10..q90 prediction interval over a
+  # 60-day rolling window. Outside this band, model_confidence
+  # auto-degrades and Phase 5 calibration recalibrates.
+  lower: 0.75
+  upper: 0.85
+
+mase:
+  # TimesFM ensemble must beat seasonal-naive (MASE <= gate) on a
+  # majority of replay-corpus tuples to be promoted past Phase 2.
+  gate: 1.0
+
+cost:
+  # Per-cycle USD ceiling — synthesizer + reviewer + microservice combined.
+  # Cycle aborts and returns degraded payload if exceeded. (Mocked in Phase 1.)
+  ceiling_usd: 0.05
+
+freshness:
+  # Maximum input-data staleness before synthesis is blocked.
+  # Reuses the same units as backend/swarm_reliability/schemas.py.
+  daily_signal_max_age_hours: 26
+  intraday_signal_max_age_minutes: 90
+  weekly_research_max_age_days: 8
+
+horizons:
+  # Trading-day horizons aligned with backend/outcome_grader.HORIZONS so
+  # graded outcomes flow into SEPL/TEVV with zero extra wiring.
+  trading_days:
+    "1d": 1
+    "5d": 5
+    "21d": 21
+    "63d": 63
