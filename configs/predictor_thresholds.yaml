@@ -1,0 +1,5 @@
+calibration_lower: 0.75
+calibration_upper: 0.85
+mase_gate: 1.0
+cost_ceiling_usd_default: 0.05
+stale_macro_hours: 72

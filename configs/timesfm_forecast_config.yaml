@@ -1,0 +1,9 @@
+max_context: 1024
+max_horizon: 256
+normalize_inputs: true
+per_core_batch_size: 32
+use_continuous_quantile_head: true
+force_flip_invariance: true
+infer_is_positive: false
+fix_quantile_crossing: true
+return_backcast: false

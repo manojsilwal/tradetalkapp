@@ -411,13 +411,17 @@ def _grade_correctness(verdict: str, excess_return: Optional[float]) -> Optional
     We only label directional decisions. Everything else (NEUTRAL, empty,
     chat-turn text) stays ``correct IS NULL`` so downstream analytics can
     filter cleanly.
+
+    Price-forecast producers may emit ``UP`` / ``DOWN`` / ``FLAT`` / ``MIXED``;
+    ``UP`` / ``DOWN`` align with buy/sell tests for excess return; ``FLAT`` and
+    ``MIXED`` stay unlabelled (same as NEUTRAL).
     """
     if excess_return is None:
         return None
     v = (verdict or "").upper().strip()
-    if v in _BUY_VERDICTS:
+    if v in _BUY_VERDICTS or v == "UP":
         return excess_return > 0
-    if v in _SELL_VERDICTS:
+    if v in _SELL_VERDICTS or v == "DOWN":
         return excess_return < 0
     return None
 

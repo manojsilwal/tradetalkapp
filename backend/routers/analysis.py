@@ -12,6 +12,7 @@ from ..schemas import (
     MarketState, MarketRegime, SwarmConsensus, DebateResult,
     DecisionTerminalPayload,
 )
+from ..predictor.schemas import PredictorForecastResponse, PredictorForecastToolInput
 from ..agents import (
     ShortInterestAgentPair, SocialSentimentAgentPair,
     PolymarketAgentPair, FundamentalHealthAgentPair,
@@ -475,4 +476,41 @@ async def decision_terminal_post(body: AnalyzeIngressRequest, _auth_user=Depends
         poly_connector=poly_connector,
         llm_client=llm_client,
         provider_audit=want_audit,
+    )
+
+
+@router.get("/predictor/forecast", response_model=PredictorForecastResponse, dependencies=[Depends(_rl_expensive)])
+async def predictor_forecast_get(
+    ticker: str = Query("AAPL", description="Stock ticker."),
+    horizon: str = Query(
+        "1d,5d,21d,63d",
+        description="Comma-separated horizons: 1d,5d,21d,63d",
+    ),
+    _auth_user=Depends(get_optional_user),
+):
+    """Probabilistic price forecast (offline-safe mock path unless TimesFM URL configured)."""
+    from ..predictor.agent import run_predictor_forecast
+
+    hs = [h.strip() for h in horizon.split(",") if h.strip()]
+    return await run_predictor_forecast(
+        ticker,
+        horizons=hs or ["1d", "5d", "21d", "63d"],
+        tool_registry=tool_registry,
+        emit_ledger=True,
+    )
+
+
+@router.post("/predictor/forecast", response_model=PredictorForecastResponse, dependencies=[Depends(_rl_expensive)])
+async def predictor_forecast_post(
+    body: PredictorForecastToolInput,
+    _auth_user=Depends(get_optional_user),
+):
+    from ..predictor.agent import run_predictor_forecast
+
+    t = validate_ticker_query(body.ticker)
+    return await run_predictor_forecast(
+        t,
+        horizons=body.horizons or ["1d", "5d", "21d", "63d"],
+        tool_registry=tool_registry,
+        emit_ledger=True,
     )

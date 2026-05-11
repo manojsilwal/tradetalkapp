@@ -1,0 +1,252 @@
+[
+  {
+    "ticker": "MSFT",
+    "as_of": "2016-12-09",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2018-12-04",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "XOM",
+    "as_of": "2016-01-03",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2024-10-01",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "XOM",
+    "as_of": "2019-08-19",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "AAPL",
+    "as_of": "2018-12-14",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "XLK",
+    "as_of": "2018-04-25",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2017-07-04",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "LEH",
+    "as_of": "2025-05-26",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "JPM",
+    "as_of": "2024-02-13",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "XLK",
+    "as_of": "2025-06-19",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2016-11-08",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2019-02-13",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "JPM",
+    "as_of": "2021-03-12",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2020-12-22",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "GOOGL",
+    "as_of": "2024-12-08",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "JPM",
+    "as_of": "2022-05-21",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "LEH",
+    "as_of": "2016-04-27",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "LEH",
+    "as_of": "2022-05-03",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "LEH",
+    "as_of": "2019-11-16",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "JPM",
+    "as_of": "2018-05-05",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "XLK",
+    "as_of": "2025-07-19",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "LEH",
+    "as_of": "2019-03-17",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2016-02-05",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "XOM",
+    "as_of": "2025-02-13",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "JPM",
+    "as_of": "2024-05-18",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2024-05-25",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2020-07-06",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "AAPL",
+    "as_of": "2020-09-25",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2020-11-17",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "GOOGL",
+    "as_of": "2021-03-18",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "LEH",
+    "as_of": "2023-01-04",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "XLK",
+    "as_of": "2019-01-08",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2023-02-25",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "GOOGL",
+    "as_of": "2023-09-06",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "XOM",
+    "as_of": "2019-09-25",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "XLK",
+    "as_of": "2022-11-21",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "JPM",
+    "as_of": "2024-08-04",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2017-06-01",
+    "horizon": "5d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2016-02-23",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2017-01-28",
+    "horizon": "21d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2024-04-09",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2024-03-24",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2023-07-07",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "MSFT",
+    "as_of": "2022-06-14",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "JPM",
+    "as_of": "2016-11-21",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "AAPL",
+    "as_of": "2022-12-11",
+    "horizon": "1d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2019-04-18",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "GOOGL",
+    "as_of": "2022-03-09",
+    "horizon": "63d"
+  },
+  {
+    "ticker": "SPY",
+    "as_of": "2017-08-26",
+    "horizon": "1d"
+  }
+]

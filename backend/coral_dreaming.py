@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 EVENT_DEBATE = "handoff_debate"
 EVENT_SWARM = "handoff_swarm_trace"
 
+EVENT_PREDICTOR = "predictor.forecast"
+EVENT_PREDICTOR_SHADOW = "predictor.shadow_diff"
+EVENT_PREDICTOR_DRIFT = "predictor.drift_alert"
+EVENT_PREDICTOR_DEGRADED = "predictor.degraded"
+
 
 async def run_dreaming_job(knowledge_store: Any = None, llm_client: Any = None) -> dict:
     """

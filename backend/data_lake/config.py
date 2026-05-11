@@ -134,6 +134,7 @@ HISTORICAL_REMOVED_TICKERS = [
     "KSU",    # merged into CP
     "NLSN",   # taken private
     "DRE",    # acquired by Prologis
+    "LEH",    # Lehman — survivorship / historical replay anchor
 ]
 
 # Combined list (deduplicated)

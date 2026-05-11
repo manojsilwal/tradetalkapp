@@ -41,6 +41,24 @@ const SMOKE_CASES = [
     requiredFields: ['briefing.directional_bias', 'briefing.confidence_0_1', 'context.macro.dxy_spot'],
     slowLatencyMs: 7000,
   },
+  {
+    id: 'predictor-aapl-1d',
+    feature: 'predictor',
+    method: 'GET',
+    path: '/predictor/forecast',
+    params: { ticker: 'AAPL', horizon: '1d' },
+    requiredFields: ['status', 'ticker', 'horizon_bands_usd', 'disclaimer', 'model_version'],
+    slowLatencyMs: 90000,
+  },
+  {
+    id: 'predictor-disclaimer-present',
+    feature: 'predictor',
+    method: 'GET',
+    path: '/predictor/forecast',
+    params: { ticker: 'SPY', horizon: '63d' },
+    requiredFields: ['disclaimer'],
+    slowLatencyMs: 90000,
+  },
 ];
 
 /** @type {FaultHunterCase[]} */

@@ -323,6 +323,16 @@ class TerminalVerdictPanel(BaseModel):
     polymarket_gated_out: bool = False
 
 
+class HorizonQuantileBand(BaseModel):
+    """Predictor fan-chart slice — q10–q90 approximates an 80 % interval."""
+
+    horizon: str = ""
+    q10_usd: Optional[float] = None
+    q50_usd: Optional[float] = None
+    q90_usd: Optional[float] = None
+    point_usd: Optional[float] = None
+
+
 class TerminalRoadmapPanel(BaseModel):
     bull_price_usd: Optional[float] = None
     base_price_usd: Optional[float] = None
@@ -332,6 +342,18 @@ class TerminalRoadmapPanel(BaseModel):
     confidence_0_1: float = Field(default=0.0, ge=0.0, le=1.0)
     used_heuristic_fallback: bool = False
     provenance: TerminalFieldProvenance = Field(default_factory=TerminalFieldProvenance)
+    horizon_quantile_bands: List[HorizonQuantileBand] = Field(
+        default_factory=list,
+        description="Optional multi-horizon q10/q50/q90 bands from the probabilistic predictor.",
+    )
+    predictor_synthesis_excerpt: Optional[str] = Field(
+        default=None,
+        description="Short synthesis text when the predictor supplied narrative.",
+    )
+    predictor_reviewer_excerpt: Optional[str] = Field(
+        default=None,
+        description="Reviewer check when predictor narrative path ran.",
+    )
 
 
 class DecisionTerminalPayload(BaseModel):

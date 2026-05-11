@@ -695,6 +695,22 @@
   color: var(--dt-muted);
 }
 
+.dt-predictor-why {
+  margin: 10px 0 0;
+  font-size: 0.7rem;
+  color: var(--dt-muted);
+  line-height: 1.4;
+}
+.dt-predictor-why summary {
+  cursor: pointer;
+  color: var(--dt-blue);
+  font-weight: 600;
+  list-style: none;
+}
+.dt-predictor-why p {
+  margin: 6px 0 0;
+}
+
 /* Tips */
 .dt-tip {
   cursor: help;

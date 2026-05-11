@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from enum import Enum
-from typing import Any, Awaitable, Callable, Dict, Optional, Type
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
 
 from pydantic import BaseModel, ConfigDict
 
@@ -86,6 +86,7 @@ class MacroFetchInput(BaseModel):
 def _build_registry() -> ToolRegistry:
     from .connectors.debate_data import fetch_debate_data
     from .connectors.macro import MacroHealthConnector
+    from .predictor.schemas import PredictorForecastToolInput
 
     reg = ToolRegistry()
     macro = MacroHealthConnector()
@@ -95,6 +96,23 @@ def _build_registry() -> ToolRegistry:
 
     async def _macro_fetch():
         return await macro.fetch_data()
+
+    async def _predictor_forecast_tool(
+        ticker: str,
+        horizons: Optional[List[str]] = None,
+        as_of: Optional[str] = None,
+    ):
+        from . import deps
+        from .predictor.agent import run_predictor_forecast
+
+        _ = as_of  # reserved for point-in-time replay
+        out = await run_predictor_forecast(
+            ticker,
+            horizons=horizons or ["1d", "5d", "21d", "63d"],
+            tool_registry=deps.tool_registry,
+            emit_ledger=True,
+        )
+        return out.model_dump(mode="json")
 
     reg.register(
         ToolSpec(
@@ -114,6 +132,16 @@ def _build_registry() -> ToolRegistry:
             side_effect=ToolSideEffect.READ,
             default_timeout_s=45.0,
             description="Global macro snapshot (VIX, credit stress, etc.).",
+        )
+    )
+    reg.register(
+        ToolSpec(
+            name="predictor_forecast",
+            handler=_predictor_forecast_tool,
+            input_model=PredictorForecastToolInput,
+            side_effect=ToolSideEffect.READ,
+            default_timeout_s=90.0,
+            description="Probabilistic price forecast (baselines + TimesFM path, evidence-gated).",
         )
     )
     return reg

@@ -24,3 +24,5 @@ httpx>=0.28,<0.29
 python-dotenv>=1.0.0
 PyYAML>=6.0
 defusedxml
+hypothesis>=6.90
+syrupy>=4.6

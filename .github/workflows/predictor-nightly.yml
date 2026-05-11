@@ -1,0 +1,24 @@
+# Nightly predictor harness — replay smoke + unit tests (Phase 5 tier).
+name: Predictor nightly
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  predictor-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install -r backend/requirements.txt
+      - name: Predictor unit tests
+        run: PYTHONPATH=. python -m unittest discover -s backend/tests -p 'test_predictor*.py' -v
+      - name: Replay smoke eval
+        run: PYTHONPATH=. python -m backend.predictor.eval
+      - name: No-trade import lint
+        run: PYTHONPATH=. python scripts/lint_no_trade_imports.py

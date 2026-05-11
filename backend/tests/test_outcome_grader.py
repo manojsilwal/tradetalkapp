@@ -93,6 +93,14 @@ class TestGradeCorrectness(unittest.TestCase):
         self.assertIsNone(_grade_correctness("", 0.02))
         self.assertIsNone(_grade_correctness("BUY", None))
 
+    def test_price_forecast_direction_verdicts(self) -> None:
+        self.assertTrue(_grade_correctness("UP", 0.01))
+        self.assertFalse(_grade_correctness("UP", -0.01))
+        self.assertTrue(_grade_correctness("DOWN", -0.02))
+        self.assertFalse(_grade_correctness("DOWN", 0.05))
+        self.assertIsNone(_grade_correctness("FLAT", 0.02))
+        self.assertIsNone(_grade_correctness("MIXED", -0.02))
+
 
 # ── End-to-end grader on SQLite ─────────────────────────────────────────────
 

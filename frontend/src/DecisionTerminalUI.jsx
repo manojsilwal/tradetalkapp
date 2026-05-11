@@ -176,23 +176,50 @@ export default function DecisionTerminalUI() {
     [z?.polymarket_gated_out, z?.prediction_market_bullish_pct],
   );
 
-  const roadmapChartData =
-    r && v?.current_price_usd != null && Number(v.current_price_usd) > 0
-      ? [
-          {
-            t: `Now ($${Number(v.current_price_usd).toFixed(2)})`,
-            bull: v.current_price_usd,
-            base: v.current_price_usd,
-            bear: v.current_price_usd,
-          },
-          {
-            t: '3Y',
-            bull: r.bull_price_usd ?? v.current_price_usd,
-            base: r.base_price_usd ?? v.current_price_usd,
-            bear: r.bear_price_usd ?? v.current_price_usd,
-          },
-        ]
-      : [];
+  const roadmapChartData = useMemo(() => {
+    if (!r || v?.current_price_usd == null || Number(v.current_price_usd) <= 0) return [];
+    const spot = Number(v.current_price_usd);
+    const bands = r.horizon_quantile_bands;
+    if (bands?.length) {
+      const rows = [
+        {
+          t: `Now ($${spot.toFixed(2)})`,
+          bull: spot,
+          base: spot,
+          bear: spot,
+        },
+      ];
+      for (const b of bands) {
+        rows.push({
+          t: `${b.horizon} · 80% PI`,
+          bull: b.q90_usd ?? spot,
+          base: b.q50_usd ?? spot,
+          bear: b.q10_usd ?? spot,
+        });
+      }
+      rows.push({
+        t: '3Y scenario',
+        bull: r.bull_price_usd ?? spot,
+        base: r.base_price_usd ?? spot,
+        bear: r.bear_price_usd ?? spot,
+      });
+      return rows;
+    }
+    return [
+      {
+        t: `Now ($${spot.toFixed(2)})`,
+        bull: spot,
+        base: spot,
+        bear: spot,
+      },
+      {
+        t: '3Y',
+        bull: r.bull_price_usd ?? spot,
+        base: r.base_price_usd ?? spot,
+        bear: r.bear_price_usd ?? spot,
+      },
+    ];
+  }, [r, v?.current_price_usd]);
 
   const dotLeft = sliderPosition(v?.current_price_usd, r?.bear_price_usd, r?.bull_price_usd);
   const spot = v?.current_price_usd;
@@ -410,7 +437,12 @@ export default function DecisionTerminalUI() {
 
           {/* —— Roadmap —— */}
           <section className="dt-panel">
-            <h2 className="dt-panel-title">Future price roadmap (3-year trajectory)</h2>
+            <h2 className="dt-panel-title">
+              Future price roadmap
+              {r?.horizon_quantile_bands?.length
+                ? ' (multi-horizon 80% intervals + 3Y scenario)'
+                : ' (3-year trajectory)'}
+            </h2>
             <div className="dt-roadmap-head">
               <span className="dt-roadmap-legend">
                 <span className="dot bull" /> Bull
@@ -463,6 +495,21 @@ export default function DecisionTerminalUI() {
                   <li key={i}>{a}</li>
                 ))}
               </ul>
+            )}
+            {(r?.predictor_synthesis_excerpt || r?.predictor_reviewer_excerpt) && (
+              <details className="dt-predictor-why">
+                <summary>Why these numbers?</summary>
+                {r?.predictor_synthesis_excerpt && (
+                  <p>
+                    <strong>Synthesis</strong> — {r.predictor_synthesis_excerpt}
+                  </p>
+                )}
+                {r?.predictor_reviewer_excerpt && (
+                  <p>
+                    <strong>Reviewer</strong> — {r.predictor_reviewer_excerpt}
+                  </p>
+                )}
+              </details>
             )}
             <div className="dt-slider-section">
               <div className="dt-slider-rail-labels">

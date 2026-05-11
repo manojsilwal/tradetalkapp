@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .schemas import (
     DebateResult,
     DecisionTerminalPayload,
+    HorizonQuantileBand,
     SwarmConsensus,
     TerminalFieldProvenance,
     TerminalQualityPanel,
@@ -412,6 +413,7 @@ async def build_decision_terminal_payload(
     llm_client: Any,
     *,
     include_provider_audit: bool = False,
+    tool_registry: Any = None,
 ) -> DecisionTerminalPayload:
     t = ticker.upper()
     now = datetime.now(timezone.utc).isoformat()
@@ -655,53 +657,98 @@ async def build_decision_terminal_payload(
     assumptions: List[str] = []
     conf_r = 0.0
     heuristic_fb = True
+    horizon_bands: List[HorizonQuantileBand] = []
+    pred_syn_ex: Optional[str] = None
+    pred_rev_ex: Optional[str] = None
 
     if price_f and price_f > 0:
-        from .deps import knowledge_store
-        stock_profile = knowledge_store.query_stock_profile(t)
-        earnings_memory = knowledge_store.query_earnings_memory(t)
-        fundamentals_n = knowledge_store.query_sp500_fundamentals(t)
+        predictor_filled = False
+        if tool_registry is not None:
+            try:
+                from .predictor.agent import run_predictor_forecast
 
-        ctx = {
-            "ticker": t,
-            "current_price": price_f,
-            "historical_cagr_3y": hist_cagr,
-            "debate_verdict": debate.verdict,
-            "swarm_verdict": swarm.global_verdict,
-            "valuation_avg_fair": avg_fair,
-            "pct_vs_average": pct_vs,
-            "bull_score": debate.bull_score,
-            "bear_score": debate.bear_score,
-            "moderator_summary": debate.moderator_summary,
-            "stock_profile": stock_profile,
-            "earnings_memory": "\n".join(earnings_memory) if isinstance(earnings_memory, list) else earnings_memory,
-            "fundamentals_narrative": fundamentals_n,
-        }
-        try:
-            rm = await llm_client.generate_decision_terminal_roadmap(t, ctx)
-            bull_p = rm.get("bull_price_usd") or rm.get("bull_price")
-            base_p = rm.get("base_price_usd") or rm.get("base_price")
-            bear_p = rm.get("bear_price_usd") or rm.get("bear_price")
-            assumptions = [str(x) for x in (rm.get("assumptions") or [])][:6]
-            conf_r = float(rm.get("confidence_0_1") or 0.0)
-            if bull_p and base_p and bear_p:
-                bull_p, base_p, bear_p = float(bull_p), float(base_p), float(bear_p)
-                if base_p > 0 and price_f > 0:
-                    cagr_b = round((pow(base_p / price_f, 1.0 / 3.0) - 1.0) * 100.0, 2)
-                heuristic_fb = bool(rm.get("used_heuristic_fallback", False))
-                roadmap_prov.source = "llm_json"
-                roadmap_prov.confidence = conf_r
-        except Exception as e:
-            logger.warning("[decision_terminal] roadmap LLM failed: %s", e)
+                pred = await run_predictor_forecast(
+                    t,
+                    horizons=["1d", "5d", "21d", "63d"],
+                    tool_registry=tool_registry,
+                    emit_ledger=True,
+                )
+                if pred.status == "ok" and pred.base_price_usd_3y_scenario is not None:
+                    bull_p = pred.bull_price_usd_3y_scenario
+                    base_p = pred.base_price_usd_3y_scenario
+                    bear_p = pred.bear_price_usd_3y_scenario
+                    if base_p and base_p > 0 and price_f > 0:
+                        cagr_b = round((pow(base_p / price_f, 1.0 / 3.0) - 1.0) * 100.0, 2)
+                    assumptions = list(pred.assumptions or [])[:6]
+                    conf_r = {"high": 0.72, "medium": 0.55, "low": 0.38}.get(pred.model_confidence, 0.55)
+                    heuristic_fb = False
+                    predictor_filled = True
+                    roadmap_prov.source = pred.model_version or "predictor"
+                    roadmap_prov.confidence = conf_r
+                    roadmap_prov.formula_or_note = (
+                        "Probabilistic predictor (baselines + TimesFM path); 3Y scenarios extrapolated from horizon bands."
+                    )
+                    horizon_bands = [
+                        HorizonQuantileBand(
+                            horizon=b.horizon,
+                            q10_usd=b.q10_usd,
+                            q50_usd=b.q50_usd,
+                            q90_usd=b.q90_usd,
+                            point_usd=b.point_usd,
+                        )
+                        for b in pred.horizon_bands_usd
+                    ]
+                    pred_syn_ex = (pred.synthesis_summary or "")[:900] or None
+                    pred_rev_ex = (pred.reviewer_summary or "")[:600] or None
+            except Exception as e:
+                logger.warning("[decision_terminal] predictor roadmap failed: %s", e)
 
-        if not (bull_p and base_p and bear_p):
-            u, b, e, cg, asm = _heuristic_roadmap(price_f, hist_cagr)
-            bull_p, base_p, bear_p, cagr_b = u, b, e, cg
-            assumptions = asm
-            heuristic_fb = True
-            roadmap_prov.source = "heuristic"
-            roadmap_prov.confidence = 0.25
-            roadmap_prov.formula_or_note = "Symmetric bands or historical CAGR when LLM JSON unavailable."
+        if not predictor_filled:
+            from .deps import knowledge_store
+            stock_profile = knowledge_store.query_stock_profile(t)
+            earnings_memory = knowledge_store.query_earnings_memory(t)
+            fundamentals_n = knowledge_store.query_sp500_fundamentals(t)
+
+            ctx = {
+                "ticker": t,
+                "current_price": price_f,
+                "historical_cagr_3y": hist_cagr,
+                "debate_verdict": debate.verdict,
+                "swarm_verdict": swarm.global_verdict,
+                "valuation_avg_fair": avg_fair,
+                "pct_vs_average": pct_vs,
+                "bull_score": debate.bull_score,
+                "bear_score": debate.bear_score,
+                "moderator_summary": debate.moderator_summary,
+                "stock_profile": stock_profile,
+                "earnings_memory": "\n".join(earnings_memory) if isinstance(earnings_memory, list) else earnings_memory,
+                "fundamentals_narrative": fundamentals_n,
+            }
+            try:
+                rm = await llm_client.generate_decision_terminal_roadmap(t, ctx)
+                bull_p = rm.get("bull_price_usd") or rm.get("bull_price")
+                base_p = rm.get("base_price_usd") or rm.get("base_price")
+                bear_p = rm.get("bear_price_usd") or rm.get("bear_price")
+                assumptions = [str(x) for x in (rm.get("assumptions") or [])][:6]
+                conf_r = float(rm.get("confidence_0_1") or 0.0)
+                if bull_p and base_p and bear_p:
+                    bull_p, base_p, bear_p = float(bull_p), float(base_p), float(bear_p)
+                    if base_p > 0 and price_f > 0:
+                        cagr_b = round((pow(base_p / price_f, 1.0 / 3.0) - 1.0) * 100.0, 2)
+                    heuristic_fb = bool(rm.get("used_heuristic_fallback", False))
+                    roadmap_prov.source = "llm_json"
+                    roadmap_prov.confidence = conf_r
+            except Exception as e:
+                logger.warning("[decision_terminal] roadmap LLM failed: %s", e)
+
+            if not (bull_p and base_p and bear_p):
+                u, b, e, cg, asm = _heuristic_roadmap(price_f, hist_cagr)
+                bull_p, base_p, bear_p, cagr_b = u, b, e, cg
+                assumptions = asm
+                heuristic_fb = True
+                roadmap_prov.source = "heuristic"
+                roadmap_prov.confidence = 0.25
+                roadmap_prov.formula_or_note = "Symmetric bands or historical CAGR when LLM JSON unavailable."
 
     roadmap = TerminalRoadmapPanel(
         bull_price_usd=bull_p,
@@ -712,6 +759,9 @@ async def build_decision_terminal_payload(
         confidence_0_1=conf_r,
         used_heuristic_fallback=heuristic_fb,
         provenance=roadmap_prov,
+        horizon_quantile_bands=horizon_bands,
+        predictor_synthesis_excerpt=pred_syn_ex,
+        predictor_reviewer_excerpt=pred_rev_ex,
     )
 
     provider_audit: Optional[Dict[str, Any]] = None
@@ -791,4 +841,5 @@ async def run_decision_terminal_request(
         ext,
         llm_client,
         include_provider_audit=provider_audit,
+        tool_registry=tool_registry,
     )
