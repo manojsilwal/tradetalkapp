@@ -27,6 +27,7 @@ def evaluate_chat_staleness(
     Additional sources can be added as richer source timestamps become available.
     """
     affected: list[StaleSourceRecord] = []
+    tier = (skill_tier or "").strip().upper()
 
     if bool(meta.get("stale_session")):
         affected.append(
@@ -40,10 +41,10 @@ def evaluate_chat_staleness(
 
     l1_updated_at = meta.get("l1_updated_at")
     now_epoch = time.time()
-    max_min = _tier_l1_threshold_minutes(skill_tier)
+    max_min = _tier_l1_threshold_minutes(tier)
     if l1_updated_at is None:
-        # For advanced/deep flows we require explicit freshness metadata.
-        if (skill_tier or "").strip().upper() in {"ADVANCED", "DEEP"}:
+        # Advanced and deep flows require explicit freshness metadata.
+        if tier in {"ADVANCED", "DEEP"}:
             affected.append(
                 StaleSourceRecord(
                     source="l1_snapshot",
@@ -64,7 +65,7 @@ def evaluate_chat_staleness(
                         signal_type="chat_turn",
                     )
                 )
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
     if not affected:
@@ -76,4 +77,3 @@ def evaluate_chat_staleness(
         affected_sources=affected,
         message="Assistant synthesis blocked because required evidence is stale.",
     )
-
