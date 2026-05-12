@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-09T20:23:35.916744Z",
+  "generated_at": "2026-05-12T02:56:19.765573Z",
   "backend": {
     "entrypoint": "backend/main.py",
     "include_router_hints": [
@@ -41,10 +41,12 @@
           "GET /analyze",
           "GET /debate",
           "GET /decision-terminal",
+          "GET /predictor/forecast",
           "GET /trace",
           "POST /analyze",
           "POST /debate",
           "POST /decision-terminal",
+          "POST /predictor/forecast",
           "POST /trace"
         ]
       },
@@ -242,6 +244,7 @@
     "docs/CRON.md",
     "docs/DECISION_LEDGER.md",
     "docs/FAULTHUNTER_TRIAGE.md",
+    "docs/MCP.md",
     "docs/PHASE_A_USECASES.md",
     "docs/PHASE_B_DREAMING.md",
     "docs/PHASE_CORAL_HUB.md",

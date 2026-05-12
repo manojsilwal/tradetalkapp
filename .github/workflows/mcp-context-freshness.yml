@@ -20,7 +20,9 @@ jobs:
         run: python3 scripts/generate_context_index.py
 
       - name: Check generated index is committed
-        run: git diff --exit-code .tradetalk/context-index.json
+        run: |
+          # ignore generated_at timestamp differences
+          git diff -I'"generated_at":' --exit-code .tradetalk/context-index.json
 
       - name: Validate MCP action registry
         run: python3 scripts/validate_mcp_actions.py
