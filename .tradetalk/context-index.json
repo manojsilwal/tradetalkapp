@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-12T02:35:31.161461Z",
+  "generated_at": "2026-05-12T02:56:19.765573Z",
   "backend": {
     "entrypoint": "backend/main.py",
     "include_router_hints": [
