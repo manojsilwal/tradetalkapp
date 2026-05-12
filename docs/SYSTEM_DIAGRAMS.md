@@ -203,3 +203,146 @@ flowchart TB
 
     Moderator --> Verdict
     Verdict --> RAG
+```
+
+## 6. Decision Ledger & Outcome Grader Loop
+
+This diagram illustrates how agent decisions are recorded, graded against future market reality, and fed back into the system to improve future performance.
+
+```mermaid
+flowchart TD
+    subgraph Producers ["Decision Producers"]
+        Factor["Swarm Factor Agents\n(AgentPair)"]
+        Debate["IC Debate\n(Moderator)"]
+        Chat["Chat Turns\n(Routers)"]
+    end
+
+    subgraph Ledger ["Decision Ledger (SQLite/Supabase)"]
+        Events[("decision_events\n(Verdicts, RAG Refs, Prompts)")]
+        Features[("feature_snapshots\n(Market Regime, Inputs)")]
+        Outcomes[("outcome_observations\n(Returns, Grades)")]
+        Violations[("contract_violations\n(Schema Drift)")]
+    end
+
+    subgraph Grader ["Outcome Grader (Scheduled)"]
+        MarketTruth["Market Truth\n(yFinance / Prices)"]
+        Evaluator["Grader Script\n(02:10 UTC)"]
+    end
+
+    subgraph Consumers ["Consumers (Feedback Loop)"]
+        Stats["Feature Correlations\n(Hit Rates)"]
+        SEPL["SEPL Reflection Source\n(Evolution)"]
+        Replay["Model Swap Replay\n(Candidate Testing)"]
+    end
+
+    Factor -->|emit_decision| Events
+    Debate -->|emit_decision| Events
+    Chat -->|emit_decision| Events
+
+    Factor -.->|inputs| Features
+    Debate -.->|inputs| Features
+
+    Events -.->|read pending| Evaluator
+    MarketTruth --> Evaluator
+    Evaluator -->|write grades| Outcomes
+
+    Events --> Stats
+    Features --> Stats
+    Outcomes --> Stats
+
+    Events --> SEPL
+    Outcomes --> SEPL
+
+    Events --> Replay
+```
+
+## 7. SEPL Resource Registry & Tool Evolution
+
+This diagram shows the Self-Evolving Prompts and Logic (SEPL) pipeline. The pipeline iterates over prompts and tools, perturbing them, evaluating them against offline fixtures, and committing improvements while an offline Kill Switch guards against regressions.
+
+```mermaid
+flowchart TD
+    subgraph Inputs ["Signals"]
+        Reflections["Ledger Outcomes\n(Failure/Success)"]
+        Fixtures["Offline JSON Fixtures\n(Test Cases)"]
+    end
+
+    subgraph Registry ["Resource Registry"]
+        Prompts[("PROMPT YAMLs\n(Learnable)")]
+        Tools[("TOOL Configs\n(Tiers 0-3)")]
+    end
+
+    subgraph Pipeline ["SEPL Finite State Machine"]
+        Reflect["1. Reflect\n(Aggregate Lessons)"]
+        Select["2. Select\n(Pick Weakest Resource)"]
+        Improve["3. Improve\n(LLM for Prompts,\nMath for Tools)"]
+        Evaluate["4. Evaluate\n(Score Candidate vs Active)"]
+        Commit{"5. Commit\n(Margin > Threshold?)"}
+    end
+
+    subgraph Protection ["Kill Switch (Auto-Rollback)"]
+        Verify["Check Post-Commit\nReflections vs Prior"]
+        Restore{"Is Regression\n> Margin?"}
+    end
+
+    Reflections --> Reflect
+    Reflect --> Select
+    Prompts --> Select
+    Tools --> Select
+    Select --> Improve
+    Improve --> Evaluate
+    Fixtures --> Evaluate
+    Evaluate --> Commit
+
+    Commit -- "Yes" --> Registry
+
+    Commit -.-> Verify
+    Verify --> Restore
+    Restore -- "Yes" --> Registry
+```
+
+## 8. CORAL Hub & Named Agents
+
+The CORAL Hub provides a central point for named system agents and infrastructure to persist heartbeat notes, share RAG-adjacent skills, and log meta-learning attempts.
+
+```mermaid
+flowchart TD
+    subgraph Schedulers ["Scheduled Triggers"]
+        Heartbeat["Global Heartbeat\n(Every 30m)"]
+        Reflections["Agent Reflections\n(Every 30m)"]
+    end
+
+    subgraph Agents ["Named Finance Agents"]
+        Ingest["data_ingest\n(Freshness / MIL)"]
+        Technical["technical\n(L1 Quotes, VIX)"]
+        Sentiment["sentiment\n(Headlines)"]
+        Gold["gold_analysis\n(GLD / UUP)"]
+    end
+
+    subgraph Hub ["CORAL Hub (SQLite)"]
+        Notes[("TTL Notes")]
+        Skills[("Reusable Skills")]
+        Attempts[("Task Attempts")]
+    end
+
+    subgraph Infrastructure ["Legacy / Infrastructure"]
+        Trace["swarm_trace"]
+        Dream["dream_synthesizer"]
+        OldHeartbeat["heartbeat"]
+    end
+
+    Heartbeat --> OldHeartbeat
+    Reflections --> Ingest
+    Reflections --> Technical
+    Reflections --> Sentiment
+    Reflections --> Gold
+
+    Ingest -->|add_note| Notes
+    Technical -->|add_note| Notes
+    Sentiment -->|add_note| Notes
+    Gold -->|add_note| Notes
+    OldHeartbeat -->|add_note| Notes
+
+    Trace -->|record_attempt| Attempts
+    Dream -->|add_skill| Skills
+```
