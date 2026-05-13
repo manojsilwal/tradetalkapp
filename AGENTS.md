@@ -58,7 +58,7 @@ Use **Mandatory loop** below (steps 1–6): targeted tests → commit → deploy
 
 4. **Commit and push** — Logical commits; message may reference FaultHunter **test ids** (e.g. `decision-aapl-today`) when fixing evaluator findings.
 
-5. **Deploy** — Pushing to the branch connected to **Render** (backend) and **Vercel** (frontend) triggers builds. Optional **explicit** hooks (if git sync lags): store **Render Deploy Hook** and **Vercel Deploy Hook** URLs as GitHub secrets `RENDER_DEPLOY_HOOK_URL` and `VERCEL_DEPLOY_HOOK_URL`, then `curl -fsS -X POST "$URL"` after push. Avoid double-deploy if pushes already trigger both.
+5. **Deploy** — Backend is typically **GCP Cloud Run**; frontend **Vercel**. Git push may trigger CI/CD per project wiring. Optional **explicit** hooks (if git sync lags): **Vercel Deploy Hook** as GitHub secret `VERCEL_DEPLOY_HOOK_URL`; legacy **Render Deploy Hook** `RENDER_DEPLOY_HOOK_URL` only if still used; then `curl -fsS -X POST "$URL"` after push. Avoid double-deploy if pushes already trigger both.
 
 6. **Verify** — Local: run Vite on **:5173** (Playwright default `baseURL` is `http://localhost:5173`). **Production user smoke** (minimal — do not run the entire E2E folder for every release):  
    `FRONTEND_URL=https://frontend-manojsilwals-projects.vercel.app npm run e2e:smoke`  
@@ -94,7 +94,7 @@ FaultHunter labels cases by **feature** and HTTP path. Use this to find TradeTal
 
 ## What not to “fix” blindly
 
-- **Empty `Target` or bad base URL** in the report: often **Render / GitHub secrets** for FaultHunter (`TRADETALK_BASE_URL`), not application logic.  
+- **Empty `Target` or bad base URL** in the report: often **GitHub / FaultHunter secrets** (`TRADETALK_BASE_URL`), not application logic.  
 - **HTTP 599 / outages:** infrastructure or deploy, not parity tuning.  
 - **Yahoo parity mismatch:** do not weaken FaultHunter checks without human review; fix app fields or data freshness instead.
 

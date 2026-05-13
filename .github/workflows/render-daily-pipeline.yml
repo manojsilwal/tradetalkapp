@@ -1,8 +1,9 @@
-# Triggers the FastAPI daily knowledge pipeline on Render.
+# Triggers the FastAPI daily knowledge pipeline (backend on GCP Cloud Run or other URL).
 # Required repo secrets:
-#   RENDER_API_BASE    — e.g. https://tradetalkapp-backend.onrender.com (no trailing slash)
-#   PIPELINE_CRON_SECRET — must match the same env var on Render
-name: Render daily pipeline
+#   TRADETALK_API_BASE — preferred, e.g. https://tradetalk-api-xxxxx.run.app (no trailing slash)
+#   RENDER_API_BASE — legacy fallback if TRADETALK_API_BASE is unset
+#   PIPELINE_CRON_SECRET — must match PIPELINE_CRON_SECRET on the API service
+name: Daily knowledge pipeline
 
 on:
   schedule:
@@ -15,12 +16,14 @@ jobs:
     steps:
       - name: POST /knowledge/pipeline-run
         env:
-          BASE: ${{ secrets.RENDER_API_BASE }}
+          TRADETALK_API_BASE: ${{ secrets.TRADETALK_API_BASE }}
+          RENDER_API_BASE: ${{ secrets.RENDER_API_BASE }}
           SECRET: ${{ secrets.PIPELINE_CRON_SECRET }}
         run: |
           set -euo pipefail
-          test -n "${BASE:-}" || { echo "Set RENDER_API_BASE in repo secrets"; exit 1; }
-          test -n "${SECRET:-}" || { echo "Set PIPELINE_CRON_SECRET in repo secrets (same as Render)"; exit 1; }
+          BASE="${TRADETALK_API_BASE:-${RENDER_API_BASE:-}}"
+          test -n "${BASE:-}" || { echo "Set TRADETALK_API_BASE or legacy RENDER_API_BASE in repo secrets"; exit 1; }
+          test -n "${SECRET:-}" || { echo "Set PIPELINE_CRON_SECRET in repo secrets (same as backend env)"; exit 1; }
           
           for attempt in 1 2 3; do
             echo "Attempt $attempt..."
