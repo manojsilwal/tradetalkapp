@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -43,6 +45,40 @@ class TestMacroRoute(unittest.TestCase):
         self.assertEqual(payload["treasury_10y"], 4.45)
         self.assertEqual(payload["macro_narrative"], "Rates elevated, dollar firm.")
         self.assertEqual(payload["fred_fetched_at"], "2026-04-04T00:00:00+00:00")
+
+
+class TestMacroFlowRoutes(unittest.TestCase):
+    def test_macro_flow_categories_after_seed(self):
+        with tempfile.TemporaryDirectory() as d:
+            db_path = os.path.join(d, "macro_flow_test.db")
+            with patch.dict(os.environ, {"MACRO_FLOW_DB_PATH": db_path}):
+                from backend.macro_flow.db import init_macro_flow_db
+                from backend.macro_flow.seed import seed_macro_flow_db
+
+                init_macro_flow_db()
+                seed_macro_flow_db(db_path)
+                with TestClient(app) as client:
+                    response = client.get("/macro/flow/categories")
+        self.assertEqual(response.status_code, 200, response.text)
+        cats = response.json().get("categories") or []
+        self.assertGreaterEqual(len(cats), 5)
+
+
+class TestMacroFlowCronRefresh(unittest.TestCase):
+    @patch("backend.macro_flow.orchestrator.run_macro_flow_pipeline", new_callable=AsyncMock)
+    def test_cron_refresh_ok_with_secret(self, mock_pipe):
+        mock_pipe.return_value = {"interval": "1w", "timestamp": 1.0, "categories": 6, "edges": 5}
+        with patch.dict(os.environ, {"PIPELINE_CRON_SECRET": "cron-test"}):
+            with TestClient(app) as client:
+                bad = client.post("/macro/flow/cron-refresh?interval=1w")
+                self.assertEqual(bad.status_code, 401)
+                ok = client.post(
+                    "/macro/flow/cron-refresh?interval=1w",
+                    headers={"Authorization": "Bearer cron-test"},
+                )
+                self.assertEqual(ok.status_code, 200, ok.text)
+                self.assertTrue(ok.json().get("ok"))
+        mock_pipe.assert_called_once()
 
 
 if __name__ == "__main__":

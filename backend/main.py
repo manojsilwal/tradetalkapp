@@ -99,6 +99,18 @@ try:
 except Exception as _e:  # never block startup over prompt seeding
     print(f"[ResourceSeeder][startup] skipped (non-fatal): {_e}")
 
+# Macro flow SQLite (thematic rotation / RRG) — migrations + seed if empty.
+try:
+    from .macro_flow.db import init_macro_flow_db
+    from .macro_flow.store import list_categories_from_db
+    from .macro_flow.seed import seed_macro_flow_db
+
+    init_macro_flow_db()
+    if not list_categories_from_db():
+        seed_macro_flow_db()
+except Exception as _e:
+    print(f"[MacroFlow][startup] skipped (non-fatal): {_e}")
+
 # ── Register routers ─────────────────────────────────────────────────────────
 from .routers import (
     auth as auth_router,

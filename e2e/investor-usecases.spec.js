@@ -39,7 +39,8 @@ test.describe('Investor Use Cases', () => {
     await expect(page.getByRole('heading', { name: 'Global Macroeconomic Grounding' })).toBeVisible({
       timeout: 60000,
     });
-    await expect(page.getByRole('heading', { name: 'Live Sector Rotation' })).toBeVisible({ timeout: 60000 });
+    await expect(page.getByTestId('macro-flow-section')).toBeVisible({ timeout: 120000 });
+    await expect(page.getByRole('heading', { name: 'Thematic capital flow' })).toBeVisible({ timeout: 120000 });
     await expect(page.getByRole('heading', { name: 'Global Capital Flows' })).toBeVisible({ timeout: 60000 });
   });
 

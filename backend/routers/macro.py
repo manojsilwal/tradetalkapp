@@ -1,13 +1,30 @@
 """Macro, metrics, and gold advisor endpoints."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from ..schemas import MacroDataResponse, InvestorMetricsResponse, GoldAdvisorResponse
 from ..auth import get_optional_user
+from ..cron_auth import require_cron_secret
 from ..rate_limiter import rate_limit
-from ..deps import macro_connector, investor_metrics_connector, llm_client, up
+from ..deps import macro_connector, investor_metrics_connector, llm_client, up, knowledge_store
 
 router = APIRouter(tags=["macro"])
 
 _rl_expensive = rate_limit("expensive")
+
+_ALLOWED_FLOW_IV = frozenset({"1d", "1w", "1m", "1y"})
+
+
+def _flow_interval(interval: str) -> str:
+    iv = (interval or "1w").strip().lower()
+    return iv if iv in _ALLOWED_FLOW_IV else "1w"
+
+
+async def _ensure_macro_flow_snapshot(interval: str) -> None:
+    from ..macro_flow.store import latest_rrg_payload
+    from ..macro_flow.orchestrator import run_macro_flow_pipeline_safe
+
+    if latest_rrg_payload(interval):
+        return
+    await run_macro_flow_pipeline_safe(interval, knowledge_store=knowledge_store)
 
 
 @router.get("/macro", response_model=MacroDataResponse)
@@ -60,3 +77,105 @@ async def gold_advisor_snapshot(_auth_user=Depends(get_optional_user)):
         except Exception:
             pass
     return GoldAdvisorResponse(context=result["context"], briefing=result["briefing"])
+
+
+@router.get("/macro/flow/categories")
+async def macro_flow_categories():
+    from ..macro_flow.store import list_categories_from_db, taxonomy_fallback
+
+    rows = list_categories_from_db()
+    if not rows:
+        rows = taxonomy_fallback()
+    return {"categories": rows}
+
+
+@router.get("/macro/flow/rrg")
+async def macro_flow_rrg(interval: str = Query("1w")):
+    from ..macro_flow.store import latest_rrg_payload
+
+    iv = _flow_interval(interval)
+    await _ensure_macro_flow_snapshot(iv)
+    return {"interval": iv, "points": latest_rrg_payload(iv)}
+
+
+@router.post("/macro/flow/refresh", dependencies=[Depends(_rl_expensive)])
+async def macro_flow_refresh(interval: str = Query("1w")):
+    from ..macro_flow.orchestrator import run_macro_flow_pipeline
+
+    iv = _flow_interval(interval)
+    out = await run_macro_flow_pipeline(iv, knowledge_store=knowledge_store)
+    if out.get("error"):
+        return {"ok": False, **out}
+    return {"ok": True, **out}
+
+
+@router.post("/macro/flow/cron-refresh", dependencies=[Depends(require_cron_secret)])
+async def macro_flow_cron_refresh(interval: str = Query("1w")):
+    """Scheduled refresh (GitHub Actions / Render) — same secret as ``/knowledge/pipeline-run``."""
+    from ..macro_flow.orchestrator import run_macro_flow_pipeline
+
+    iv = _flow_interval(interval)
+    out = await run_macro_flow_pipeline(iv, knowledge_store=knowledge_store)
+    if out.get("error"):
+        return {"ok": False, **out}
+    return {"ok": True, **out}
+
+
+@router.get("/macro/flow/sankey")
+async def macro_flow_sankey(interval: str = Query("1w")):
+    from ..macro_flow.store import latest_rrg_payload, latest_edge_flows
+
+    iv = _flow_interval(interval)
+    await _ensure_macro_flow_snapshot(iv)
+    pts = latest_rrg_payload(iv)
+    edges = latest_edge_flows(iv)
+    nodes = []
+    seen = set()
+    for p in pts:
+        cid = p.get("category_id")
+        if cid and cid not in seen:
+            seen.add(cid)
+            nodes.append(
+                {
+                    "id": cid,
+                    "name": p.get("name") or cid,
+                    "qa_verdict": p.get("qa_verdict"),
+                    "flow_score": p.get("flow_score"),
+                }
+            )
+    links = []
+    for e in edges:
+        mag = e.get("flow_magnitude")
+        if mag is None:
+            continue
+        links.append(
+            {
+                "source": e.get("source_category"),
+                "target": e.get("target_category"),
+                "value": abs(float(mag)),
+                "edge_id": e.get("edge_id"),
+                "description": e.get("description"),
+            }
+        )
+    return {"interval": iv, "nodes": nodes, "links": links}
+
+
+@router.get("/macro/flow/value-chain")
+async def macro_flow_value_chain(
+    theme: str = Query("ai-infra"),
+    interval: str = Query("1w"),
+):
+    from ..macro_flow.store import value_chain_payload
+
+    iv = _flow_interval(interval)
+    await _ensure_macro_flow_snapshot(iv)
+    return value_chain_payload(theme, iv)
+
+
+@router.get("/macro/flow/timeline")
+async def macro_flow_timeline(interval: str = Query("1w"), limit: int = Query(30, ge=1, le=120)):
+    from ..macro_flow.store import flow_timeline
+
+    iv = _flow_interval(interval)
+    await _ensure_macro_flow_snapshot(iv)
+    return {"interval": iv, "snapshots": flow_timeline(iv, limit=limit)}

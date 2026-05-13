@@ -1,0 +1,24 @@
+# Daily thematic macro_flow refresh on the Render API (same auth as Render daily pipeline).
+# Secrets: RENDER_API_BASE, PIPELINE_CRON_SECRET (must match Render env).
+name: Macro flow daily refresh
+
+on:
+  schedule:
+    - cron: "25 1 * * *" # 01:25 UTC — after US cash close window
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /macro/flow/cron-refresh
+        env:
+          BASE: ${{ secrets.RENDER_API_BASE }}
+          SECRET: ${{ secrets.PIPELINE_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "${BASE:-}" || { echo "Set RENDER_API_BASE in repo secrets"; exit 1; }
+          test -n "${SECRET:-}" || { echo "Set PIPELINE_CRON_SECRET in repo secrets"; exit 1; }
+          curl -fsS --max-time 900 -X POST "${BASE}/macro/flow/cron-refresh?interval=1w" \
+            -H "Authorization: Bearer ${SECRET}" \
+            -H "Content-Type: application/json"

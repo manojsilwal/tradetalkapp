@@ -1,7 +1,7 @@
 """
 Nightly / scheduled dreaming — ingest recent handoff events into CORAL notes + skills.
 
-Reads ``coral_handoff_events`` (debate + swarm trace) from the last N hours and
+Reads ``coral_handoff_events`` (debate, swarm trace, macro_flow, predictor, …) from the last N hours and
 writes compact hub notes so agents compound context without re-querying Chroma.
 
 Env:
@@ -26,6 +26,8 @@ EVENT_PREDICTOR = "predictor.forecast"
 EVENT_PREDICTOR_SHADOW = "predictor.shadow_diff"
 EVENT_PREDICTOR_DRIFT = "predictor.drift_alert"
 EVENT_PREDICTOR_DEGRADED = "predictor.degraded"
+
+EVENT_MACRO_FLOW = "macro_flow.refresh"
 
 
 async def run_dreaming_job(knowledge_store: Any = None, llm_client: Any = None) -> dict:
@@ -71,6 +73,11 @@ async def run_dreaming_job(knowledge_store: Any = None, llm_client: Any = None) 
         elif et == EVENT_SWARM:
             lines.append(
                 f"- trace {t}: signal={p.get('global_signal')} verdict={p.get('global_verdict')}"
+            )
+        elif et == EVENT_MACRO_FLOW:
+            lines.append(
+                f"- macro_flow {p.get('interval')}: strongest={p.get('strongest_flow_category')} "
+                f"score={p.get('strongest_flow_score')} verdicts={p.get('verdict_counts')}"
             )
         else:
             lines.append(f"- {et}: {str(p)[:120]}")

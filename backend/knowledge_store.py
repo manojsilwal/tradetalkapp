@@ -57,6 +57,7 @@ COLLECTIONS = [
     "sp500_sector_analysis",         # S&P 500 weekly sector rotation + momentum narratives
     "chat_memories",                 # salient chat exchanges stored for cross-session recall
     "yf_batch_chunks",               # batch ETL — yfinance profile chunks + filing metadata path
+    "macro_regime_memories",         # thematic macro_flow QA snapshots (RAG for ledger)
 ]
 
 class _CollectionProxy:
@@ -612,6 +613,41 @@ class KnowledgeStore:
             )
         except Exception as e:
             logger.warning(f"[KnowledgeStore] add_macro_snapshot failed: {e}")
+
+    def add_macro_regime_memory(
+        self,
+        *,
+        text: str,
+        category_id: str = "",
+        interval: str = "",
+        verdict: str = "",
+        confidence: float = 0.0,
+    ) -> None:
+        """Append a macro_flow regime memory row (best-effort)."""
+        col = self._safe_col("macro_regime_memories")
+        if not col:
+            return
+        try:
+            today = str(datetime.now(timezone.utc).date())
+            doc = (text or "").strip()[:8000]
+            if not doc:
+                return
+            eid = f"mrm_{category_id}_{interval}_{int(time.time())}"
+            col.add(
+                documents=[doc],
+                metadatas=[
+                    {
+                        "date": today,
+                        "category_id": (category_id or "")[:64],
+                        "interval": (interval or "")[:16],
+                        "verdict": (verdict or "")[:64],
+                        "confidence": float(confidence),
+                    }
+                ],
+                ids=[eid[:256]],
+            )
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] add_macro_regime_memory failed: {e}")
 
     def add_youtube_insight(self, channel: str, title: str, description: str, published: str, tags: list) -> None:
         col = self._safe_col("youtube_insights")

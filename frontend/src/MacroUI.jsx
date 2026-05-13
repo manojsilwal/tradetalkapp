@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Globe, TrendingUp, TrendingDown, DollarSign, Loader2, AlertTriangle, ArrowRightLeft, Wallet } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { API_BASE_URL, apiFetch } from './api';
+import MacroFlowPanel from './MacroFlowPanel';
 
 /** Static regime-to-sector themes (educational heuristic; not a live signal). */
 const REGIME_IMPACT_MATRIX = {
@@ -73,7 +74,7 @@ export default function MacroUI() {
             <div className="header-section" style={{ marginBottom: '24px' }}>
                 <div className="title-group">
                     <h2>Global Macroeconomic Grounding</h2>
-                    <p>Live Indicators & Sector Rotation</p>
+                    <p>Live indicators, thematic flow, and reference sector ETFs</p>
                 </div>
             </div>
 
@@ -182,11 +183,18 @@ export default function MacroUI() {
             {/* Bottom Grid: Sectors */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px', marginBottom: '24px' }}>
 
-                {/* Sector Rotation */}
+                <MacroFlowPanel />
+
+                {/* Reference sector ETFs (Yahoo parity checks; not the primary rotation signal). */}
                 <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                         <TrendingUp color="var(--accent-orange)" />
-                        <h3 style={{ margin: 0 }}>Live Sector Rotation</h3>
+                        <div>
+                            <h3 style={{ margin: 0 }}>Sector ETF snapshot</h3>
+                            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '4px 0 0 0' }}>
+                                Classic sector ETFs with daily % change (reference only).
+                            </p>
+                        </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, justifyContent: 'space-around' }}>
                         {data.sectors.map(sector => (

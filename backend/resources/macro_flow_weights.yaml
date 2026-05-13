@@ -1,0 +1,5 @@
+# Learnable blend weights for thematic macro flow (read by backend/macro_flow/weights_config.py).
+cmf_weight: 1.2
+rs_weight: 0.8
+# Minimum QA confidence before writing a macro_regime_memories vector row.
+regime_memory_confidence_min: 0.65

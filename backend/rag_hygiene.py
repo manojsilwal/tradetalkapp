@@ -23,6 +23,7 @@ TTL_DAYS: Dict[str, int] = {
     "youtube_insights":     90,    # video summaries — 3 month window
     "chat_memories":        180,   # chat recall — 6 month window
     "macro_snapshots":      180,   # macro snapshots — 6 month window
+    "macro_regime_memories": 365,  # macro_flow regime notes — 1 year
     "swarm_history":        365,   # swarm analyses — 1 year
     "debate_history":       365,   # debate results — 1 year
 }
