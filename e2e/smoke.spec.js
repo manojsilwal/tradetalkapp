@@ -6,6 +6,7 @@
  * Deeper coverage: full `npm run e2e` or `faulthunter-api.spec.js` without smoke profile.
  */
 const { test, expect } = require('@playwright/test');
+const { dismissOnboarding, expectOneOf } = require('./support');
 
 const FRONTEND = process.env.FRONTEND_URL || 'http://localhost:5173';
 
@@ -54,5 +55,15 @@ test.describe('TradeTalkApp E2E smoke', () => {
     await page.goto(FRONTEND);
     await page.click('text=Strategy Lab');
     await expect(page.locator('textarea, input').first()).toBeVisible({ timeout: 10000 });
+  });
+
+  test('paper portfolio route shows import entry or auth gate', async ({ page }) => {
+    await page.goto(`${FRONTEND.replace(/\/$/, '')}/portfolio`);
+    await dismissOnboarding(page);
+    await expectOneOf(
+      page,
+      [/Unlock Paper Portfolio/i, /Import holdings/i, /Open Positions/i, /Add Position/i],
+      30000,
+    );
   });
 });
