@@ -333,6 +333,60 @@ def gemini_chat_turn_result_sync(
     return _with_llm_guard(_call)
 
 
+_HOLDINGS_VISION_INSTRUCTION = (
+    "You are extracting stock and ETF holdings from a broker app screenshot "
+    "(e.g. Robinhood, Fidelity mobile). For each equity line, output ticker, "
+    "share quantity, and average cost per share in USD. "
+    "Rules: use plain US tickers (AAPL, MSFT). Uppercase tickers. "
+    "Ignore cash, buying power, and options unless it is clearly common stock. "
+    "If quantity or average cost is missing or illegible, use null for that field. "
+    "Respond with JSON only: {\"holdings\":[{\"ticker\":string,\"shares\":number|null,\"avg_cost\":number|null}]} "
+    "with no markdown or commentary."
+)
+
+
+def gemini_extract_holdings_from_image(
+    *,
+    image_bytes: bytes,
+    mime_type: str,
+    max_tokens: int = 2048,
+) -> str:
+    """
+    Multimodal Gemini call: screenshot → JSON text body (holdings list).
+    Requires ``GEMINI_API_KEY`` or ``GOOGLE_API_KEY``.
+    """
+    from google.genai import types
+
+    if not image_bytes:
+        raise ValueError("empty image")
+    mt = (mime_type or "image/jpeg").split(";")[0].strip().lower()
+    if mt not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
+        mt = "image/jpeg"
+
+    vision_model = os.environ.get("GEMINI_VISION_MODEL", "").strip() or resolve_gemini_model("heavy")
+
+    def _call() -> str:
+        client = _genai_client()
+        parts = [
+            types.Part(inline_data=types.Blob(data=image_bytes, mime_type=mt)),
+            types.Part(text=_HOLDINGS_VISION_INSTRUCTION),
+        ]
+        contents = [types.Content(role="user", parts=parts)]
+        cfg = types.GenerateContentConfig(
+            temperature=0.1,
+            max_output_tokens=max_tokens,
+            response_mime_type="application/json",
+        )
+        response = client.models.generate_content(
+            model=vision_model,
+            contents=contents,
+            config=cfg,
+        )
+        return _response_text(response)
+
+    return _with_llm_guard(_call)
+
+
 async def gemini_fallback_chat_events(
     *,
     system: str,

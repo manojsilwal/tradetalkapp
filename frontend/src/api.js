@@ -43,6 +43,31 @@ export async function apiFetch(url, options = {}) {
 }
 
 /**
+ * Multipart POST (e.g. image upload). Do not set Content-Type — browser sets boundary.
+ */
+export async function apiPostMultipart(url, formData) {
+  const token = getToken();
+  const headers = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+  const res = await fetch(url, { method: 'POST', body: formData, headers });
+  if (!res.ok) {
+    let errMsg = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      errMsg =
+        typeof body.detail === 'string'
+          ? body.detail
+          : body.detail?.message || body.error || errMsg;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+/**
  * JSON fetch with optional timeout, auth header, and X-Request-ID on errors.
  * Use for long-running endpoints (e.g. POST /backtest) where callers need request_id for QA.
  */

@@ -9,6 +9,12 @@ import threading
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+from .portfolio_holdings_reconcile import (
+    aggregate_open_long_positions,
+    normalize_extracted_holdings,
+    normalize_ticker,
+)
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "progress.db")
 _local  = threading.local()
 STARTING_CASH = 10_000.0
@@ -141,6 +147,120 @@ def get_portfolio_performance(user_id: str) -> Dict[str, Any]:
         "spy_pnl_pct":   round(spy_pnl_pct, 2),
         "beating_spy":   total_pnl_pct > spy_pnl_pct,
     }
+
+
+def _quiet_close_open_long(conn: sqlite3.Connection, user_id: str, ticker: str, today_iso: str) -> int:
+    """Close all open LONG rows for ticker at breakeven (for import replace)."""
+    rows = conn.execute(
+        """
+        SELECT id FROM paper_positions
+        WHERE user_id=? AND ticker=? AND closed=0 AND direction='LONG'
+        """,
+        (user_id, ticker),
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            """
+            UPDATE paper_positions
+            SET closed=1, exit_price=entry_price, exit_date=?, realised_pnl=0
+            WHERE id=? AND user_id=?
+            """,
+            (today_iso, r["id"], user_id),
+        )
+    return len(rows)
+
+
+def _resolve_import_entry_price(ticker: str, avg_cost: Optional[float]) -> float:
+    if avg_cost is not None and float(avg_cost) > 0:
+        return float(avg_cost)
+    try:
+        import yfinance as yf
+
+        return float(yf.Ticker(ticker).fast_info["lastPrice"])
+    except Exception as exc:
+        raise ValueError(f"Could not resolve price for {ticker}: {exc}") from exc
+
+
+def _insert_explicit_long(
+    conn: sqlite3.Connection,
+    user_id: str,
+    ticker: str,
+    shares: float,
+    entry_price: float,
+    source: str,
+    note: str,
+    today_iso: str,
+) -> str:
+    pos_id = f"{ticker}_{int(time.time() * 1000)}"
+    allocated = round(float(shares) * float(entry_price), 6)
+    conn.execute(
+        """
+        INSERT INTO paper_positions
+        (id, user_id, ticker, direction, entry_price, entry_date, shares, allocated, source, note)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            pos_id,
+            user_id,
+            ticker,
+            "LONG",
+            float(entry_price),
+            today_iso,
+            float(shares),
+            allocated,
+            source,
+            note or "",
+        ),
+    )
+    return pos_id
+
+
+def apply_holdings_import(
+    user_id: str,
+    raw_items: List[Dict[str, Any]],
+    *,
+    full_snapshot: bool = False,
+    source: str = "holdings_import",
+    note: str = "",
+) -> Dict[str, Any]:
+    """
+    Replace open LONG positions from an imported holdings list (per-ticker upsert).
+    When full_snapshot is True, open LONG tickers missing from the list are closed.
+    """
+    items = normalize_extracted_holdings(raw_items)
+    errors: List[Dict[str, Any]] = []
+    applied: List[str] = []
+    conn = _get_conn()
+    today = date.today().isoformat()
+    current = aggregate_open_long_positions(get_positions(user_id, include_closed=False))
+    item_tickers = {normalize_ticker(str(i.get("ticker") or "")) for i in items}
+
+    if full_snapshot:
+        for t in list(current.keys()):
+            if t not in item_tickers:
+                _quiet_close_open_long(conn, user_id, t, today)
+
+    for it in items:
+        t = normalize_ticker(str(it.get("ticker") or ""))
+        if not t:
+            continue
+        sh_raw, ac_raw = it.get("shares"), it.get("avg_cost")
+        if sh_raw is None or float(sh_raw) <= 0:
+            errors.append({"ticker": t, "error": "shares must be provided and positive"})
+            continue
+        try:
+            entry = _resolve_import_entry_price(t, float(ac_raw) if ac_raw is not None else None)
+        except ValueError as e:
+            errors.append({"ticker": t, "error": str(e)})
+            continue
+        _quiet_close_open_long(conn, user_id, t, today)
+        _insert_explicit_long(
+            conn, user_id, t, float(sh_raw), entry, source, note, today
+        )
+        applied.append(t)
+
+    conn.commit()
+    return {"applied": applied, "errors": errors}
 
 
 def close_position(user_id: str, position_id: str) -> Dict[str, Any]:
