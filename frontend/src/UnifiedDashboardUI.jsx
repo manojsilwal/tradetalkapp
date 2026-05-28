@@ -6,6 +6,8 @@ import { API_BASE_URL, apiFetch } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
 import DashboardScorecardPanel from './components/DashboardScorecardPanel';
+import DebateThreadPanel from './components/debate/DebateThreadPanel';
+import DebateVerdictSummary from './components/debate/DebateVerdictSummary';
 import './DecisionTerminalUI.css';
 
 // From Decision Terminal
@@ -122,6 +124,9 @@ export default function UnifiedDashboardUI() {
   // From Consumer UI
   const [traceData, setTraceData] = useState(null);
   const [metricsData, setMetricsData] = useState(null);
+  const [debateData, setDebateData] = useState(null);
+  const [debateLoading, setDebateLoading] = useState(false);
+  const [debateError, setDebateError] = useState(null);
 
   // From Decision Terminal
   const [decisionData, setDecisionData] = useState(null);
@@ -147,6 +152,9 @@ export default function UnifiedDashboardUI() {
     if (!overrideTicker) return;
     setTicker(overrideTicker.toUpperCase());
     setLoading(true);
+    setDebateLoading(true);
+    setDebateError(null);
+    setDebateData(null);
     setScorecardLoading(true);
     setError(null);
     setScorecardError(null);
@@ -172,19 +180,37 @@ export default function UnifiedDashboardUI() {
     };
 
     try {
-      const [traceRes, metricsRes, decisionRes, scorecardRes] = await Promise.all([
-        apiFetch(`${API_BASE_URL}/trace?ticker=${sym}`),
+      const [analyzeRes, metricsRes, decisionRes, scorecardRes] = await Promise.all([
+        apiFetch(`${API_BASE_URL}/analyze?ticker=${sym}`).catch(() => null),
         apiFetch(`${API_BASE_URL}/metrics/${sym}`),
         apiFetch(`${API_BASE_URL}/decision-terminal?ticker=${sym}`).catch(() => null),
         fetchScorecard(),
       ]);
 
+      let traceRes = analyzeRes?.swarm || null;
+      let debateRes = analyzeRes?.debate || null;
+
+      if (!traceRes || !debateRes) {
+        const [traceFallback, debateFallback] = await Promise.all([
+          traceRes ? Promise.resolve(traceRes) : apiFetch(`${API_BASE_URL}/trace?ticker=${sym}`).catch(() => null),
+          debateRes ? Promise.resolve(debateRes) : apiFetch(`${API_BASE_URL}/debate?ticker=${sym}`).catch(() => null),
+        ]);
+        traceRes = traceRes || traceFallback;
+        debateRes = debateRes || debateFallback;
+      }
+
+      if (!debateRes) {
+        setDebateError('Debate is temporarily unavailable for this symbol.');
+      }
+
       setTraceData(traceRes);
       setMetricsData(metricsRes?.metrics);
       setDecisionData(decisionRes);
+      setDebateData(debateRes);
 
       addAnalysis(sym, {
         trace: traceRes,
+        debate: debateRes,
         metrics: metricsRes?.metrics,
         dt: decisionRes,
         scorecard: scorecardRes,
@@ -194,6 +220,7 @@ export default function UnifiedDashboardUI() {
     } finally {
       setLoadingStep('');
       setLoading(false);
+      setDebateLoading(false);
     }
   };
 
@@ -525,6 +552,27 @@ export default function UnifiedDashboardUI() {
                  </div>
                </div>
             )}
+          </section>
+        )}
+
+        {(debateLoading || debateData || debateError) && (
+          <section className="dt-panel" style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <h2 className="dt-panel-title">AI Debate Panel</h2>
+            {debateLoading && (
+              <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
+                Running multi-agent debate and synthesizing verdict...
+              </div>
+            )}
+            {debateError && (
+              <div style={{
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+                borderRadius: 10, padding: '12px 16px', color: '#f87171', fontSize: '0.85rem',
+              }}>
+                {debateError}
+              </div>
+            )}
+            <DebateThreadPanel result={debateData} loading={debateLoading} />
+            {!debateLoading && debateData && <DebateVerdictSummary result={debateData} />}
           </section>
         )}
       </div>

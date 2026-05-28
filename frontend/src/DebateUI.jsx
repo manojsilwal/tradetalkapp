@@ -6,6 +6,8 @@ import {
 import { API_BASE_URL, apiFetch } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { EducationTooltip } from './components/EducationLink.jsx';
+import DebateThreadPanel from './components/debate/DebateThreadPanel';
+import DebateVerdictSummary from './components/debate/DebateVerdictSummary';
 
 // Agent configuration
 const AGENTS = [
@@ -428,94 +430,10 @@ export default function DebateUI() {
       )}
 
       {/* ── Debate Arena ─────────────────────────────────────────────────────── */}
-      {(loading || result) && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, 1fr)',
-          gap: 14, marginBottom: 20,
-        }}>
-          {AGENTS.map((agent, idx) => {
-            const isLast = idx === 4;
-            const argument = result?.arguments?.find(a => a.agent_role === agent.role);
-            return (
-              <div key={agent.role} style={isLast ? { gridColumn: '1 / -1', maxWidth: 480, margin: '0 auto', width: '100%' } : {}}>
-                {loading || !argument
-                  ? <AgentCardSkeleton agent={agent} />
-                  : <AgentCard argument={argument} agent={agent} />
-                }
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {(loading || result) && <DebateThreadPanel result={result} loading={loading} />}
 
       {/* ── Verdict Banner ───────────────────────────────────────────────────── */}
-      {result && !loading && (
-        <div ref={verdictRef} style={{
-          background: 'rgba(15,23,42,0.75)',
-          borderRadius: 14, padding: '24px 28px', marginBottom: 20,
-          border: `1px solid ${verdictStyle.color}33`,
-          boxShadow: verdictStyle.glow !== 'none' ? `inset 0 0 40px ${verdictStyle.color}0a` : 'none',
-          animation: 'slideUp 0.4s ease-out both',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap', marginBottom: 16 }}>
-            {/* Ring */}
-            <ScoreRing bullScore={result.bull_score} bearScore={result.bear_score} />
-
-            {/* Verdict text */}
-            <div style={{ flex: 1, minWidth: 160 }}>
-              <div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
-                Panel Verdict
-              </div>
-              <div style={{
-                color: verdictStyle.color, fontSize: 'clamp(1.5rem,4vw,2.2rem)',
-                fontWeight: 800, letterSpacing: '-0.01em',
-                textShadow: verdictStyle.glow, marginBottom: 6,
-              }}>
-                {result.verdict}
-              </div>
-              <div style={{ color: '#94a3b8', fontSize: '0.82rem' }}>
-                Confidence: {Math.round(result.consensus_confidence * 100)}%
-              </div>
-            </div>
-
-            {/* Tally */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {[
-                { label: 'Bullish', count: result.bull_score,    color: '#10b981' },
-                { label: 'Bearish', count: result.bear_score,    color: '#ef4444' },
-                { label: 'Neutral', count: result.neutral_score, color: '#94a3b8' },
-              ].map(({ label, count, color }) => (
-                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                  <span style={{ color: '#64748b', fontSize: '0.8rem', width: 52 }}>{label}</span>
-                  <span style={{ color, fontWeight: 700, fontSize: '0.9rem' }}>{count}/5</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Moderator summary */}
-          <blockquote style={{
-            margin: 0, padding: '14px 18px',
-            borderLeft: `3px solid ${verdictStyle.color}66`,
-            background: `${verdictStyle.color}08`,
-            borderRadius: '0 8px 8px 0',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-              <Gavel size={16} color={verdictStyle.color} style={{ flexShrink: 0, marginTop: 2 }} />
-              <div>
-                <p style={{ color: '#cbd5e1', fontSize: '0.87rem', lineHeight: 1.65, margin: 0 }}>
-                  {result.moderator_summary}
-                </p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
-                  <EducationTooltip term={result.moderator_summary || ''} />
-                </div>
-              </div>
-            </div>
-          </blockquote>
-        </div>
-      )}
+      {result && !loading && <div ref={verdictRef}><DebateVerdictSummary result={result} /></div>}
 
       {/* ── Export Bar ──────────────────────────────────────────────────────── */}
       {result && !loading && (

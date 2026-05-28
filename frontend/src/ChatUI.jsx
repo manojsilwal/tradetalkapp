@@ -387,7 +387,7 @@ export default function ChatUI({ prefetch = null }) {
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px' }}>
+    <div style={{ maxWidth: 760, margin: '0 auto', padding: '24px 12px' }}>
       <h1 style={{ fontSize: '1.35rem', fontWeight: 700, marginBottom: 8, color: '#e2e8f0' }}>
         TradeTalk Assistant
       </h1>
@@ -431,14 +431,15 @@ export default function ChatUI({ prefetch = null }) {
       )}
       <div
         style={{
-          border: '1px solid rgba(148,163,184,0.2)',
-          borderRadius: 12,
-          padding: 16,
-          minHeight: 320,
-          background: 'rgba(15,23,42,0.5)',
+          border: '1px solid rgba(167,139,250,0.35)',
+          boxShadow: '0 0 0 1px rgba(167,139,250,0.12), 0 20px 45px rgba(2,6,23,0.55)',
+          borderRadius: 18,
+          padding: 14,
+          minHeight: 360,
+          background: 'radial-gradient(120% 120% at 20% 0%, rgba(59,130,246,0.09), transparent 45%), rgba(2,6,23,0.9)',
           marginBottom: 12,
           overflowY: 'auto',
-          maxHeight: '55vh',
+          maxHeight: '62vh',
         }}
       >
         {messages.map((m, i) => (
@@ -447,12 +448,28 @@ export default function ChatUI({ prefetch = null }) {
             style={{
               marginBottom: 12,
               whiteSpace: 'pre-wrap',
-              color: m.role === 'user' ? '#a5b4fc' : '#e2e8f0',
+              color: '#e2e8f0',
               fontSize: 14,
               lineHeight: 1.5,
+              display: 'flex',
+              justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start',
             }}
           >
-            <strong>{m.role === 'user' ? 'You' : 'Assistant'}:</strong> {linkifyContent(m.content)}
+            <div
+              style={{
+                maxWidth: '82%',
+                padding: '12px 16px',
+                borderRadius: 14,
+                border: m.role === 'user'
+                  ? '1px solid rgba(148,163,184,0.24)'
+                  : '1px solid rgba(148,163,184,0.12)',
+                background: m.role === 'user'
+                  ? 'linear-gradient(180deg, rgba(71,85,105,0.65), rgba(30,41,59,0.58))'
+                  : 'linear-gradient(180deg, rgba(30,41,59,0.78), rgba(15,23,42,0.7))',
+              }}
+            >
+              <span style={{ opacity: 0.95 }}>{linkifyContent(m.content)}</span>
+            </div>
           </div>
         ))}
         {quoteCards.map((q, i) => (
@@ -478,9 +495,11 @@ export default function ChatUI({ prefetch = null }) {
           </div>
         ))}
         {streaming && (
-          <div style={{ whiteSpace: 'pre-wrap', color: '#e2e8f0', fontSize: 14 }}>
-            <strong>Assistant:</strong> {linkifyContent(streaming)}
-            <span className="cursor-blink">▍</span>
+          <div style={{ whiteSpace: 'pre-wrap', color: '#e2e8f0', fontSize: 14, display: 'flex', justifyContent: 'flex-start' }}>
+            <div style={{ maxWidth: '82%', padding: '12px 16px', borderRadius: 14, border: '1px solid rgba(148,163,184,0.12)', background: 'linear-gradient(180deg, rgba(30,41,59,0.78), rgba(15,23,42,0.7))' }}>
+              {linkifyContent(streaming)}
+              <span className="cursor-blink">▍</span>
+            </div>
           </div>
         )}
         {busy && !streaming && (
@@ -574,11 +593,11 @@ export default function ChatUI({ prefetch = null }) {
           style={{
             flex: 1,
             resize: 'vertical',
-            borderRadius: 10,
-            border: '1px solid rgba(148,163,184,0.25)',
-            background: 'rgba(30,41,59,0.6)',
+            borderRadius: 12,
+            border: '1px solid rgba(148,163,184,0.2)',
+            background: 'rgba(30,41,59,0.8)',
             color: '#e2e8f0',
-            padding: '10px 12px',
+            padding: '12px 14px',
             fontSize: 14,
           }}
         />
@@ -588,17 +607,18 @@ export default function ChatUI({ prefetch = null }) {
           disabled={busy || (sessionLoading && !sessionId) || !input.trim()}
           style={{
             alignSelf: 'flex-end',
-            padding: '10px 18px',
-            borderRadius: 10,
+            padding: '11px 18px',
+            borderRadius: 12,
             border: 'none',
-            background: 'linear-gradient(135deg, #7c3aed, #a78bfa)',
+            background: 'linear-gradient(135deg, #8b5cf6, #a78bfa)',
+            boxShadow: '0 6px 20px rgba(139,92,246,0.35)',
             color: '#fff',
             fontWeight: 700,
             cursor: busy ? 'wait' : 'pointer',
             opacity: busy || (sessionLoading && !sessionId) ? 0.6 : 1,
           }}
         >
-          {busy ? '…' : 'Send'}
+          {busy ? '…' : 'Send →'}
         </button>
       </div>
     </div>
