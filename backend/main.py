@@ -132,6 +132,8 @@ from .routers import (
     sepl as sepl_router,
     scorecard as scorecard_router,
     provider_smoke,
+    swarm_eval as swarm_eval_router,
+    ubds_eval as ubds_eval_router,
 )
 
 app.include_router(auth_router.router)
@@ -152,6 +154,8 @@ app.include_router(resources_router.router)
 app.include_router(sepl_router.router)
 app.include_router(scorecard_router.router)
 app.include_router(provider_smoke.router)
+app.include_router(swarm_eval_router.router)
+app.include_router(ubds_eval_router.router)
 
 # ── Serve generated video files ──────────────────────────────────────────────
 _static_videos = os.path.join(os.path.dirname(__file__), "static", "videos")

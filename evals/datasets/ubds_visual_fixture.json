@@ -1,0 +1,7 @@
+{
+  "design_system_compliance_rate": 0.91,
+  "contrast_pass_rate": 0.94,
+  "empty_state_coverage": 0.82,
+  "loading_state_coverage": 0.88,
+  "error_state_coverage": 0.86
+}

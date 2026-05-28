@@ -1,0 +1,3 @@
+variant: single_agent_rag
+version: v1.0.0
+mode: fixture

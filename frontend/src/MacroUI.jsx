@@ -89,7 +89,7 @@ export default function MacroUI() {
                     <p style={{ color: 'var(--text-muted)', margin: '8px 0 0 0' }}>Market Expectation of near-term risk</p>
                 </div>
 
-                <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px' }}>
+                <div className="dash-card glass-panel fade-in" data-testid="macro-consumer-spending-chart" style={{ padding: '24px', borderRadius: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                         <Wallet color="var(--accent-green)" />
                         <h3 style={{ margin: 0 }}>Total Cash Reserves</h3>
@@ -102,7 +102,7 @@ export default function MacroUI() {
                     <p style={{ color: 'var(--text-muted)', margin: '8px 0 0 0' }}>Sitting on the sidelines</p>
                 </div>
 
-                <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px' }}>
+                <div className="dash-card glass-panel fade-in" data-testid="macro-cash-reserves-chart" style={{ padding: '24px', borderRadius: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                         {isStress ? <AlertTriangle color="var(--accent-red)" /> : <TrendingUp color="var(--accent-green)" />}
                         <h3 style={{ margin: 0 }}>Market Regime</h3>
@@ -186,7 +186,7 @@ export default function MacroUI() {
                 <MacroFlowPanel />
 
                 {/* Regime impact matrix — maps current regime to favored / avoided sector themes */}
-                <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px', display: 'flex', flexDirection: 'column' }}>
+                <div className="dash-card glass-panel fade-in" data-testid="macro-regime-impact-matrix" style={{ padding: '24px', borderRadius: '16px', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                         <TrendingUp color="var(--accent-green)" />
                         <div>
@@ -235,7 +235,7 @@ export default function MacroUI() {
             </div>
 
             {/* Global Capital Flows (Phase 10) */}
-            <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px', marginTop: '24px' }}>
+            <div className="dash-card glass-panel fade-in" data-testid="macro-capital-flows" style={{ padding: '24px', borderRadius: '16px', marginTop: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                     <ArrowRightLeft color="var(--accent-blue)" />
                     <div>

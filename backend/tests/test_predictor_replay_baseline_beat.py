@@ -1,9 +1,11 @@
-"""Regression placeholder: extend with held-out MASE vs seasonal-naive on replay corpus."""
+"""Replay corpus smoke + historical calibration gate."""
 
 import asyncio
 import json
 import os
 import unittest
+
+from backend.predictor.eval.historical_calibration import run_historical_calibration
 
 
 class TestReplayBaselineBeat(unittest.TestCase):
@@ -30,6 +32,13 @@ class TestReplayBaselineBeat(unittest.TestCase):
             out = asyncio.run(_one(row["ticker"]))
             self.assertEqual(out.status, "ok")
             self.assertTrue(out.horizon_bands_usd)
+
+    def test_historical_calibration_gate(self) -> None:
+        os.environ["PREDICTOR_ENABLE"] = "1"
+        os.environ["PREDICTOR_USE_DATA_LAKE"] = "0"
+        out = run_historical_calibration(limit=30)
+        self.assertTrue(out.get("ok"), msg=str(out))
+        self.assertGreaterEqual(out.get("evaluated", 0), 10)
 
 
 if __name__ == "__main__":

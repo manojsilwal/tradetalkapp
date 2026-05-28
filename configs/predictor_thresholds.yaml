@@ -1,5 +1,9 @@
 calibration_lower: 0.75
 calibration_upper: 0.85
+historical_calibration_min_rows: 10
+historical_calibration_coverage_lower: 0.55
+historical_calibration_coverage_upper: 0.92
+historical_calibration_max_pinball_ratio_vs_naive: 1.20
 mase_gate: 1.0
 cost_ceiling_usd_default: 0.05
 stale_macro_hours: 72

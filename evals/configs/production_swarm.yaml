@@ -1,0 +1,3 @@
+variant: production_swarm
+version: v1.0.0
+mode: fixture

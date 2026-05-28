@@ -1,0 +1,7 @@
+{
+  "critical_accessibility_issues": 0,
+  "moderate_accessibility_issues": 4,
+  "contrast_pass_rate": 0.94,
+  "mobile_layout_pass_rate": 0.88,
+  "keyboard_navigation_success": 0.92
+}

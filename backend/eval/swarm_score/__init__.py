@@ -1,0 +1,2 @@
+"""SwarmScore evaluator package."""
+

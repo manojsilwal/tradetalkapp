@@ -41,3 +41,35 @@ def downgrade_confidence_if_miscalibrated(
     if coverage_in_band(measured_coverage):
         return base
     return "low"
+
+
+def pinball_loss(realized: float, quantile: float, tau: float) -> float:
+    """Pinball / quantile loss for a single observation."""
+    err = float(realized) - float(quantile)
+    t = float(tau)
+    return err * t if err >= 0 else err * (t - 1.0)
+
+
+def mean_pinball(
+    realized: Iterable[float],
+    quantiles: Iterable[float],
+    tau: float,
+) -> float:
+    pairs = list(zip(realized, quantiles, strict=False))
+    if not pairs:
+        return 0.0
+    return sum(pinball_loss(y, q, tau) for y, q in pairs) / float(len(pairs))
+
+
+def interval_pinball_mean(
+    realized: float,
+    q10: float,
+    q50: float,
+    q90: float,
+) -> float:
+    """Average pinball loss across q10 / q50 / q90 for one row."""
+    return (
+        pinball_loss(realized, q10, 0.10)
+        + pinball_loss(realized, q50, 0.50)
+        + pinball_loss(realized, q90, 0.90)
+    ) / 3.0

@@ -1,0 +1,15 @@
+{
+  "standard": "UBDS v1.0",
+  "tasks": [
+    { "id": "agent_start_dashboard", "name": "Start agentic task from dashboard", "critical": true },
+    { "id": "understand_agent_path", "name": "Understand which agent/path was selected", "critical": true },
+    { "id": "nav_observer_trace", "name": "View live progress of multi-agent task", "critical": true },
+    { "id": "inspect_rag_evidence", "name": "Inspect retrieved RAG sources", "critical": true },
+    { "id": "understand_ai_confidence", "name": "Identify grounded vs uncertain answer", "critical": true },
+    { "id": "recover_tool_failure", "name": "Recover from failed tool/API call", "critical": true },
+    { "id": "compare_two_reports", "name": "Compare two generated reports", "critical": false },
+    { "id": "export_eval_report", "name": "Export evaluation report", "critical": false },
+    { "id": "find_previous_eval", "name": "Find previous evaluation run", "critical": false },
+    { "id": "dashboard_alert", "name": "Understand dashboard alert/recommendation", "critical": false }
+  ]
+}

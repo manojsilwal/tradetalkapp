@@ -1,0 +1,83 @@
+# UBDS v1.0 — UI Behavior & Design benchmark (fixture on PR; full Playwright on schedule).
+name: UBDS benchmark
+
+on:
+  pull_request:
+    paths:
+      - "backend/eval/ubds/**"
+      - "evals/datasets/ubds_*"
+      - "evals/configs/ubds_benchmark.yaml"
+      - "e2e/ubds-*.js"
+      - "frontend/src/UbdsBenchmarkUI.jsx"
+      - ".github/workflows/ubds-benchmark.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_playwright:
+        description: "Run Playwright UBDS tasks (requires Vite+API)"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "30 8 * * 1"
+
+concurrency:
+  group: ubds-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubds-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt pyyaml
+      - name: UBDS unit tests
+        run: PYTHONPATH=. python -m unittest backend.tests.test_ubds_scoring backend.tests.test_ubds_runner backend.tests.test_ubds_reports -v
+      - name: Run UBDS fixture benchmark
+        run: PYTHONPATH=. python -m backend.eval.ubds.runner --mode fixture
+      - name: Upload UBDS report artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubds-reports
+          path: |
+            evals/reports/latest_uiux.md
+            evals/reports/latest_uiux_results.json
+            frontend/public/dashboard/uiux-summary.json
+
+  ubds-playwright:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_playwright == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          npm ci
+          pip install -r backend/requirements.txt pyyaml
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+      - name: Start API and Vite
+        run: |
+          PYTHONPATH=. uvicorn backend.main:app --host 127.0.0.1 --port 8000 &
+          npm run dev -- --host 127.0.0.1 --port 5173 &
+          sleep 25
+      - name: UBDS Playwright (skip slow chat unless secrets present)
+        run: UBDS_SKIP_CHAT=1 npm run e2e:ubds
+        env:
+          FRONTEND_URL: http://127.0.0.1:5173
+      - name: Score from Playwright output
+        run: PYTHONPATH=. python -m backend.eval.ubds.runner --mode playwright

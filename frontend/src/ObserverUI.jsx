@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Play, Loader2, Bot, ShieldCheck, AlertCircle, CheckCircle2, XCircle, Clock, AlertTriangle, Database, ArrowRight, Zap, MessageSquare, TrendingUp, TrendingDown, Info, Bell, Filter, Search, Shield } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Play, Loader2, Bot, ShieldCheck, AlertCircle, CheckCircle2, XCircle, Clock, AlertTriangle, Database, ArrowRight, Zap, MessageSquare, TrendingUp, TrendingDown, Info, Bell, Filter, Search, Shield, Sparkles, Gauge } from 'lucide-react';
 import { API_BASE_URL, apiFetch } from './api';
 
 // ── Agent metadata ──
@@ -13,6 +14,7 @@ const AGENTS = [
 const NOTIFICATION_TAB_INDEX = AGENTS.length; // 5th tab
 
 export default function ObserverUI() {
+    const navigate = useNavigate();
     const [ticker, setTicker] = useState("GME");
     const [traceData, setTraceData] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -22,6 +24,8 @@ export default function ObserverUI() {
     const [notifLoading, setNotifLoading] = useState(false);
     const [learningHealth, setLearningHealth] = useState(null);
     const [learningHealthError, setLearningHealthError] = useState(null);
+    const [evalSummary, setEvalSummary] = useState(null);
+    const [ubdsSummary, setUbdsSummary] = useState(null);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -31,6 +35,36 @@ export default function ObserverUI() {
                 if (!cancelled) setLearningHealth(data);
             } catch (e) {
                 if (!cancelled) setLearningHealthError(e.message);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch('/dashboard/uiux-summary.json', { cache: 'no-cache' });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!cancelled) setUbdsSummary(data);
+            } catch (_e) {
+                /* optional static dashboard */
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch('/dashboard/eval-summary.json', { cache: 'no-cache' });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!cancelled) setEvalSummary(data);
+            } catch (_e) {
+                // Static eval summary is optional in dev.
             }
         })();
         return () => { cancelled = true; };
@@ -96,6 +130,58 @@ export default function ObserverUI() {
                             {learningHealth.sepl?.dry_run_default ? ' · dry-run' : ''}
                         </div>
                     )}
+                </div>
+            )}
+
+            {evalSummary && (
+                <div style={{
+                    padding: '14px 18px',
+                    borderRadius: '12px',
+                    marginBottom: '20px',
+                    background: 'rgba(251,191,36,0.06)',
+                    border: '1px solid rgba(251,191,36,0.18)',
+                    fontSize: '0.82rem',
+                    lineHeight: 1.6,
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                            <Shield size={16} color="#fbbf24" />
+                            SwarmScore · {String(evalSummary.status || 'hold').toUpperCase()}
+                        </div>
+                        <button type="button" onClick={() => navigate('/swarm-score')} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Sparkles size={14} />
+                            Open full report
+                        </button>
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', marginTop: 8 }}>
+                        Winner: {evalSummary.winner || 'n/a'} · Δ {evalSummary.score_delta ?? 'n/a'}
+                    </div>
+                </div>
+            )}
+
+            {ubdsSummary && (
+                <div style={{
+                    padding: '14px 18px',
+                    borderRadius: '12px',
+                    marginBottom: '20px',
+                    background: 'rgba(56,189,248,0.06)',
+                    border: '1px solid rgba(56,189,248,0.18)',
+                    fontSize: '0.82rem',
+                    lineHeight: 1.6,
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                            <Gauge size={16} color="#38bdf8" />
+                            UBDS · {String(ubdsSummary.status || 'hold').toUpperCase()} · {ubdsSummary.overall_score ?? '—'}
+                        </div>
+                        <button type="button" onClick={() => navigate('/ubds')} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Gauge size={14} />
+                            Open UBDS report
+                        </button>
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', marginTop: 8 }}>
+                        Grade {ubdsSummary.grade || 'n/a'}
+                    </div>
                 </div>
             )}
 

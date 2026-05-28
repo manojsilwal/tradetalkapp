@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, MessageCircle, Scale } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, MessageCircle, Scale, Sparkles } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -16,6 +16,8 @@ const GoldAdvisorUI = React.lazy(() => import('./GoldAdvisorUI'))
 const DebateUI = React.lazy(() => import('./DebateUI'))
 const BacktestUI = React.lazy(() => import('./BacktestUI'))
 const ObserverUI = React.lazy(() => import('./ObserverUI'))
+const SwarmScoreUI = React.lazy(() => import('./SwarmScoreUI'))
+const UbdsBenchmarkUI = React.lazy(() => import('./UbdsBenchmarkUI'))
 const SystemMapUI = React.lazy(() => import('./SystemMapUI'))
 const SystemDiagramsUI = React.lazy(() => import('./SystemDiagramsUI'))
 const DailyChallengeUI = React.lazy(() => import('./DailyChallengeUI'))
@@ -42,6 +44,8 @@ const ROUTE_TO_KEY = {
     '/backtest': 'backtest',
     '/scorecard': 'scorecard',
     '/observer': 'observer',
+    '/swarm-score': 'swarm_score',
+    '/ubds': 'ubds',
     '/systemmap': 'systemmap',
     '/challenge': 'challenge',
     '/portfolio': 'portfolio',
@@ -273,6 +277,24 @@ function App() {
                     </button>
 
                     <button
+                        className={`nav-btn ${activeTab === 'swarm_score' ? 'active' : ''}`}
+                        onClick={() => { navigate('/swarm-score'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/swarm-score' ? 'page' : undefined}
+                    >
+                        <Sparkles size={20} />
+                        <span>SwarmScore Eval</span>
+                    </button>
+
+                    <button
+                        className={`nav-btn ${activeTab === 'ubds' ? 'active' : ''}`}
+                        onClick={() => { navigate('/ubds'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/ubds' ? 'page' : undefined}
+                    >
+                        <Gauge size={20} />
+                        <span>UBDS Benchmark</span>
+                    </button>
+
+                    <button
                         className={`nav-btn ${activeTab === 'systemmap' ? 'active' : ''}`}
                         onClick={() => { navigate('/systemmap'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/systemmap' ? 'page' : undefined}
@@ -306,6 +328,8 @@ function App() {
                             <Route path="/backtest" element={<BacktestUI />} />
                             <Route path="/scorecard" element={<ScorecardUI />} />
                             <Route path="/observer" element={<ObserverUI />} />
+                            <Route path="/swarm-score" element={<SwarmScoreUI />} />
+                            <Route path="/ubds" element={<UbdsBenchmarkUI />} />
                             <Route path="/systemmap" element={<SystemMapUI />} />
                             <Route path="/system-diagrams" element={<SystemDiagramsUI />} />
                             <Route path="/challenge" element={

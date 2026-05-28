@@ -18,7 +18,9 @@ jobs:
         run: pip install -r backend/requirements.txt
       - name: Predictor unit tests
         run: PYTHONPATH=. python -m unittest discover -s backend/tests -p 'test_predictor*.py' -v
-      - name: Replay smoke eval
+      - name: Replay smoke + historical calibration eval
         run: PYTHONPATH=. python -m backend.predictor.eval
+      - name: Historical calibration only (explicit)
+        run: PYTHONPATH=. python -m backend.predictor.eval.historical_calibration
       - name: No-trade import lint
         run: PYTHONPATH=. python scripts/lint_no_trade_imports.py

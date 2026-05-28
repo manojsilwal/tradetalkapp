@@ -54,9 +54,17 @@ def run_replay_smoke(*, limit: int = 12) -> Dict[str, Any]:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     lim = int(os.environ.get("PREDICTOR_EVAL_LIMIT", "12"))
-    out = run_replay_smoke(limit=lim)
-    logger.info("[predictor.eval] %s", out)
-    raise SystemExit(0 if out.get("ok") else 1)
+    smoke = run_replay_smoke(limit=lim)
+    logger.info("[predictor.eval] smoke %s", smoke)
+
+    from .historical_calibration import run_historical_calibration
+
+    cal_lim = int(os.environ.get("PREDICTOR_CALIB_LIMIT", "50"))
+    cal = run_historical_calibration(limit=cal_lim)
+    logger.info("[predictor.eval] calibration %s", cal)
+
+    ok = bool(smoke.get("ok")) and bool(cal.get("ok"))
+    raise SystemExit(0 if ok else 1)
 
 
 if __name__ == "__main__":

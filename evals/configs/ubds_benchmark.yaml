@@ -1,0 +1,19 @@
+# UBDS v1.0 — per-task time benchmarks (median ms) for efficiency scoring
+app_name: TradeTalk
+version: dev
+benchmark_type: internal
+median_time_on_task_ms: 45000
+tasks:
+  agent_start_dashboard: 35000
+  understand_agent_path: 20000
+  nav_observer_trace: 120000
+  inspect_rag_evidence: 180000
+  understand_ai_confidence: 180000
+  recover_tool_failure: 150000
+  compare_two_reports: 25000
+  export_eval_report: 15000
+  find_previous_eval: 20000
+  dashboard_alert: 30000
+  nav_swarm_score: 15000
+  nav_macro_surface: 60000
+  nav_decision_terminal: 90000
