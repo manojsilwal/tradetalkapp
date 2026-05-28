@@ -282,6 +282,7 @@ export default function ConsumerUI() {
                             question="What does the prediction market say?"
                             answer={data?.factors?.polymarket?.trading_signal === 1 ? 'Crowd is betting on upside' : 'No prediction markets for this stock'}
                             isPositive={data?.factors?.polymarket?.trading_signal === 1}
+                            sentiment={(data?.factors?.polymarket?.trading_signal ?? 0) > 0 ? 'positive' : 'neutral'}
                             detail={getRationale('polymarket')}
                             delay="0.3s"
                         />
@@ -759,8 +760,14 @@ const MetricChartCard = ({ title, data, color, chartType }) => {
 };
 
 // --- Factor Signal Card (Premium Q&A Format) ---
-const FactorSignalCard = ({ icon, accentColor, label, question, answer, isPositive, detail, delay }) => {
+const FactorSignalCard = ({ icon, accentColor, label, question, answer, isPositive, detail, delay, sentiment }) => {
     const [expanded, setExpanded] = useState(false);
+    const resolvedSentiment = sentiment || (isPositive ? 'positive' : 'negative');
+    const toneColor = resolvedSentiment === 'positive'
+        ? 'var(--accent-green)'
+        : resolvedSentiment === 'negative'
+            ? 'var(--accent-red)'
+            : 'var(--text-muted)';
 
     return (
         <div className="fade-in" style={{
@@ -792,9 +799,11 @@ const FactorSignalCard = ({ icon, accentColor, label, question, answer, isPositi
                         </div>
                         <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, color: 'var(--text-muted)' }}>{label}</span>
                     </div>
-                    {isPositive
+                    {resolvedSentiment === 'positive'
                         ? <CheckCircle2 size={18} color="var(--accent-green)" />
-                        : <XCircle size={18} color="var(--accent-red)" />
+                        : resolvedSentiment === 'negative'
+                            ? <XCircle size={18} color="var(--accent-red)" />
+                            : <Info size={18} color="var(--text-muted)" />
                     }
                 </div>
 
@@ -804,7 +813,7 @@ const FactorSignalCard = ({ icon, accentColor, label, question, answer, isPositi
                 {/* Answer */}
                 <p style={{
                     margin: 0, fontSize: '1.1rem', fontWeight: 600,
-                    color: isPositive ? 'var(--accent-green)' : 'var(--accent-red)',
+                    color: toneColor,
                     lineHeight: 1.4
                 }}>
                     {answer}

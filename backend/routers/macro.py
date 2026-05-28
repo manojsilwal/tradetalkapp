@@ -157,7 +157,22 @@ async def macro_flow_sankey(interval: str = Query("1w")):
                 "description": e.get("description"),
             }
         )
+    for n in nodes:
+        cid = n.get("id")
+        for p in pts:
+            if p.get("category_id") == cid and p.get("color_hex"):
+                n["color_hex"] = p.get("color_hex")
+                break
     return {"interval": iv, "nodes": nodes, "links": links}
+
+
+@router.get("/macro/flow/stock-graph", dependencies=[Depends(_rl_expensive)])
+async def macro_flow_stock_graph(interval: str = Query("1w")):
+    """S&P 500 stock-level co-flow graph (correlation-weighted directed edges)."""
+    from ..macro_flow.stock_graph import build_stock_flow_graph_async
+
+    iv = _flow_interval(interval)
+    return await build_stock_flow_graph_async(iv)
 
 
 @router.get("/macro/flow/value-chain")

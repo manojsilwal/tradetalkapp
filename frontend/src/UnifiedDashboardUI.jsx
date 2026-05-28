@@ -206,6 +206,14 @@ export default function UnifiedDashboardUI() {
 
   const valFill = valuationArcRatio(v?.pct_vs_average);
   const pmFill = z?.polymarket_gated_out ? 0.35 : polymarketArcRatio(z?.prediction_market_bullish_pct);
+  const socialFactor = traceData?.factors?.social_sentiment;
+  const socialConfPct = socialFactor?.confidence != null
+    ? Number((socialFactor.confidence * 100).toFixed(0))
+    : null;
+  const socialBullish = Number(socialFactor?.trading_signal ?? 0) > 0;
+  const socialFill = socialConfPct != null
+    ? polymarketArcRatio(socialBullish ? socialConfPct : 100 - socialConfPct)
+    : 0.5;
 
   const expertPct = z?.expert_bullish_pct;
   const expertBullish = expertPct != null && expertPct >= 55;
@@ -350,14 +358,29 @@ export default function UnifiedDashboardUI() {
         <section className="dt-panel" style={{ gridColumn: 'span 1' }}>
           <h2 className="dt-panel-title">Verdict & Sentiment Hub</h2>
           <div className="dt-verdict-split" style={{ display: 'flex', gap: '24px', marginTop: '16px', alignItems: 'center' }}>
-            <div className="dt-pm-block" style={{ flex: 1, textAlign: 'center' }}>
-              <div className="dt-subblock-title" style={{ marginBottom: '12px' }}>Prediction Market Sentiment</div>
-              <div className="dt-pm-gauge-wrap" style={{ position: 'relative', display: 'inline-block' }}>
-                <SemiGauge fillRatio={hasDecisionData ? pmFill : 0.5} size="small" />
-                <div className="dt-pm-label" style={{ position: 'absolute', bottom: '8px', left: '50%', transform: 'translateX(-50%)', fontWeight: 600 }}>
-                  {hasDecisionData && !z?.polymarket_gated_out && z?.prediction_market_bullish_pct != null
-                    ? `${z.prediction_market_bullish_pct}% Bullish`
-                    : hasDecisionData ? 'No gated market' : '—'}
+            <div className="dt-pm-block" style={{ flex: 1, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              <div>
+                <div className="dt-subblock-title" style={{ marginBottom: '12px' }}>Social Media Sentiment</div>
+                <div className="dt-pm-gauge-wrap" style={{ position: 'relative', display: 'inline-block' }}>
+                  <SemiGauge fillRatio={socialFill} size="small" />
+                  <div className="dt-pm-label" style={{ position: 'absolute', bottom: '8px', left: '50%', transform: 'translateX(-50%)', fontWeight: 600 }}>
+                    {socialConfPct != null
+                      ? socialBullish
+                        ? `${socialConfPct}% Bullish`
+                        : `${100 - socialConfPct}% Mixed/Bearish`
+                      : '—'}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div className="dt-subblock-title" style={{ marginBottom: '12px' }}>Polymarket Sentiment</div>
+                <div className="dt-pm-gauge-wrap" style={{ position: 'relative', display: 'inline-block' }}>
+                  <SemiGauge fillRatio={hasDecisionData ? pmFill : 0.5} size="small" />
+                  <div className="dt-pm-label" style={{ position: 'absolute', bottom: '8px', left: '50%', transform: 'translateX(-50%)', fontWeight: 600 }}>
+                    {hasDecisionData && !z?.polymarket_gated_out && z?.prediction_market_bullish_pct != null
+                      ? `${z.prediction_market_bullish_pct}% Bullish`
+                      : hasDecisionData ? 'No gated market' : '—'}
+                  </div>
                 </div>
               </div>
             </div>
@@ -448,17 +471,32 @@ export default function UnifiedDashboardUI() {
 
               {/* Factor Signals using FactorSignalCard style simplified */}
               {Object.entries(traceData.factors || {}).map(([key, factorData], idx) => {
-                 const isPositive = factorData.trading_signal > 0;
+                 const signal = Number(factorData?.trading_signal ?? 0);
+                 const sentiment = signal > 0 ? 'bullish' : signal < 0 ? 'bearish' : 'neutral';
+                 const titleText = sentiment === 'bullish'
+                   ? 'Bullish Signal'
+                   : sentiment === 'bearish'
+                     ? 'Bearish Signal'
+                     : 'No Market Signal';
+                 const titleColor = sentiment === 'bullish'
+                   ? '#00ff88'
+                   : sentiment === 'bearish'
+                     ? '#f87171'
+                     : '#94a3b8';
                  return (
                    <div key={key} data-testid={`dashboard-factor-${key}`} style={{ padding: '20px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px' }}>
                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                        <span style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, color: '#94a3b8' }}>
                          {key.replace('_', ' ')}
                        </span>
-                       {isPositive ? <CheckCircle2 size={18} color="#00ff88" /> : <XCircle size={18} color="#f87171" />}
+                       {sentiment === 'bullish'
+                         ? <CheckCircle2 size={18} color="#00ff88" />
+                         : sentiment === 'bearish'
+                           ? <XCircle size={18} color="#f87171" />
+                           : <HelpCircle size={18} color="#94a3b8" />}
                      </div>
-                     <p style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: 600, color: isPositive ? '#00ff88' : '#f87171' }}>
-                        {isPositive ? 'Bullish Signal' : 'Bearish Signal'} (Conf: {(factorData.confidence * 100).toFixed(0)}%)
+                     <p style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: 600, color: titleColor }}>
+                        {titleText} (Conf: {(factorData.confidence * 100).toFixed(0)}%)
                      </p>
                      <p style={{ margin: 0, fontSize: '13px', color: '#cbd5e1', lineHeight: 1.5 }}>
                         {getRationale(key)}

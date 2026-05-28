@@ -2,6 +2,7 @@ import asyncio
 import yfinance as yf
 from typing import Dict, Any, List
 from .base import DataConnector
+from .debate_data import fetch_debate_data
 
 class InvestorMetricsConnector(DataConnector):
     """
@@ -12,64 +13,92 @@ class InvestorMetricsConnector(DataConnector):
     
     async def fetch_data(self, **kwargs) -> Dict[str, Any]:
         ticker_sym = kwargs.get("ticker", "GME").upper()
+
+        def _num(v: Any, default: float = 0.0) -> float:
+            try:
+                if v is None:
+                    return float(default)
+                return float(v)
+            except (TypeError, ValueError):
+                return float(default)
+
+        def _compute_rsi_14(prices: List[float]) -> float | None:
+            if len(prices) < 15:
+                return None
+            gains: List[float] = []
+            losses: List[float] = []
+            for i in range(1, len(prices)):
+                d = prices[i] - prices[i - 1]
+                gains.append(max(d, 0.0))
+                losses.append(abs(min(d, 0.0)))
+            avg_gain = sum(gains[-14:]) / 14.0
+            avg_loss = sum(losses[-14:]) / 14.0
+            if avg_loss == 0:
+                return 100.0
+            rs = avg_gain / avg_loss
+            return 100.0 - (100.0 / (1.0 + rs))
         
         def get_all_metrics() -> Dict[str, Any]:
             ticker = yf.Ticker(ticker_sym)
-            info = ticker.info
+            info = ticker.info or {}
+            hist_3mo = ticker.history(period="3mo")
+            closes: List[float] = []
+            if hist_3mo is not None and not hist_3mo.empty and "Close" in hist_3mo:
+                closes = [float(v) for v in hist_3mo["Close"].dropna().tolist()]
             
             # --- 1. ROIC & ROE ---
-            roe = info.get("returnOnEquity", 0) * 100
-            roa = info.get("returnOnAssets", 0) * 100
+            roe = _num(info.get("returnOnEquity")) * 100
+            roa = _num(info.get("returnOnAssets")) * 100
             # Proxy ROIC with ROA + some premium if not directly available
             roic = roe * 0.8 if roe > 0 else roa
             
             # --- 2. Free Cash Flow Yield ---
-            fcf = info.get("freeCashflow", 0)
-            market_cap = info.get("marketCap", 1) # Avoid div by zero
+            fcf = _num(info.get("freeCashflow"))
+            market_cap = _num(info.get("marketCap"), 1.0) # Avoid div by zero
             fcf_yield = (fcf / market_cap) * 100 if fcf else 0
             
             # --- 3. EV/EBIT ---
-            ev = info.get("enterpriseValue", 0)
-            ebitda = info.get("ebitda", 0)
+            ev = _num(info.get("enterpriseValue"))
+            ebitda = _num(info.get("ebitda"))
             ev_ebit = (ev / ebitda) if ebitda else 0
             
             # --- 4. Owner Earnings ---
             # Proxy: Net Income + Depreciation (often roughly equals Operating Cash Flow)
-            op_cashflow = info.get("operatingCashflow", 0)
-            capex = info.get("capitalExpenditures", 0) # usually negative
+            op_cashflow = _num(info.get("operatingCashflow"))
+            capex = _num(info.get("capitalExpenditures")) # usually negative
             owner_earnings = op_cashflow + capex # adding negative effectively subtracts
             
             # --- 5. Capacity to Reinvest ---
             # Highly subjective. Proxy: Retained earnings growth or simply Revenue Growth
-            rev_growth = info.get("revenueGrowth", 0) * 100
+            rev_growth = _num(info.get("revenueGrowth")) * 100
             
             # --- 6. Interest Coverage ---
-            ebitda_margin = info.get("ebitdaMargins", 0)
+            ebitda_margin = _num(info.get("ebitdaMargins"))
             # Yfinance doesn't cleanly expose interest expense in simple info dict often.
             # Proxy based on totalDebt
-            total_debt = info.get("totalDebt", 0)
+            total_debt = _num(info.get("totalDebt"))
             # Assume 5% average interest rate on debt
             est_interest = total_debt * 0.05
             int_coverage = (ebitda / est_interest) if est_interest > 0 else 999
             
             # --- 7. Price-to-Tangible Book ---
-            ptb = info.get("priceToBook", 0) # Using P/B as close proxy
+            ptb = _num(info.get("priceToBook")) # Using P/B as close proxy
             
             # --- 8. Gross & Operating Margins ---
-            gross_margin = info.get("grossMargins", 0) * 100
-            op_margin = info.get("operatingMargins", 0) * 100
+            gross_margin = _num(info.get("grossMargins")) * 100
+            op_margin = _num(info.get("operatingMargins")) * 100
             
             # --- 9. Shareholder Yield (Dividend Yield + Net Buyback Yield) ---
-            dividend_yield = info.get("dividendYield", 0) or 0
+            dividend_yield = _num(info.get("dividendYield"))
             dividend_yield_pct = dividend_yield * 100
             # Approximate buyback yield from share repurchase data
-            shares_outstanding = info.get("sharesOutstanding", 0) or 1
+            shares_outstanding = _num(info.get("sharesOutstanding"), 1.0)
             # yfinance doesn't directly expose buyback $ easily; approximate from 
             # the difference between operating cash flow allocation
-            buyback_amount = info.get("shareRepurchasesAndIssuances", 0) or 0
+            buyback_amount = _num(info.get("shareRepurchasesAndIssuances"))
             if buyback_amount == 0:
                 # Fallback: estimate from FCF minus dividends paid
-                dividends_paid = abs(info.get("lastDividendValue", 0) or 0) * shares_outstanding
+                dividends_paid = abs(_num(info.get("lastDividendValue"))) * shares_outstanding
                 estimated_buyback = max(0, fcf - dividends_paid - capex) * 0.5  # Conservative estimate
                 buyback_yield_pct = (estimated_buyback / market_cap) * 100 if market_cap > 0 else 0
             else:
@@ -79,9 +108,9 @@ class InvestorMetricsConnector(DataConnector):
             # --- 10. Margin of Safety ---
             # Calculated intrinsic value discount. 
             # We'll calculate a crude Graham Number as an intrinsic value proxy
-            eps = info.get("trailingEps", 0)
-            bps = info.get("bookValue", 0)
-            current_price = info.get("currentPrice", 0)
+            eps = _num(info.get("trailingEps"))
+            bps = _num(info.get("bookValue"))
+            current_price = _num(info.get("currentPrice"))
             
             graham_number = 0
             margin_of_safety = 0
@@ -117,6 +146,10 @@ class InvestorMetricsConnector(DataConnector):
                     data.append(round(val + noise, 2))
                     val += step
                 return data
+
+            rsi_14 = _compute_rsi_14(closes)
+            inst_ownership_pct = _num(info.get("heldPercentInstitutions")) * 100
+            short_percent_float = _num(info.get("shortPercentOfFloat")) * 100
 
             return {
                 "roic_roe": {
@@ -178,12 +211,52 @@ class InvestorMetricsConnector(DataConnector):
                     "historical": format_val(margin_of_safety - 10, "% Discount") if margin_of_safety > 10 else "N/A",
                     "trend": "Better Value" if margin_of_safety > 0 else "Overvalued",
                     "history": make_sparkline(margin_of_safety, 0.2)
-                }
+                },
+                # Explicit keys used by UnifiedDashboardUI "Key Metrics Activity"
+                "momentum_rsi": {
+                    "current": format_val(rsi_14) if rsi_14 is not None else "N/A",
+                    "historical": "N/A",
+                    "trend": "N/A",
+                },
+                "institutional_ownership": {
+                    "current": format_val(inst_ownership_pct, "%") if inst_ownership_pct > 0 else "N/A",
+                    "historical": "N/A",
+                    "trend": "N/A",
+                },
+                "short_interest": {
+                    "current": format_val(short_percent_float, "%") if short_percent_float > 0 else "N/A",
+                    "historical": "N/A",
+                    "trend": "N/A",
+                },
             }
             
         try:
-            metrics = await asyncio.to_thread(get_all_metrics)
-            return {"ticker": ticker_sym, "metrics": metrics}
+            # Parallel acquisition: primary yfinance metrics + fallback debate_data
+            yf_task = asyncio.to_thread(get_all_metrics)
+            fallback_task = fetch_debate_data(ticker_sym)
+            metrics, fallback = await asyncio.gather(yf_task, fallback_task, return_exceptions=True)
+
+            if isinstance(metrics, Exception):
+                metrics = {}
+            if isinstance(fallback, Exception):
+                fallback = {}
+
+            # Hydrate key activity fields from fallback path when yfinance path is missing.
+            if metrics:
+                if metrics.get("momentum_rsi", {}).get("current") in ("N/A", "", None):
+                    one_m = fallback.get("price_return_1m")
+                    if one_m is not None:
+                        # Approximate RSI proxy from 1m return when history is unavailable.
+                        proxy = max(5.0, min(95.0, 50.0 + float(one_m) * 1.2))
+                        metrics["momentum_rsi"]["current"] = f"{proxy:.1f}"
+                        metrics["momentum_rsi"]["trend"] = "Proxy"
+                if metrics.get("short_interest", {}).get("current") in ("N/A", "", None):
+                    spf = fallback.get("short_percent_float")
+                    if spf is not None and float(spf) > 0:
+                        metrics["short_interest"]["current"] = f"{float(spf):.1f}%"
+                        metrics["short_interest"]["trend"] = "Fallback"
+
+            return {"ticker": ticker_sym, "metrics": metrics or {}}
         except Exception as e:
             # Safe Fallback
             return {"ticker": ticker_sym, "error": str(e), "metrics": {}}
