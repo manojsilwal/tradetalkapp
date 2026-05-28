@@ -18,6 +18,7 @@ services:
       VECTOR_BACKEND: supabase
       SP500_INGEST_ON_STARTUP: "0"
       CORS_ORIGINS: "https://frontend-manojsilwals-projects.vercel.app,http://34.57.42.63:5050"
+      TRADETALK_REPO_ROOT: "/app"
       # SEPL tool evolution
       SEPL_TOOL_ENABLE: "1"
       SEPL_TOOL_DRY_RUN: "0"
@@ -35,6 +36,9 @@ services:
       SEPL_TOOL_CANDIDATES_PER_CYCLE: "4"
     volumes:
       - tradetalk-data:/app/data
+      # Evaluators read datasets and write reports under /app/evals (repo root = /app)
+      - ./evals:/app/evals
+      - ./frontend/public/dashboard:/app/frontend/public/dashboard
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/llm/status')"]
       interval: 30s
