@@ -5,6 +5,7 @@ import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Responsive
 import { API_BASE_URL, apiFetch } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
+import DashboardScorecardPanel from './components/DashboardScorecardPanel';
 import './DecisionTerminalUI.css';
 
 // From Decision Terminal
@@ -125,6 +126,10 @@ export default function UnifiedDashboardUI() {
   // From Decision Terminal
   const [decisionData, setDecisionData] = useState(null);
 
+  const [scorecardData, setScorecardData] = useState(null);
+  const [scorecardError, setScorecardError] = useState(null);
+  const [scorecardLoading, setScorecardLoading] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [error, setError] = useState(null);
@@ -142,20 +147,48 @@ export default function UnifiedDashboardUI() {
     if (!overrideTicker) return;
     setTicker(overrideTicker.toUpperCase());
     setLoading(true);
+    setScorecardLoading(true);
     setError(null);
+    setScorecardError(null);
+    setScorecardData(null);
     setLoadingStep('Fetching combined market data...');
+    const sym = overrideTicker.toUpperCase();
+
+    const fetchScorecard = async () => {
+      try {
+        const res = await apiFetch(
+          `${API_BASE_URL}/scorecard/${encodeURIComponent(sym)}?preset=balanced`
+        );
+        setScorecardData(res);
+        setScorecardError(null);
+        return res;
+      } catch (err) {
+        setScorecardData(null);
+        setScorecardError(typeof err.message === 'string' ? err.message : 'Scorecard unavailable');
+        return null;
+      } finally {
+        setScorecardLoading(false);
+      }
+    };
+
     try {
-      const [traceRes, metricsRes, decisionRes] = await Promise.all([
-        apiFetch(`${API_BASE_URL}/trace?ticker=${overrideTicker}`),
-        apiFetch(`${API_BASE_URL}/metrics/${overrideTicker}`),
-        apiFetch(`${API_BASE_URL}/decision-terminal?ticker=${overrideTicker}`).catch(() => null)
+      const [traceRes, metricsRes, decisionRes, scorecardRes] = await Promise.all([
+        apiFetch(`${API_BASE_URL}/trace?ticker=${sym}`),
+        apiFetch(`${API_BASE_URL}/metrics/${sym}`),
+        apiFetch(`${API_BASE_URL}/decision-terminal?ticker=${sym}`).catch(() => null),
+        fetchScorecard(),
       ]);
 
       setTraceData(traceRes);
       setMetricsData(metricsRes?.metrics);
       setDecisionData(decisionRes);
 
-      addAnalysis(overrideTicker.toUpperCase(), { trace: traceRes, metrics: metricsRes?.metrics, dt: decisionRes });
+      addAnalysis(sym, {
+        trace: traceRes,
+        metrics: metricsRes?.metrics,
+        dt: decisionRes,
+        scorecard: scorecardRes,
+      });
     } catch (err) {
       setError(typeof err.message === 'string' ? err.message : JSON.stringify(err.message));
     } finally {
@@ -345,6 +378,13 @@ export default function UnifiedDashboardUI() {
             </div>
           </div>
         </section>
+
+        <DashboardScorecardPanel
+          data={scorecardData}
+          ticker={searchUpper}
+          loading={scorecardLoading}
+          error={scorecardError}
+        />
 
         {/* Future Price Roadmap */}
         <section className="dt-panel" style={{ gridColumn: '1 / -1' }}>

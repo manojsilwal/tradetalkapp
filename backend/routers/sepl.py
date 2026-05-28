@@ -28,16 +28,17 @@ from pydantic import BaseModel, Field
 from ..deps import knowledge_store, llm_client, resource_registry
 from ..sepl import (
     SEPL,
-    KnowledgeStoreReflectionSource,
     RollbackOutcome,
     SEPLKillSwitch,
     SEPLOutcome,
+    build_sepl_reflection_source,
     sepl_dry_run,
     sepl_effectiveness_ceiling,
     sepl_enabled,
     sepl_max_commits_per_day,
     sepl_min_margin,
     sepl_min_samples,
+    sepl_reflection_source_mode,
     sepl_rollback_margin,
     sepl_rollback_min_samples,
     sepl_rollback_window_hours,
@@ -54,6 +55,7 @@ router = APIRouter(prefix="/sepl", tags=["sepl"])
 class SEPLStatus(BaseModel):
     enabled: bool
     dry_run_default: bool
+    reflection_source: str
     tunables: Dict[str, float]
     rollback_tunables: Dict[str, float]
     fixtures_dir: str
@@ -145,18 +147,22 @@ class RollbackReportResponse(BaseModel):
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _reflection_source():
+    return build_sepl_reflection_source(knowledge_store)
+
+
 def _sepl() -> SEPL:
     return SEPL(
         llm_client=llm_client,
         registry=resource_registry,
-        reflection_source=KnowledgeStoreReflectionSource(knowledge_store),
+        reflection_source=_reflection_source(),
     )
 
 
 def _kill_switch() -> SEPLKillSwitch:
     return SEPLKillSwitch(
         registry=resource_registry,
-        reflection_source=KnowledgeStoreReflectionSource(knowledge_store),
+        reflection_source=_reflection_source(),
     )
 
 
@@ -182,6 +188,7 @@ def get_status() -> SEPLStatus:
     return SEPLStatus(
         enabled=sepl_enabled(),
         dry_run_default=sepl_dry_run(),
+        reflection_source=sepl_reflection_source_mode(),
         tunables={
             "min_samples": float(sepl_min_samples()),
             "min_margin": sepl_min_margin(),

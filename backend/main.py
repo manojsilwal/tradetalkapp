@@ -111,6 +111,18 @@ try:
 except Exception as _e:
     print(f"[MacroFlow][startup] skipped (non-fatal): {_e}")
 
+# Supply chain SQLite (entity-level capital flow graph) — migrations + seed if empty.
+try:
+    from .supply_chain.db import init_supply_chain_db
+    from .supply_chain.store import list_all_nodes
+    from .supply_chain.seed_chains import seed_supply_chain_db
+
+    init_supply_chain_db()
+    if not list_all_nodes():
+        seed_supply_chain_db()
+except Exception as _e:
+    print(f"[SupplyChain][startup] skipped (non-fatal): {_e}")
+
 # ── Register routers ─────────────────────────────────────────────────────────
 from .routers import (
     auth as auth_router,
@@ -218,7 +230,7 @@ async def startup_event():
         from .sepl import (
             SEPL as _SEPL,
             SEPLKillSwitch as _SEPLKillSwitch,
-            KnowledgeStoreReflectionSource as _KSR,
+            build_sepl_reflection_source as _build_sepl_reflection_source,
         )
 
         _sepl_scheduler = AsyncIOScheduler()
@@ -226,7 +238,7 @@ async def startup_event():
         async def _sepl_tick():
             try:
                 autocommit = os.environ.get("SEPL_AUTOCOMMIT", "0").strip() == "1"
-                reflection_source = _KSR(knowledge_store)
+                reflection_source = _build_sepl_reflection_source(knowledge_store)
                 sepl = _SEPL(
                     llm_client=llm_client,
                     registry=resource_registry,

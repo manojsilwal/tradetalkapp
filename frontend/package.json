@@ -12,7 +12,10 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@nivo/core": "^0.99.0",
+    "@nivo/sankey": "^0.99.0",
     "@react-oauth/google": "^0.13.4",
+    "@xyflow/react": "^12.10.2",
     "lucide-react": "^0.575.0",
     "mermaid": "^11.14.0",
     "react": "^19.2.4",

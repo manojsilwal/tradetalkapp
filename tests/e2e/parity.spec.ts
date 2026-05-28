@@ -15,7 +15,6 @@ const SCORECARD_TICKERS = (process.env.PARITY_SCORECARD_TICKERS ?? 'AAPL,MSFT')
   .filter(Boolean)
   .slice(0, 3);
 
-const MACRO_SECTOR_SYMBOLS = ['XLK', 'XLF', 'XLV', 'XLE', 'XLC', 'XLRE', 'XME'];
 const MACRO_FLOW_SYMBOLS = ['SPY', 'EFA', 'EWJ', 'TLT', 'GLD', 'BIL'];
 
 type YahooQuote = {
@@ -184,8 +183,8 @@ test.describe('Production Yahoo parity', () => {
     expectPriceClose(appPrice, ref, `Dashboard ${DECISION_TICKER} current price`);
   });
 
-  test('Macro VIX, sector ETFs, and capital-flow ETFs match Yahoo', async ({ page }, testInfo) => {
-    const symbols = ['^VIX', ...MACRO_SECTOR_SYMBOLS, ...MACRO_FLOW_SYMBOLS];
+  test('Macro VIX and capital-flow ETFs match Yahoo', async ({ page }, testInfo) => {
+    const symbols = ['^VIX', ...MACRO_FLOW_SYMBOLS];
     const refs = skipIfYahooUnavailable(testInfo, await Promise.all(symbols.map(fetchYahooQuote)));
     const bySymbol = new Map(refs.map((quote) => [quote.symbol, quote]));
 
@@ -195,11 +194,6 @@ test.describe('Production Yahoo parity', () => {
 
     const appVix = await textNumber(page.getByTestId('macro-vix-value'));
     expectMacroClose(appVix, bySymbol.get('^VIX') as YahooQuote, 'Macro ^VIX');
-
-    for (const symbol of MACRO_SECTOR_SYMBOLS) {
-      const appPct = await textNumber(page.getByTestId(`macro-sector-${symbol}-change`));
-      expectPctClose(appPct, bySymbol.get(symbol) as YahooQuote, `Macro sector ${symbol}`);
-    }
 
     for (const symbol of MACRO_FLOW_SYMBOLS) {
       const appPct = await textNumber(page.getByTestId(`macro-flow-${symbol}-change`));

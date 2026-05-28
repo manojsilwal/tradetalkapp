@@ -20,6 +20,21 @@ export default function ObserverUI() {
     const [activeAgent, setActiveAgent] = useState(0);
     const [notifTrace, setNotifTrace] = useState(null);
     const [notifLoading, setNotifLoading] = useState(false);
+    const [learningHealth, setLearningHealth] = useState(null);
+    const [learningHealthError, setLearningHealthError] = useState(null);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const data = await apiFetch(`${API_BASE_URL}/learning-health`);
+                if (!cancelled) setLearningHealth(data);
+            } catch (e) {
+                if (!cancelled) setLearningHealthError(e.message);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
 
     const runTrace = async () => {
         setLoading(true);
@@ -57,6 +72,30 @@ export default function ObserverUI() {
             {error && (
                 <div style={{ padding: '12px 18px', borderRadius: '10px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--accent-red)', marginBottom: '20px', fontSize: '0.85rem' }}>
                     {error}
+                </div>
+            )}
+
+            {(learningHealth || learningHealthError) && (
+                <div style={{
+                    padding: '14px 18px', borderRadius: '12px', marginBottom: '20px',
+                    background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.15)',
+                    fontSize: '0.82rem', lineHeight: 1.6,
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', fontWeight: 600 }}>
+                        <Database size={16} color="#60a5fa" />
+                        Continual learning health
+                    </div>
+                    {learningHealthError && (
+                        <span style={{ color: 'var(--accent-red)' }}>{learningHealthError}</span>
+                    )}
+                    {learningHealth?.ledger && (
+                        <div style={{ color: 'var(--text-muted)' }}>
+                            Ledger: {learningHealth.ledger.table_counts?.decision_events ?? 0} decisions,{' '}
+                            {learningHealth.ledger.graded_decisions ?? 0} graded ({learningHealth.ledger.graded_pct ?? 0}%).
+                            SEPL: {learningHealth.sepl?.enabled ? 'on' : 'off'} · reflection: {learningHealth.sepl?.reflection_source || '—'}
+                            {learningHealth.sepl?.dry_run_default ? ' · dry-run' : ''}
+                        </div>
+                    )}
                 </div>
             )}
 

@@ -31,6 +31,7 @@ def fuse_and_cap_hits(
     rrf_k: int = 60,
     max_records: int = 12,
     allowed_meta_fields: List[str] | None = None,
+    harness_session_id: str | None = None,
 ) -> List[dict]:
     """
     Fuse per-collection ranked hits using RRF, then apply post-fusion L/W/D caps.
@@ -39,6 +40,16 @@ def fuse_and_cap_hits(
     Width cap: keep only allowed metadata fields.
     Depth cap: truncate per-document text.
     """
+    if harness_session_id:
+        try:
+            from backend.harness.integration import merge_harness_memory_channel
+
+            channel_hits = merge_harness_memory_channel(
+                channel_hits, session_id=harness_session_id
+            )
+        except Exception:
+            pass
+
     allowed_meta_fields = allowed_meta_fields or [
         "source",
         "ticker",
@@ -63,7 +74,8 @@ def fuse_and_cap_hits(
                 row["collection"] = str(h.get("collection") or collection or "")
                 row["_rrf"] = 0.0
                 by_key[key] = row
-            row["_rrf"] = float(row.get("_rrf", 0.0)) + _rrf_score(rank, rrf_k)
+            boost = float(h.get("_harness_weight", 1.0))
+            row["_rrf"] = float(row.get("_rrf", 0.0)) + _rrf_score(rank, rrf_k) * boost
 
     ranked = sorted(by_key.values(), key=lambda x: float(x.get("_rrf", 0.0)), reverse=True)
     if max_records > 0:

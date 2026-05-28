@@ -176,6 +176,9 @@ class AgentPair:
                     regime=regime,
                 ),
             ]
+            from .decision_ledger_registry import registry_attribution
+
+            _pv, _snap, _model = registry_attribution()
             _dl.emit_decision(
                 decision_type="swarm_factor",
                 symbol=ticker,
@@ -191,6 +194,9 @@ class AgentPair:
                 },
                 source_route=f"backend/agents.py::{type(self).__name__}.run",
                 features=features,
+                prompt_versions=_pv,
+                registry_snapshot_id=_snap,
+                model=_model,
             )
         except Exception as e:
             logger.debug(

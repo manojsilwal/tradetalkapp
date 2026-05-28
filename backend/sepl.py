@@ -1258,6 +1258,64 @@ def _extract_versions(row: Dict[str, Any]) -> Dict[str, str]:
     return {}
 
 
+def sepl_reflection_source_mode() -> str:
+    """``composite`` (default), ``ledger``, or ``chroma``."""
+    import os
+
+    return (os.environ.get("SEPL_REFLECTION_SOURCE") or "composite").strip().lower()
+
+
+class CompositeReflectionSource:
+    """Merge multiple reflection sources; ledger rows win on duplicate decision_id."""
+
+    def __init__(self, sources: Sequence[Any]) -> None:
+        self._sources = list(sources)
+
+    def fetch_recent_reflections(
+        self, limit: int = 200, *, only_with_prompt_versions: bool = True
+    ) -> List[Dict[str, Any]]:
+        cap = max(1, int(limit))
+        seen_ids: set[str] = set()
+        merged: List[Dict[str, Any]] = []
+        for src in self._sources:
+            try:
+                batch = src.fetch_recent_reflections(
+                    limit=cap, only_with_prompt_versions=only_with_prompt_versions
+                )
+            except Exception as e:
+                logger.warning("[SEPL] reflection source %s failed: %s", type(src).__name__, e)
+                continue
+            for row in batch or []:
+                did = str((row.get("meta") or {}).get("decision_id") or "")
+                if did:
+                    if did in seen_ids:
+                        continue
+                    seen_ids.add(did)
+                merged.append(row)
+        merged.sort(
+            key=lambda r: str((r.get("meta") or {}).get("date", "")),
+            reverse=True,
+        )
+        return merged[:cap]
+
+
+def build_sepl_reflection_source(knowledge_store: Any) -> Any:
+    """
+    Factory used by the SEPL scheduler and ``/sepl`` routes.
+
+    Default ``SEPL_REFLECTION_SOURCE=composite``: graded ledger outcomes first,
+    then legacy Chroma ``swarm_reflections``.
+    """
+    mode = sepl_reflection_source_mode()
+    chroma = KnowledgeStoreReflectionSource(knowledge_store)
+    ledger = DecisionLedgerReflectionSource()
+    if mode in ("ledger", "decision_ledger"):
+        return ledger
+    if mode in ("chroma", "knowledge_store", "knowledge"):
+        return chroma
+    return CompositeReflectionSource([ledger, chroma])
+
+
 class KnowledgeStoreReflectionSource:
     """Pulls reflections via Chroma for production use."""
 

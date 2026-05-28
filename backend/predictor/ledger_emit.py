@@ -13,26 +13,15 @@ logger = logging.getLogger(__name__)
 
 
 def _registry_snapshot() -> str:
-    try:
-        from backend.resource_registry import get_resource_registry, registry_enabled
+    from backend.decision_ledger_registry import registry_attribution
 
-        if registry_enabled():
-            return get_resource_registry().snapshot_id()
-    except Exception:
-        pass
-    return ""
+    return registry_attribution()[1]
 
 
 def _prompt_versions_dict() -> Dict[str, str]:
-    try:
-        from backend.resource_registry import get_resource_registry, registry_enabled
+    from backend.decision_ledger_registry import registry_attribution
 
-        if not registry_enabled():
-            return {}
-        reg = get_resource_registry()
-        return {r.name: r.version for r in reg.list()}
-    except Exception:
-        return {}
+    return registry_attribution()[0]
 
 
 def _verdict_for_grader(directional: str) -> str:

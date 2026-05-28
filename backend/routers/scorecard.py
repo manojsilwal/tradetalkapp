@@ -172,8 +172,43 @@ async def compare_scorecard(
             notes.append(f"{d.ticker}: missing fields — {', '.join(d.fields_missing)}")
 
     rows_out: List[ScorecardRowOut] = []
+    _dl_mod = None
+    _pv: dict = {}
+    _snap = ""
+    _model = ""
+    try:
+        from .. import decision_ledger as _dl_mod
+        from ..decision_ledger_registry import registry_attribution
+
+        _pv, _snap, _model = registry_attribution()
+    except Exception:
+        pass
     for row, data in zip(basket.rows, data_rows):
         v = verdicts.get(row.ticker, {"verdict": "Balanced", "one_line_reason": ""})
+        if _dl_mod is not None:
+            try:
+                _dl_mod.emit_decision(
+                decision_type="scorecard",
+                symbol=row.ticker,
+                horizon_hint="63d",
+                verdict=str(v.get("verdict", "Balanced")),
+                confidence=None,
+                output={
+                    "preset": req.preset,
+                    "signal": row.signal,
+                    "action": row.action,
+                    "quadrant": row.quadrant,
+                    "ratio": row.ratio,
+                    "one_line_reason": v.get("one_line_reason", ""),
+                    "compare": True,
+                },
+                source_route="backend/routers/scorecard.py::compare_scorecard",
+                prompt_versions=_pv,
+                registry_snapshot_id=_snap,
+                model=_model,
+                )
+            except Exception as e:
+                logger.debug("[scorecard] ledger emit skipped %s: %s", row.ticker, e)
         rows_out.append(
             ScorecardRowOut(
                 ticker=row.ticker,
@@ -237,6 +272,33 @@ async def single_ticker_scorecard(
 
     verdicts = await _fetch_verdicts_single(row, preset_key, skip_llm=skip_llm_scores)
     v = verdicts.get(row.ticker, {"verdict": "Balanced", "one_line_reason": ""})
+
+    try:
+        from .. import decision_ledger as _dl
+        from ..decision_ledger_registry import registry_attribution
+
+        _pv, _snap, _model = registry_attribution()
+        _dl.emit_decision(
+            decision_type="scorecard",
+            symbol=sym,
+            horizon_hint="63d",
+            verdict=str(v.get("verdict", "Balanced")),
+            confidence=None,
+            output={
+                "preset": preset_key,
+                "signal": row.signal,
+                "action": row.action,
+                "quadrant": row.quadrant,
+                "ratio": row.ratio,
+                "one_line_reason": v.get("one_line_reason", ""),
+            },
+            source_route="backend/routers/scorecard.py::single_ticker_scorecard",
+            prompt_versions=_pv,
+            registry_snapshot_id=_snap,
+            model=_model,
+        )
+    except Exception as e:
+        logger.debug("[scorecard] ledger emit skipped: %s", e)
 
     return ScorecardRowOut(
         ticker=row.ticker,

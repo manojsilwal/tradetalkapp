@@ -179,3 +179,67 @@ async def macro_flow_timeline(interval: str = Query("1w"), limit: int = Query(30
     iv = _flow_interval(interval)
     await _ensure_macro_flow_snapshot(iv)
     return {"interval": iv, "snapshots": flow_timeline(iv, limit=limit)}
+
+
+# ── Supply chain capital flow (entity-level directed graph) ──────────────────
+
+@router.get("/macro/supply-chain/graph")
+async def supply_chain_graph(
+    year: int | None = Query(None),
+    root: str | None = Query(None),
+):
+    from ..supply_chain.store import get_graph
+    return get_graph(year=year, root=root)
+
+
+@router.get("/macro/supply-chain/nodes/{node_id}")
+async def supply_chain_node_detail(node_id: str, year: int | None = Query(None)):
+    from ..supply_chain.store import get_node_detail
+    from fastapi import HTTPException as _HTTPExc
+
+    detail = get_node_detail(node_id, year=year)
+    if not detail:
+        raise _HTTPExc(status_code=404, detail=f"Node {node_id!r} not found")
+    return detail
+
+
+@router.post("/macro/supply-chain/extract-preview")
+async def supply_chain_extract_preview(
+    ticker: str = Query(...),
+    form: str = Query("10-K"),
+):
+    from ..supply_chain.extract_agent import extract_supply_chain_preview
+    return await extract_supply_chain_preview(ticker, form=form)
+
+
+@router.post("/macro/supply-chain/reseed")
+async def supply_chain_reseed(_=Depends(require_cron_secret)):
+    from ..supply_chain.seed_chains import seed_supply_chain_db, node_count
+    seed_supply_chain_db()
+    return {"ok": True, "nodes": node_count()}
+
+
+@router.get("/macro/supply-chain/timeline")
+async def supply_chain_timeline(
+    year_from: int = Query(2020, alias="from"),
+    year_to: int = Query(2026, alias="to"),
+    root: str | None = Query(None),
+):
+    from ..supply_chain.temporal import get_snapshots
+    snapshots = get_snapshots(year_from=year_from, year_to=year_to, root=root)
+    return {"year_from": year_from, "year_to": year_to, "root": root, "snapshots": snapshots}
+
+
+@router.get("/macro/supply-chain/sector-sankey")
+async def supply_chain_sector_sankey(year: int = Query(2025)):
+    from ..supply_chain.sector_rollup import sector_sankey
+    return sector_sankey(year)
+
+
+@router.get("/macro/supply-chain/sector-sankey/timeline")
+async def supply_chain_sector_sankey_timeline(
+    year_from: int = Query(2020, alias="from"),
+    year_to: int = Query(2026, alias="to"),
+):
+    from ..supply_chain.sector_rollup import sector_sankey_timeline
+    return {"year_from": year_from, "year_to": year_to, "snapshots": sector_sankey_timeline(year_from, year_to)}

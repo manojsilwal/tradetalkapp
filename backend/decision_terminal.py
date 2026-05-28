@@ -832,7 +832,7 @@ async def run_decision_terminal_request(
         asyncio.to_thread(_sync_extended_snapshot, t),
     )
 
-    return await build_decision_terminal_payload(
+    payload = await build_decision_terminal_payload(
         t,
         analysis.swarm,
         analysis.debate,
@@ -843,3 +843,35 @@ async def run_decision_terminal_request(
         include_provider_audit=provider_audit,
         tool_registry=tool_registry,
     )
+
+    try:
+        from . import decision_ledger as _dl
+        from .decision_ledger_registry import registry_attribution
+
+        _pv, _snap, _model = registry_attribution()
+        verdict_panel = payload.verdict
+        headline = (
+            verdict_panel.headline_verdict if verdict_panel is not None else ""
+        )
+        _dl.emit_decision(
+            decision_type="decision_terminal",
+            symbol=t,
+            horizon_hint="21d",
+            verdict=str(headline or ""),
+            confidence=None,
+            output={
+                "headline_verdict": headline,
+                "debate_verdict": getattr(verdict_panel, "debate_verdict", ""),
+                "swarm_verdict": getattr(verdict_panel, "swarm_verdict", ""),
+                "market_data_degraded": payload.market_data_degraded,
+                "generated_at_utc": payload.generated_at_utc,
+            },
+            source_route="backend/decision_terminal.py::run_decision_terminal_request",
+            prompt_versions=_pv,
+            registry_snapshot_id=_snap,
+            model=_model,
+        )
+    except Exception as e:
+        logger.debug("[decision_terminal] ledger emit skipped: %s", e)
+
+    return payload

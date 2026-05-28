@@ -183,7 +183,38 @@ async def run_gold_advisor(macro_connector, llm_client) -> Dict[str, Any]:
     context = await build_gold_advisor_payload(macro_connector)
     briefing_raw = await llm_client.generate_gold_briefing(context)
     briefing = _safe_gold_briefing(briefing_raw)
-    return {
+    try:
+        from .harness.integration import record_gold_advisor_step
+
+        briefing = record_gold_advisor_step(context=context, briefing=briefing)
+    except Exception as e:
+        logger.debug("[GoldAdvisor] harness step skipped: %s", e)
+    result = {
         "context": context,
         "briefing": briefing,
     }
+    try:
+        from . import decision_ledger as _dl
+        from .decision_ledger_registry import registry_attribution
+
+        _pv, _snap, _model = registry_attribution()
+        stance = str((briefing or {}).get("stance") or (briefing or {}).get("verdict") or "")
+        _dl.emit_decision(
+            decision_type="gold_advisor",
+            symbol="GLD",
+            horizon_hint="21d",
+            verdict=stance,
+            confidence=None,
+            output={
+                "briefing": briefing,
+                "spot_usd": (context or {}).get("spot_usd"),
+                "regime_hint": (context or {}).get("regime_hint"),
+            },
+            source_route="backend/gold_advisor_service.py::run_gold_advisor",
+            prompt_versions=_pv,
+            registry_snapshot_id=_snap,
+            model=_model,
+        )
+    except Exception as e:
+        logger.debug("[gold_advisor] ledger emit skipped: %s", e)
+    return result

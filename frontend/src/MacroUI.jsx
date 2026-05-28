@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Globe, TrendingUp, TrendingDown, DollarSign, Loader2, AlertTriangle, ArrowRightLeft, Wallet } from 'lucide-react';
+import { Globe, TrendingUp, DollarSign, Loader2, AlertTriangle, ArrowRightLeft, Wallet } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { API_BASE_URL, apiFetch } from './api';
 import MacroFlowPanel from './MacroFlowPanel';
@@ -74,7 +74,7 @@ export default function MacroUI() {
             <div className="header-section" style={{ marginBottom: '24px' }}>
                 <div className="title-group">
                     <h2>Global Macroeconomic Grounding</h2>
-                    <p>Live indicators, thematic flow, and reference sector ETFs</p>
+                    <p>Live indicators and thematic capital flow</p>
                 </div>
             </div>
 
@@ -180,44 +180,10 @@ export default function MacroUI() {
 
             </div>
 
-            {/* Bottom Grid: Sectors */}
+            {/* Thematic flow & regime */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px', marginBottom: '24px' }}>
 
                 <MacroFlowPanel />
-
-                {/* Reference sector ETFs (Yahoo parity checks; not the primary rotation signal). */}
-                <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px', display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                        <TrendingUp color="var(--accent-orange)" />
-                        <div>
-                            <h3 style={{ margin: 0 }}>Sector ETF snapshot</h3>
-                            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '4px 0 0 0' }}>
-                                Classic sector ETFs with daily % change (reference only).
-                            </p>
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, justifyContent: 'space-around' }}>
-                        {data.sectors.map(sector => (
-                            <div
-                                key={sector.symbol}
-                                data-testid={`macro-sector-${sector.symbol}`}
-                                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}
-                            >
-                                <div>
-                                    <strong style={{ display: 'block', fontSize: '1.1rem' }}>{sector.name}</strong>
-                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{sector.symbol}</span>
-                                </div>
-                                <div data-testid={`macro-sector-${sector.symbol}-change`} style={{
-                                    color: sector.daily_change_pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)',
-                                    fontWeight: 'bold',
-                                    fontSize: '1.2rem'
-                                }}>
-                                    {sector.daily_change_pct > 0 ? '+' : ''}{sector.daily_change_pct}%
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
 
                 {/* Regime impact matrix — maps current regime to favored / avoided sector themes */}
                 <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px', display: 'flex', flexDirection: 'column' }}>

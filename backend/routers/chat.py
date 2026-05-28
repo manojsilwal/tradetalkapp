@@ -683,30 +683,29 @@ async def chat_send_message(
             # Decision-Outcome Ledger (best-effort): risk surface verdict emit.
             try:
                 from .. import decision_ledger as _dl
+                from ..decision_ledger_registry import registry_attribution
 
+                _pv, _snap, _model = registry_attribution()
                 _dl.emit_decision(
                     decision_type="risk_assessment",
                     user_id=str(uid or ""),
                     symbol=sym,
                     horizon_hint="5d",
-                    side="none",
+                    verdict="",
                     confidence=0.0,
-                    rationale=f"regime={payload.get('regime')} caution={payload.get('position_size_caution')}",
-                    expected_return_bps=None,
-                    expected_vol_bps=None,
-                    max_drawdown_bps=None,
-                    prompt_versions_json="{}",
-                    model_version=(os.getenv("OPENROUTER_MODEL") or ""),
-                    prompt_hash=None,
-                    model_hash=None,
-                    registry_snapshot_id=None,
-                    evidence_refs=[],
-                    feature_values=[],
-                    metadata_json={
+                    output={
                         "source": "chat_risk_tool",
+                        "regime": payload.get("regime"),
+                        "position_size_caution": payload.get("position_size_caution"),
                         "vix_level": payload.get("vix_level"),
                         "event_risk_flags": payload.get("event_risk_flags"),
+                        "realized_vol_30d": payload.get("realized_vol_30d"),
+                        "atr_14_pct": payload.get("atr_14_pct"),
                     },
+                    source_route="backend/routers/chat.py::get_risk_assessment",
+                    prompt_versions=_pv,
+                    registry_snapshot_id=_snap,
+                    model=_model,
                 )
             except Exception:
                 pass
@@ -771,29 +770,29 @@ async def chat_send_message(
             # Decision-Outcome Ledger (best-effort)
             try:
                 from .. import decision_ledger as _dl
+                from ..decision_ledger_registry import registry_attribution
+
+                _pv, _snap, _model = registry_attribution()
                 _dl.emit_decision(
                     decision_type="what_if_backtest",
                     user_id=str(uid or ""),
                     symbol="",
                     horizon_hint="21d",
-                    side="none",
+                    verdict="",
                     confidence=0.0,
-                    rationale=f"preset={pid} lookback_months={lookback_months}",
-                    expected_return_bps=None,
-                    expected_vol_bps=None,
-                    max_drawdown_bps=None,
-                    prompt_versions_json="{}",
-                    model_version=(os.getenv("OPENROUTER_MODEL") or ""),
-                    prompt_hash=None,
-                    model_hash=None,
-                    registry_snapshot_id=None,
-                    evidence_refs=[],
-                    feature_values=[],
-                    metadata_json={
+                    output={
                         "source": "chat_backtest_tool",
                         "preset_id": pid,
                         "lookback_months": lookback_months,
+                        "win_rate": win_rate,
+                        "total_trades": total_trades,
+                        "avg_r": avg_r,
+                        "expectancy": expectancy,
                     },
+                    source_route="backend/routers/chat.py::run_what_if_backtest",
+                    prompt_versions=_pv,
+                    registry_snapshot_id=_snap,
+                    model=_model,
                 )
             except Exception:
                 pass
@@ -1353,6 +1352,9 @@ async def chat_send_message(
                     value_num=float(len(tool_trace or [])),
                 ),
             ]
+            from ..decision_ledger_registry import registry_attribution
+
+            _pv, _snap, _model = registry_attribution()
             _dl.emit_decision(
                 decision_type="chat_turn",
                 user_id=str(uid or ""),
@@ -1375,6 +1377,9 @@ async def chat_send_message(
                 source_route="backend/routers/chat.py::chat_send_message",
                 evidence=refs,
                 features=feats,
+                prompt_versions=_pv,
+                registry_snapshot_id=_snap,
+                model=_model,
             )
         except Exception as _e:  # never block the stream
             logger.debug("[Chat] decision_ledger emit skipped: %s", _e)

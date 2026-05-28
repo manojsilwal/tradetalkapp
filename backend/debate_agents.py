@@ -583,6 +583,9 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
                 except Exception:
                     continue
 
+        from .decision_ledger_registry import registry_attribution
+
+        _pv, _snap, _model = registry_attribution()
         _dl.emit_decision(
             decision_type="debate",
             symbol=ticker,
@@ -604,6 +607,9 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
             source_route="backend/debate_agents.py::_run_full_debate_impl",
             evidence=all_refs,
             features=features,
+            prompt_versions=_pv,
+            registry_snapshot_id=_snap,
+            model=_model,
         )
     except Exception as e:
         logger.debug("[Debate] decision_ledger emit skipped: %s", e)

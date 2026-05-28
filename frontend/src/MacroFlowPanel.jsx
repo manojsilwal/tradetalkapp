@@ -1,5 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw, GitBranch, Activity, Share2 } from 'lucide-react';
+import React, { useCallback, useEffect, useState, lazy, Suspense } from 'react';
+import { Loader2, RefreshCw, GitBranch, Activity, Share2, Network } from 'lucide-react';
+
+const SupplyChainTab = lazy(() => import('./supplyChain/SupplyChainTab'));
 import {
     ResponsiveContainer,
     ScatterChart,
@@ -163,6 +165,7 @@ export default function MacroFlowPanel() {
                     { id: 'rrg', label: 'RRG', icon: Activity },
                     { id: 'sankey', label: 'Flow links', icon: Share2 },
                     { id: 'chain', label: 'Value chain', icon: GitBranch },
+                    { id: 'supply', label: 'Supply chain', icon: Network },
                 ].map((v) => {
                     const Icon = v.icon;
                     return (
@@ -297,7 +300,7 @@ export default function MacroFlowPanel() {
                         </ul>
                     )}
                 </div>
-            ) : (
+            ) : view === 'chain' ? (
                 <div data-testid="macro-value-chain-panel" style={{ fontSize: '0.9rem' }}>
                     {!chain?.links?.length ? (
                         <p style={{ color: 'var(--text-muted)' }}>No edges for this theme.</p>
@@ -314,7 +317,11 @@ export default function MacroFlowPanel() {
                         </ul>
                     )}
                 </div>
-            )}
+            ) : view === 'supply' ? (
+                <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Loader2 className="spinner" size={36} color="var(--accent-blue)" /></div>}>
+                    <SupplyChainTab />
+                </Suspense>
+            ) : null}
         </div>
     );
 }

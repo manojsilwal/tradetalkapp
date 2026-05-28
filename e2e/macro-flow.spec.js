@@ -13,4 +13,13 @@ test.describe('Macro thematic flow', () => {
     await page.getByTestId('macro-flow-view-sankey').click();
     await expect(page.getByTestId('macro-sankey-panel')).toBeVisible({ timeout: 60000 });
   });
+
+  test('supply chain tab renders interactive graph', async ({ page }) => {
+    await page.goto('/macro', { waitUntil: 'domcontentloaded' });
+    await dismissOnboarding(page);
+    await expect(page.getByTestId('macro-flow-section')).toBeVisible({ timeout: 120000 });
+    await page.getByTestId('macro-flow-view-supply').click();
+    await expect(page.getByTestId('supply-chain-tab')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId('supply-chain-graph')).toBeVisible({ timeout: 15000 });
+  });
 });
