@@ -142,11 +142,11 @@ export default function UnifiedDashboardUI() {
   const { addAnalysis } = useAnalysisHistory();
 
   const searchUpper = ticker.trim().toUpperCase();
-  const isValid = !searchUpper || SP500_TICKERS.includes(searchUpper);
+  const isInSp500 = !!searchUpper && SP500_TICKERS.includes(searchUpper);
   const suggestions = useMemo(() => {
-    if (isValid || !searchUpper) return [];
+    if (!searchUpper || isInSp500) return [];
     return SP500_TICKERS.filter(t => t.startsWith(searchUpper) || t.includes(searchUpper)).slice(0, 4);
-  }, [searchUpper, isValid]);
+  }, [searchUpper, isInSp500]);
 
   const analyzeTicker = async (overrideTicker = ticker) => {
     if (!overrideTicker) return;
@@ -180,6 +180,23 @@ export default function UnifiedDashboardUI() {
     };
 
     try {
+      setLoadingStep('Validating symbol...');
+      const probe = await apiFetch(`${API_BASE_URL}/metrics/validate/${encodeURIComponent(sym)}`).catch(() => null);
+      const probeSoftFail = probe?.reason === 'probe_timeout' || probe?.reason === 'probe_failed';
+      if (probe && probe.exists === false && !probeSoftFail) {
+        setError(
+          probe.reason === 'invalid_format'
+            ? `Ticker "${sym}" looks invalid. Please check the symbol format and try again.`
+            : `Could not find a market quote for "${sym}". Check the symbol and try again.`
+        );
+        setLoading(false);
+        setDebateLoading(false);
+        setScorecardLoading(false);
+        return;
+      }
+      // If probe timed out or Yahoo was unreachable, continue with full analysis.
+
+      setLoadingStep('Fetching combined market data...');
       const [analyzeRes, metricsRes, decisionRes, scorecardRes] = await Promise.all([
         apiFetch(`${API_BASE_URL}/analyze?ticker=${sym}`).catch(() => null),
         apiFetch(`${API_BASE_URL}/metrics/${sym}`),
@@ -306,22 +323,22 @@ export default function UnifiedDashboardUI() {
               value={ticker}
               onChange={(e) => setTicker(e.target.value)}
               placeholder="e.g. AAPL"
-              className={`dt-search-input ${!isValid && searchUpper ? 'dt-invalid' : ''}`}
+              className="dt-search-input"
               style={{ width: '160px', padding: '10px 14px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)', color: 'white' }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && isValid) analyzeTicker(ticker); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') analyzeTicker(ticker); }}
             />
             <button
               onClick={() => analyzeTicker(ticker)}
-              disabled={loading || (!isValid && searchUpper)}
+              disabled={loading}
               style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'var(--accent-blue)', color: 'white', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
             >
               {loading ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
               Analyze
             </button>
           </div>
-          {!isValid && searchUpper && suggestions.length > 0 && (
+          {!isInSp500 && searchUpper && suggestions.length > 0 && (
             <div className="dt-suggestions" style={{ position: 'absolute', top: '100%', left: 0, width: '160px', background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', marginTop: '4px', zIndex: 10 }}>
-              <div style={{ padding: '8px', fontSize: '11px', color: '#94a3b8' }}>S&P 500 Tickers only</div>
+              <div style={{ padding: '8px', fontSize: '11px', color: '#94a3b8' }}>Suggestions (S&P 500)</div>
               {suggestions.map((s) => (
                 <div key={s} onClick={() => analyzeTicker(s)} style={{ padding: '8px', cursor: 'pointer', fontSize: '14px' }}>
                   {s}
@@ -468,11 +485,6 @@ export default function UnifiedDashboardUI() {
             </div>
 
             <div className="dt-slider-section" style={{ position: 'relative', marginTop: '30px', paddingBottom: '20px' }}>
-              <div className="dt-slider-rail-labels" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#94a3b8', marginBottom: '8px' }}>
-                <span className="sell">Sell over</span>
-                <span className="neutral">Neutral</span>
-                <span className="buy">Buy under</span>
-              </div>
               <div className="dt-slider-track" style={{ height: '6px', background: 'linear-gradient(to right, #f87171, #eab308, #00ff88)', borderRadius: '3px', position: 'relative' }}>
                 <div className="dt-slider-knob" style={{ width: '12px', height: '12px', background: '#fff', borderRadius: '50%', position: 'absolute', top: '50%', transform: 'translate(-50%, -50%)', left: `${dotLeft}%`, boxShadow: '0 0 10px rgba(0,0,0,0.5)' }} title="Vs bear–bull scenario band" />
               </div>

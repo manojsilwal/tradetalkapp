@@ -66,6 +66,62 @@ async def get_investor_metrics(ticker: str):
     return InvestorMetricsResponse(ticker=ticker.upper(), metrics=data["metrics"])
 
 
+@router.get("/metrics/validate/{ticker}")
+async def validate_ticker_fast(ticker: str):
+    """
+    Fast ticker existence probe backed by yfinance.
+    Returns ``exists=false`` when no usable quote can be resolved.
+    """
+    import asyncio
+
+    sym = (ticker or "").strip().upper()
+    if not sym or len(sym) > 12:
+        return {"ticker": sym, "exists": False, "reason": "invalid_format"}
+
+    def _probe() -> tuple[bool, float | None]:
+        # Use Yahoo chart endpoint directly with hard network timeout for a
+        # fast existence check on newly-entered symbols.
+        import requests
+
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
+        params = {"range": "1d", "interval": "1d"}
+        r = requests.get(url, params=params, timeout=2.5)
+        r.raise_for_status()
+        data = r.json() or {}
+        chart = (data.get("chart") or {}).get("result") or []
+        if not chart:
+            return False, None
+        meta = chart[0].get("meta") or {}
+        px = meta.get("regularMarketPrice")
+        if px is None:
+            return False, None
+        try:
+            v = float(px)
+            return (v > 0), v
+        except (TypeError, ValueError):
+            return False, None
+
+    try:
+        ok, price = await asyncio.wait_for(asyncio.to_thread(_probe), timeout=3.0)
+    except (asyncio.TimeoutError, TimeoutError):
+        return {
+            "ticker": sym,
+            "exists": False,
+            "reason": "probe_timeout",
+        }
+    except Exception:
+        return {
+            "ticker": sym,
+            "exists": False,
+            "reason": "probe_failed",
+        }
+    return {
+        "ticker": sym,
+        "exists": bool(ok),
+        "last_price": price,
+    }
+
+
 @router.get("/advisor/gold", response_model=GoldAdvisorResponse, dependencies=[Depends(_rl_expensive)])
 async def gold_advisor_snapshot(_auth_user=Depends(get_optional_user)):
     """Gold allocator snapshot: FRED real yields, VIX, DXY, gold futures, LLM briefing."""
