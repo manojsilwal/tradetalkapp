@@ -19,6 +19,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "progress.db")
 _local  = threading.local()
 STARTING_CASH = 10_000.0
 SPY_TICKER    = "SPY"
+UNKNOWN_CATEGORY = "Unknown"
 
 
 def _get_conn():
@@ -58,29 +59,117 @@ def init_portfolio_db():
             PRIMARY KEY (user_id, snapshot_date)
         );
     """)
+    _ensure_position_metadata_columns(conn)
     conn.commit()
 
 
-def add_position(user_id: str, ticker: str, direction: str, allocated: float,
-                 source: str = "manual", note: str = "") -> Dict[str, Any]:
+def _ensure_position_metadata_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(paper_positions)").fetchall()
+    }
+    columns = {
+        "sector": "TEXT DEFAULT 'Unknown'",
+        "market_cap": "REAL DEFAULT NULL",
+        "cap_bucket": "TEXT DEFAULT 'Unknown'",
+        "asset_type": "TEXT DEFAULT 'Unknown'",
+    }
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE paper_positions ADD COLUMN {name} {ddl}")
+
+
+def _classify_market_cap(market_cap: Optional[float]) -> str:
+    if not market_cap or market_cap <= 0:
+        return UNKNOWN_CATEGORY
+    if market_cap >= 200_000_000_000:
+        return "Mega Cap"
+    if market_cap >= 10_000_000_000:
+        return "Large Cap"
+    if market_cap >= 2_000_000_000:
+        return "Mid Cap"
+    if market_cap >= 300_000_000:
+        return "Small Cap"
+    return "Micro Cap"
+
+
+def _portfolio_category_from_info(info: Dict[str, Any]) -> Dict[str, Any]:
+    quote_type = str(info.get("quoteType") or info.get("typeDisp") or "").upper()
+    sector = info.get("sector") or info.get("category") or UNKNOWN_CATEGORY
+    market_cap = info.get("marketCap")
+    try:
+        market_cap = float(market_cap) if market_cap is not None else None
+    except (TypeError, ValueError):
+        market_cap = None
+    asset_type = "ETF" if quote_type in {"ETF", "MUTUALFUND"} else (quote_type.title() or "Equity")
+    return {
+        "sector": str(sector or UNKNOWN_CATEGORY),
+        "market_cap": market_cap,
+        "cap_bucket": _classify_market_cap(market_cap),
+        "asset_type": asset_type,
+    }
+
+
+def _fetch_ticker_profile(ticker: str) -> Dict[str, Any]:
     try:
         import yfinance as yf
-        price = float(yf.Ticker(ticker).fast_info["lastPrice"])
+
+        info = yf.Ticker(ticker).info or {}
+    except Exception:
+        info = {}
+    return _portfolio_category_from_info(info)
+
+
+def add_position(
+    user_id: str,
+    ticker: str,
+    direction: str,
+    allocated: Optional[float] = None,
+    source: str = "manual",
+    note: str = "",
+    *,
+    price: Optional[float] = None,
+    shares: Optional[float] = None,
+) -> Dict[str, Any]:
+    ticker = normalize_ticker(ticker)
+    if not ticker:
+        return {"error": "Ticker is required"}
+    try:
+        if price is None:
+            import yfinance as yf
+
+            price = float(yf.Ticker(ticker).fast_info["lastPrice"])
+        else:
+            price = float(price)
     except Exception:
         return {"error": f"Could not fetch price for {ticker}"}
-    shares = round(allocated / price, 6)
-    pos_id = f"{ticker}_{int(time.time())}"
+    if price <= 0:
+        return {"error": "Price must be positive"}
+    if shares is not None:
+        shares = round(float(shares), 6)
+        if shares <= 0:
+            return {"error": "Shares must be positive"}
+        allocated = round(shares * price, 6)
+    else:
+        allocated = float(allocated if allocated is not None else 1000.0)
+        if allocated <= 0:
+            return {"error": "Amount must be positive"}
+        shares = round(allocated / price, 6)
+    profile = _fetch_ticker_profile(ticker)
+    pos_id = f"{ticker}_{int(time.time() * 1000)}"
     conn   = _get_conn()
     conn.execute("""
         INSERT INTO paper_positions
-        (id, user_id, ticker, direction, entry_price, entry_date, shares, allocated, source, note)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+        (id, user_id, ticker, direction, entry_price, entry_date, shares, allocated, source, note,
+         sector, market_cap, cap_bucket, asset_type)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (pos_id, user_id, ticker.upper(), direction.upper(), price,
-          date.today().isoformat(), shares, allocated, source, note))
+          date.today().isoformat(), shares, allocated, source, note,
+          profile["sector"], profile["market_cap"], profile["cap_bucket"], profile["asset_type"]))
     conn.commit()
     return {"id": pos_id, "ticker": ticker.upper(), "direction": direction.upper(),
             "entry_price": price, "entry_date": date.today().isoformat(),
-            "shares": shares, "allocated": allocated}
+            "shares": shares, "allocated": allocated, **profile}
 
 
 def get_positions(user_id: str, include_closed: bool = False) -> List[Dict[str, Any]]:
@@ -97,7 +186,8 @@ def get_portfolio_performance(user_id: str) -> Dict[str, Any]:
     if not positions:
         return {"positions": [], "total_value": STARTING_CASH, "total_pnl": 0.0,
                 "total_pnl_pct": 0.0, "spy_pnl_pct": 0.0, "beating_spy": False,
-                "starting_cash": STARTING_CASH}
+                "starting_cash": STARTING_CASH,
+                "analysis": {"by_sector": {}, "by_cap_bucket": {}, "by_asset_type": {}}}
     try:
         import yfinance as yf
         tickers_needed = list({p["ticker"] for p in positions} | {SPY_TICKER})
@@ -123,6 +213,9 @@ def get_portfolio_performance(user_id: str) -> Dict[str, Any]:
     spy_pnl_pct = ((spy_now - spy_entry) / spy_entry * 100) if spy_entry else 0.0
 
     enriched = []
+    by_sector: Dict[str, float] = {}
+    by_cap_bucket: Dict[str, float] = {}
+    by_asset_type: Dict[str, float] = {}
     for p in positions:
         cur = prices.get(p["ticker"], p["entry_price"])
         if p["direction"] == "LONG":
@@ -133,6 +226,12 @@ def get_portfolio_performance(user_id: str) -> Dict[str, Any]:
             pos_value  = p["allocated"] + pnl_dollar
         pnl_pct = (pnl_dollar / p["allocated"] * 100) if p["allocated"] else 0.0
         total_value += pos_value
+        sector = p.get("sector") or UNKNOWN_CATEGORY
+        cap_bucket = p.get("cap_bucket") or UNKNOWN_CATEGORY
+        asset_type = p.get("asset_type") or UNKNOWN_CATEGORY
+        by_sector[sector] = by_sector.get(sector, 0.0) + pos_value
+        by_cap_bucket[cap_bucket] = by_cap_bucket.get(cap_bucket, 0.0) + pos_value
+        by_asset_type[asset_type] = by_asset_type.get(asset_type, 0.0) + pos_value
         enriched.append({**p, "current_price": cur, "current_value": round(pos_value, 2),
                          "pnl_dollar": round(pnl_dollar, 2), "pnl_pct": round(pnl_pct, 2)})
 
@@ -146,6 +245,11 @@ def get_portfolio_performance(user_id: str) -> Dict[str, Any]:
         "total_pnl_pct": round(total_pnl_pct, 2),
         "spy_pnl_pct":   round(spy_pnl_pct, 2),
         "beating_spy":   total_pnl_pct > spy_pnl_pct,
+        "analysis": {
+            "by_sector": {k: round(v, 2) for k, v in sorted(by_sector.items())},
+            "by_cap_bucket": {k: round(v, 2) for k, v in sorted(by_cap_bucket.items())},
+            "by_asset_type": {k: round(v, 2) for k, v in sorted(by_asset_type.items())},
+        },
     }
 
 
@@ -191,13 +295,15 @@ def _insert_explicit_long(
     note: str,
     today_iso: str,
 ) -> str:
+    profile = _fetch_ticker_profile(ticker)
     pos_id = f"{ticker}_{int(time.time() * 1000)}"
     allocated = round(float(shares) * float(entry_price), 6)
     conn.execute(
         """
         INSERT INTO paper_positions
-        (id, user_id, ticker, direction, entry_price, entry_date, shares, allocated, source, note)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+        (id, user_id, ticker, direction, entry_price, entry_date, shares, allocated, source, note,
+         sector, market_cap, cap_bucket, asset_type)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             pos_id,
@@ -210,6 +316,10 @@ def _insert_explicit_long(
             allocated,
             source,
             note or "",
+            profile["sector"],
+            profile["market_cap"],
+            profile["cap_bucket"],
+            profile["asset_type"],
         ),
     )
     return pos_id

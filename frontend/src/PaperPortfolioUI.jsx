@@ -1,10 +1,16 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { Plus, Target, ImageUp, X } from "lucide-react";
-import { API_BASE_URL, apiFetch, apiPostMultipart } from "./api";
+import { API_BASE_URL, apiFetch, apiPostMultipart, fetchJsonWithMeta } from "./api";
 
 const fmt = (n, dec = 2) => (n >= 0 ? "+" : "") + n.toFixed(dec);
 const fmtUSD = (n) => (n >= 0 ? "+$" : "-$") + Math.abs(n).toFixed(2);
+const fmtPlainUSD = (n) => `$${Number(n || 0).toFixed(2)}`;
+
+function topBreakdown(map = {}) {
+  const entries = Object.entries(map).sort((a, b) => Number(b[1]) - Number(a[1]));
+  return entries.slice(0, 3);
+}
 
 function rowStatus(ticker, rec) {
   if (!rec || !ticker) return "—";
@@ -17,13 +23,14 @@ function rowStatus(ticker, rec) {
 export default function PaperPortfolioUI({ onXpGained }) {
   const location = useLocation();
   const [perf, setPerf] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [perfLoading, setPerfLoading] = useState(true);
+  const [perfError, setPerfError] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({
     ticker: "",
     direction: "LONG",
-    allocated: 1000,
+    price: "",
+    shares: "",
     note: "",
   });
   const [adding, setAdding] = useState(false);
@@ -144,17 +151,22 @@ export default function PaperPortfolioUI({ onXpGained }) {
   }, [location.state]);
 
   const fetchPerf = async () => {
+    setPerfLoading(true);
+    setPerfError(null);
     try {
-      setLoading(true);
-      const data = await apiFetch(`${API_BASE_URL}/portfolio/performance`);
+      const { data } = await fetchJsonWithMeta(
+        `${API_BASE_URL}/portfolio/performance`,
+        {},
+        20000
+      );
       setPerf(data);
-      if (data.beating_spy && onXpGained) {
-        // Silently poll — don't spam awards
-      }
     } catch (e) {
-      setError("Failed to load portfolio");
+      setPerfError(
+        e.message ||
+          "Could not load portfolio performance. Start the API on port 8000 or check VITE_API_BASE_URL."
+      );
     } finally {
-      setLoading(false);
+      setPerfLoading(false);
     }
   };
 
@@ -167,12 +179,25 @@ export default function PaperPortfolioUI({ onXpGained }) {
       setAddError("Enter a ticker");
       return;
     }
+    if (!Number(addForm.price) || Number(addForm.price) <= 0) {
+      setAddError("Enter a positive purchase price");
+      return;
+    }
+    if (!Number(addForm.shares) || Number(addForm.shares) <= 0) {
+      setAddError("Enter a positive share count");
+      return;
+    }
     setAdding(true);
     setAddError("");
     try {
       const data = await apiFetch(`${API_BASE_URL}/portfolio/position`, {
         method: "POST",
-        body: JSON.stringify(addForm),
+        body: JSON.stringify({
+          ...addForm,
+          price: Number(addForm.price),
+          shares: Number(addForm.shares),
+          source: "manual_price_shares",
+        }),
       });
       if (data.error) {
         setAddError(data.error);
@@ -180,7 +205,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
       }
       if (onXpGained) onXpGained({ xp_awarded: 10, new_badges: [] });
       setShowAdd(false);
-      setAddForm({ ticker: "", direction: "LONG", allocated: 1000, note: "" });
+      setAddForm({ ticker: "", direction: "LONG", price: "", shares: "", note: "" });
       await fetchPerf();
     } catch {
       setAddError("Failed to add position");
@@ -201,28 +226,86 @@ export default function PaperPortfolioUI({ onXpGained }) {
     }
   };
 
-  if (loading)
-    return (
-      <div style={{ display: "flex", justifyContent: "center", padding: 60 }}>
-        <div
-          className="spinner"
-          style={{
-            width: 40,
-            height: 40,
-            border: "3px solid rgba(255,255,255,0.1)",
-            borderTopColor: "#a78bfa",
-            borderRadius: "50%",
-            animation: "spin 0.8s linear infinite",
-          }}
-        />
-      </div>
-    );
-
   const positions = perf?.positions || [];
   const beatingSPY = perf?.beating_spy;
+  const analysis = perf?.analysis || {};
 
   return (
-    <div style={{ maxWidth: 800, margin: "0 auto", padding: "0 16px" }}>
+    <div style={{ maxWidth: 920, margin: "0 auto", padding: "0 16px" }}>
+      <div style={{ marginBottom: 22 }}>
+        <div style={{ fontSize: 11, color: "#a78bfa", fontWeight: 800, letterSpacing: 1.2, marginBottom: 6 }}>
+          PORTFOLIO BUILDER
+        </div>
+        <h2 style={{ margin: 0, color: "#f8fafc", fontSize: 28 }}>
+          Add stocks manually or import a broker screenshot
+        </h2>
+        <p style={{ margin: "8px 0 0", color: "#94a3b8", fontSize: 13, lineHeight: 1.6 }}>
+          Each holding is automatically tagged by sector, asset type, and market-cap bucket for later portfolio analysis.
+        </p>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: 14,
+          marginBottom: 24,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            setShowAdd(true);
+            setImportExpanded(false);
+          }}
+          style={optionCardStyle(showAdd)}
+        >
+          <Plus size={22} />
+          <span style={{ fontWeight: 800, fontSize: 15 }}>Add stock one by one</span>
+          <span style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5 }}>
+            Enter ticker, buy price, and number of shares. TradeTalk tags the position automatically.
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setImportExpanded(true);
+            setShowAdd(false);
+          }}
+          style={optionCardStyle(importExpanded)}
+        >
+          <ImageUp size={22} />
+          <span style={{ fontWeight: 800, fontSize: 15 }}>Upload broker screenshot</span>
+          <span style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5 }}>
+            Bulk import holdings from Robinhood, Webull, or another broker using Gemini 3.5 Flash vision.
+          </span>
+        </button>
+      </div>
+
+      {perfError ? (
+        <div
+          style={{
+            marginBottom: 18,
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(239,68,68,0.35)",
+            background: "rgba(239,68,68,0.08)",
+            color: "#fca5a5",
+            fontSize: 13,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <span style={{ flex: "1 1 240px", lineHeight: 1.5 }}>{perfError}</span>
+          <button type="button" onClick={fetchPerf} style={btnStyle("#7c3aed")}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+
       {/* Portfolio Summary */}
       <div
         style={{
@@ -232,59 +315,114 @@ export default function PaperPortfolioUI({ onXpGained }) {
           marginBottom: 24,
         }}
       >
+        {perfLoading
+          ? [1, 2, 3].map((i) => (
+              <div
+                key={i}
+                style={{
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: 14,
+                  padding: "16px 18px",
+                  minHeight: 88,
+                  opacity: 0.6,
+                }}
+              />
+            ))
+          : [
+              {
+                label: "Portfolio Value",
+                value: `$${(perf?.total_value || 0).toFixed(2)}`,
+                sub: `Started $${perf?.starting_cash?.toFixed(0) || "10,000"}`,
+                color: "#a78bfa",
+              },
+              {
+                label: "Total P&L",
+                value: fmtUSD(perf?.total_pnl || 0),
+                sub: `${fmt(perf?.total_pnl_pct || 0)}%`,
+                color: (perf?.total_pnl || 0) >= 0 ? "#10b981" : "#ef4444",
+              },
+              {
+                label: "vs SPY",
+                value: `${fmt(perf?.total_pnl_pct || 0)}% vs ${fmt(perf?.spy_pnl_pct || 0)}%`,
+                sub: beatingSPY ? "Beating the market" : "SPY is ahead",
+                color: beatingSPY ? "#10b981" : "#f59e0b",
+              },
+            ].map((card) => (
+              <div
+                key={card.label}
+                style={{
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: 14,
+                  padding: "16px 18px",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#64748b",
+                    fontWeight: 600,
+                    letterSpacing: 1,
+                    marginBottom: 8,
+                  }}
+                >
+                  {card.label.toUpperCase()}
+                </div>
+                <div
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 800,
+                    color: card.color,
+                    marginBottom: 4,
+                  }}
+                >
+                  {card.value}
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>{card.sub}</div>
+              </div>
+            ))}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: 12,
+          marginBottom: 22,
+        }}
+      >
         {[
-          {
-            label: "Portfolio Value",
-            value: `$${(perf?.total_value || 0).toFixed(2)}`,
-            sub: `Started $${perf?.starting_cash?.toFixed(0) || "10,000"}`,
-            color: "#a78bfa",
-          },
-          {
-            label: "Total P&L",
-            value: fmtUSD(perf?.total_pnl || 0),
-            sub: `${fmt(perf?.total_pnl_pct || 0)}%`,
-            color: (perf?.total_pnl || 0) >= 0 ? "#10b981" : "#ef4444",
-          },
-          {
-            label: "vs SPY",
-            value: `${fmt(perf?.total_pnl_pct || 0)}% vs ${fmt(perf?.spy_pnl_pct || 0)}%`,
-            sub: beatingSPY ? "🔥 Beating the market!" : "SPY is ahead",
-            color: beatingSPY ? "#10b981" : "#f59e0b",
-          },
-        ].map((card) => (
-          <div
-            key={card.label}
-            style={{
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 14,
-              padding: "16px 18px",
-            }}
-          >
+          ["Sector mix", analysis.by_sector],
+          ["Market-cap mix", analysis.by_cap_bucket],
+          ["Asset type", analysis.by_asset_type],
+        ].map(([label, data]) => {
+          const rows = topBreakdown(data);
+          return (
             <div
+              key={label}
               style={{
-                fontSize: 10,
-                color: "#64748b",
-                fontWeight: 600,
-                letterSpacing: 1,
-                marginBottom: 8,
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 14,
+                padding: "14px 16px",
+                minHeight: 92,
               }}
             >
-              {card.label.toUpperCase()}
+              <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
+                {label.toUpperCase()}
+              </div>
+              {rows.length ? rows.map(([name, value]) => (
+                <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>
+                  <span>{name}</span>
+                  <strong>{fmtPlainUSD(value)}</strong>
+                </div>
+              )) : (
+                <div style={{ color: "#64748b", fontSize: 12 }}>Add holdings to unlock breakdowns.</div>
+              )}
             </div>
-            <div
-              style={{
-                fontSize: 20,
-                fontWeight: 800,
-                color: card.color,
-                marginBottom: 4,
-              }}
-            >
-              {card.value}
-            </div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>{card.sub}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Vision / manual holdings import */}
@@ -313,10 +451,13 @@ export default function PaperPortfolioUI({ onXpGained }) {
             padding: 0,
           }}
         >
-          <ImageUp size={18} /> Import holdings (screenshot or manual)
+          <ImageUp size={18} /> Bulk upload from broker screenshot
         </button>
         {importExpanded && (
           <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6, marginBottom: 12 }}>
+              Upload a Robinhood, Webull, Fidelity, or other broker screenshot. The backend sends the image to Gemini 3.5 Flash and returns editable holdings before anything is applied.
+            </div>
             <label
               style={{
                 display: "flex",
@@ -362,7 +503,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
                     e.target.value = "";
                   }}
                 />
-                Upload Robinhood / broker screenshot
+                Upload screenshot
               </label>
             </div>
             <div
@@ -374,7 +515,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
                 letterSpacing: 0.5,
               }}
             >
-              OR ENTER MANUALLY
+              OR PASTE MULTIPLE ROWS MANUALLY
             </div>
             {manualDraft.map((row, idx) => (
               <div
@@ -488,7 +629,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
             gap: 6,
           }}
         >
-          <Plus size={14} /> Add Position
+          <Plus size={14} /> Add Stock
         </button>
       </div>
 
@@ -506,7 +647,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr",
+              gridTemplateColumns: "1fr 1fr 1fr 1fr",
               gap: 12,
               marginBottom: 12,
             }}
@@ -534,11 +675,24 @@ export default function PaperPortfolioUI({ onXpGained }) {
             </select>
             <input
               type="number"
-              value={addForm.allocated}
+              min="0"
+              step="0.01"
+              value={addForm.price}
               onChange={(e) =>
-                setAddForm((f) => ({ ...f, allocated: Number(e.target.value) }))
+                setAddForm((f) => ({ ...f, price: e.target.value }))
               }
-              placeholder="Amount ($)"
+              placeholder="Buy price ($)"
+              style={inputStyle}
+            />
+            <input
+              type="number"
+              min="0"
+              step="0.000001"
+              value={addForm.shares}
+              onChange={(e) =>
+                setAddForm((f) => ({ ...f, shares: e.target.value }))
+              }
+              placeholder="Shares"
               style={inputStyle}
             />
           </div>
@@ -566,7 +720,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
               disabled={adding}
               style={btnStyle("#7c3aed")}
             >
-              {adding ? "Adding..." : "Add Position"}
+              {adding ? "Adding..." : "Add Stock"}
             </button>
             <button
               onClick={() => setShowAdd(false)}
@@ -591,8 +745,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
         >
           <Target size={32} color="#64748b" style={{ marginBottom: 12 }} />
           <div style={{ fontSize: 15, color: "#64748b" }}>
-            No positions yet. Add a position after running a debate or
-            valuation.
+            No positions yet. Add a stock manually or upload a broker screenshot.
           </div>
         </div>
       ) : (
@@ -665,6 +818,23 @@ export default function PaperPortfolioUI({ onXpGained }) {
                     >
                       {(pos.source || "manual").replace(/_/g, " ")}
                     </span>
+                    {[pos.sector, pos.cap_bucket, pos.asset_type].filter(Boolean).map((tag) => (
+                      <span
+                        key={`${pos.id}-${tag}`}
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: 0.4,
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          background: "rgba(15,23,42,0.7)",
+                          color: "#93c5fd",
+                          border: "1px solid rgba(147,197,253,0.25)",
+                        }}
+                      >
+                        {tag}
+                      </span>
+                    ))}
                   </div>
                   <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
                     {pos.shares.toFixed(4)} shares · $
@@ -950,4 +1120,19 @@ const btnStyle = (bg) => ({
   fontSize: 13,
   fontWeight: 600,
   cursor: "pointer",
+});
+
+const optionCardStyle = (active) => ({
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  gap: 8,
+  textAlign: "left",
+  borderRadius: 16,
+  border: active ? "1px solid rgba(167,139,250,0.75)" : "1px solid rgba(255,255,255,0.1)",
+  background: active ? "rgba(124,58,237,0.18)" : "rgba(255,255,255,0.04)",
+  color: "#e2e8f0",
+  padding: "18px 20px",
+  cursor: "pointer",
+  boxShadow: active ? "0 12px 35px rgba(124,58,237,0.18)" : "none",
 });

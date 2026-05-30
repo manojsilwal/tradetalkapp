@@ -24,7 +24,9 @@ MAX_IMAGE_BYTES = 4 * 1024 * 1024
 class AddPositionRequest(BaseModel):
     ticker: str
     direction: str = "LONG"
-    allocated: float = 1000.0
+    allocated: Optional[float] = None
+    price: Optional[float] = None
+    shares: Optional[float] = None
     source: str = "manual"
     note: str = ""
 
@@ -68,6 +70,8 @@ def add_position(req: AddPositionRequest, user: UserInfo = Depends(get_current_u
         allocated=req.allocated,
         source=req.source,
         note=req.note,
+        price=req.price,
+        shares=req.shares,
     )
     up.award_xp(user.id, "prediction_log", note=req.ticker)
     return result

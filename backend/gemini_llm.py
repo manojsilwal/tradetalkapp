@@ -335,7 +335,7 @@ def gemini_chat_turn_result_sync(
 
 _HOLDINGS_VISION_INSTRUCTION = (
     "You are extracting stock and ETF holdings from a broker app screenshot "
-    "(e.g. Robinhood, Fidelity mobile). For each equity line, output ticker, "
+    "(e.g. Robinhood, Webull, Fidelity mobile). For each equity line, output ticker, "
     "share quantity, and average cost per share in USD. "
     "Rules: use plain US tickers (AAPL, MSFT). Uppercase tickers. "
     "Ignore cash, buying power, and options unless it is clearly common stock. "
@@ -363,7 +363,7 @@ def gemini_extract_holdings_from_image(
     if mt not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
         mt = "image/jpeg"
 
-    vision_model = os.environ.get("GEMINI_VISION_MODEL", "").strip() or resolve_gemini_model("heavy")
+    vision_model = os.environ.get("GEMINI_VISION_MODEL", "").strip() or "gemini-3.5-flash"
 
     def _call() -> str:
         client = _genai_client()
