@@ -44,10 +44,17 @@ def _get_conn():
 def init_portfolio_db():
     if _use_postgres():
         from . import paper_portfolio_pg as pg
+        import logging
 
-        pg.init_schema()
-        pg.migrate_from_sqlite_if_needed()
-        return
+        try:
+            pg.init_schema()
+            pg.migrate_from_sqlite_if_needed()
+        except Exception as exc:
+            logging.getLogger(__name__).error(
+                "[paper_portfolio] Postgres init failed — falling back to SQLite: %s", exc
+            )
+        else:
+            return
     conn = _get_conn()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS paper_positions (

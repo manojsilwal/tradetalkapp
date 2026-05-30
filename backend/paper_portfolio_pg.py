@@ -63,7 +63,12 @@ def migrate_from_sqlite_if_needed() -> None:
             return
     src = sqlite3.connect(sqlite_path)
     src.row_factory = sqlite3.Row
-    rows = src.execute("SELECT * FROM paper_positions").fetchall()
+    try:
+        rows = src.execute("SELECT * FROM paper_positions").fetchall()
+    except sqlite3.OperationalError:
+        src.close()
+        logger.info("[paper_portfolio_pg] SQLite has no paper_positions table — nothing to migrate")
+        return
     src.close()
     if not rows:
         return
