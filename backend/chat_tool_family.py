@@ -108,6 +108,10 @@ CHAT_TOOL_FAMILY_BY_NAME: dict[str, ToolFamily] = {
     "get_risk_assessment": ToolFamily.RISK,
     "run_what_if_backtest": ToolFamily.BACKTEST,
     "find_similar_setups": ToolFamily.MARKET_DATA,
+    # Super-agent context tools
+    "get_portfolio_snapshot": ToolFamily.PORTFOLIO,
+    "get_macro_regime": ToolFamily.MACRO,
+    "get_macro_flow_summary": ToolFamily.MACRO,
 }
 
 EXPECTED_CHAT_TOOL_NAMES: frozenset[str] = frozenset(CHAT_TOOL_FAMILY_BY_NAME.keys())
@@ -185,6 +189,9 @@ TOOL_NAMESPACE_BY_NAME: dict[str, MemoryNamespace] = {
     "get_risk_assessment": MemoryNamespace.MARKET_DATA,
     "run_what_if_backtest": MemoryNamespace.OUTCOME_STORE,
     "find_similar_setups": MemoryNamespace.MARKET_DATA,
+    "get_portfolio_snapshot": MemoryNamespace.OUTCOME_STORE,
+    "get_macro_regime": MemoryNamespace.NEWS_RAG,
+    "get_macro_flow_summary": MemoryNamespace.NEWS_RAG,
 }
 
 
@@ -204,6 +211,9 @@ TOOL_RETRIEVAL_MODE_BY_NAME: dict[str, str] = {
     "get_risk_assessment": "live_fetch",
     "run_what_if_backtest": "outcome_indexed",
     "find_similar_setups": "similarity",
+    "get_portfolio_snapshot": "outcome_indexed",
+    "get_macro_regime": "live_fetch",
+    "get_macro_flow_summary": "recency_weighted",
 }
 
 
@@ -222,6 +232,9 @@ SOURCE_REF_ARTIFACT_TYPE_BY_TOOL: dict[str, str] = {
     "get_risk_assessment": "risk_assessment",
     "run_what_if_backtest": "backtest_summary",
     "find_similar_setups": "pattern_match",
+    "get_portfolio_snapshot": "user_profile",
+    "get_macro_regime": "macro_data",
+    "get_macro_flow_summary": "macro_data",
 }
 
 

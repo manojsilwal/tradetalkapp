@@ -8,7 +8,9 @@ import threading
 from typing import Any, Dict, List, Optional
 from . import video_academy as va
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "progress.db")
+from .progress_db import resolve_progress_db_path
+
+DB_PATH = resolve_progress_db_path()
 _local  = threading.local()
 
 

@@ -18,8 +18,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth import UserInfo, get_optional_user
-from ..deps import knowledge_store, llm_client
+from ..deps import knowledge_store, llm_client, macro_connector
 from .. import agent_memory
+from .. import paper_portfolio as pp
 from .. import chat_service
 from ..chat_evidence_contract import build_evidence_contract
 from ..chat_tool_family import EXPECTED_CHAT_TOOL_NAMES
@@ -49,6 +50,10 @@ CHAT_TOOL_NAMES: frozenset[str] = frozenset({
     "get_risk_assessment",
     "run_what_if_backtest",
     "find_similar_setups",
+    # Super-agent context tools
+    "get_portfolio_snapshot",
+    "get_macro_regime",
+    "get_macro_flow_summary",
 })
 
 assert CHAT_TOOL_NAMES == EXPECTED_CHAT_TOOL_NAMES, (
@@ -262,13 +267,17 @@ async def chat_send_message(
         raise HTTPException(status_code=410, detail="session_expired")
 
     uid = _user.id if _user else None
+    # Fetch portfolio context once per turn (avoids duplicate yfinance work).
+    user_ctx = await chat_service.get_user_context_block(uid) if uid else {}
     # Refresh base system prompt every turn so instructions + L1/pipeline snapshot stay current
     # (no need to open a new session after backend updates).
-    fresh_prompt = await chat_service.build_fresh_system_prompt(knowledge_store, uid)
+    fresh_prompt = await chat_service.build_fresh_system_prompt(
+        knowledge_store, uid, user_ctx=user_ctx
+    )
     sess.system_prompt = fresh_prompt
 
     rag_block, meta = await chat_service.gather_message_context(
-        knowledge_store, sess, body.message.strip()
+        knowledge_store, sess, body.message.strip(), user_ctx=user_ctx
     )
     full_system = fresh_prompt + rag_block
     memory_ok = bool(uid and sess.user_id and sess.user_id == uid)
@@ -1134,6 +1143,65 @@ async def chat_send_message(
                 },
             },
         },
+        # ── Super-agent context tools ─────────────────────────────────────────
+        {
+            "type": "function",
+            "function": {
+                "name": "get_portfolio_snapshot",
+                "description": (
+                    "Return a detailed snapshot of the signed-in user's paper portfolio: "
+                    "all open positions, current P&L, sector/cap-bucket breakdown, SPY benchmark "
+                    "comparison, and top winners/losers. "
+                    "Use when the user asks about their portfolio performance, exposure, "
+                    "concentration risk, or wants exact P&L on their holdings. "
+                    "The system prompt already has a summary — call this tool when the user "
+                    "explicitly wants detail or the summary does not answer their question."
+                ),
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_macro_regime",
+                "description": (
+                    "Return the current global macro regime: VIX, credit stress index, "
+                    "market regime label (BULL_NORMAL / BEAR_STRESS), fed funds rate, "
+                    "2Y/10Y treasury yields, yield curve spread, DXY dollar index, CPI, "
+                    "unemployment, and sector ETF moves. "
+                    "Use for questions about the macro environment, interest rates, the dollar, "
+                    "recession risk, Fed policy, or the overall market regime. "
+                    "Do not fabricate rates or yields from memory — call this tool."
+                ),
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_macro_flow_summary",
+                "description": (
+                    "Return thematic sector capital-flow scores and QA verdicts from the "
+                    "macro flow pipeline (CMF/RS momentum + fundamental qual). "
+                    "Shows which sectors have strong inflows (durable/speculative) vs outflows, "
+                    "and the leading tickers within each theme. "
+                    "Use when the user asks about sector rotation, capital flows, thematic trends, "
+                    "which sectors are leading or lagging, or wants macro flow analysis."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "interval": {
+                            "type": "string",
+                            "enum": ["1d", "1w", "1m", "1y"],
+                            "description": "Lookback window for flow scores. Default '1w'.",
+                            "default": "1w",
+                        }
+                    },
+                    "required": [],
+                },
+            },
+        },
     ]
 
     async def recall_financial_profile() -> str:
@@ -1145,6 +1213,201 @@ async def chat_send_message(
         if not uid:
             return "Sign in to save preferences."
         return await asyncio.to_thread(uprefs.save_financial_preference_for_tool, uid, key, value)
+
+    async def get_portfolio_snapshot() -> str:
+        """
+        Return a detailed snapshot of the user's paper portfolio: all open positions,
+        current P&L, sector/cap breakdown, SPY benchmark comparison, and top winners/losers.
+        Use when the user asks about their portfolio performance, exposure, concentration,
+        or wants to know how specific holdings are doing.
+        """
+        if not uid:
+            return "Sign in to view your portfolio."
+        try:
+            perf = await asyncio.to_thread(pp.get_portfolio_performance, uid)
+            positions = perf.get("positions") or []
+            if not positions:
+                return "Your portfolio is empty. Add positions via the Portfolio page."
+
+            total_val = perf.get("total_value", 0.0)
+            total_pnl = perf.get("total_pnl", 0.0)
+            total_pnl_pct = perf.get("total_pnl_pct", 0.0)
+            spy_pct = perf.get("spy_pnl_pct")
+            beating = perf.get("beating_spy", False)
+            analysis = perf.get("analysis") or {}
+
+            lines = [
+                f"**Portfolio Snapshot** ({len(positions)} open positions)",
+                f"- Total Value: ${total_val:,.2f} | P&L: ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)",
+            ]
+            if spy_pct is not None:
+                lines.append(
+                    f"- SPY benchmark: {spy_pct:+.2f}% | {'Beating' if beating else 'Trailing'} SPY"
+                )
+
+            # Sector breakdown
+            by_sector = analysis.get("by_sector") or {}
+            if by_sector:
+                top_sectors = sorted(by_sector.items(), key=lambda x: x[1], reverse=True)[:4]
+                sector_str = ", ".join(f"{s}: ${v:,.0f}" for s, v in top_sectors)
+                lines.append(f"- Sector exposure: {sector_str}")
+
+            # Cap bucket breakdown
+            by_cap = analysis.get("by_cap_bucket") or {}
+            if by_cap:
+                cap_str = ", ".join(f"{c}: ${v:,.0f}" for c, v in sorted(by_cap.items(), key=lambda x: x[1], reverse=True)[:3])
+                lines.append(f"- Cap breakdown: {cap_str}")
+
+            # Top 3 winners and losers
+            sorted_pos = sorted(positions, key=lambda p: p.get("pnl_pct", 0.0), reverse=True)
+            winners = sorted_pos[:3]
+            losers = sorted_pos[-3:][::-1]
+            if winners:
+                w_str = ", ".join(
+                    f"{p['ticker']} {p.get('pnl_pct', 0):+.1f}%" for p in winners if p.get("pnl_pct", 0) > 0
+                )
+                if w_str:
+                    lines.append(f"- Top gainers: {w_str}")
+            if losers:
+                l_str = ", ".join(
+                    f"{p['ticker']} {p.get('pnl_pct', 0):+.1f}%" for p in losers if p.get("pnl_pct", 0) < 0
+                )
+                if l_str:
+                    lines.append(f"- Top losers: {l_str}")
+
+            # Full position table (compact)
+            lines.append("\n**Open Positions:**")
+            for p in positions:
+                pnl_str = f"{p.get('pnl_pct', 0):+.1f}%"
+                lines.append(
+                    f"  {p['ticker']} ({p.get('direction','LONG')}) | "
+                    f"Entry: ${p.get('entry_price', 0):.2f} | "
+                    f"Current: ${p.get('current_price', 0):.2f} | "
+                    f"P&L: ${p.get('pnl_dollar', 0):+.2f} ({pnl_str}) | "
+                    f"Sector: {p.get('sector', 'Unknown')}"
+                )
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Portfolio snapshot unavailable: {e}"
+
+    async def get_macro_regime() -> str:
+        """
+        Return the current global macro regime: VIX, credit stress, market regime label,
+        fed funds rate, 2Y/10Y treasury yields, yield curve spread, DXY, CPI, unemployment.
+        Use when the user asks about the macro environment, interest rates, the dollar,
+        recession risk, or the overall market regime.
+        """
+        try:
+            data = await macro_connector.fetch_data()
+            ind = data.get("indicators") or {}
+            vix = ind.get("vix_level")
+            csi = ind.get("credit_stress_index")
+            regime = "BULL_NORMAL" if (csi or 0) <= 1.1 else "BEAR_STRESS"
+            narrative = ind.get("macro_narrative") or ""
+
+            lines = [f"**Macro Regime: {regime}**"]
+            if vix is not None:
+                lines.append(f"- VIX: {vix:.1f} | Credit Stress Index: {csi:.2f}" if csi else f"- VIX: {vix:.1f}")
+
+            fed = ind.get("fed_funds_rate")
+            t2y = ind.get("treasury_2y")
+            t10y = ind.get("treasury_10y")
+            spread = ind.get("yield_curve_spread_10y_2y")
+            if any(v is not None for v in [fed, t2y, t10y]):
+                rate_parts = []
+                if fed is not None:
+                    rate_parts.append(f"Fed Funds: {fed:.2f}%")
+                if t2y is not None:
+                    rate_parts.append(f"2Y: {t2y:.2f}%")
+                if t10y is not None:
+                    rate_parts.append(f"10Y: {t10y:.2f}%")
+                if spread is not None:
+                    rate_parts.append(f"Spread (10Y-2Y): {spread:+.2f}%")
+                lines.append(f"- Rates: {' | '.join(rate_parts)}")
+
+            dxy = ind.get("dxy_level")
+            dxy_chg = ind.get("dxy_change_5d_pct")
+            dxy_lbl = ind.get("dxy_strength_label") or ""
+            if dxy is not None:
+                dxy_str = f"DXY: {dxy:.1f}"
+                if dxy_chg is not None:
+                    dxy_str += f" ({dxy_chg:+.2f}% 5d)"
+                if dxy_lbl:
+                    dxy_str += f" — {dxy_lbl}"
+                lines.append(f"- Dollar: {dxy_str}")
+
+            cpi = ind.get("cpi_yoy")
+            unemp = ind.get("unemployment")
+            if cpi is not None or unemp is not None:
+                econ_parts = []
+                if cpi is not None:
+                    econ_parts.append(f"CPI YoY: {cpi:.1f}%")
+                if unemp is not None:
+                    econ_parts.append(f"Unemployment: {unemp:.1f}%")
+                lines.append(f"- Economy: {' | '.join(econ_parts)}")
+
+            # Sector ETF snapshot
+            sectors = data.get("sectors") or []
+            if sectors:
+                sector_line = " | ".join(
+                    f"{s.get('name','?')}: {s.get('change_pct', 0):+.1f}%"
+                    for s in sectors[:5]
+                )
+                lines.append(f"- Sector moves: {sector_line}")
+
+            if narrative:
+                lines.append(f"- Narrative: {narrative[:400]}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Macro regime data unavailable: {e}"
+
+    async def get_macro_flow_summary(interval: str = "1w") -> str:
+        """
+        Return thematic sector capital-flow scores and QA verdicts from the macro flow pipeline.
+        Shows which sectors have strong inflows (durable/speculative) vs outflows, and the
+        top movers within each theme. Use when the user asks about sector rotation, capital
+        flows, thematic trends, which sectors are leading/lagging, or macro flow analysis.
+        interval: '1d', '1w' (default), '1m', or '1y'
+        """
+        allowed = {"1d", "1w", "1m", "1y"}
+        iv = interval.strip().lower() if interval.strip().lower() in allowed else "1w"
+        try:
+            from ..macro_flow.store import latest_rrg_payload
+
+            pts = await asyncio.to_thread(latest_rrg_payload, iv)
+            if not pts:
+                return (
+                    f"No macro flow data cached for interval={iv}. "
+                    "Try refreshing via the Macro page or ask again shortly."
+                )
+
+            # Sort by flow_score descending
+            pts_sorted = sorted(pts, key=lambda p: float(p.get("flow_score") or 0.0), reverse=True)
+
+            lines = [f"**Macro Sector Flow Summary** (interval: {iv})"]
+            lines.append("\nTop inflow sectors:")
+            for p in pts_sorted[:5]:
+                name = p.get("name") or p.get("category_id") or "Unknown"
+                fs = float(p.get("flow_score") or 0.0)
+                verdict = p.get("qa_verdict") or "—"
+                top_m = p.get("top_movers") or []
+                movers_str = ", ".join(str(m) for m in top_m[:3]) if top_m else ""
+                line = f"  {name}: flow={fs:+.3f} | verdict={verdict}"
+                if movers_str:
+                    line += f" | leaders={movers_str}"
+                lines.append(line)
+
+            lines.append("\nBottom / outflow sectors:")
+            for p in pts_sorted[-4:]:
+                name = p.get("name") or p.get("category_id") or "Unknown"
+                fs = float(p.get("flow_score") or 0.0)
+                verdict = p.get("qa_verdict") or "—"
+                lines.append(f"  {name}: flow={fs:+.3f} | verdict={verdict}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Macro flow data unavailable: {e}"
 
     tool_handlers = {
         "get_stock_quote": get_stock_quote,
@@ -1159,6 +1422,9 @@ async def chat_send_message(
         "get_risk_assessment": get_risk_assessment,
         "run_what_if_backtest": run_what_if_backtest,
         "find_similar_setups": find_similar_setups,
+        "get_portfolio_snapshot": get_portfolio_snapshot,
+        "get_macro_regime": get_macro_regime,
+        "get_macro_flow_summary": get_macro_flow_summary,
     }
 
     # Phase A1: stable per-turn identifiers for trajectory telemetry.

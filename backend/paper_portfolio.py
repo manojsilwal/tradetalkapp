@@ -6,7 +6,7 @@ import json
 import os
 import time
 import threading
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
 from .portfolio_holdings_reconcile import (
@@ -14,12 +14,24 @@ from .portfolio_holdings_reconcile import (
     normalize_extracted_holdings,
     normalize_ticker,
 )
+from .progress_db import resolve_progress_db_path
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "progress.db")
+DB_PATH = resolve_progress_db_path()
 _local  = threading.local()
 STARTING_CASH = 10_000.0
 SPY_TICKER    = "SPY"
 UNKNOWN_CATEGORY = "Unknown"
+_PERF_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_PERF_CACHE_TTL_SEC = 45.0
+
+
+def _use_postgres() -> bool:
+    try:
+        from .postgres_config import postgres_enabled
+
+        return postgres_enabled()
+    except Exception:
+        return False
 
 
 def _get_conn():
@@ -30,6 +42,12 @@ def _get_conn():
 
 
 def init_portfolio_db():
+    if _use_postgres():
+        from . import paper_portfolio_pg as pg
+
+        pg.init_schema()
+        pg.migrate_from_sqlite_if_needed()
+        return
     conn = _get_conn()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS paper_positions (
@@ -131,6 +149,12 @@ def add_position(
     price: Optional[float] = None,
     shares: Optional[float] = None,
 ) -> Dict[str, Any]:
+    if _use_postgres():
+        from . import paper_portfolio_pg as pg
+
+        return pg.add_position(
+            user_id, ticker, direction, allocated, source, note, price=price, shares=shares
+        )
     ticker = normalize_ticker(ticker)
     if not ticker:
         return {"error": "Ticker is required"}
@@ -167,12 +191,62 @@ def add_position(
           date.today().isoformat(), shares, allocated, source, note,
           profile["sector"], profile["market_cap"], profile["cap_bucket"], profile["asset_type"]))
     conn.commit()
+    invalidate_portfolio_performance_cache(user_id)
     return {"id": pos_id, "ticker": ticker.upper(), "direction": direction.upper(),
             "entry_price": price, "entry_date": date.today().isoformat(),
             "shares": shares, "allocated": allocated, **profile}
 
 
+def _spy_benchmark_return_pct(first_date_iso: str) -> Optional[float]:
+    """
+    SPY return % from the portfolio's earliest open position date through the latest quote.
+
+    Uses prior session close when all positions were opened today (imports / same-day adds).
+    """
+    try:
+        import yfinance as yf
+
+        since = date.fromisoformat(str(first_date_iso)[:10])
+        today = date.today()
+        ticker = yf.Ticker(SPY_TICKER)
+
+        if since >= today:
+            hist = ticker.history(period="10d", auto_adjust=True)
+            if hist is None or hist.empty:
+                return None
+            if len(hist) >= 2:
+                spy_entry = float(hist["Close"].iloc[-2])
+            else:
+                spy_entry = float(hist["Close"].iloc[0])
+        else:
+            end = today + timedelta(days=1)
+            hist = ticker.history(start=since, end=end, auto_adjust=True)
+            if hist is None or hist.empty:
+                return None
+            spy_entry = float(hist["Close"].iloc[0])
+
+        spy_now = float(hist["Close"].iloc[-1])
+        try:
+            live = ticker.fast_info.get("lastPrice")
+            if live is not None:
+                v = float(live)
+                if v > 0:
+                    spy_now = v
+        except Exception:
+            pass
+
+        if spy_entry <= 0:
+            return None
+        return ((spy_now - spy_entry) / spy_entry) * 100
+    except Exception:
+        return None
+
+
 def get_positions(user_id: str, include_closed: bool = False) -> List[Dict[str, Any]]:
+    if _use_postgres():
+        from . import paper_portfolio_pg as pg
+
+        return pg.get_positions(user_id, include_closed=include_closed)
     conn = _get_conn()
     if include_closed:
         rows = conn.execute("SELECT * FROM paper_positions WHERE user_id=? ORDER BY entry_date DESC", (user_id,)).fetchall()
@@ -181,36 +255,106 @@ def get_positions(user_id: str, include_closed: bool = False) -> List[Dict[str, 
     return [dict(r) for r in rows]
 
 
-def get_portfolio_performance(user_id: str) -> Dict[str, Any]:
+def invalidate_portfolio_performance_cache(user_id: str | None = None) -> None:
+    """Drop cached performance snapshot after portfolio mutations."""
+    if user_id:
+        _PERF_CACHE.pop(user_id, None)
+    else:
+        _PERF_CACHE.clear()
+
+
+def _fetch_last_prices_batch(tickers: List[str]) -> Dict[str, float]:
+    """Fetch last prices for many tickers in one yfinance call (fallback: per-ticker)."""
+    if not tickers:
+        return {}
+    prices: Dict[str, float] = {}
+    unique = list(dict.fromkeys(str(t).strip().upper() for t in tickers if t))
+
+    # Reuse hot L1 cache quotes when available (avoids network for mag7/ETFs).
+    try:
+        from . import market_l1_cache
+
+        snap = market_l1_cache.get_snapshot() or {}
+        quote_map = dict((snap.get("quotes") or {}))
+        quote_map.update((snap.get("sector_etfs") or {}))
+        for sym in unique:
+            cached = quote_map.get(sym)
+            if cached is not None:
+                try:
+                    prices[sym] = float(cached)
+                except (TypeError, ValueError):
+                    pass
+    except Exception:
+        pass
+
+    remaining = [t for t in unique if t not in prices]
+    if remaining:
+        try:
+            import yfinance as yf
+
+            raw = yf.download(
+                " ".join(remaining),
+                period="1d",
+                interval="1d",
+                group_by="ticker",
+                progress=False,
+                threads=True,
+            )
+            if raw is not None and not getattr(raw, "empty", True):
+                if len(remaining) == 1:
+                    sym = remaining[0]
+                    try:
+                        prices[sym] = float(raw["Close"].iloc[-1])
+                    except Exception:
+                        pass
+                else:
+                    for sym in remaining:
+                        try:
+                            val = float(raw[sym]["Close"].iloc[-1])
+                            if val == val:  # skip NaN
+                                prices[sym] = val
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    for sym in unique:
+        if sym in prices:
+            continue
+        try:
+            import yfinance as yf
+
+            prices[sym] = float(yf.Ticker(sym).fast_info["lastPrice"])
+        except Exception:
+            prices[sym] = 0.0
+    return prices
+
+
+def get_portfolio_performance(user_id: str, *, use_cache: bool = True) -> Dict[str, Any]:
+    if use_cache:
+        cached = _PERF_CACHE.get(user_id)
+        if cached and (time.time() - cached[0]) < _PERF_CACHE_TTL_SEC:
+            return cached[1]
+
     positions = get_positions(user_id)
     if not positions:
-        return {"positions": [], "total_value": STARTING_CASH, "total_pnl": 0.0,
+        empty = {"positions": [], "total_value": STARTING_CASH, "total_pnl": 0.0,
                 "total_pnl_pct": 0.0, "spy_pnl_pct": 0.0, "beating_spy": False,
                 "starting_cash": STARTING_CASH,
                 "analysis": {"by_sector": {}, "by_cap_bucket": {}, "by_asset_type": {}}}
+        _PERF_CACHE[user_id] = (time.time(), empty)
+        return empty
     try:
-        import yfinance as yf
-        tickers_needed = list({p["ticker"] for p in positions} | {SPY_TICKER})
-        prices: Dict[str, float] = {}
-        for t in tickers_needed:
-            try:
-                prices[t] = float(yf.Ticker(t).fast_info["lastPrice"])
-            except Exception:
-                prices[t] = 0.0
+        tickers_needed = list({p["ticker"] for p in positions})
+        prices = _fetch_last_prices_batch(tickers_needed)
     except Exception:
         prices = {}
 
     total_cost  = sum(p["allocated"] for p in positions)
     total_value = 0.0
-    spy_now     = prices.get(SPY_TICKER, 0.0)
     first_date  = min(p["entry_date"] for p in positions) if positions else date.today().isoformat()
-    try:
-        import yfinance as yf
-        spy_hist  = yf.Ticker(SPY_TICKER).history(start=first_date, period="2d")
-        spy_entry = float(spy_hist["Close"].iloc[0]) if not spy_hist.empty else spy_now
-    except Exception:
-        spy_entry = spy_now
-    spy_pnl_pct = ((spy_now - spy_entry) / spy_entry * 100) if spy_entry else 0.0
+    spy_pnl_raw = _spy_benchmark_return_pct(first_date)
+    spy_pnl_pct = round(spy_pnl_raw, 2) if spy_pnl_raw is not None else None
 
     enriched = []
     by_sector: Dict[str, float] = {}
@@ -237,20 +381,25 @@ def get_portfolio_performance(user_id: str) -> Dict[str, Any]:
 
     total_pnl     = total_value - total_cost
     total_pnl_pct = (total_pnl / total_cost * 100) if total_cost else 0.0
-    return {
+    result = {
         "positions":     enriched,
         "total_value":   round(total_value, 2),
         "starting_cash": STARTING_CASH,
         "total_pnl":     round(total_pnl, 2),
         "total_pnl_pct": round(total_pnl_pct, 2),
-        "spy_pnl_pct":   round(spy_pnl_pct, 2),
-        "beating_spy":   total_pnl_pct > spy_pnl_pct,
+        "spy_pnl_pct":   spy_pnl_pct,
+        "spy_benchmark_available": spy_pnl_pct is not None,
+        "beating_spy":   (
+            total_pnl_pct > spy_pnl_pct if spy_pnl_pct is not None else False
+        ),
         "analysis": {
             "by_sector": {k: round(v, 2) for k, v in sorted(by_sector.items())},
             "by_cap_bucket": {k: round(v, 2) for k, v in sorted(by_cap_bucket.items())},
             "by_asset_type": {k: round(v, 2) for k, v in sorted(by_asset_type.items())},
         },
     }
+    _PERF_CACHE[user_id] = (time.time(), result)
+    return result
 
 
 def _quiet_close_open_long(conn: sqlite3.Connection, user_id: str, ticker: str, today_iso: str) -> int:
@@ -337,6 +486,12 @@ def apply_holdings_import(
     Replace open LONG positions from an imported holdings list (per-ticker upsert).
     When full_snapshot is True, open LONG tickers missing from the list are closed.
     """
+    if _use_postgres():
+        from . import paper_portfolio_pg as pg
+
+        return pg.apply_holdings_import(
+            user_id, raw_items, full_snapshot=full_snapshot, source=source, note=note
+        )
     items = normalize_extracted_holdings(raw_items)
     errors: List[Dict[str, Any]] = []
     applied: List[str] = []
@@ -370,10 +525,15 @@ def apply_holdings_import(
         applied.append(t)
 
     conn.commit()
+    invalidate_portfolio_performance_cache(user_id)
     return {"applied": applied, "errors": errors}
 
 
 def close_position(user_id: str, position_id: str) -> Dict[str, Any]:
+    if _use_postgres():
+        from . import paper_portfolio_pg as pg
+
+        return pg.close_position(user_id, position_id)
     conn = _get_conn()
     row  = conn.execute(
         "SELECT * FROM paper_positions WHERE id=? AND user_id=? AND closed=0",
@@ -396,4 +556,5 @@ def close_position(user_id: str, position_id: str) -> Dict[str, Any]:
         WHERE id=? AND user_id=?
     """, (exit_price, date.today().isoformat(), round(pnl, 2), position_id, user_id))
     conn.commit()
+    invalidate_portfolio_performance_cache(user_id)
     return {"closed": True, "realised_pnl": round(pnl, 2), "exit_price": exit_price}

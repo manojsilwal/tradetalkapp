@@ -40,6 +40,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
   const [importExpanded, setImportExpanded] = useState(false);
   const [fullSnapshot, setFullSnapshot] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
+  const [importStatus, setImportStatus] = useState("");
   const [importErr, setImportErr] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewRows, setReviewRows] = useState([]);
@@ -88,23 +89,43 @@ export default function PaperPortfolioUI({ onXpGained }) {
   };
 
   const runParseImage = async (fileList) => {
-    const file = fileList?.[0];
-    if (!file) return;
+    const files = Array.from(fileList || []).filter(
+      (f) => f && (f.type || "").startsWith("image/")
+    );
+    if (!files.length) {
+      setImportErr("Choose at least one image.");
+      return;
+    }
+    if (files.length > 10) {
+      setImportErr("Maximum 10 images per upload.");
+      return;
+    }
     setImportBusy(true);
     setImportErr("");
+    setImportStatus(
+      `Parsing ${files.length} screenshot${files.length > 1 ? "s" : ""} with Gemini…`
+    );
     try {
       const fd = new FormData();
-      fd.append("file", file);
+      files.forEach((f) => fd.append("files", f));
       fd.append("full_snapshot", fullSnapshot ? "true" : "false");
       const data = await apiPostMultipart(
         `${API_BASE_URL}/portfolio/parse-holdings-image`,
-        fd
+        fd,
+        Math.min(180000, 45000 + files.length * 30000)
       );
       openReview(data);
+      if (data.parse_warnings?.length) {
+        setImportErr(
+          `Parsed ${data.images_parsed ?? files.length} of ${files.length} image(s). ` +
+            data.parse_warnings.join(" · ")
+        );
+      }
     } catch (e) {
-      setImportErr(e.message || "Could not parse screenshot");
+      setImportErr(e.message || "Could not parse screenshots");
     } finally {
       setImportBusy(false);
+      setImportStatus("");
     }
   };
 
@@ -277,7 +298,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
           <ImageUp size={22} />
           <span style={{ fontWeight: 800, fontSize: 15 }}>Upload broker screenshot</span>
           <span style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5 }}>
-            Bulk import holdings from Robinhood, Webull, or another broker using Gemini 3.5 Flash vision.
+            Bulk import from multiple broker screenshots at once using Gemini 3.5 Flash vision.
           </span>
         </button>
       </div>
@@ -344,9 +365,22 @@ export default function PaperPortfolioUI({ onXpGained }) {
               },
               {
                 label: "vs SPY",
-                value: `${fmt(perf?.total_pnl_pct || 0)}% vs ${fmt(perf?.spy_pnl_pct || 0)}%`,
-                sub: beatingSPY ? "Beating the market" : "SPY is ahead",
-                color: beatingSPY ? "#10b981" : "#f59e0b",
+                value:
+                  perf?.spy_pnl_pct != null
+                    ? `${fmt(perf?.total_pnl_pct || 0)}% vs ${fmt(perf.spy_pnl_pct)}%`
+                    : `${fmt(perf?.total_pnl_pct || 0)}% · SPY n/a`,
+                sub:
+                  perf?.spy_pnl_pct != null
+                    ? beatingSPY
+                      ? "Beating the market"
+                      : "SPY is ahead"
+                    : "Could not load SPY benchmark",
+                color:
+                  perf?.spy_pnl_pct != null
+                    ? beatingSPY
+                      ? "#10b981"
+                      : "#f59e0b"
+                    : "#94a3b8",
               },
             ].map((card) => (
               <div
@@ -456,7 +490,8 @@ export default function PaperPortfolioUI({ onXpGained }) {
         {importExpanded && (
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6, marginBottom: 12 }}>
-              Upload a Robinhood, Webull, Fidelity, or other broker screenshot. The backend sends the image to Gemini 3.5 Flash and returns editable holdings before anything is applied.
+              Upload one or more broker screenshots (Robinhood, Webull, Fidelity, etc.) — up to 10 images at once.
+              Gemini 3.5 Flash extracts holdings from each; results are merged for review before apply.
             </div>
             <label
               style={{
@@ -496,6 +531,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
                 <input
                   type="file"
                   accept="image/*"
+                  multiple
                   disabled={importBusy}
                   style={{ display: "none" }}
                   onChange={(e) => {
@@ -503,9 +539,23 @@ export default function PaperPortfolioUI({ onXpGained }) {
                     e.target.value = "";
                   }}
                 />
-                Upload screenshot
+                {importBusy && importStatus
+                  ? importStatus
+                  : "Upload screenshot(s)"}
               </label>
             </div>
+            {importErr && !reviewOpen ? (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: importErr.startsWith("Parsed") ? "#fbbf24" : "#ef4444",
+                  marginBottom: 10,
+                  lineHeight: 1.5,
+                }}
+              >
+                {importErr}
+              </div>
+            ) : null}
             <div
               style={{
                 fontSize: 11,
@@ -590,11 +640,6 @@ export default function PaperPortfolioUI({ onXpGained }) {
                 {importBusy ? "Working…" : "Preview changes"}
               </button>
             </div>
-            {importErr ? (
-              <div style={{ fontSize: 12, color: "#ef4444", marginTop: 10 }}>
-                {importErr}
-              </div>
-            ) : null}
           </div>
         )}
       </div>
@@ -1088,7 +1133,14 @@ export default function PaperPortfolioUI({ onXpGained }) {
               </button>
             </div>
             {importErr && reviewOpen ? (
-              <div style={{ fontSize: 12, color: "#ef4444", marginTop: 10 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: importErr.startsWith("Parsed") ? "#fbbf24" : "#ef4444",
+                  marginTop: 10,
+                  lineHeight: 1.5,
+                }}
+              >
                 {importErr}
               </div>
             ) : null}

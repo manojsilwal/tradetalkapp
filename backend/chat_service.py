@@ -322,7 +322,7 @@ def _build_system_prompt(
     memory_instructions_block: str = "",
 ) -> str:
     snap = json.dumps(market_snapshot, indent=2, default=str)[:8000]
-    uctx = json.dumps(user_ctx, indent=2, default=str)[:4000]
+    uctx = json.dumps(user_ctx, indent=2, default=str)[:8000]
     pipe = json.dumps(pipeline_status or {}, indent=2, default=str)[:2000]
     prompt = (
         "You are TradeTalk, a concise finance and education assistant. "
@@ -349,6 +349,16 @@ def _build_system_prompt(
         "- **Company-specific why / recent events** → `get_deep_news(ticker)`.\n"
         "- **SEC filing text** (10-K, 10-Q, 8-K) → `get_sec_filing`.\n"
         "- **Pasted or named URL** → `scrape_url`.\n"
+        "- **\"What stocks do I hold\", \"list my portfolio\", \"what are my positions\"** → "
+        "answer directly from `ticker_list` and `open_positions` in the User portfolio context block "
+        "below. Do NOT call any tool — the data is already here.\n"
+        "- **Live P&L, current prices, % gains/losses, SPY comparison, sector breakdown** → "
+        "`get_portfolio_snapshot`. Only call this when the user explicitly wants performance numbers "
+        "or exposure detail — not for simple listing questions.\n"
+        "- **Interest rates, yield curve, DXY, CPI, VIX, credit stress, Fed funds, market regime** → "
+        "`get_macro_regime`. Do not state rate or dollar values from memory — call the tool.\n"
+        "- **Sector rotation, capital flows, thematic trends, which sectors are leading/lagging** → "
+        "`get_macro_flow_summary`. This is the only source for CMF/RS flow scores and sector verdicts.\n"
         "- **Retrieval / L1 blocks** below may contain KB or snapshot facts — cite them, but if the user "
         "asks for **exact** numbers not there, call the matching tool.\n\n"
         f"## Market snapshot (cached)\n{snap}\n\n"
@@ -363,20 +373,46 @@ def _build_system_prompt(
 
 
 async def get_user_context_block(user_id: Optional[str]) -> dict:
+    """
+    Build the per-turn user context block injected into the system prompt.
+
+    Uses DB-only ``get_positions`` (instant SQLite read) — no yfinance call.
+    Live prices are only fetched when the user explicitly asks for P&L via the
+    ``get_portfolio_snapshot`` tool.
+    """
     if not user_id:
         return {}
     try:
         from . import paper_portfolio as pp
 
-        perf = await asyncio.to_thread(pp.get_portfolio_performance, user_id)
         pos = await asyncio.to_thread(pp.get_positions, user_id)
-        return {"portfolio_performance": perf, "open_positions": pos[:20]}
+        tickers = [p.get("ticker") for p in pos if p.get("ticker")]
+        return {
+            "open_positions": [
+                {
+                    "ticker": p.get("ticker"),
+                    "direction": p.get("direction", "LONG"),
+                    "shares": p.get("shares"),
+                    "entry_price": p.get("entry_price"),
+                    "entry_date": p.get("entry_date"),
+                    "sector": p.get("sector"),
+                    "allocated": p.get("allocated"),
+                }
+                for p in pos[:50]
+            ],
+            "ticker_list": tickers,
+            "open_position_count": len(pos),
+        }
     except Exception as e:
         logger.debug("[Chat] user context failed: %s", e)
         return {}
 
 
-async def build_fresh_system_prompt(ks, user_id: Optional[str]) -> str:
+async def build_fresh_system_prompt(
+    ks,
+    user_id: Optional[str],
+    user_ctx: Optional[dict] = None,
+) -> str:
     """
     Recompute the base system prompt (instructions + L1 snapshot + portfolio + pipeline + prefs).
     Call on **every** chat message so rule text and cached numbers stay current without a new session.
@@ -391,6 +427,8 @@ async def build_fresh_system_prompt(ks, user_id: Optional[str]) -> str:
             return {}
 
     async def uctx():
+        if user_ctx is not None:
+            return user_ctx
         return await get_user_context_block(user_id)
 
     async def load_prefs():
@@ -524,6 +562,7 @@ async def gather_message_context(
     ks,
     session: ChatSession,
     user_message: str,
+    user_ctx: Optional[dict] = None,
 ) -> Tuple[str, dict]:
     """
     Concurrent: RAG (or prewarm fast path), L1 read, user_ctx refresh, freshness meta.
@@ -552,6 +591,8 @@ async def gather_message_context(
             return market_l1_cache.get_snapshot()
 
         async def user_task():
+            if user_ctx is not None:
+                return user_ctx
             return await get_user_context_block(session.user_id)
 
         async def fresh_task():

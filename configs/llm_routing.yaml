@@ -1,14 +1,12 @@
-# Predictor synthesis / reviewer routing (OpenRouter model slugs).
-# Reviewer primary MUST differ from synthesis vendor prefix — enforced by CI.
+# Predictor synthesis / reviewer routing — NVIDIA Pro → Flash → Gemini 3.5 Flash.
+# Temperature and max_tokens are read by the predictor; model cascade is handled
+# in code (synthesizer.py / reviewer.py) and honours NVIDIA_LLM_MODEL_PRO,
+# NVIDIA_LLM_MODEL_FLASH, and GEMINI_MODEL env vars.
 
 predictor:
   synthesis:
-    primary: "openai/gpt-5.5"
-    fallback: "openai/gpt-5-mini"
     temperature: 0.2
     max_tokens: 1500
   reviewer:
-    primary: "google/gemini-3-flash"
-    fallback: "anthropic/claude-opus-4.6"
     temperature: 0.0
     max_tokens: 800

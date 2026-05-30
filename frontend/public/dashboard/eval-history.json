@@ -78,5 +78,61 @@
       "RRF memory retrieval: Make conditional.",
       "Nightly Mutation Engine: Disable by default."
     ]
+  },
+  {
+    "run_id": "eval_20260528_152223",
+    "timestamp": "2026-05-28T15:22:23Z",
+    "status": "shadow_recommended",
+    "winner": "Reduced Swarm + Current LLM",
+    "production_score": 83.2,
+    "winning_score": 83.95,
+    "score_delta": 0.75,
+    "swarm_advantage_score": -0.75,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.011,
+    "critical_failures": 0,
+    "p95_latency_ms": 4100.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Shadow deploy Reduced Swarm + Current LLM and monitor real traffic.",
+    "report_path": "/evals/reports/2026-05-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Shadow Recommended",
+      "color": "yellow"
+    },
+    "top_actions": [
+      "Shadow deploy Reduced Swarm + Current LLM and monitor real traffic.",
+      "Critic agent: Make conditional.",
+      "Reflection loop: Disable by default.",
+      "RRF memory retrieval: Make conditional.",
+      "Nightly Mutation Engine: Disable by default."
+    ]
+  },
+  {
+    "run_id": "eval_20260529_183906",
+    "timestamp": "2026-05-29T18:39:06Z",
+    "status": "shadow_recommended",
+    "winner": "Reduced Swarm + Current LLM",
+    "production_score": 83.2,
+    "winning_score": 83.95,
+    "score_delta": 0.75,
+    "swarm_advantage_score": -0.75,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.011,
+    "critical_failures": 0,
+    "p95_latency_ms": 4100.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Shadow deploy Reduced Swarm + Current LLM and monitor real traffic.",
+    "report_path": "/evals/reports/2026-05-29/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Shadow Recommended",
+      "color": "yellow"
+    },
+    "top_actions": [
+      "Shadow deploy Reduced Swarm + Current LLM and monitor real traffic.",
+      "Critic agent: Make conditional.",
+      "Reflection loop: Disable by default.",
+      "RRF memory retrieval: Make conditional.",
+      "Nightly Mutation Engine: Disable by default."
+    ]
   }
 ]

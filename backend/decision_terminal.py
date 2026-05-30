@@ -307,6 +307,47 @@ def _swarm_rejection_present(swarm: SwarmConsensus) -> bool:
     return False
 
 
+def _sanitize_roadmap_scenarios(
+    spot: float,
+    bull: Optional[float],
+    base: Optional[float],
+    bear: Optional[float],
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    Keep 3Y scenario prices ordered (bull >= base >= bear) and anchored to spot:
+    bull is an upside path (>= spot), bear is a downside path (<= spot).
+    """
+    if spot <= 0:
+        return bull, base, bear
+    try:
+        b, m, e = float(bull), float(base), float(bear)
+    except (TypeError, ValueError):
+        return None, None, None
+    if min(b, m, e) <= 0:
+        return None, None, None
+
+    misscaled = max(b, m, e) < spot * 0.55 or max(b, m, e) > spot * 25 or min(b, m, e) < spot * 0.02
+    lo, hi = spot * 0.35, spot * 2.75
+
+    if misscaled:
+        b, m, e = spot * 1.36, spot * 1.12, spot * 0.82
+    else:
+        b, m, e = max(lo, min(hi, b)), max(lo, min(hi, m)), max(lo, min(hi, e))
+        ordered = sorted([b, m, e], reverse=True)
+        b, m, e = ordered[0], ordered[1], ordered[2]
+
+    b = max(b, spot * 1.08)
+    e = min(e, spot * 0.92)
+    m = max(e, min(b, m))
+    if m < spot * 0.98:
+        m = max(e, min(b, spot * 1.04))
+
+    b = max(b, m, e)
+    e = min(b, m, e)
+    m = max(e, min(b, m))
+    return round(b, 2), round(m, 2), round(e, 2)
+
+
 def _heuristic_roadmap(current_price: float, hist_cagr_3y: Optional[float] = None) -> Tuple[float, float, float, float, List[str]]:
     if hist_cagr_3y is not None:
         cagr_factor = hist_cagr_3y / 100.0
@@ -314,14 +355,17 @@ def _heuristic_roadmap(current_price: float, hist_cagr_3y: Optional[float] = Non
         u = b * 1.2
         e = current_price * pow(1.0 + min(0.0, cagr_factor - 0.05), 3.0)
         asm_txt = f"Base case tied to historical 3Y CAGR ({hist_cagr_3y:.1f}%)."
-        cagr_b = hist_cagr_3y
     else:
         b = current_price * 1.12
         u = current_price * 1.36
         e = current_price * 0.82
-        cagr_b = (pow(b / current_price, 1.0 / 3.0) - 1.0) * 100.0
         asm_txt = "Base case ≈ +12% cumulative over 3Y (heuristic placeholder)."
-        
+
+    u, b, e = _sanitize_roadmap_scenarios(current_price, u, b, e)
+    if u is None or b is None or e is None:
+        u, b, e = current_price * 1.36, current_price * 1.12, current_price * 0.82
+    cagr_b = (pow(b / current_price, 1.0 / 3.0) - 1.0) * 100.0
+
     assumptions = [
         asm_txt,
         "Bull / bear are symmetric stress bands around base (not a formal model).",
@@ -749,6 +793,11 @@ async def build_decision_terminal_payload(
                 roadmap_prov.source = "heuristic"
                 roadmap_prov.confidence = 0.25
                 roadmap_prov.formula_or_note = "Symmetric bands or historical CAGR when LLM JSON unavailable."
+
+    if price_f and price_f > 0 and bull_p and base_p and bear_p:
+        bull_p, base_p, bear_p = _sanitize_roadmap_scenarios(price_f, bull_p, base_p, bear_p)
+        if bull_p and base_p and bear_p and base_p > 0:
+            cagr_b = round((pow(base_p / price_f, 1.0 / 3.0) - 1.0) * 100.0, 2)
 
     roadmap = TerminalRoadmapPanel(
         bull_price_usd=bull_p,

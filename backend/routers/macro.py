@@ -19,12 +19,8 @@ def _flow_interval(interval: str) -> str:
 
 
 async def _ensure_macro_flow_snapshot(interval: str) -> None:
-    from ..macro_flow.store import latest_rrg_payload
-    from ..macro_flow.orchestrator import run_macro_flow_pipeline_safe
-
-    if latest_rrg_payload(interval):
-        return
-    await run_macro_flow_pipeline_safe(interval, knowledge_store=knowledge_store)
+    """No-op: sector flow reads cached SQLite only (refresh via POST /macro/flow/refresh or cron)."""
+    return
 
 
 @router.get("/macro", response_model=MacroDataResponse)
@@ -156,10 +152,10 @@ async def macro_flow_rrg(interval: str = Query("1w")):
 
 @router.post("/macro/flow/refresh", dependencies=[Depends(_rl_expensive)])
 async def macro_flow_refresh(interval: str = Query("1w")):
-    from ..macro_flow.orchestrator import run_macro_flow_pipeline
+    from ..macro_flow.orchestrator import run_macro_flow_pipeline_safe
 
     iv = _flow_interval(interval)
-    out = await run_macro_flow_pipeline(iv, knowledge_store=knowledge_store)
+    out = await run_macro_flow_pipeline_safe(iv, knowledge_store=knowledge_store)
     if out.get("error"):
         return {"ok": False, **out}
     return {"ok": True, **out}
@@ -175,6 +171,15 @@ async def macro_flow_cron_refresh(interval: str = Query("1w")):
     if out.get("error"):
         return {"ok": False, **out}
     return {"ok": True, **out}
+
+
+@router.get("/macro/flow/chain")
+async def macro_flow_chain(interval: str = Query("1w")):
+    """Ordered value-chain stages with sector-to-sector flow magnitudes."""
+    from ..macro_flow.chain_view import build_value_chain_payload
+
+    iv = _flow_interval(interval)
+    return await build_value_chain_payload(iv)
 
 
 @router.get("/macro/flow/sankey")
@@ -213,6 +218,29 @@ async def macro_flow_sankey(interval: str = Query("1w")):
                 "description": e.get("description"),
             }
         )
+    if not links and pts:
+        from ..macro_flow.store import load_graph_edges
+
+        score_by_id = {
+            p.get("category_id"): max(abs(float(p.get("flow_score") or 0)), 0.05)
+            for p in pts
+            if p.get("category_id")
+        }
+        for ge in load_graph_edges():
+            src = ge.get("source_category")
+            tgt = ge.get("target_category")
+            if not src or not tgt:
+                continue
+            mag = float(ge.get("base_strength") or 0.5) * score_by_id.get(src, 0.05)
+            links.append(
+                {
+                    "source": src,
+                    "target": tgt,
+                    "value": abs(mag),
+                    "edge_id": ge.get("edge_id"),
+                    "description": ge.get("description"),
+                }
+            )
     for n in nodes:
         cid = n.get("id")
         for p in pts:

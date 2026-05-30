@@ -19,23 +19,22 @@ logger = logging.getLogger(__name__)
 #                           strategy parsing, backtest explanation, gold advisor).
 # ``GEMINI_MODEL_LIGHT``  — lightweight paths (swarm_analyst factor calls, swarm
 #                           synthesizer, reflection writer, RAG polish, video scene
-#                           director). Default ``gemini-3.1-flash`` = faster + cheaper.
+#                           director).
 # ``GEMINI_FALLBACK_MODEL`` — legacy alias retained for backward compat; still used
 #                           when a caller does not specify a tier (= heavy default).
+#
+# Both tiers default to ``gemini-3.5-flash``.  NVIDIA Build (free) is the
+# primary provider; Gemini 3.5 Flash serves as fallback everywhere.
 #
 # When ``GEMINI_PRIMARY=1``, ``LLMClient._provider_generate`` routes every call
 # through ``gemini_simple_completion_sync`` with the tier-appropriate model —
 # burning credits on the Gemini account and skipping OpenRouter entirely.
 GEMINI_MODEL = os.environ.get(
     "GEMINI_MODEL",
-    os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.1-pro-preview"),
+    os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash"),
 ).strip()
-# In the Gemini 3.1 family the text-capable "flash" slug is ``gemini-3.1-flash-lite-preview``.
-# There is no plain ``gemini-3.1-flash`` — ``gemini-3.1-flash-image-preview`` /
-# ``-tts-preview`` / ``-live-preview`` exist but are specialised. If we ever need
-# a stable-channel fallback, ``gemini-flash-latest`` or ``gemini-2.5-flash`` work.
 GEMINI_MODEL_LIGHT = os.environ.get(
-    "GEMINI_MODEL_LIGHT", "gemini-3.1-flash-lite-preview"
+    "GEMINI_MODEL_LIGHT", "gemini-3.5-flash"
 ).strip()
 # Kept for callers that still import the old name.
 GEMINI_FALLBACK_MODEL = GEMINI_MODEL

@@ -1,6 +1,6 @@
 {
-  "run_id": "eval_20260528_042337",
-  "timestamp": "2026-05-28T04:23:37Z",
+  "run_id": "eval_20260528_152223",
+  "timestamp": "2026-05-28T15:22:23Z",
   "production_version": "v1.0.0",
   "benchmark_suite": "agentic_swarm_eval_v1",
   "decision": "shadow_deploy",
@@ -162,8 +162,8 @@
     "CORAL / Meta-LLM: Make conditional."
   ],
   "dashboard_notification": {
-    "run_id": "eval_20260528_042337",
-    "timestamp": "2026-05-28T04:23:37Z",
+    "run_id": "eval_20260528_152223",
+    "timestamp": "2026-05-28T15:22:23Z",
     "status": "shadow_recommended",
     "winner": "Reduced Swarm + Current LLM",
     "production_score": 83.2,

@@ -48,7 +48,15 @@ export function AuthProvider({ children }) {
                 const data = await apiFetch(`${API_BASE_URL}/auth/me`);
                 setUser(data);
             } catch {
-                clearToken();  // expired or invalid
+                clearToken();
+                // Expired JWT: fall back to dev user so local portfolio/XP stay on dev_user_001
+                try {
+                    await login('dev');
+                } catch (e) {
+                    if (!e.message?.includes('Failed to fetch')) {
+                        console.error('Session restore failed', e);
+                    }
+                }
             } finally {
                 setLoading(false);
             }

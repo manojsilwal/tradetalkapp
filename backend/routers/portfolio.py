@@ -11,6 +11,7 @@ from .. import paper_portfolio as pp
 from .. import user_progress as up
 from ..portfolio_holdings_reconcile import (
     aggregate_open_long_positions,
+    holdings_dicts_from_model_json,
     normalize_extracted_holdings,
     reconcile_holdings,
 )
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 logger = logging.getLogger(__name__)
 
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
+MAX_IMAGES_PER_REQUEST = 10
 
 
 class AddPositionRequest(BaseModel):
@@ -59,6 +61,31 @@ def _reconcile_payload(user_id: str, raw_items: list, full_snapshot: bool) -> di
         "reconciliation": reconcile_holdings(normalized, current, full_snapshot=full_snapshot),
         "current_open_tickers": sorted(current.keys()),
     }
+
+
+def _holdings_rows_from_model_json(text: str) -> List[HoldingsRow]:
+    rows: List[HoldingsRow] = []
+    for x in holdings_dicts_from_model_json(text):
+        try:
+            rows.append(HoldingsRow.model_validate(x))
+        except Exception:
+            continue
+    return rows
+
+
+async def _parse_one_upload(file: UploadFile) -> tuple[List[HoldingsRow], Optional[str]]:
+    """Returns (rows, error_message). error_message is set when this image failed."""
+    raw = await file.read()
+    if len(raw) > MAX_IMAGE_BYTES:
+        return [], f"{file.filename or 'image'}: too large (max 4MB)"
+    mime = file.content_type or "image/jpeg"
+    try:
+        text = gemini_extract_holdings_from_image(image_bytes=raw, mime_type=mime)
+        return _holdings_rows_from_model_json(text), None
+    except json.JSONDecodeError:
+        return [], f"{file.filename or 'image'}: model returned invalid JSON"
+    except Exception as e:
+        return [], f"{file.filename or 'image'}: {str(e)[:200]}"
 
 
 @router.post("/position")
@@ -102,8 +129,9 @@ def preview_holdings_import(body: PreviewHoldingsRequest, user: UserInfo = Depen
 
 @router.post("/parse-holdings-image")
 async def parse_holdings_image(
-    file: UploadFile = File(...),
     full_snapshot: str = Form("false"),
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
     user: UserInfo = Depends(get_current_user),
 ):
     if not resolve_gemini_api_key():
@@ -111,32 +139,42 @@ async def parse_holdings_image(
             status_code=503,
             detail="GEMINI_API_KEY (or GOOGLE_API_KEY) is not configured for screenshot import",
         )
-    raw = await file.read()
-    if len(raw) > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=413, detail="Image too large (max 4MB)")
-    mime = file.content_type or "image/jpeg"
+    uploads: List[UploadFile] = []
+    if file is not None:
+        uploads.append(file)
+    uploads.extend(files or [])
+    if not uploads:
+        raise HTTPException(status_code=400, detail="Upload at least one image")
+    if len(uploads) > MAX_IMAGES_PER_REQUEST:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many images (max {MAX_IMAGES_PER_REQUEST})",
+        )
+
     fs_flag = str(full_snapshot).lower() in ("1", "true", "yes", "on")
-    try:
-        text = gemini_extract_holdings_from_image(image_bytes=raw, mime_type=mime)
-        data = json.loads(text)
-        raw_holdings = data.get("holdings")
-        if not isinstance(raw_holdings, list):
-            raw_holdings = []
-        rows = []
-        for x in raw_holdings:
-            if not isinstance(x, dict):
-                continue
-            try:
-                rows.append(HoldingsRow.model_validate(x))
-            except Exception:
-                continue
-    except json.JSONDecodeError:
-        logger.warning("parse-holdings-image: invalid JSON from model")
-        raise HTTPException(status_code=502, detail="Model returned invalid JSON") from None
-    except Exception as e:
-        logger.warning("parse-holdings-image failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e)[:500]) from e
-    return _reconcile_payload(user.id, rows, fs_flag)
+    merged: List[HoldingsRow] = []
+    parse_errors: List[str] = []
+    images_ok = 0
+
+    for upload in uploads:
+        rows, err = await _parse_one_upload(upload)
+        if err:
+            parse_errors.append(err)
+            logger.warning("parse-holdings-image: %s", err)
+            continue
+        images_ok += 1
+        merged.extend(rows)
+
+    if images_ok == 0:
+        detail = parse_errors[0] if len(parse_errors) == 1 else "; ".join(parse_errors[:5])
+        raise HTTPException(status_code=502, detail=detail or "Could not parse any image")
+
+    payload = _reconcile_payload(user.id, merged, fs_flag)
+    payload["images_parsed"] = images_ok
+    payload["images_failed"] = len(parse_errors)
+    if parse_errors:
+        payload["parse_warnings"] = parse_errors
+    return payload
 
 
 @router.post("/apply-holdings-import")

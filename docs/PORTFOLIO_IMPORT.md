@@ -4,11 +4,27 @@ The Robinhood-style flow (upload screenshot or manual rows → Gemini JSON → r
 
 ## Backend routes (auth required)
 
-- `POST /portfolio/parse-holdings-image` — multipart image; uses Gemini vision on the **API** host.
+- `POST /portfolio/parse-holdings-image` — multipart image(s); field `files` (repeatable, up to 10) or legacy single `file`. Uses Gemini vision on the **API** host; merges holdings across images.
 - `POST /portfolio/preview-holdings-import` — JSON `items` + `full_snapshot`.
 - `POST /portfolio/apply-holdings-import` — persists after user confirms.
 
 Code: `backend/routers/portfolio.py`, reconciliation `backend/portfolio_holdings_reconcile.py`, apply `backend/paper_portfolio.py`, vision `backend/gemini_llm.py`. UI: `frontend/src/PaperPortfolioUI.jsx`.
+
+## Persistence (why holdings disappear)
+
+Holdings are keyed by your signed-in **user id** — not browser memory.
+
+| Environment | Where data lives | Survives browser refresh? | Survives API redeploy? |
+|-------------|------------------|---------------------------|-------------------------|
+| Local `uvicorn` on :8000 | SQLite `backend/progress.db` | Yes (same API + same login) | Yes |
+| GCP Docker (production) | **Cloud SQL Postgres** when `PORTFOLIO_STORAGE=postgres` | Yes | Yes |
+| GCP Docker (fallback) | `/app/data/progress.db` on volume `tradetalk-data` | Yes | Yes |
+
+See [`docs/GCP_POSTGRES.md`](GCP_POSTGRES.md) for host/user defaults in code and `POSTGRES_PASSWORD` in `.env.gcp`.
+
+**Also check:** `frontend/.env.local` `VITE_API_BASE_URL` must be the same host you used when adding positions (e.g. always `http://127.0.0.1:8000` or always production). Switching hosts looks like an empty portfolio.
+
+**Login:** Dev login uses `dev_user_001`; Google sign-in uses your Google account id — different portfolios. Stay on one sign-in method.
 
 ## Deploy verification (Cloud Run or any API host)
 
@@ -37,7 +53,7 @@ Code: `backend/routers/portfolio.py`, reconciliation `backend/portfolio_holdings
 1. Sign in (Paper Portfolio is behind `GamificationTab` in `frontend/src/App.jsx`).
 2. Open **Paper Portfolio** (`/portfolio`).
 3. Expand **Import holdings (screenshot or manual)**.
-4. Either upload a small broker screenshot or add manual rows with ticker + shares (+ optional avg cost).
+4. Either upload one or more broker screenshots (multi-select, max 10) or add manual rows with ticker + shares (+ optional avg cost).
 5. **Preview changes** — confirm reconciliation groups (new / updated / unchanged / removed when “full snapshot” is checked).
 6. **Apply to paper portfolio** — confirm positions update and performance reloads.
 

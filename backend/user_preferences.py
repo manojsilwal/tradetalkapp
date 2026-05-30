@@ -22,7 +22,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "progress.db")
+from .progress_db import resolve_progress_db_path
+
+DB_PATH = resolve_progress_db_path()
 _local = threading.local()
 
 # ── Default preference values ─────────────────────────────────────────────────

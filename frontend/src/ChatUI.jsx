@@ -5,6 +5,75 @@ import { API_BASE_URL, getToken, apiFetch } from './api'
 /** Persisted chat session id — survives refresh; server must still have the row (TTL). */
 const CHAT_SESSION_STORAGE_KEY = 'tradetalk_chat_session_id'
 
+/** Maps tool family names → chip display config */
+const CHIP_CONFIG = {
+  portfolio:   { label: 'Portfolio',    color: '#34d399', bg: 'rgba(16,185,129,0.12)',  border: 'rgba(52,211,153,0.3)'  },
+  macro:       { label: 'Macro',        color: '#60a5fa', bg: 'rgba(59,130,246,0.12)',  border: 'rgba(96,165,250,0.3)'  },
+  news:        { label: 'News',         color: '#fb923c', bg: 'rgba(249,115,22,0.12)',  border: 'rgba(251,146,60,0.3)'  },
+  quote:       { label: 'Live Quote',   color: '#a78bfa', bg: 'rgba(139,92,246,0.12)',  border: 'rgba(167,139,250,0.3)' },
+  rag:         { label: 'Knowledge',    color: '#f9a8d4', bg: 'rgba(236,72,153,0.12)',  border: 'rgba(249,168,212,0.3)' },
+  risk:        { label: 'Risk',         color: '#fbbf24', bg: 'rgba(245,158,11,0.12)',  border: 'rgba(251,191,36,0.3)'  },
+  backtest:    { label: 'Backtest',     color: '#38bdf8', bg: 'rgba(14,165,233,0.12)',  border: 'rgba(56,189,248,0.3)'  },
+  market_data: { label: 'Market Data',  color: '#94a3b8', bg: 'rgba(100,116,139,0.12)', border: 'rgba(148,163,184,0.3)' },
+  web_search:  { label: 'Web',          color: '#e2e8f0', bg: 'rgba(226,232,240,0.08)', border: 'rgba(226,232,240,0.2)' },
+}
+
+/**
+ * Renders small context-source badges below the last assistant turn, derived from the
+ * streamed ``evidence_contract`` event (tool_families_used) and the ``meta`` event
+ * (rag_nonempty). No new endpoints needed.
+ */
+function ContextChips({ evidence, meta }) {
+  const families = (evidence?.tool_families_used || []).map((f) => f.toLowerCase())
+  const hasRag = meta?.rag_nonempty || families.includes('rag')
+  const chips = []
+
+  for (const family of families) {
+    if (family === 'rag') continue
+    const cfg = CHIP_CONFIG[family]
+    if (cfg && !chips.some((c) => c.label === cfg.label)) chips.push(cfg)
+  }
+  if (hasRag && !chips.some((c) => c.label === 'Knowledge')) chips.push(CHIP_CONFIG.rag)
+
+  if (chips.length === 0) return null
+
+  return (
+    <div
+      data-testid="context-chips"
+      style={{
+        display: 'flex',
+        gap: 6,
+        flexWrap: 'wrap',
+        marginBottom: 8,
+        paddingLeft: 2,
+      }}
+    >
+      {chips.map((chip) => (
+        <span
+          key={chip.label}
+          title={`Context used: ${chip.label}`}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            padding: '3px 8px',
+            borderRadius: 20,
+            border: `1px solid ${chip.border}`,
+            background: chip.bg,
+            color: chip.color,
+          }}
+        >
+          {chip.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function openSessionRequestBody(forceNew = false) {
   if (forceNew) return {}
   try {
@@ -90,6 +159,7 @@ export default function ChatUI({ prefetch = null }) {
   const [err, setErr] = useState('')
   const [quoteCards, setQuoteCards] = useState([])
   const [evidenceContract, setEvidenceContract] = useState(null)
+  const [lastMeta, setLastMeta] = useState(null)
   const [exportBusy, setExportBusy] = useState(false)
   const bottomRef = useRef(null)
   const refreshTimer = useRef(null)
@@ -255,6 +325,7 @@ export default function ChatUI({ prefetch = null }) {
     setStreaming('')
     setQuoteCards([])
     setEvidenceContract(null)
+    setLastMeta(null)
 
     const token = getToken()
     const headers = {
@@ -321,6 +392,7 @@ export default function ChatUI({ prefetch = null }) {
           if (payload === '[DONE]') continue
           try {
             const j = JSON.parse(payload)
+            if (j.type === 'meta' && j.data) setLastMeta(j.data)
             if (j.type === 'token' && j.text) {
               assistant += cleanText(j.text)
               setStreaming(assistant)
@@ -524,34 +596,37 @@ export default function ChatUI({ prefetch = null }) {
           </div>
         )}
         {evidenceContract && (
-          <details
-            data-testid="evidence-contract"
-            style={{
-              marginBottom: 12,
-              padding: '10px 12px',
-              borderRadius: 10,
-              border: '1px solid rgba(148,163,184,0.25)',
-              background: 'rgba(15,23,42,0.65)',
-              fontSize: 12,
-              color: '#cbd5e1',
-            }}
-          >
-            <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#94a3b8' }}>
-              Sources & confidence
-            </summary>
-            <pre
+          <>
+            <ContextChips evidence={evidenceContract} meta={lastMeta} />
+            <details
+              data-testid="evidence-contract"
               style={{
-                margin: '10px 0 0',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                fontSize: 11,
-                lineHeight: 1.45,
-                color: '#e2e8f0',
+                marginBottom: 12,
+                padding: '10px 12px',
+                borderRadius: 10,
+                border: '1px solid rgba(148,163,184,0.25)',
+                background: 'rgba(15,23,42,0.65)',
+                fontSize: 12,
+                color: '#cbd5e1',
               }}
             >
-              {JSON.stringify(evidenceContract, null, 2)}
-            </pre>
-          </details>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#94a3b8' }}>
+                Sources & confidence
+              </summary>
+              <pre
+                style={{
+                  margin: '10px 0 0',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontSize: 11,
+                  lineHeight: 1.45,
+                  color: '#e2e8f0',
+                }}
+              >
+                {JSON.stringify(evidenceContract, null, 2)}
+              </pre>
+            </details>
+          </>
         )}
         <div ref={bottomRef} />
       </div>

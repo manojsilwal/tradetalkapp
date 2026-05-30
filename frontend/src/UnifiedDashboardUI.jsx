@@ -9,6 +9,7 @@ import DashboardScorecardPanel from './components/DashboardScorecardPanel';
 import DebateThreadPanel from './components/debate/DebateThreadPanel';
 import DebateVerdictSummary from './components/debate/DebateVerdictSummary';
 import './DecisionTerminalUI.css';
+import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
 
 // From Decision Terminal
 const QUALITY_ICONS = {
@@ -263,22 +264,19 @@ export default function UnifiedDashboardUI() {
   const expertBullish = expertPct != null && expertPct >= 55;
 
   const spot = v?.current_price_usd;
-  const dotLeft = sliderPosition(spot, r?.bear_price_usd, r?.bull_price_usd);
+  const scenarioPrices = useMemo(() => roadmapScenarioPrices(r, spot), [r, spot]);
+  const dotLeft = sliderPosition(spot, scenarioPrices?.bear ?? r?.bear_price_usd, scenarioPrices?.bull ?? r?.bull_price_usd);
 
-  const roadmapChartData = useMemo(() => {
-    if (!r || r.bull_price_usd == null) return [];
-    const sy = new Date().getFullYear();
-    const data = [{ t: `${sy}`, base: spot, bull: spot, bear: spot }];
-    for (let i = 1; i <= 3; i++) {
-      data.push({
-        t: `${sy + i}`,
-        base: spot + (r.base_price_usd - spot) * (i / 3),
-        bull: spot + (r.bull_price_usd - spot) * (i / 3),
-        bear: spot + (r.bear_price_usd - spot) * (i / 3),
-      });
-    }
-    return data;
-  }, [r, spot]);
+  const roadmapChartData = useMemo(
+    () => buildRoadmapChartData(r, spot),
+    [r, spot],
+  );
+
+  const predictedCagrPct = useMemo(() => {
+    if (r?.predicted_cagr_base_pct != null) return r.predicted_cagr_base_pct;
+    if (!scenarioPrices || !spot || spot <= 0) return null;
+    return Number((((scenarioPrices.base / spot) ** (1 / 3) - 1) * 100).toFixed(2));
+  }, [r?.predicted_cagr_base_pct, scenarioPrices, spot]);
 
   // Derived from trace / metrics
   const isBullish = traceData?.global_signal >= 2;
@@ -458,12 +456,12 @@ export default function UnifiedDashboardUI() {
           <h2 className="dt-panel-title">Future Price Roadmap (3-Year Trajectory)</h2>
           <div style={{ marginTop: '16px', height: '300px' }}>
             <div className="dt-roadmap-head" style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
-              <span className="dt-roadmap-legend"><span className="dot bull" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#00ff88', marginRight: 6 }} /> Bull {r?.bull_price_usd != null && ` ($${Number(r.bull_price_usd).toFixed(0)})`}</span>
-              <span className="dt-roadmap-legend"><span className="dot base" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', marginRight: 6 }} /> Base {r?.base_price_usd != null && ` ($${Number(r.base_price_usd).toFixed(0)})`}</span>
-              <span className="dt-roadmap-legend"><span className="dot bear" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f87171', marginRight: 6 }} /> Bear {r?.bear_price_usd != null && ` ($${Number(r.bear_price_usd).toFixed(0)})`}</span>
+              <span className="dt-roadmap-legend"><span className="dot bull" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#00ff88', marginRight: 6 }} /> Bull {scenarioPrices?.bull != null && ` ($${Number(scenarioPrices.bull).toFixed(0)})`}</span>
+              <span className="dt-roadmap-legend"><span className="dot base" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', marginRight: 6 }} /> Base {scenarioPrices?.base != null && ` ($${Number(scenarioPrices.base).toFixed(0)})`}</span>
+              <span className="dt-roadmap-legend"><span className="dot bear" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f87171', marginRight: 6 }} /> Bear {scenarioPrices?.bear != null && ` ($${Number(scenarioPrices.bear).toFixed(0)})`}</span>
             </div>
-            {hasDecisionData && r?.predicted_cagr_base_pct != null && (
-              <div className="dt-cagr-chip" style={{ display: 'inline-block', padding: '4px 8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', fontSize: '12px', marginBottom: '16px' }}>Predicted CAGR: {r.predicted_cagr_base_pct}%</div>
+            {hasDecisionData && predictedCagrPct != null && (
+              <div className="dt-cagr-chip" style={{ display: 'inline-block', padding: '4px 8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', fontSize: '12px', marginBottom: '16px' }}>Predicted CAGR: {predictedCagrPct}%</div>
             )}
             <div className="dt-chart-box" style={{ height: 'calc(100% - 60px)', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '16px' }}>
               {roadmapChartData.length > 0 ? (

@@ -26,6 +26,7 @@ import {
 import { API_BASE_URL, apiFetch } from './api';
 import { SP500_TICKERS } from './sp500';
 import './DecisionTerminalUI.css';
+import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
 
 const QUALITY_ICONS = {
   roic: TrendingUp,
@@ -176,60 +177,26 @@ export default function DecisionTerminalUI() {
     [z?.polymarket_gated_out, z?.prediction_market_bullish_pct],
   );
 
-  const roadmapChartData = useMemo(() => {
-    if (!r || v?.current_price_usd == null || Number(v.current_price_usd) <= 0) return [];
-    const spot = Number(v.current_price_usd);
-    const bands = r.horizon_quantile_bands;
-    if (bands?.length) {
-      const rows = [
-        {
-          t: `Now ($${spot.toFixed(2)})`,
-          bull: spot,
-          base: spot,
-          bear: spot,
-        },
-      ];
-      for (const b of bands) {
-        rows.push({
-          t: `${b.horizon} · 80% PI`,
-          bull: b.q90_usd ?? spot,
-          base: b.q50_usd ?? spot,
-          bear: b.q10_usd ?? spot,
-        });
-      }
-      rows.push({
-        t: '3Y scenario',
-        bull: r.bull_price_usd ?? spot,
-        base: r.base_price_usd ?? spot,
-        bear: r.bear_price_usd ?? spot,
-      });
-      return rows;
-    }
-    return [
-      {
-        t: `Now ($${spot.toFixed(2)})`,
-        bull: spot,
-        base: spot,
-        bear: spot,
-      },
-      {
-        t: '3Y',
-        bull: r.bull_price_usd ?? spot,
-        base: r.base_price_usd ?? spot,
-        bear: r.bear_price_usd ?? spot,
-      },
-    ];
-  }, [r, v?.current_price_usd]);
+  const roadmapChartData = useMemo(
+    () => buildRoadmapChartData(r, v?.current_price_usd),
+    [r, v?.current_price_usd],
+  );
 
-  const dotLeft = sliderPosition(v?.current_price_usd, r?.bear_price_usd, r?.bull_price_usd);
   const spot = v?.current_price_usd;
+  const scenarioPrices = useMemo(() => roadmapScenarioPrices(r, spot), [r, spot]);
+  const dotLeft = sliderPosition(spot, scenarioPrices?.bear ?? r?.bear_price_usd, scenarioPrices?.bull ?? r?.bull_price_usd);
+
+  const predictedCagrPct = useMemo(() => {
+    if (r?.predicted_cagr_base_pct != null) return r.predicted_cagr_base_pct;
+    if (!scenarioPrices || !spot || spot <= 0) return null;
+    return Number((((scenarioPrices.base / spot) ** (1 / 3) - 1) * 100).toFixed(2));
+  }, [r?.predicted_cagr_base_pct, scenarioPrices, spot]);
 
   const chartTooltip = ({ active, payload: rows }) => {
     if (!active || !rows?.length) return null;
-    const cagr = r?.predicted_cagr_base_pct;
     return (
       <div className="dt-chart-tooltip">
-        {cagr != null && <div className="dt-chart-tooltip-cagr">Predicted CAGR: {cagr}%</div>}
+        {predictedCagrPct != null && <div className="dt-chart-tooltip-cagr">Predicted CAGR: {predictedCagrPct}%</div>}
         {rows.map((row) => (
           <div key={row.dataKey} className="dt-chart-tooltip-row">
             <span style={{ color: row.color }}>{row.name}</span>
@@ -437,28 +404,23 @@ export default function DecisionTerminalUI() {
 
           {/* —— Roadmap —— */}
           <section className="dt-panel">
-            <h2 className="dt-panel-title">
-              Future price roadmap
-              {r?.horizon_quantile_bands?.length
-                ? ' (multi-horizon 80% intervals + 3Y scenario)'
-                : ' (3-year trajectory)'}
-            </h2>
+            <h2 className="dt-panel-title">Future price roadmap (3-year trajectory)</h2>
             <div className="dt-roadmap-head">
               <span className="dt-roadmap-legend">
                 <span className="dot bull" /> Bull
-                {r?.bull_price_usd != null && ` ($${Number(r.bull_price_usd).toFixed(0)})`}
+                {scenarioPrices?.bull != null && ` ($${Number(scenarioPrices.bull).toFixed(0)})`}
               </span>
               <span className="dt-roadmap-legend">
                 <span className="dot base" /> Base
-                {r?.base_price_usd != null && ` ($${Number(r.base_price_usd).toFixed(0)})`}
+                {scenarioPrices?.base != null && ` ($${Number(scenarioPrices.base).toFixed(0)})`}
               </span>
               <span className="dt-roadmap-legend">
                 <span className="dot bear" /> Bear
-                {r?.bear_price_usd != null && ` ($${Number(r.bear_price_usd).toFixed(0)})`}
+                {scenarioPrices?.bear != null && ` ($${Number(scenarioPrices.bear).toFixed(0)})`}
               </span>
             </div>
-            {hasData && r?.predicted_cagr_base_pct != null && (
-              <div className="dt-cagr-chip">Predicted CAGR: {r.predicted_cagr_base_pct}%</div>
+            {hasData && predictedCagrPct != null && (
+              <div className="dt-cagr-chip">Predicted CAGR: {predictedCagrPct}%</div>
             )}
             <div className="dt-chart-box">
               {roadmapChartData.length > 0 ? (

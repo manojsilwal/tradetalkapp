@@ -52,6 +52,10 @@ init_users_db()
 
 up.init_db()
 
+from .progress_db import migrate_legacy_progress_db_if_needed
+
+migrate_legacy_progress_db_if_needed()
+
 from . import daily_challenge as dc
 dc.init_challenges_db()
 
@@ -393,6 +397,26 @@ async def startup_event():
             print(f"[MarketIntel] startup warm failed: {e}")
 
     asyncio.create_task(_warm_market_intel())
+
+    async def _warm_macro_flow():
+        await asyncio.sleep(20)
+        try:
+            from .macro_flow.store import latest_rrg_payload
+            from .macro_flow.orchestrator import run_macro_flow_pipeline_safe
+            from .deps import knowledge_store
+
+            if latest_rrg_payload("1w"):
+                return
+            print("[MacroFlow] Cold start — computing 1w sector flow snapshot in background...")
+            out = await run_macro_flow_pipeline_safe("1w", knowledge_store=knowledge_store)
+            if out.get("error"):
+                print(f"[MacroFlow] startup warm failed: {out['error']}")
+            else:
+                print(f"[MacroFlow] startup warm complete: {out.get('categories', 0)} categories")
+        except Exception as e:
+            print(f"[MacroFlow] startup warm failed: {e}")
+
+    asyncio.create_task(_warm_macro_flow())
 
 
 

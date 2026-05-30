@@ -19,6 +19,15 @@ services:
       SP500_INGEST_ON_STARTUP: "0"
       CORS_ORIGINS: "https://frontend-manojsilwals-projects.vercel.app,http://34.57.42.63:5050"
       TRADETALK_REPO_ROOT: "/app"
+      # Persist portfolio, auth, XP, preferences across container rebuilds
+      PROGRESS_DB_PATH: "/app/data/progress.db"
+      # Paper portfolio on Cloud SQL (host/user/db defaults in backend/gcp_settings.py)
+      PORTFOLIO_STORAGE: "postgres"
+      POSTGRES_HOST: "34.31.98.184"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "tradetalk"
+      POSTGRES_USER: "tradetalk"
+      # POSTGRES_PASSWORD: set in .env.gcp only (never commit)
       # SEPL tool evolution
       SEPL_TOOL_ENABLE: "1"
       SEPL_TOOL_DRY_RUN: "0"

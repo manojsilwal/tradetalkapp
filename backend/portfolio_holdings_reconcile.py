@@ -5,6 +5,7 @@ Compares extracted rows to aggregated open LONG positions per ticker.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional, TypedDict
 
 
@@ -37,6 +38,19 @@ def _to_opt_float(val: Any) -> Optional[float]:
         return float(val)
     except (TypeError, ValueError):
         return None
+
+
+def holdings_dicts_from_model_json(text: str) -> List[Dict[str, Any]]:
+    """Parse Gemini vision JSON body into holding dicts (ticker/shares/avg_cost)."""
+    data = json.loads(text)
+    raw_holdings = data.get("holdings")
+    if not isinstance(raw_holdings, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for x in raw_holdings:
+        if isinstance(x, dict) and x.get("ticker"):
+            out.append(x)
+    return out
 
 
 def normalize_extracted_holdings(rows: List[Dict[str, Any]]) -> List[ExtractedHolding]:

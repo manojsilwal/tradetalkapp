@@ -7,12 +7,15 @@ export function toMacroSankey(sankeyPayload) {
   );
   const nodes = (sankeyPayload.nodes || []).map((n, i) => ({
     id: n.id,
+    label: n.name || n.id.replace(/_/g, ' '),
     nodeColor: colorById[n.id] || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
   }));
   const links = sankeyPayload.links.map((l) => ({
     source: l.source,
     target: l.target,
     value: Math.max(Math.abs(l.value) || 0, 0.001),
+    label: l.description || `${l.source} → ${l.target}`,
+    rawValue: l.value,
   }));
   return { nodes, links };
 }

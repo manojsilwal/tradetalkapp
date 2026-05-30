@@ -4,7 +4,7 @@ LLM Client — OpenAI-compatible HTTP inference (NVIDIA Build or OpenRouter), op
   1. NVIDIA Build (preferred when ``NVIDIA_API_KEY`` is set, or ``LLM_HTTP_PROVIDER=nvidia``) —
      OpenAI-compatible ``https://integrate.api.nvidia.com/v1``.
      Chat order: ``NVIDIA_LLM_MODEL_PRO`` (DeepSeek v4 Pro) → ``NVIDIA_LLM_MODEL_FLASH`` (DeepSeek v4 Flash)
-     → ``GEMINI_MODEL`` (Gemini 3.1 Pro) when a Gemini key is configured.
+     → ``GEMINI_MODEL`` (Gemini 3.5 Flash) when a Gemini key is configured.
      JSON / swarm roles: heavy → Pro, light → Flash on NVIDIA; final fallback Gemini when enabled.
      Embeddings and batch ETL can still use ``OPENROUTER_*`` separately.
 
@@ -133,12 +133,10 @@ def _http_openai_model_for_role(provider: str, role: str) -> str:
 def _gemini_model_for_role(role: str) -> str:
     """
     Pick the Gemini model for a given role using the same heavy/light mapping as
-    OpenRouter. Heavy roles (bull, bear, moderator, strategy_parser, …) run on
-    :data:`GEMINI_MODEL` (default ``gemini-3.1-pro-preview``); light roles
-    (swarm_analyst, swarm_synthesizer, rag_narrative_polish, video_scene_director,
-    …) run on :data:`GEMINI_MODEL_LIGHT` (default ``gemini-3.1-flash``). Keeping
-    the mapping source-of-truth single means tier changes only have to be made
-    in one place.
+    OpenRouter. Both tiers default to ``gemini-3.5-flash`` — the NVIDIA Build
+    free tier is the primary provider and Gemini 3.5 Flash is the fallback.
+    Keeping the mapping source-of-truth single means tier changes only have to
+    be made in one place.
     """
     return resolve_gemini_model(_tier_for_role(role))
 
@@ -697,9 +695,9 @@ class LLMClient:
         fallback = lambda: (FALLBACK_TEMPLATES.get(role, {}), prompt_version)
 
         # Gemini-primary path (GEMINI_PRIMARY=1): route every role through Gemini
-        # 3.1 Pro (heavy) or Gemini 3.1 Flash (light). On any Gemini failure we go
-        # straight to ``FALLBACK_TEMPLATES`` — OpenRouter is intentionally NOT
-        # consulted so all LLM spend lands on the Gemini account (user config:
+        # 3.5 Flash. On any Gemini failure we go straight to
+        # ``FALLBACK_TEMPLATES`` — OpenRouter is intentionally NOT consulted so
+        # all LLM spend lands on the Gemini account (user config:
         # "primary_with_local_fallback"). To re-enable OpenRouter as a fallback,
         # clear GEMINI_PRIMARY.
         if gemini_primary_enabled():

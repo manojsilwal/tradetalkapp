@@ -37,7 +37,9 @@ if not DEV_MODE and JWT_SECRET == "dev-secret-change-in-prod":
         "Set JWT_SECRET environment variable to a strong random secret."
     )
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "progress.db")
+from .progress_db import resolve_progress_db_path
+
+DB_PATH = resolve_progress_db_path()
 _local  = threading.local()
 
 

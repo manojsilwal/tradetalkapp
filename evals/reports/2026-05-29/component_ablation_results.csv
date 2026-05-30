@@ -1,0 +1,6 @@
+component,status,reason,with_score,without_score,delta,recommendation
+Critic agent,ok,,83.2,80.65,2.55,Make conditional
+Reflection loop,ok,,83.2,81.6,1.6,Disable by default
+RRF memory retrieval,ok,,83.2,80.6,2.6,Make conditional
+Nightly Mutation Engine,ok,,83.2,81.95,1.25,Disable by default
+CORAL / Meta-LLM,ok,,83.2,80.4,2.8,Make conditional

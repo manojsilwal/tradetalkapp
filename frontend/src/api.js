@@ -45,12 +45,24 @@ export async function apiFetch(url, options = {}) {
 /**
  * Multipart POST (e.g. image upload). Do not set Content-Type — browser sets boundary.
  */
-export async function apiPostMultipart(url, formData) {
+export async function apiPostMultipart(url, formData, timeoutMs = 120000) {
   const token = getToken();
   const headers = {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
-  const res = await fetch(url, { method: 'POST', body: formData, headers });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(url, { method: 'POST', body: formData, headers, signal: controller.signal });
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      throw new Error(`Upload timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw e;
+  }
+  clearTimeout(timer);
   if (!res.ok) {
     let errMsg = `HTTP ${res.status}`;
     try {

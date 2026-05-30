@@ -25,6 +25,26 @@ class TestPaperPortfolioCategories(unittest.TestCase):
         self.pp.DB_PATH = self.old_db_path
         self.tmp.cleanup()
 
+    def test_spy_benchmark_same_day_uses_prior_close(self):
+        import pandas as pd
+
+        hist = pd.DataFrame({"Close": [100.0, 102.0, 105.0]})
+
+        class _Ticker:
+            def history(self, **kwargs):
+                return hist
+
+            @property
+            def fast_info(self):
+                return {"lastPrice": 105.0}
+
+        today = self.pp.date.today().isoformat()
+        with patch("yfinance.Ticker", return_value=_Ticker()):
+            pct = self.pp._spy_benchmark_return_pct(today)
+        self.assertIsNotNone(pct)
+        # vs prior close 102 → live 105
+        self.assertAlmostEqual(pct, (105 - 102) / 102 * 100, places=2)
+
     def test_market_cap_bucket_thresholds(self):
         self.assertEqual(self.pp._classify_market_cap(250_000_000_000), "Mega Cap")
         self.assertEqual(self.pp._classify_market_cap(50_000_000_000), "Large Cap")
