@@ -45,9 +45,7 @@ def init_schema() -> None:
     ddl = sql_path.read_text(encoding="utf-8")
     conn = _get_conn()
     with conn.cursor() as cur:
-        for stmt in (s.strip() for s in ddl.split(";")):
-            if stmt and not stmt.startswith("--"):
-                cur.execute(stmt)
+        cur.execute(ddl)
     conn.commit()
     logger.info("[paper_portfolio_pg] schema ready on %s", postgres_connection_kwargs()["host"])
 
