@@ -224,3 +224,24 @@ def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[U
         return get_user(user_id)
     except Exception:
         return None
+
+
+def get_current_user_or_dev(authorization: Optional[str] = Header(None)) -> UserInfo:
+    """
+    Portfolio-friendly auth: use JWT when present; in DEV_MODE fall back to the
+    local dev user so paper portfolio works without a sign-in wall.
+    """
+    user = get_optional_user(authorization)
+    if user:
+        return user
+    if DEV_MODE:
+        existing = get_user("dev_user_001")
+        if existing:
+            return existing
+        return upsert_user(
+            google_id="dev_user_001",
+            email="dev@tradetalk.local",
+            name="Dev User",
+            avatar="",
+        )
+    raise HTTPException(status_code=401, detail="Missing Authorization header")

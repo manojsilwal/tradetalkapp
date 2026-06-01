@@ -5,6 +5,7 @@ from .macro import MacroHealthConnector
 from .polymarket import PolymarketConnector
 from .fundamentals import FundamentalsConnector
 from .investor_metrics import InvestorMetricsConnector
+from .small_cap_metrics import SmallCapMetricsConnector
 from .news_scanner import NewsScannerConnector
 from .debate_data import fetch_debate_data
 from .backtest_data import (
@@ -25,6 +26,7 @@ __all__ = [
     "PolymarketConnector",
     "FundamentalsConnector",
     "InvestorMetricsConnector",
+    "SmallCapMetricsConnector",
     "NewsScannerConnector",
     "fetch_debate_data",
     "fetch_backtest_data",

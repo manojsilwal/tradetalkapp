@@ -138,6 +138,8 @@ from .routers import (
     provider_smoke,
     swarm_eval as swarm_eval_router,
     ubds_eval as ubds_eval_router,
+    portfolio_news as portfolio_news_router,
+    small_cap as small_cap_router,
 )
 
 app.include_router(auth_router.router)
@@ -160,6 +162,12 @@ app.include_router(scorecard_router.router)
 app.include_router(provider_smoke.router)
 app.include_router(swarm_eval_router.router)
 app.include_router(ubds_eval_router.router)
+app.include_router(portfolio_news_router.router)
+app.include_router(small_cap_router.router)
+
+# ── MCP S&P 500 Market Data Server ────────────────────────────────────────────
+from .mcp_server.router import router as mcp_sp500_router
+app.include_router(mcp_sp500_router)
 
 # ── Serve generated video files ──────────────────────────────────────────────
 _static_videos = os.path.join(os.path.dirname(__file__), "static", "videos")

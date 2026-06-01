@@ -108,6 +108,68 @@ class MetricDataPoint(BaseModel):
 class InvestorMetricsResponse(BaseModel):
     ticker: str
     metrics: Dict[str, MetricDataPoint]
+    market_cap: Optional[float] = Field(
+        default=None,
+        description="Latest market capitalization in USD when available from yfinance.",
+    )
+    cap_bucket: Optional[str] = Field(
+        default=None,
+        description="Mega/Large/Mid/Small/Micro cap classification for dashboard routing.",
+    )
+
+
+class SmallCapSignal(BaseModel):
+    label: str = Field(description="Signal name, e.g. Profitability Runway")
+    score: str = Field(description="green | yellow | red")
+    headline: str = Field(description="One-sentence verdict")
+    detail: str = Field(description="2-3 sentence elaboration")
+
+
+class SmallCapStreamYear(BaseModel):
+    year: str
+    revenue_usd: Optional[float] = None
+    gross_margin_pct: Optional[float] = None
+    operating_margin_pct: Optional[float] = None
+
+
+class SmallCapRevenueStream(BaseModel):
+    name: str
+    latest_share_pct: Optional[float] = Field(
+        default=None,
+        description="Approximate mix of total revenue in the latest year, when known.",
+    )
+    years: List[SmallCapStreamYear] = Field(default_factory=list)
+    source: Optional[str] = Field(
+        default=None,
+        description="Where this stream's figures came from, when known.",
+    )
+
+
+class SmallCapMajorDeal(BaseModel):
+    partner: str
+    deal_type: str = Field(default="partnership")
+    amount_usd: Optional[float] = None
+    amount_label: str = Field(default="Undisclosed")
+    year: Optional[int] = None
+    summary: str = ""
+    predictability_note: str = Field(
+        default="",
+        description="Why this deal improves revenue visibility or predictability.",
+    )
+    source: Optional[str] = Field(
+        default=None,
+        description="Where this deal was found, when known.",
+    )
+
+
+class SmallCapAssessment(BaseModel):
+    ticker: str
+    cap_bucket: str
+    signals: List[SmallCapSignal]
+    overall_verdict: str = Field(description="Compelling | Watch | Avoid")
+    overall_rationale: str
+    revenue_streams: List[SmallCapRevenueStream] = Field(default_factory=list)
+    major_deals: List[SmallCapMajorDeal] = Field(default_factory=list)
 
 class MacroAlert(BaseModel):
     id: str

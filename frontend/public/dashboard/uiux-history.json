@@ -61,5 +61,19 @@
     "overall_score": 93.51,
     "grade": "A",
     "status": "pass"
+  },
+  {
+    "run_id": "uiux_eval_20260601_011516",
+    "timestamp": "2026-06-01T01:15:16.020420+00:00",
+    "overall_score": 93.51,
+    "grade": "A",
+    "status": "pass"
+  },
+  {
+    "run_id": "uiux_eval_20260601_011516",
+    "timestamp": "2026-06-01T01:15:16.031148+00:00",
+    "overall_score": 93.51,
+    "grade": "A",
+    "status": "pass"
   }
 ]

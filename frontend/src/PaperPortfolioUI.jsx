@@ -1,7 +1,228 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useLocation } from "react-router-dom";
-import { Plus, Target, ImageUp, X } from "lucide-react";
-import { API_BASE_URL, apiFetch, apiPostMultipart, fetchJsonWithMeta } from "./api";
+import { Plus, Target, ImageUp, X, Newspaper, ExternalLink, Loader2, Star } from "lucide-react";
+import { API_BASE_URL, apiFetch, apiPostMultipart, fetchJsonWithMeta, getToken } from "./api";
+import {
+  AI_INFRA_BASKET,
+  AI_INFRA_THEMES,
+  LOCAL_WATCHLIST_KEY,
+  chunkTickers,
+  formatWatchNum,
+  mapScorecardVerdict,
+  mergeWatchlistTickers,
+  watchBriefReason,
+  watchVerdictColor,
+} from "./utils/watchlistUtils";
+
+// ── Sentiment palette ──────────────────────────────────────────────────────────
+const SENTIMENT_STYLE = {
+  positive: { bg: "rgba(16,185,129,0.15)", color: "#10b981", label: "Positive" },
+  negative: { bg: "rgba(239,68,68,0.15)", color: "#ef4444", label: "Negative" },
+  neutral:  { bg: "rgba(100,116,139,0.2)", color: "#94a3b8", label: "Neutral" },
+};
+
+function fmtRelativeTime(unixTs) {
+  if (!unixTs) return "";
+  const diff = Math.floor(Date.now() / 1000) - unixTs;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function NewsImpactFeed({ newsItems, newsLoading, newsError }) {
+  if (newsLoading) {
+    return (
+      <div
+        style={{
+          marginTop: 32,
+          padding: "28px 0",
+          textAlign: "center",
+          color: "#64748b",
+          fontSize: 13,
+        }}
+      >
+        <div
+          style={{
+            display: "inline-block",
+            width: 18,
+            height: 18,
+            border: "2px solid rgba(167,139,250,0.3)",
+            borderTopColor: "#a78bfa",
+            borderRadius: "50%",
+            animation: "spin 0.8s linear infinite",
+            marginRight: 8,
+            verticalAlign: "middle",
+          }}
+        />
+        Loading portfolio news…
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
+
+  if (newsError) {
+    return (
+      <div style={{ marginTop: 32, color: "#64748b", fontSize: 12, textAlign: "center" }}>
+        News unavailable — {newsError}
+      </div>
+    );
+  }
+
+  if (!newsItems || newsItems.length === 0) {
+    return (
+      <div style={{ marginTop: 32, color: "#64748b", fontSize: 12, textAlign: "center" }}>
+        No recent verified news found for your holdings.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      {/* Section header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+        <Newspaper size={18} color="#a78bfa" />
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 800,
+            letterSpacing: 1.2,
+            color: "#a78bfa",
+            textTransform: "uppercase",
+          }}
+        >
+          Portfolio News & Impact
+        </span>
+        <span
+          style={{
+            fontSize: 11,
+            color: "#475569",
+            marginLeft: 4,
+            fontWeight: 400,
+          }}
+        >
+          Credible sources only · AI-classified
+        </span>
+      </div>
+
+      {/* Cards */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {newsItems.map((item, idx) => {
+          const sty = SENTIMENT_STYLE[item.sentiment] || SENTIMENT_STYLE.neutral;
+          return (
+            <div
+              key={idx}
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.07)",
+                borderLeft: `3px solid ${sty.color}`,
+                borderRadius: 12,
+                padding: "14px 16px",
+              }}
+            >
+              {/* Top row: ticker tag + sentiment badge + time */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  marginBottom: 8,
+                }}
+              >
+                <span
+                  style={{
+                    background: "rgba(124,58,237,0.2)",
+                    color: "#c4b5fd",
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: 0.8,
+                    padding: "3px 8px",
+                    borderRadius: 6,
+                  }}
+                >
+                  {item.ticker}
+                </span>
+                <span
+                  style={{
+                    background: sty.bg,
+                    color: sty.color,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "3px 8px",
+                    borderRadius: 6,
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  {sty.label}
+                </span>
+                <span
+                  style={{
+                    background: "rgba(255,255,255,0.06)",
+                    color: "#94a3b8",
+                    fontSize: 10,
+                    padding: "3px 8px",
+                    borderRadius: 6,
+                  }}
+                >
+                  {item.publisher}
+                </span>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "#475569" }}>
+                  {fmtRelativeTime(item.published_at)}
+                </span>
+              </div>
+
+              {/* Headline */}
+              <a
+                href={item.link || "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 6,
+                  color: "#e2e8f0",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  lineHeight: 1.5,
+                  textDecoration: "none",
+                  marginBottom: item.impact ? 8 : 0,
+                }}
+              >
+                <span style={{ flex: 1 }}>{item.title}</span>
+                {item.link && (
+                  <ExternalLink
+                    size={12}
+                    color="#64748b"
+                    style={{ flexShrink: 0, marginTop: 3 }}
+                  />
+                )}
+              </a>
+
+              {/* AI impact explanation */}
+              {item.impact && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "#94a3b8",
+                    lineHeight: 1.6,
+                    borderTop: "1px solid rgba(255,255,255,0.06)",
+                    paddingTop: 8,
+                  }}
+                >
+                  <span style={{ color: sty.color, fontWeight: 700 }}>
+                    {sty.label} —{" "}
+                  </span>
+                  {item.impact}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 const fmt = (n, dec = 2) => (n >= 0 ? "+" : "") + n.toFixed(dec);
 const fmtUSD = (n) => (n >= 0 ? "+$" : "-$") + Math.abs(n).toFixed(2);
@@ -37,6 +258,11 @@ export default function PaperPortfolioUI({ onXpGained }) {
   const [addError, setAddError] = useState("");
   const [closing, setClosing] = useState(null);
 
+  // News feed state — fetched independently, non-blocking
+  const [newsItems, setNewsItems] = useState([]);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsError, setNewsError] = useState(null);
+
   const [importExpanded, setImportExpanded] = useState(false);
   const [fullSnapshot, setFullSnapshot] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
@@ -48,6 +274,136 @@ export default function PaperPortfolioUI({ onXpGained }) {
   const [manualDraft, setManualDraft] = useState([
     { ticker: "", shares: "", avg_cost: "" },
   ]);
+
+  const [watchlist, setWatchlist] = useState([]);
+  const [watchlistAuth, setWatchlistAuth] = useState(false);
+  const [watchlistPrefsLoading, setWatchlistPrefsLoading] = useState(true);
+  const [watchlistSaving, setWatchlistSaving] = useState(false);
+  const [watchlistRows, setWatchlistRows] = useState([]);
+  const [watchlistMetricsLoading, setWatchlistMetricsLoading] = useState(false);
+  const [watchlistError, setWatchlistError] = useState(null);
+
+  const persistWatchlist = useCallback(async (nextList) => {
+    setWatchlist(nextList);
+    if (getToken()) {
+      await apiFetch(`${API_BASE_URL}/preferences`, {
+        method: "PUT",
+        body: JSON.stringify({ watchlist: nextList }),
+      });
+      setWatchlistAuth(true);
+    } else {
+      localStorage.setItem(LOCAL_WATCHLIST_KEY, JSON.stringify(nextList));
+      setWatchlistAuth(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setWatchlistPrefsLoading(true);
+      try {
+        const data = await apiFetch(`${API_BASE_URL}/preferences`);
+        if (cancelled) return;
+        if (data.authenticated) {
+          setWatchlistAuth(true);
+          setWatchlist(Array.isArray(data.preferences?.watchlist) ? data.preferences.watchlist : []);
+        } else {
+          setWatchlistAuth(false);
+          try {
+            const stored = localStorage.getItem(LOCAL_WATCHLIST_KEY);
+            setWatchlist(stored ? JSON.parse(stored) : []);
+          } catch {
+            setWatchlist([]);
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setWatchlistAuth(false);
+          try {
+            const stored = localStorage.getItem(LOCAL_WATCHLIST_KEY);
+            setWatchlist(stored ? JSON.parse(stored) : []);
+          } catch {
+            setWatchlist([]);
+          }
+        }
+      } finally {
+        if (!cancelled) setWatchlistPrefsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!watchlist.length) {
+      setWatchlistRows([]);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      setWatchlistMetricsLoading(true);
+      setWatchlistError(null);
+      try {
+        const chunks = chunkTickers(watchlist);
+        const mergedRows = [];
+        for (const chunk of chunks) {
+          const { data } = await fetchJsonWithMeta(
+            `${API_BASE_URL}/scorecard/compare`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                tickers: chunk,
+                preset: "balanced",
+                skip_llm_scores: true,
+              }),
+            },
+            120000,
+          );
+          if (data?.rows?.length) mergedRows.push(...data.rows);
+        }
+        const order = new Map(watchlist.map((t, i) => [t, i]));
+        mergedRows.sort(
+          (a, b) => (order.get(a.ticker) ?? 999) - (order.get(b.ticker) ?? 999),
+        );
+        if (!cancelled) setWatchlistRows(mergedRows);
+      } catch (e) {
+        if (!cancelled) {
+          setWatchlistError(e.message || "Could not load watchlist metrics");
+          setWatchlistRows([]);
+        }
+      } finally {
+        if (!cancelled) setWatchlistMetricsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [watchlist]);
+
+  const handleAddAiInfraBasket = async () => {
+    setWatchlistSaving(true);
+    setWatchlistError(null);
+    try {
+      const merged = mergeWatchlistTickers(watchlist, AI_INFRA_BASKET);
+      await persistWatchlist(merged);
+    } catch (e) {
+      setWatchlistError(e.message || "Could not save watchlist");
+    } finally {
+      setWatchlistSaving(false);
+    }
+  };
+
+  const handleRemoveWatchTicker = async (ticker) => {
+    const sym = String(ticker || "").trim().toUpperCase();
+    if (!sym) return;
+    setWatchlistSaving(true);
+    setWatchlistError(null);
+    try {
+      const next = watchlist.filter((t) => t !== sym);
+      await persistWatchlist(next);
+    } catch (e) {
+      setWatchlistError(e.message || "Could not update watchlist");
+    } finally {
+      setWatchlistSaving(false);
+    }
+  };
 
   const openReview = useCallback((payload) => {
     const rows = (payload.holdings || []).map((h) => ({
@@ -250,6 +606,34 @@ export default function PaperPortfolioUI({ onXpGained }) {
   const positions = perf?.positions || [];
   const beatingSPY = perf?.beating_spy;
   const analysis = perf?.analysis || {};
+
+  // Fire news fetch once positions are available, independently of main render
+  useEffect(() => {
+    if (!positions.length) return;
+    const tickers = [...new Set(positions.map((p) => p.ticker).filter(Boolean))];
+    if (!tickers.length) return;
+    let cancelled = false;
+    setNewsLoading(true);
+    setNewsError(null);
+    fetch(`${API_BASE_URL}/portfolio/news?tickers=${tickers.join(",")}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) setNewsItems(data.items || []);
+      })
+      .catch((e) => {
+        if (!cancelled) setNewsError(e.message || "Could not load news");
+      })
+      .finally(() => {
+        if (!cancelled) setNewsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perf]);
 
   return (
     <div style={{ maxWidth: 920, margin: "0 auto", padding: "0 16px" }}>
@@ -644,6 +1028,226 @@ export default function PaperPortfolioUI({ onXpGained }) {
         )}
       </div>
 
+      {/* AI Infrastructure Watchlist */}
+      <div
+        style={{
+          marginBottom: 28,
+          padding: "18px 20px",
+          borderRadius: 14,
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(124,58,237,0.22)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            marginBottom: 14,
+          }}
+        >
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <Star size={18} color="#a78bfa" />
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#f8fafc" }}>
+                AI Infrastructure Watchlist
+              </h3>
+            </div>
+            <p style={{ margin: 0, color: "#94a3b8", fontSize: 12, lineHeight: 1.55, maxWidth: 640 }}>
+              Grid, cooling, optical interconnect, and silicon networking names to monitor before buying.
+              Valuation metrics use the scorecard framework — not standard large-cap P/E rules alone.
+            </p>
+            {!watchlistAuth && !watchlistPrefsLoading && (
+              <p style={{ margin: "8px 0 0", color: "#64748b", fontSize: 11 }}>
+                Sign in to save this watchlist across devices. Session-only list is stored locally until then.
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            disabled={watchlistSaving || watchlistPrefsLoading}
+            onClick={handleAddAiInfraBasket}
+            style={btnStyle("#7c3aed")}
+          >
+            {watchlistSaving ? "Saving…" : "Add AI Infra Basket"}
+          </button>
+        </div>
+
+        {watchlistPrefsLoading && (
+          <div style={{ color: "#64748b", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+            <Loader2 size={16} style={{ animation: "spin 0.8s linear infinite" }} />
+            Loading watchlist…
+          </div>
+        )}
+
+        {!watchlistPrefsLoading && watchlist.length === 0 && (
+          <div style={{ color: "#64748b", fontSize: 13 }}>
+            No watchlist symbols yet. Click <strong>Add AI Infra Basket</strong> to load GEV, ETN, VRT, NVDA, and related names.
+          </div>
+        )}
+
+        {watchlistError && (
+          <div style={{ color: "#fca5a5", fontSize: 12, marginBottom: 10 }}>{watchlistError}</div>
+        )}
+
+        {watchlist.length > 0 && (
+          <>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+              {watchlist.map((sym) => (
+                <span
+                  key={sym}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "4px 8px",
+                    borderRadius: 8,
+                    background: "rgba(124,58,237,0.15)",
+                    color: "#c4b5fd",
+                    fontSize: 11,
+                    fontWeight: 700,
+                  }}
+                >
+                  {sym}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${sym}`}
+                    onClick={() => handleRemoveWatchTicker(sym)}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "#94a3b8",
+                      cursor: "pointer",
+                      padding: 0,
+                      lineHeight: 1,
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+
+            {watchlistMetricsLoading && (
+              <div style={{ color: "#64748b", fontSize: 13, display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <Loader2 size={16} style={{ animation: "spin 0.8s linear infinite" }} />
+                Loading valuation metrics…
+              </div>
+            )}
+
+            {watchlistRows.length > 0 && (
+              <div style={{ overflowX: "auto" }}>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: 12,
+                    minWidth: 980,
+                  }}
+                >
+                  <thead>
+                    <tr style={{ background: "rgba(15,23,42,0.55)", color: "#e2e8f0" }}>
+                      {[
+                        "Ticker",
+                        "Theme",
+                        "Price",
+                        "Fwd P/E",
+                        "Hist P/E",
+                        "Rev Gr%",
+                        "EPS Gr%",
+                        "PT Upside%",
+                        "D/E",
+                        "Signal",
+                        "Verdict",
+                        "Brief",
+                      ].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            padding: "8px 10px",
+                            textAlign: h === "Ticker" || h === "Theme" || h === "Brief" ? "left" : "right",
+                            borderBottom: "1px solid rgba(148,163,184,0.2)",
+                            whiteSpace: h === "Brief" ? "normal" : "nowrap",
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {watchlistRows.map((row) => {
+                      const inputs = row.inputs || {};
+                      const mappedVerdict = mapScorecardVerdict(row.verdict);
+                      const verdictColor = watchVerdictColor(mappedVerdict);
+                      return (
+                        <tr
+                          key={row.ticker}
+                          style={{ borderBottom: "1px solid rgba(148,163,184,0.08)" }}
+                        >
+                          <td style={{ padding: "8px 10px", fontWeight: 800 }}>{row.ticker}</td>
+                          <td style={{ padding: "8px 10px", color: "#94a3b8", maxWidth: 120 }}>
+                            {AI_INFRA_THEMES[row.ticker] || inputs.industry || "—"}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                            {formatWatchNum(inputs.current_price, 2)}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                            {formatWatchNum(inputs.forward_pe, 1)}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                            {formatWatchNum(inputs.historical_avg_pe, 1)}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                            {formatWatchNum(inputs.revenue_growth_pct, 1)}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                            {formatWatchNum(inputs.eps_growth_pct, 1)}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                            {formatWatchNum(inputs.pt_upside_pct, 1)}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                            {formatWatchNum(inputs.debt_to_equity, 2)}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right", color: "#cbd5e1" }}>
+                            {row.signal || "—"}
+                          </td>
+                          <td
+                            style={{
+                              padding: "8px 10px",
+                              textAlign: "right",
+                              color: verdictColor,
+                              fontWeight: 700,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {mappedVerdict}
+                          </td>
+                          <td
+                            style={{
+                              padding: "8px 10px",
+                              color: "#94a3b8",
+                              lineHeight: 1.45,
+                              maxWidth: 320,
+                            }}
+                          >
+                            {watchBriefReason(row)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+
       {/* Add position button */}
       <div
         style={{
@@ -947,6 +1551,13 @@ export default function PaperPortfolioUI({ onXpGained }) {
           })}
         </div>
       )}
+
+      {/* Portfolio News & Impact Feed — lazy-loaded, non-blocking */}
+      <NewsImpactFeed
+        newsItems={newsItems}
+        newsLoading={newsLoading}
+        newsError={newsError}
+      />
 
       {reviewOpen && (
         <div

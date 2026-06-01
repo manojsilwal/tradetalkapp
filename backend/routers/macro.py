@@ -59,7 +59,12 @@ async def get_investor_metrics(ticker: str):
     data = await investor_metrics_connector.fetch_data(ticker=ticker)
     if "error" in data:
         return InvestorMetricsResponse(ticker=ticker.upper(), metrics={})
-    return InvestorMetricsResponse(ticker=ticker.upper(), metrics=data["metrics"])
+    return InvestorMetricsResponse(
+        ticker=ticker.upper(),
+        metrics=data["metrics"],
+        market_cap=data.get("market_cap"),
+        cap_bucket=data.get("cap_bucket"),
+    )
 
 
 @router.get("/metrics/validate/{ticker}")

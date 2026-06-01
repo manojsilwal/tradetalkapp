@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL, apiFetch, setToken, getToken, clearToken } from './api';
+import { AUTH_REQUIRED, GUEST_USER } from './authConfig';
 
 const AuthContext = createContext(null);
 
@@ -27,12 +28,30 @@ export function AuthProvider({ children }) {
         return data;
     }, []);
 
+    const trySilentDevLogin = useCallback(async () => {
+        try {
+            await login('dev');
+        } catch (e) {
+            if (!String(e.message || '').includes('Failed to fetch')) {
+                console.warn('[Auth] silent dev login failed', e.message || e);
+            }
+        }
+    }, [login]);
+
     // On mount, try to restore session from localStorage
     useEffect(() => {
         const restore = async () => {
+            if (!AUTH_REQUIRED) {
+                setUser(GUEST_USER);
+                setLoading(false);
+                if (!getToken()) {
+                    void trySilentDevLogin();
+                }
+                return;
+            }
+
             const token = getToken();
             if (!token) {
-                // Auto dev-login to disable login requirement
                 try {
                     await login('dev');
                 } catch (e) {
@@ -49,7 +68,6 @@ export function AuthProvider({ children }) {
                 setUser(data);
             } catch {
                 clearToken();
-                // Expired JWT: fall back to dev user so local portfolio/XP stay on dev_user_001
                 try {
                     await login('dev');
                 } catch (e) {
@@ -62,7 +80,7 @@ export function AuthProvider({ children }) {
             }
         };
         restore();
-    }, [login]);
+    }, [login, trySilentDevLogin]);
 
 
 

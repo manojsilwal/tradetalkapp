@@ -183,6 +183,64 @@ class FinCrawlerClient:
             logger.warning("[FinCrawler] get_stock_news failed for %s: %s", ticker, e)
             return []
 
+    async def get_stock_news_articles(self, ticker: str, limit: int = 12) -> List[Dict[str, str]]:
+        """
+        Structured news articles from GET /news when FinCrawler exposes it.
+        Returns list of {title, summary, publisher, link, source}.
+        """
+        if not self.enabled:
+            return []
+        ticker = ticker.upper().strip()
+        cache_key = f"news_articles:{ticker}:{limit}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        articles: List[Dict[str, str]] = []
+        try:
+            data = await self._get("/news", params={"ticker": ticker, "limit": limit})
+            for item in (data.get("articles") or [])[:limit]:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    continue
+                summary = str(item.get("summary") or item.get("text") or "").strip()[:500]
+                articles.append(
+                    {
+                        "title": title,
+                        "summary": summary,
+                        "publisher": str(item.get("publisher") or item.get("source") or "FinCrawler").strip(),
+                        "link": str(item.get("link") or item.get("url") or "").strip(),
+                        "source": "fincrawler",
+                    }
+                )
+        except Exception as e:
+            logger.debug("[FinCrawler] get_stock_news_articles /news failed for %s: %s", ticker, e)
+
+        if not articles:
+            summaries = await self.get_stock_news(ticker, limit=limit)
+            for line in summaries:
+                text = str(line or "").strip()
+                if not text:
+                    continue
+                if ": " in text:
+                    title, _, summary = text.partition(": ")
+                else:
+                    title, summary = text[:120], text
+                articles.append(
+                    {
+                        "title": title.strip(),
+                        "summary": summary.strip(),
+                        "publisher": "FinCrawler",
+                        "link": "",
+                        "source": "fincrawler_scrape",
+                    }
+                )
+
+        _cache_set(cache_key, articles)
+        return articles
+
     async def get_sec_filing(
         self,
         ticker: str,

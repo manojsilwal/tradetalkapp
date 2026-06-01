@@ -322,8 +322,32 @@ def _build_system_prompt(
     memory_instructions_block: str = "",
 ) -> str:
     snap = json.dumps(market_snapshot, indent=2, default=str)[:8000]
-    uctx = json.dumps(user_ctx, indent=2, default=str)[:8000]
     pipe = json.dumps(pipeline_status or {}, indent=2, default=str)[:2000]
+
+    # Format portfolio as a plain readable block — avoids LLM needing to parse JSON
+    # and eliminates any temptation to call a tool just to list holdings.
+    positions = user_ctx.get("open_positions") or []
+    ticker_list = user_ctx.get("ticker_list") or []
+    count = user_ctx.get("open_position_count", 0)
+    if positions:
+        pos_lines = "\n".join(
+            f"  {p.get('ticker','?')} | {p.get('direction','LONG')} | "
+            f"Entry ${p.get('entry_price', 0):.2f} | "
+            f"{p.get('shares', 0):.4f} shares | "
+            f"${p.get('allocated', 0):.2f} allocated | "
+            f"Sector: {p.get('sector') or 'Unknown'} | "
+            f"Opened: {p.get('entry_date','?')}"
+            for p in positions
+        )
+        tickers_inline = ", ".join(ticker_list)
+        uctx = (
+            f"**{count} open position(s):** {tickers_inline}\n\n"
+            f"Detail (entry price, shares, allocated — NO live price):\n{pos_lines}\n\n"
+            "NOTE: entry prices are from when the position was opened, not current market price. "
+            "For current prices and P&L call `get_portfolio_snapshot`."
+        )
+    else:
+        uctx = "No open positions." if user_ctx else "Not signed in."
     prompt = (
         "You are TradeTalk, a concise finance and education assistant. "
         "Lead with a one-sentence takeaway, then details. "
@@ -349,9 +373,10 @@ def _build_system_prompt(
         "- **Company-specific why / recent events** → `get_deep_news(ticker)`.\n"
         "- **SEC filing text** (10-K, 10-Q, 8-K) → `get_sec_filing`.\n"
         "- **Pasted or named URL** → `scrape_url`.\n"
-        "- **\"What stocks do I hold\", \"list my portfolio\", \"what are my positions\"** → "
-        "answer directly from `ticker_list` and `open_positions` in the User portfolio context block "
-        "below. Do NOT call any tool — the data is already here.\n"
+        "- **\"What stocks do I hold\", \"list my portfolio\", \"what are my positions\", "
+        "\"what are my portfolio stocks\"** → answer IMMEDIATELY from the "
+        "\"User portfolio context\" block below. The tickers are listed on the very first line. "
+        "Do NOT call any tool. Do NOT think about calling a tool. Just read and reply.\n"
         "- **Live P&L, current prices, % gains/losses, SPY comparison, sector breakdown** → "
         "`get_portfolio_snapshot`. Only call this when the user explicitly wants performance numbers "
         "or exposure detail — not for simple listing questions.\n"

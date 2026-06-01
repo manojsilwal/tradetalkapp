@@ -61,6 +61,15 @@ async def run_daily_pipeline(knowledge_store, llm_client=None) -> dict:
         logger.warning(f"[DailyPipeline] swarm outcome tracking failed: {e}")
 
     knowledge_store.update_pipeline_status(**summary)
+
+    # RAG Bridge: index new BQ rows into vector store for agent retrieval
+    try:
+        from .mcp_server.rag_bridge import run_full_index
+        rag_results = run_full_index(days_back=1)
+        summary["rag_bridge_indexed"] = rag_results
+    except Exception as e:
+        logger.debug("[DailyPipeline] RAG bridge skipped: %s", e)
+
     logger.info(f"[DailyPipeline] Complete — {summary}")
     return summary
 
@@ -80,6 +89,17 @@ async def _ingest_price_movements(knowledge_store) -> dict:
             context=mover.get("context", ""),
         )
         count += 1
+
+    # Persist to BigQuery permanently (never deleted)
+    try:
+        from .mcp_server.persist import persist_pipeline_snapshot
+        summary = f"{count} movers: " + ", ".join(
+            f"{m['ticker']} {m['change_pct']:+.1f}%" for m in movers[:5]
+        )
+        persist_pipeline_snapshot("top_movers", movers, summary)
+    except Exception as e:
+        logger.debug("[DailyPipeline] BQ persist skipped: %s", e)
+
     return {"price_movements_added": count}
 
 
@@ -117,6 +137,15 @@ async def _ingest_macro_snapshot(knowledge_store) -> dict:
         logger.warning(f"[DailyPipeline] FRED merge failed: {e}")
 
     knowledge_store.add_macro_snapshot(ind)
+
+    # Persist to BigQuery permanently
+    try:
+        from .mcp_server.persist import persist_pipeline_snapshot
+        narrative = ind.get("macro_narrative", "")
+        persist_pipeline_snapshot("macro_snapshot", ind, narrative)
+    except Exception as e:
+        logger.debug("[DailyPipeline] BQ persist skipped: %s", e)
+
     return {"macro_snapshot_added": True, "keys": list(ind.keys())}
 
 

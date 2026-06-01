@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..auth import get_current_user, UserInfo
+from ..auth import get_current_user_or_dev, UserInfo
 from ..gemini_llm import gemini_extract_holdings_from_image, resolve_gemini_api_key
 from .. import paper_portfolio as pp
 from .. import user_progress as up
@@ -89,7 +89,7 @@ async def _parse_one_upload(file: UploadFile) -> tuple[List[HoldingsRow], Option
 
 
 @router.post("/position")
-def add_position(req: AddPositionRequest, user: UserInfo = Depends(get_current_user)):
+def add_position(req: AddPositionRequest, user: UserInfo = Depends(get_current_user_or_dev)):
     result = pp.add_position(
         user_id=user.id,
         ticker=req.ticker,
@@ -105,12 +105,12 @@ def add_position(req: AddPositionRequest, user: UserInfo = Depends(get_current_u
 
 
 @router.get("/positions")
-def get_positions(include_closed: bool = False, user: UserInfo = Depends(get_current_user)):
+def get_positions(include_closed: bool = False, user: UserInfo = Depends(get_current_user_or_dev)):
     return pp.get_positions(user.id, include_closed)
 
 
 @router.get("/performance")
-def get_performance(user: UserInfo = Depends(get_current_user)):
+def get_performance(user: UserInfo = Depends(get_current_user_or_dev)):
     perf = pp.get_portfolio_performance(user.id)
     if perf.get("beating_spy"):
         up.award_xp(user.id, "prediction_right", note="beat_spy")
@@ -118,12 +118,12 @@ def get_performance(user: UserInfo = Depends(get_current_user)):
 
 
 @router.post("/close/{position_id}")
-def close_position(position_id: str, user: UserInfo = Depends(get_current_user)):
+def close_position(position_id: str, user: UserInfo = Depends(get_current_user_or_dev)):
     return pp.close_position(user.id, position_id)
 
 
 @router.post("/preview-holdings-import")
-def preview_holdings_import(body: PreviewHoldingsRequest, user: UserInfo = Depends(get_current_user)):
+def preview_holdings_import(body: PreviewHoldingsRequest, user: UserInfo = Depends(get_current_user_or_dev)):
     return _reconcile_payload(user.id, body.items, body.full_snapshot)
 
 
@@ -132,7 +132,7 @@ async def parse_holdings_image(
     full_snapshot: str = Form("false"),
     file: Optional[UploadFile] = File(None),
     files: Optional[List[UploadFile]] = File(None),
-    user: UserInfo = Depends(get_current_user),
+    user: UserInfo = Depends(get_current_user_or_dev),
 ):
     if not resolve_gemini_api_key():
         raise HTTPException(
@@ -178,7 +178,7 @@ async def parse_holdings_image(
 
 
 @router.post("/apply-holdings-import")
-def apply_holdings_import_route(body: ApplyHoldingsRequest, user: UserInfo = Depends(get_current_user)):
+def apply_holdings_import_route(body: ApplyHoldingsRequest, user: UserInfo = Depends(get_current_user_or_dev)):
     result = pp.apply_holdings_import(
         user.id,
         [r.model_dump() for r in body.items],

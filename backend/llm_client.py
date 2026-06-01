@@ -113,6 +113,7 @@ MODEL_TIER = {
     "sitg_scorer":            "heavy",
     "execution_risk_scorer":  "heavy",
     "scorecard_verdict":      "light",
+    "news_impact_classifier": "light",
 }
 
 def _tier_for_role(role: str) -> str:
@@ -221,6 +222,34 @@ AGENT_SYSTEM_PROMPTS = {
         "ONLY discuss investment topics. "
         "Respond ONLY with valid JSON: {\"lesson\": \"1-2 sentence lesson\"}"
     ),
+    "small_cap_analyst": (
+        "You are a growth-stage equity analyst specializing in Small Cap and Micro Cap companies "
+        "that may be pre-profit or early-profit. Standard P/E and Graham metrics do NOT apply. "
+        "Evaluate using six growth-stage criteria only:\n"
+        "1) Profitability Runway — credible path to profitability within 2-3 years (not 5+ year moonshots).\n"
+        "2) Revenue & Margin Momentum — revenue growth and gross/operating margins improving over time.\n"
+        "3) Problem-Solution Fit — solves a near-term real bottleneck, not speculative science fiction.\n"
+        "4) Institutional Backing — credible institutions or funds on the register with meaningful ownership.\n"
+        "5) Founding Team Stability — founders/operators still leading, focused, capable.\n"
+        "6) Product Moat — differentiated product with a creative moat that can monetize in 2-5 years.\n"
+        "Score each signal green (strong), yellow (mixed/uncertain), or red (weak). "
+        "Be honest when data is missing — use yellow, not green. ONLY discuss investment topics. "
+        "Also summarize revenue streams (product lines/segments) with up to 5 annual years of revenue "
+        "and gross/operating margin when inferable from filings, business summary, or provided financial rows. "
+        "List major enterprise deals/partnerships/customer wins from news headlines when amounts or counterparties "
+        "are mentioned; use amount_label when exact USD is unclear. "
+        "Respond ONLY with valid JSON: {\"signals\": [{\"label\": \"Profitability Runway\", "
+        "\"score\": \"green|yellow|red\", \"headline\": \"one sentence\", \"detail\": \"2-3 sentences\"}, "
+        "... six total with exact labels: Profitability Runway, Revenue & Margin Momentum, "
+        "Problem-Solution Fit, Institutional Backing, Founding Team Stability, Product Moat], "
+        "\"overall_verdict\": \"Compelling|Watch|Avoid\", \"overall_rationale\": \"2-3 sentences\", "
+        "\"revenue_streams\": [{\"name\": \"stream name\", \"latest_share_pct\": number|null, "
+        "\"years\": [{\"year\": \"2024\", \"revenue_usd\": number|null, \"gross_margin_pct\": number|null, "
+        "\"operating_margin_pct\": number|null}]}], "
+        "\"major_deals\": [{\"partner\": \"counterparty\", \"deal_type\": \"contract|partnership|customer win\", "
+        "\"amount_usd\": number|null, \"amount_label\": \"$50M multi-year|Undisclosed\", \"year\": 2025, "
+        "\"summary\": \"one sentence\", \"predictability_note\": \"why this improves visibility\"}]}"
+    ),
     "video_scene_director": (
         "You are a visual director creating short educational finance scene plans. "
         "Return ONLY valid JSON in this shape: "
@@ -326,6 +355,13 @@ AGENT_SYSTEM_PROMPTS = {
         "  \"one_line_reason\": \"one sentence citing the driver\"\n"
         "}"
     ),
+    "news_impact_classifier": (
+        "You are a financial news analyst classifying the investment impact of a single headline. "
+        "ONLY discuss investment topics. "
+        "Respond ONLY with valid JSON: "
+        "{\"sentiment\": \"positive|negative|neutral\", "
+        "\"impact\": \"1-2 sentence explanation of the investment significance\"}"
+    ),
     "gold_advisor": (
         "You are a precious-metals allocator advisor for LONG-TERM investors (not day traders). "
         "You receive a JSON snapshot: macro (VIX, 10Y TIPS real yield, nominal 10Y, DXY, gold futures), "
@@ -354,6 +390,50 @@ FALLBACK_TEMPLATES = {
     "swarm_synthesizer": {"consensus_rationale": "Factors are split — insufficient conviction for a directional call.", "verdict": "NEUTRAL", "confidence": 0.5},
     "swarm_analyst": {"signal": 0, "rationale": "Data falls in ambiguous range; defaulting to neutral.", "confidence": 0.5},
     "swarm_reflection_writer": {"lesson": "Insufficient data to derive a clear lesson."},
+    "small_cap_analyst": {
+        "signals": [
+            {
+                "label": "Profitability Runway",
+                "score": "yellow",
+                "headline": "Profitability timeline is unclear from available filings.",
+                "detail": "Revenue may be growing but losses and cash burn need closer review before assuming a 2-3 year path to profit.",
+            },
+            {
+                "label": "Revenue & Margin Momentum",
+                "score": "yellow",
+                "headline": "Growth trajectory requires confirmation across multiple periods.",
+                "detail": "Use quarterly revenue and margin trends to verify acceleration rather than a single YoY snapshot.",
+            },
+            {
+                "label": "Problem-Solution Fit",
+                "score": "yellow",
+                "headline": "Business addresses a real market need but execution risk remains.",
+                "detail": "Assess whether demand is near-term and measurable versus a long-dated speculative bet.",
+            },
+            {
+                "label": "Institutional Backing",
+                "score": "yellow",
+                "headline": "Institutional ownership data is limited or mixed.",
+                "detail": "Quality of holders matters more than count — look for reputable funds with sustained positions.",
+            },
+            {
+                "label": "Founding Team Stability",
+                "score": "yellow",
+                "headline": "Leadership continuity cannot be fully verified from public data.",
+                "detail": "Confirm founders or operator-CEOs remain engaged without major distraction or turnover.",
+            },
+            {
+                "label": "Product Moat",
+                "score": "yellow",
+                "headline": "Differentiation is plausible but not yet proven at scale.",
+                "detail": "Evaluate whether the product solves a bottleneck competitors cannot easily replicate in 2-5 years.",
+            },
+        ],
+        "overall_verdict": "Watch",
+        "overall_rationale": "Mixed growth-stage signals — standard valuation metrics do not apply; diligence on runway, holders, and team is required.",
+        "revenue_streams": [],
+        "major_deals": [],
+    },
     "video_scene_director": {"scenes": []},
     "video_veo_text_fallback": {
         "caption": "Lesson scene",
@@ -385,6 +465,10 @@ FALLBACK_TEMPLATES = {
     "scorecard_verdict": {
         "verdict": "Balanced",
         "one_line_reason": "Risk/reward is roughly balanced at current prices; monitor catalysts.",
+    },
+    "news_impact_classifier": {
+        "sentiment": "neutral",
+        "impact": None,
     },
     "gold_advisor": {
         "directional_bias": "neutral",
@@ -1065,6 +1149,24 @@ class LLMClient:
             f"The data is in an ambiguous range. Reason step by step and determine a signal."
         )
         return await self.generate("swarm_analyst", prompt)
+
+    async def generate_small_cap_analysis(self, metrics: dict) -> dict:
+        """Growth-stage assessment for small / micro cap tickers — six signal JSON contract."""
+        ctx = json.dumps(metrics, indent=2, default=str)
+        if len(ctx) > 14000:
+            ctx = ctx[:14000] + "\n…(truncated)"
+        prompt = (
+            f"Ticker: {(metrics.get('ticker') or '').upper()}\n"
+            f"Cap bucket: {metrics.get('cap_bucket')}\n"
+            f"Sector: {metrics.get('sector')} / {metrics.get('industry')}\n\n"
+            f"Quantitative and qualitative inputs JSON:\n{ctx}\n\n"
+            "Apply the six growth-stage criteria. Do NOT use P/E or large-cap value rules. "
+            "Use company_revenue_history_5y and segment_revenue_streams (yfinance) for baseline revenue. "
+            "When fincrawler_sec_10k_excerpt / fincrawler_sec_10q_excerpt are present, use them for "
+            "segment mix, customer concentration, and backlog visibility. "
+            "Use news_headlines, fincrawler_news_summaries, and fincrawler_sec_8k_excerpt for major_deals."
+        )
+        return await self.generate("small_cap_analyst", prompt)
 
     async def generate_decision_terminal_roadmap(self, ticker: str, context: dict) -> dict:
         """3Y bull/base/bear prices for Decision Terminal — JSON only; fallback zeros trigger heuristics."""

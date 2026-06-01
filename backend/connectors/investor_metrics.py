@@ -1,8 +1,9 @@
 import asyncio
 import yfinance as yf
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple, Optional
 from .base import DataConnector
 from .debate_data import fetch_debate_data
+from ..paper_portfolio import _classify_market_cap
 
 class InvestorMetricsConnector(DataConnector):
     """
@@ -38,7 +39,7 @@ class InvestorMetricsConnector(DataConnector):
             rs = avg_gain / avg_loss
             return 100.0 - (100.0 / (1.0 + rs))
         
-        def get_all_metrics() -> Dict[str, Any]:
+        def get_all_metrics() -> Tuple[Dict[str, Any], Optional[float]]:
             ticker = yf.Ticker(ticker_sym)
             info = ticker.info or {}
             hist_3mo = ticker.history(period="3mo")
@@ -55,6 +56,7 @@ class InvestorMetricsConnector(DataConnector):
             # --- 2. Free Cash Flow Yield ---
             fcf = _num(info.get("freeCashflow"))
             market_cap = _num(info.get("marketCap"), 1.0) # Avoid div by zero
+            raw_market_cap = _num(info.get("marketCap"))
             fcf_yield = (fcf / market_cap) * 100 if fcf else 0
             
             # --- 3. EV/EBIT ---
@@ -228,7 +230,7 @@ class InvestorMetricsConnector(DataConnector):
                     "historical": "N/A",
                     "trend": "N/A",
                 },
-            }
+            }, raw_market_cap if raw_market_cap and raw_market_cap > 0 else None
             
         try:
             # Parallel acquisition: primary yfinance metrics + fallback debate_data
@@ -236,28 +238,41 @@ class InvestorMetricsConnector(DataConnector):
             fallback_task = fetch_debate_data(ticker_sym)
             metrics, fallback = await asyncio.gather(yf_task, fallback_task, return_exceptions=True)
 
+            market_cap: Optional[float] = None
+            metrics_dict: Dict[str, Any] = {}
+
             if isinstance(metrics, Exception):
-                metrics = {}
+                metrics_dict = {}
+            elif isinstance(metrics, tuple) and len(metrics) == 2:
+                metrics_dict, market_cap = metrics
+            elif isinstance(metrics, dict):
+                metrics_dict = metrics
+
             if isinstance(fallback, Exception):
                 fallback = {}
 
             # Hydrate key activity fields from fallback path when yfinance path is missing.
-            if metrics:
-                if metrics.get("momentum_rsi", {}).get("current") in ("N/A", "", None):
+            if metrics_dict:
+                if metrics_dict.get("momentum_rsi", {}).get("current") in ("N/A", "", None):
                     one_m = fallback.get("price_return_1m")
                     if one_m is not None:
                         # Approximate RSI proxy from 1m return when history is unavailable.
                         proxy = max(5.0, min(95.0, 50.0 + float(one_m) * 1.2))
-                        metrics["momentum_rsi"]["current"] = f"{proxy:.1f}"
-                        metrics["momentum_rsi"]["trend"] = "Proxy"
-                if metrics.get("short_interest", {}).get("current") in ("N/A", "", None):
+                        metrics_dict["momentum_rsi"]["current"] = f"{proxy:.1f}"
+                        metrics_dict["momentum_rsi"]["trend"] = "Proxy"
+                if metrics_dict.get("short_interest", {}).get("current") in ("N/A", "", None):
                     spf = fallback.get("short_percent_float")
                     if spf is not None and float(spf) > 0:
-                        metrics["short_interest"]["current"] = f"{float(spf):.1f}%"
-                        metrics["short_interest"]["trend"] = "Fallback"
+                        metrics_dict["short_interest"]["current"] = f"{float(spf):.1f}%"
+                        metrics_dict["short_interest"]["trend"] = "Fallback"
 
-            return {"ticker": ticker_sym, "metrics": metrics or {}}
+            return {
+                "ticker": ticker_sym,
+                "metrics": metrics_dict or {},
+                "market_cap": market_cap,
+                "cap_bucket": _classify_market_cap(market_cap),
+            }
         except Exception as e:
             # Safe Fallback
-            return {"ticker": ticker_sym, "error": str(e), "metrics": {}}
+            return {"ticker": ticker_sym, "error": str(e), "metrics": {}, "market_cap": None, "cap_bucket": None}
 

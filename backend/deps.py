@@ -8,8 +8,9 @@ from . import env_bootstrap  # noqa: F401 — load backend/.env before os.enviro
 from .connectors import (
     ShortsConnector, SocialSentimentConnector, MacroHealthConnector,
     PolymarketConnector, FundamentalsConnector, InvestorMetricsConnector,
-    NewsScannerConnector,
+    NewsScannerConnector, SmallCapMetricsConnector,
 )
+from .connectors.kalshi import KalshiConnector
 from .notification_agents import NotificationPipeline
 from .knowledge_store import get_knowledge_store
 from .llm_client import get_llm_client
@@ -22,8 +23,10 @@ shorts_connector = ShortsConnector()
 social_connector = SocialSentimentConnector()
 macro_connector = MacroHealthConnector()
 poly_connector = PolymarketConnector()
+kalshi_connector = KalshiConnector()
 fund_connector = FundamentalsConnector()
 investor_metrics_connector = InvestorMetricsConnector()
+small_cap_metrics_connector = SmallCapMetricsConnector()
 news_scanner = NewsScannerConnector()
 notification_pipeline = NotificationPipeline()
 

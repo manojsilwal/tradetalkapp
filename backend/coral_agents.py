@@ -57,6 +57,32 @@ CORAL_TOOL_DESCRIPTORS: list[dict[str, Any]] = [
         "description": "Log a task attempt with optional signal/score for meta-learning.",
         "parameters": {"task_id": "str", "agent_id": "str", "signal": "float?", "score": "float?"},
     },
+    # ── S&P 500 Market Data MCP Tools ──
+    {
+        "name": "sp500_get_price_window",
+        "description": "Retrieve OHLCV + technicals for a symbol within a date range.",
+        "parameters": {"symbol": "str", "start": "date", "end": "date"},
+    },
+    {
+        "name": "sp500_get_movement_context",
+        "description": "Full context for a symbol on a date: features + attributed events.",
+        "parameters": {"symbol": "str", "trade_date": "date"},
+    },
+    {
+        "name": "sp500_get_causal_events",
+        "description": "Events by category (earnings, fed, macro, geopolitical, tariff, insider).",
+        "parameters": {"category": "str", "start_date": "date", "end_date": "date"},
+    },
+    {
+        "name": "sp500_find_similar_events",
+        "description": "Semantic search for historically similar events via embeddings.",
+        "parameters": {"query_text": "str", "top_k": "int", "category_filter": "str?"},
+    },
+    {
+        "name": "sp500_get_gold_spx_context",
+        "description": "Gold-equity correlation, risk regime, DXY context for a date.",
+        "parameters": {"trade_date": "date"},
+    },
 ]
 
 
@@ -77,12 +103,19 @@ def hub_add_note(
     ttl_seconds: Optional[float] = None,
 ) -> int:
     _warn_if_unknown_agent(agent_id)
-    return coral_hub.add_note(
+    row_id = coral_hub.add_note(
         agent_id,
         observation,
         market_regime=market_regime,
         ttl_seconds=ttl_seconds,
     )
+    # Dual-write to BigQuery for permanent persistence (no TTL)
+    try:
+        from .mcp_server.persist import persist_agent_learning
+        persist_agent_learning(agent_id, "note", observation, market_regime=market_regime)
+    except Exception:
+        pass
+    return row_id
 
 
 def hub_add_skill(
@@ -93,13 +126,22 @@ def hub_add_skill(
     skill_id: Optional[str] = None,
     ttl_seconds: Optional[float] = None,
 ) -> str:
-    return coral_hub.add_skill(
+    result = coral_hub.add_skill(
         name,
         content,
         contributed_by=contributed_by,
         skill_id=skill_id,
         ttl_seconds=ttl_seconds,
     )
+    # Dual-write to BigQuery for permanent persistence
+    try:
+        from .mcp_server.persist import persist_agent_learning
+        persist_agent_learning(
+            contributed_by or "unknown", "skill", f"{name}: {content}"
+        )
+    except Exception:
+        pass
+    return result
 
 
 def hub_record_attempt(

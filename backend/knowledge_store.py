@@ -58,6 +58,9 @@ COLLECTIONS = [
     "chat_memories",                 # salient chat exchanges stored for cross-session recall
     "yf_batch_chunks",               # batch ETL — yfinance profile chunks + filing metadata path
     "macro_regime_memories",         # thematic macro_flow QA snapshots (RAG for ledger)
+    "pipeline_rag_index",            # BQ pipeline_snapshots indexed for RAG retrieval
+    "events_semantic",               # BQ events_curated indexed with semantic embeddings
+    "agent_learnings_rag",           # BQ agent_learnings indexed for cross-agent RAG
 ]
 
 class _CollectionProxy:

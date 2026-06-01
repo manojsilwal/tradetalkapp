@@ -6,6 +6,7 @@ import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
 import AuthGate from './components/AuthGate'
 import { useAuth } from './AuthContext'
+import { AUTH_REQUIRED } from './authConfig'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
 import { API_BASE_URL, getToken } from './api'
 
@@ -27,11 +28,11 @@ const ChatUI = React.lazy(() => import('./ChatUI'))
 const ScorecardUI = React.lazy(() => import('./ScorecardUI'))
 
 /**
- * Wraps gamification tabs — shows AuthGate when user is not signed in.
- * Keeps the real component unmounted (so no hook violations).
+ * Wraps gamification tabs — shows AuthGate when auth is required and user is not signed in.
+ * Set VITE_AUTH_REQUIRED=true to re-enable the sign-in wall.
  */
 function GamificationTab({ user, featureName, featureIcon, children }) {
-    if (!user) return <AuthGate featureName={featureName} featureIcon={featureIcon} />
+    if (AUTH_REQUIRED && !user) return <AuthGate featureName={featureName} featureIcon={featureIcon} />
     return children
 }
 

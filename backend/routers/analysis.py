@@ -27,7 +27,7 @@ from ..telemetry import get_tracer
 from ..rate_limiter import rate_limit
 from ..deps import (
     shorts_connector, social_connector, poly_connector, fund_connector,
-    knowledge_store, llm_client, tool_registry, up,
+    knowledge_store, llm_client, tool_registry, up, kalshi_connector,
 )
 from ..coral_agents import hub_record_attempt
 from ..swarm_reliability.schemas import EvidenceArtifact, EvidenceManifest, parse_iso_datetime
@@ -514,3 +514,74 @@ async def predictor_forecast_post(
         tool_registry=tool_registry,
         emit_ledger=True,
     )
+
+
+@router.get("/prediction-markets")
+async def prediction_markets(ticker: str = Query("AAPL")):
+    """
+    Aggregated prediction-market data for a ticker from Polymarket and Kalshi.
+
+    Results are tagged with `relevance_type`:
+      - "direct"  — company-specific bets (AAPL closes above $300, etc.)
+      - "sector"  — index/sector-level bets the stock belongs to
+                    (S&P 500, Nasdaq, tech-sector ETFs, etc.)
+
+    Both sources are fetched concurrently; partial results returned on failure.
+    """
+    t = validate_ticker_query(ticker)
+
+    async def _safe(coro):
+        try:
+            return await coro
+        except Exception:
+            return {"events": [], "has_relevant_data": False, "source": "error", "context": {}}
+
+    poly_result, kalshi_result = await asyncio.gather(
+        _safe(poly_connector.fetch_data(ticker=t)),
+        _safe(kalshi_connector.fetch_data(ticker=t)),
+    )
+
+    poly_events = [
+        {**e, "source": "Polymarket"} for e in (poly_result.get("events") or [])
+    ]
+    kalshi_events = [
+        {**e, "source": "Kalshi"} for e in (kalshi_result.get("events") or [])
+    ]
+
+    # Merge: keep direct events first, then sector, sort by volume within each group
+    direct_events = sorted(
+        [e for e in poly_events + kalshi_events if e.get("relevance_type") != "sector"],
+        key=lambda x: x.get("volume") or 0, reverse=True,
+    )
+    sector_events = sorted(
+        [e for e in poly_events + kalshi_events if e.get("relevance_type") == "sector"],
+        key=lambda x: x.get("volume") or 0, reverse=True,
+    )
+
+    all_events = direct_events[:12] + sector_events[:6]
+
+    # Aggregate context (sector / indices) from either connector
+    ctx = poly_result.get("context") or kalshi_result.get("context") or {}
+
+    return {
+        "ticker": t,
+        "has_relevant_data": bool(all_events),
+        "event_count": len(all_events),
+        "events": all_events,
+        "context": {
+            "sector": ctx.get("sector"),
+            "indices": ctx.get("indices") or [],
+            "direct_count": len(direct_events),
+            "sector_count": len(sector_events),
+        },
+        "sources": {
+            "polymarket": {
+                "has_data": poly_result.get("has_relevant_data", False),
+                "count": len(poly_events),
+            },
+            "kalshi": {
+                "has_data": kalshi_result.get("has_relevant_data", False),
+                "count": len(kalshi_events),
+            },
+        },
+    }

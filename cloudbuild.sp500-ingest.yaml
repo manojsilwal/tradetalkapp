@@ -1,0 +1,11 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.data-lake
+      - -t
+      - gcr.io/tradetalkapp-492904/sp500-ingest:latest
+      - .
+images:
+  - gcr.io/tradetalkapp-492904/sp500-ingest:latest
