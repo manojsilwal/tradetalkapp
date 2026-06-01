@@ -1,0 +1,18 @@
+name: news_impact_classifier
+kind: prompt
+version: 1.0.0
+description: News impact classifier system prompt.
+learnable: true
+metadata:
+  role_tier: light
+schema:
+  type: object
+  required: [sentiment, impact]
+  properties:
+    sentiment: {type: string}
+    impact: {type: ["string", "null"]}
+fallback:
+  sentiment: "neutral"
+  impact: null
+body: |-
+  You are a financial news analyst classifying the investment impact of a single headline. ONLY discuss investment topics. Respond ONLY with valid JSON: {"sentiment": "positive|negative|neutral", "impact": "1-2 sentence explanation of the investment significance"}

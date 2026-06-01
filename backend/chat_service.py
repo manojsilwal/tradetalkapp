@@ -232,7 +232,10 @@ async def chat_rag_context(
             channel_hits.setdefault("earnings_memory", []).extend(earnings)
             merged.extend(earnings)
 
-        if CHAT_RAG_RRF_ON:
+        # Make RRF memory retrieval conditional on having multiple active channels with hits.
+        # This optimizes performance, cost, and latency when fusion is not required.
+        active_channels = [ch for ch, items in channel_hits.items() if items]
+        if CHAT_RAG_RRF_ON and len(active_channels) > 1:
             ranked = fuse_and_cap_hits(
                 channel_hits,
                 rrf_k=int(os.environ.get("CHAT_RAG_RRF_K", "60")),

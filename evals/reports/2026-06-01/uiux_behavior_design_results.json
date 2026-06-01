@@ -1,5 +1,5 @@
 {
-  "run_id": "uiux_eval_20260601_011516",
+  "run_id": "uiux_eval_20260601_222815",
   "app_name": "TradeTalk",
   "version": "dev",
   "benchmark_type": "internal",
@@ -231,7 +231,7 @@
   "top_issues": [],
   "recommendation": "Release can proceed with monitored follow-ups.",
   "missing_inputs": [],
-  "timestamp": "2026-06-01T01:15:16.031148+00:00",
+  "timestamp": "2026-06-01T22:28:15.879768+00:00",
   "previous_overall_score": 93.51,
   "overall_score_delta": 0.0
 }

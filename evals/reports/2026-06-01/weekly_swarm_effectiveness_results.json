@@ -1,18 +1,18 @@
 {
-  "run_id": "eval_20260601_011515",
-  "timestamp": "2026-06-01T01:15:15Z",
+  "run_id": "eval_20260601_223121",
+  "timestamp": "2026-06-01T22:31:21Z",
   "production_version": "v1.0.0",
   "benchmark_suite": "agentic_swarm_eval_v1",
-  "decision": "shadow_deploy",
-  "winner": "Reduced Swarm + Current LLM",
+  "decision": "hold",
+  "winner": "Production 5-Agent Swarm",
   "scores": {
     "production_swarm": {
-      "aes": 83.9,
+      "aes": 85.7,
       "task_success": 88.0,
       "rag_quality": 90.0,
       "orchestration": 88.0,
       "continual_learning": 75.0,
-      "efficiency": 68.0,
+      "efficiency": 80.0,
       "safety_groundedness": 95.0,
       "maintainability": 72.0
     },
@@ -97,51 +97,51 @@
       "maintainability": 76.0
     }
   },
-  "swarm_advantage_score": -0.05,
+  "swarm_advantage_score": 1.75,
   "complexity_tax": "low",
   "ablation_results": [
     {
       "component": "Critic agent",
-      "with_score": 83.9,
+      "with_score": 85.7,
       "without_score": 80.65,
-      "delta": 3.25,
-      "recommendation": "Make conditional",
+      "delta": 5.05,
+      "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
     },
     {
       "component": "Reflection loop",
-      "with_score": 83.9,
+      "with_score": 85.7,
       "without_score": 81.6,
-      "delta": 2.3,
+      "delta": 4.1,
       "recommendation": "Make conditional",
       "status": "ok",
       "reason": null
     },
     {
       "component": "RRF memory retrieval",
-      "with_score": 83.9,
+      "with_score": 85.7,
       "without_score": 80.6,
-      "delta": 3.3,
-      "recommendation": "Make conditional",
+      "delta": 5.1,
+      "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
     },
     {
       "component": "Nightly Mutation Engine",
-      "with_score": 83.9,
+      "with_score": 85.7,
       "without_score": 81.95,
-      "delta": 1.95,
-      "recommendation": "Disable by default",
+      "delta": 3.75,
+      "recommendation": "Make conditional",
       "status": "ok",
       "reason": null
     },
     {
       "component": "CORAL / Meta-LLM",
-      "with_score": 83.9,
+      "with_score": 85.7,
       "without_score": 80.4,
-      "delta": 3.5,
-      "recommendation": "Make conditional",
+      "delta": 5.3,
+      "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
     }
@@ -154,39 +154,34 @@
     "citation_validity": 0.9
   },
   "recommendations": [
-    "Shadow deploy Reduced Swarm + Current LLM and monitor real traffic.",
-    "Critic agent: Make conditional.",
+    "Keep production swarm as baseline until a candidate clearly wins.",
     "Reflection loop: Make conditional.",
-    "RRF memory retrieval: Make conditional.",
-    "Nightly Mutation Engine: Disable by default.",
-    "CORAL / Meta-LLM: Make conditional."
+    "Nightly Mutation Engine: Make conditional."
   ],
   "dashboard_notification": {
-    "run_id": "eval_20260601_011515",
-    "timestamp": "2026-06-01T01:15:15Z",
-    "status": "shadow_recommended",
-    "winner": "Reduced Swarm + Current LLM",
-    "production_score": 83.9,
-    "winning_score": 83.95,
-    "score_delta": 0.05,
-    "swarm_advantage_score": -0.05,
+    "run_id": "eval_20260601_223121",
+    "timestamp": "2026-06-01T22:31:21Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 85.7,
+    "winning_score": 85.7,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 1.75,
     "complexity_tax": "low",
-    "hallucination_rate": 0.011,
+    "hallucination_rate": 0.012,
     "critical_failures": 0,
-    "p95_latency_ms": 4100.0,
-    "cost_per_task": 0.08,
-    "recommendation": "Shadow deploy Reduced Swarm + Current LLM and monitor real traffic.",
+    "p95_latency_ms": 4800.0,
+    "cost_per_task": 0.1,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
     "report_path": "/evals/reports/2026-06-01/weekly_swarm_effectiveness_report.md",
     "dashboard_badge": {
-      "label": "Eval: Shadow Recommended",
-      "color": "yellow"
+      "label": "Eval: Pass",
+      "color": "green"
     },
     "top_actions": [
-      "Shadow deploy Reduced Swarm + Current LLM and monitor real traffic.",
-      "Critic agent: Make conditional.",
+      "Keep production swarm as baseline until a candidate clearly wins.",
       "Reflection loop: Make conditional.",
-      "RRF memory retrieval: Make conditional.",
-      "Nightly Mutation Engine: Disable by default."
+      "Nightly Mutation Engine: Make conditional."
     ]
   },
   "missing_inputs": [],
@@ -196,16 +191,16 @@
       "name": "Production 5-Agent Swarm",
       "status": "ok",
       "status_reason": null,
-      "aes": 83.9,
+      "aes": 85.7,
       "task_success": 88.0,
       "rag_quality": 90.0,
       "orchestration": 88.0,
       "learning": 75.0,
-      "efficiency": 68.0,
+      "efficiency": 80.0,
       "safety": 95.0,
       "maintainability": 72.0,
-      "p95_latency_ms": 5200.0,
-      "cost_per_task": 0.11,
+      "p95_latency_ms": 4800.0,
+      "cost_per_task": 0.1,
       "decision": ""
     },
     {

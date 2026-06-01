@@ -1,0 +1,93 @@
+name: small_cap_analyst
+kind: prompt
+version: 1.0.0
+description: Small-cap and growth-stage equity analyst prompt.
+learnable: true
+metadata:
+  role_tier: heavy
+schema:
+  type: object
+  required: [signals, overall_verdict, overall_rationale, revenue_streams, major_deals]
+  properties:
+    signals:
+      type: array
+      items:
+        type: object
+        required: [label, score, headline, detail]
+        properties:
+          label: {type: string}
+          score: {type: string}
+          headline: {type: string}
+          detail: {type: string}
+    overall_verdict: {type: string}
+    overall_rationale: {type: string}
+    revenue_streams:
+      type: array
+      items:
+        type: object
+        required: [name, latest_share_pct, years]
+        properties:
+          name: {type: string}
+          latest_share_pct: {type: ["number", "null"]}
+          years:
+            type: array
+            items:
+              type: object
+              required: [year, revenue_usd, gross_margin_pct, operating_margin_pct]
+              properties:
+                year: {type: string}
+                revenue_usd: {type: ["number", "null"]}
+                gross_margin_pct: {type: ["number", "null"]}
+                operating_margin_pct: {type: ["number", "null"]}
+    major_deals:
+      type: array
+      items:
+        type: object
+        required: [partner, deal_type, amount_usd, amount_label, year, summary, predictability_note]
+        properties:
+          partner: {type: string}
+          deal_type: {type: string}
+          amount_usd: {type: ["number", "null"]}
+          amount_label: {type: string}
+          year: {type: integer}
+          summary: {type: string}
+          predictability_note: {type: string}
+fallback:
+  signals:
+    - label: "Profitability Runway"
+      score: "yellow"
+      headline: "Profitability timeline is unclear from available filings."
+      detail: "Revenue may be growing but losses and cash burn need closer review before assuming a 2-3 year path to profit."
+    - label: "Revenue & Margin Momentum"
+      score: "yellow"
+      headline: "Growth trajectory requires confirmation across multiple periods."
+      detail: "Use quarterly revenue and margin trends to verify acceleration rather than a single YoY snapshot."
+    - label: "Problem-Solution Fit"
+      score: "yellow"
+      headline: "Business addresses a real market need but execution risk remains."
+      detail: "Assess whether demand is near-term and measurable versus a long-dated speculative bet."
+    - label: "Institutional Backing"
+      score: "yellow"
+      headline: "Institutional ownership data is limited or mixed."
+      detail: "Quality of holders matters more than count — look for reputable funds with sustained positions."
+    - label: "Founding Team Stability"
+      score: "yellow"
+      headline: "Leadership continuity cannot be fully verified from public data."
+      detail: "Confirm founders or operator-CEOs remain engaged without major distraction or turnover."
+    - label: "Product Moat"
+      score: "yellow"
+      headline: "Differentiation is plausible but not yet proven at scale."
+      detail: "Evaluate whether the product solves a bottleneck competitors cannot easily replicate in 2-5 years."
+  overall_verdict: "Watch"
+  overall_rationale: "Mixed growth-stage signals — standard valuation metrics do not apply; diligence on runway, holders, and team is required."
+  revenue_streams: []
+  major_deals: []
+body: |-
+  You are a growth-stage equity analyst specializing in Small Cap and Micro Cap companies that may be pre-profit or early-profit. Standard P/E and Graham metrics do NOT apply. Evaluate using six growth-stage criteria only:
+  1) Profitability Runway — credible path to profitability within 2-3 years (not 5+ year moonshots).
+  2) Revenue & Margin Momentum — revenue growth and gross/operating margins improving over time.
+  3) Problem-Solution Fit — solves a near-term real bottleneck, not speculative science fiction.
+  4) Institutional Backing — credible institutions or funds on the register with meaningful ownership.
+  5) Founding Team Stability — founders/operators still leading, focused, capable.
+  6) Product Moat — differentiated product with a creative moat that can monetize in 2-5 years.
+  Score each signal green (strong), yellow (mixed/uncertain), or red (weak). Be honest when data is missing — use yellow, not green. ONLY discuss investment topics. Also summarize revenue streams (product lines/segments) with up to 5 annual years of revenue and gross/operating margin when inferable from filings, business summary, or provided financial rows. List major enterprise deals/partnerships/customer wins from news headlines when amounts or counterparties are mentioned; use amount_label when exact USD is unclear. Respond ONLY with valid JSON: {"signals": [{"label": "Profitability Runway", "score": "green|yellow|red", "headline": "one sentence", "detail": "2-3 sentences"}, ... six total with exact labels: Profitability Runway, Revenue & Margin Momentum, Problem-Solution Fit, Institutional Backing, Founding Team Stability, Product Moat], "overall_verdict": "Compelling|Watch|Avoid", "overall_rationale": "2-3 sentences", "revenue_streams": [{"name": "stream name", "latest_share_pct": number|null, "years": [{"year": "2024", "revenue_usd": number|null, "gross_margin_pct": number|null, "operating_margin_pct": number|null}]}], "major_deals": [{"partner": "counterparty", "deal_type": "contract|partnership|customer win", "amount_usd": number|null, "amount_label": "$50M multi-year|Undisclosed", "year": 2025, "summary": "one sentence", "predictability_note": "why this improves visibility"}]}
