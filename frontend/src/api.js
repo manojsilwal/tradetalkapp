@@ -8,15 +8,28 @@
 const DEFAULT_LOCAL_API = 'http://localhost:8000';
 const DEFAULT_PRODUCTION_API = 'https://tradetalk-api-933081724691.us-central1.run.app';
 
+function isVercelProductionHost() {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname || '';
+  return host.endsWith('.vercel.app') || host.includes('vercel.app');
+}
+
+/** Stale build env (localhost, Cloudflare tunnel, ngrok) must not win on production Vercel. */
+function isNonProductionApiUrl(url) {
+  if (!url) return true;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(url)) return true;
+  if (/trycloudflare\.com|ngrok-free\.app|ngrok\.io/i.test(url)) return true;
+  if (/tradetalkapp-backend\.onrender\.com/i.test(url)) return true;
+  return false;
+}
+
 function resolveApiBaseUrl() {
-  const fromEnv = (import.meta.env.VITE_API_BASE_URL || '').trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, '');
-  if (typeof window !== 'undefined') {
-    const host = window.location.hostname || '';
-    if (host.endsWith('.vercel.app') || host.includes('vercel.app')) {
-      return DEFAULT_PRODUCTION_API;
-    }
+  const fromEnv = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '');
+  if (isVercelProductionHost()) {
+    if (!isNonProductionApiUrl(fromEnv)) return fromEnv;
+    return DEFAULT_PRODUCTION_API;
   }
+  if (fromEnv) return fromEnv;
   return DEFAULT_LOCAL_API;
 }
 
