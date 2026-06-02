@@ -41,7 +41,19 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: Object.fromEntries(
-      API_PATH_PREFIXES.map((path) => [path, { target: API_TARGET, changeOrigin: true }])
+      API_PATH_PREFIXES.map((path) => [
+        path,
+        {
+          target: API_TARGET,
+          changeOrigin: true,
+          bypass: (req) => {
+            if (req.headers.accept && req.headers.accept.includes('text/html')) {
+              return '/index.html'
+            }
+            return undefined
+          },
+        },
+      ])
     ),
   },
 })
