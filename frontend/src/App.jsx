@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, MessageCircle, Scale, Sparkles } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, MessageCircle, Scale, Sparkles, Newspaper } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -26,6 +26,7 @@ const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
 const LearningPathUI = React.lazy(() => import('./LearningPathUI'))
 const ChatUI = React.lazy(() => import('./ChatUI'))
 const ScorecardUI = React.lazy(() => import('./ScorecardUI'))
+const DailyBriefUI = React.lazy(() => import('./DailyBriefUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when auth is required and user is not signed in.
@@ -44,6 +45,7 @@ const ROUTE_TO_KEY = {
     '/debate': 'debate',
     '/backtest': 'backtest',
     '/scorecard': 'scorecard',
+    '/daily-brief': 'daily_brief',
     '/observer': 'observer',
     '/swarm-score': 'swarm_score',
     '/ubds': 'ubds',
@@ -172,6 +174,15 @@ function App() {
                     </button>
 
 
+
+                    <button
+                        className={`nav-btn ${activeTab === 'daily_brief' ? 'active' : ''}`}
+                        onClick={() => { navigate('/daily-brief'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/daily-brief' ? 'page' : undefined}
+                    >
+                        <Newspaper size={20} />
+                        <span>Daily Brief</span>
+                    </button>
 
                     <button
                         className={`nav-btn ${activeTab === 'macro' ? 'active' : ''}`}
@@ -328,6 +339,7 @@ function App() {
                             <Route path="/debate" element={<DebateUI />} />
                             <Route path="/backtest" element={<BacktestUI />} />
                             <Route path="/scorecard" element={<ScorecardUI />} />
+                            <Route path="/daily-brief" element={<DailyBriefUI />} />
                             <Route path="/observer" element={<ObserverUI />} />
                             <Route path="/swarm-score" element={<SwarmScoreUI />} />
                             <Route path="/ubds" element={<UbdsBenchmarkUI />} />
