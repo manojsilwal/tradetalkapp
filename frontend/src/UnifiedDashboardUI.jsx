@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useId, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useMemo, useId, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { TrendingUp, Shield, CircleDollarSign, Wallet, PieChart, Scale, CheckCircle2, ArrowUpRight, HelpCircle, Loader2, Search, Zap, CheckCircle, BarChart3, TrendingDown, Target, Activity, ShieldAlert, XCircle } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, LineChart as ReLineChart, Line, Legend } from 'recharts';
 import { API_BASE_URL, apiFetch } from './api';
@@ -363,8 +363,9 @@ function SmallCapPanel({ data, loading, capBucket }) {
 }
 
 export default function UnifiedDashboardUI() {
-  const navigate = useNavigate();
-  const [ticker, setTicker] = useState('AAPL');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const lastAutoTicker = useRef('');
+  const [ticker, setTicker] = useState(() => searchParams.get('ticker')?.trim().toUpperCase() || 'AAPL');
 
   // From Consumer UI
   // Per-section state — each section loads independently
@@ -406,10 +407,14 @@ export default function UnifiedDashboardUI() {
     return SP500_TICKERS.filter(t => t.startsWith(searchUpper) || t.includes(searchUpper)).slice(0, 4);
   }, [searchUpper, isInSp500]);
 
-  const analyzeTicker = async (overrideTicker = ticker) => {
-    if (!overrideTicker) return;
-    const sym = overrideTicker.trim().toUpperCase();
+  const analyzeTicker = useCallback(async (overrideTicker = ticker) => {
+    const sym = (overrideTicker ?? ticker).trim().toUpperCase();
+    if (!sym) {
+      setError('Enter a ticker symbol to analyze.');
+      return;
+    }
     setTicker(sym);
+    setSearchParams({ ticker: sym }, { replace: true });
 
     // Reset all per-section state
     setLoading(true);
@@ -423,6 +428,8 @@ export default function UnifiedDashboardUI() {
     setScorecardData(null); setScorecardLoading(true); setScorecardError(null);
     setPredMarketsData(null); setPredMarketsLoading(true);
 
+    let validationFailed = false;
+
     // Symbol validation first (fast)
     try {
       const probe = await apiFetch(`${API_BASE_URL}/metrics/validate/${encodeURIComponent(sym)}`).catch(() => null);
@@ -432,69 +439,101 @@ export default function UnifiedDashboardUI() {
           ? `Ticker "${sym}" looks invalid. Check the symbol format and try again.`
           : `Could not find a market quote for "${sym}". Check the symbol and try again.`;
         setError(msg);
-        setLoading(false);
-        setTraceLoading(false); setMetricsLoading(false); setDebateLoading(false);
-        setDecisionLoading(false); setScorecardLoading(false); setPredMarketsLoading(false);
-        return;
+        validationFailed = true;
       }
     } catch (_) { /* continue */ }
 
+    if (validationFailed) {
+      setLoading(false);
+      setLoadingStep('');
+      setTraceLoading(false); setMetricsLoading(false); setDebateLoading(false);
+      setDecisionLoading(false); setScorecardLoading(false); setPredMarketsLoading(false);
+      return;
+    }
+
     setLoadingStep('Loading data…');
 
-    // ── Fire all section fetches independently ──────────────────────────────
-    // Each one updates its own state slice as soon as it resolves.
-    // The global spinner goes away once the first section lands.
     let firstResolved = false;
+    let successCount = 0;
+    let lastErr = null;
     const onFirstResolved = () => {
-      if (!firstResolved) { firstResolved = true; setLoading(false); setLoadingStep(''); }
+      if (!firstResolved) {
+        firstResolved = true;
+        setLoading(false);
+        setLoadingStep('');
+      }
+    };
+    const onSuccess = () => {
+      successCount += 1;
+      onFirstResolved();
+    };
+    const onFail = (err) => {
+      if (err) lastErr = err;
+    };
+    const whenAllSettled = () => {
+      setLoading(false);
+      setLoadingStep('');
+      if (successCount === 0) {
+        const msg = lastErr?.message || String(lastErr || '');
+        if (/failed to fetch|network|load failed/i.test(msg)) {
+          setError(
+            `Cannot reach the API at ${API_BASE_URL}. Check VITE_API_BASE_URL (Vercel) and that the backend allows your origin (CORS).`,
+          );
+        } else {
+          setError(msg || 'Analysis failed — all API requests returned errors.');
+        }
+      }
     };
 
-    // 1. Metrics (fastest — no LLM)
-    apiFetch(`${API_BASE_URL}/metrics/${sym}`)
-      .then(res => {
-        setMetricsData(res?.metrics ?? null);
-        setCapBucket(res?.cap_bucket ?? null);
-        onFirstResolved();
-      })
-      .catch(() => { setMetricsData(null); setCapBucket(null); })
-      .finally(() => setMetricsLoading(false));
+    const jobs = [
+      apiFetch(`${API_BASE_URL}/metrics/${sym}`)
+        .then((res) => {
+          setMetricsData(res?.metrics ?? null);
+          setCapBucket(res?.cap_bucket ?? null);
+          onSuccess();
+        })
+        .catch((err) => { onFail(err); setMetricsData(null); setCapBucket(null); })
+        .finally(() => setMetricsLoading(false)),
+      apiFetch(`${API_BASE_URL}/prediction-markets?ticker=${sym}`)
+        .then((res) => { setPredMarketsData(res); onSuccess(); })
+        .catch((err) => { onFail(err); setPredMarketsData(null); })
+        .finally(() => setPredMarketsLoading(false)),
+      apiFetch(`${API_BASE_URL}/trace?ticker=${sym}`)
+        .then((res) => { setTraceData(res); onSuccess(); })
+        .catch((err) => { onFail(err); setTraceData(null); })
+        .finally(() => setTraceLoading(false)),
+      apiFetch(`${API_BASE_URL}/debate?ticker=${sym}`)
+        .then((res) => { setDebateData(res); setDebateError(null); onSuccess(); })
+        .catch((err) => {
+          onFail(err);
+          setDebateError('Debate temporarily unavailable.');
+          setDebateData(null);
+        })
+        .finally(() => setDebateLoading(false)),
+      apiFetch(`${API_BASE_URL}/decision-terminal?ticker=${sym}`)
+        .then((res) => { setDecisionData(res); onSuccess(); })
+        .catch((err) => { onFail(err); setDecisionData(null); })
+        .finally(() => setDecisionLoading(false)),
+      apiFetch(`${API_BASE_URL}/scorecard/${encodeURIComponent(sym)}?preset=balanced`)
+        .then((res) => { setScorecardData(res); setScorecardError(null); onSuccess(); })
+        .catch((err) => {
+          onFail(err);
+          setScorecardError(err?.message || 'Scorecard unavailable');
+          setScorecardData(null);
+        })
+        .finally(() => setScorecardLoading(false)),
+    ];
 
-    // 2. Prediction markets (fast — no LLM)
-    apiFetch(`${API_BASE_URL}/prediction-markets?ticker=${sym}`)
-      .then(res => { setPredMarketsData(res); onFirstResolved(); })
-      .catch(() => setPredMarketsData(null))
-      .finally(() => setPredMarketsLoading(false));
+    Promise.allSettled(jobs).then(whenAllSettled);
+  }, [ticker, setSearchParams]);
 
-    // 3. Swarm trace (moderate — LLM)
-    apiFetch(`${API_BASE_URL}/trace?ticker=${sym}`)
-      .then(res => { setTraceData(res); onFirstResolved(); })
-      .catch(() => setTraceData(null))
-      .finally(() => setTraceLoading(false));
-
-    // 4. Debate (slower — LLM)
-    apiFetch(`${API_BASE_URL}/debate?ticker=${sym}`)
-      .then(res => { setDebateData(res); onFirstResolved(); })
-      .catch(() => { setDebateError('Debate temporarily unavailable.'); setDebateData(null); })
-      .finally(() => setDebateLoading(false));
-
-    // 5. Decision terminal (slowest — full analysis)
-    apiFetch(`${API_BASE_URL}/decision-terminal?ticker=${sym}`)
-      .then(res => { setDecisionData(res); onFirstResolved(); })
-      .catch(() => setDecisionData(null))
-      .finally(() => setDecisionLoading(false));
-
-    // 6. Scorecard (parallel — fast)
-    apiFetch(`${API_BASE_URL}/scorecard/${encodeURIComponent(sym)}?preset=balanced`)
-      .then(res => { setScorecardData(res); setScorecardError(null); onFirstResolved(); })
-      .catch(err => setScorecardError(err?.message || 'Scorecard unavailable'))
-      .finally(() => setScorecardLoading(false));
-
-    // Safety net: clear global spinner after 90s regardless
-    setTimeout(() => { setLoading(false); setLoadingStep(''); }, 90_000);
-
-    // We don't await the individual fetches here — history is added lazily
-    // when decisionData lands (tracked by effect below).
-  };
+  // Deep-link: /?ticker=NVDA from Daily Brief or bookmarks
+  useEffect(() => {
+    const fromUrl = searchParams.get('ticker')?.trim().toUpperCase();
+    if (!fromUrl || fromUrl === lastAutoTicker.current) return;
+    lastAutoTicker.current = fromUrl;
+    analyzeTicker(fromUrl);
+  }, [searchParams, analyzeTicker]);
 
   // Add to history once decision data arrives
   useEffect(() => {
@@ -575,12 +614,14 @@ export default function UnifiedDashboardUI() {
   const verdict = traceData?.global_verdict || "AWAITING ANALYSIS";
 
   const getRationale = (factorKey) => {
-    if (!traceData || !traceData.factors[factorKey]) return "Awaiting Scan...";
+    if (!traceData?.factors?.[factorKey]) return 'Awaiting Scan...';
     const factorData = traceData.factors[factorKey];
-    const historyLen = factorData.history.length;
-    if (historyLen < 2) return factorData.rationale || "No trace found.";
-    return factorData.history[historyLen - 2].content.substring(0, 110) + "...";
-  }
+    const history = Array.isArray(factorData.history) ? factorData.history : [];
+    if (history.length < 2) return factorData.rationale || 'No trace found.';
+    const snippet = history[history.length - 2]?.content;
+    if (!snippet) return factorData.rationale || 'No trace found.';
+    return snippet.length > 110 ? `${snippet.substring(0, 110)}...` : snippet;
+  };
 
   const chartTooltip = ({ active, payload, label }) => {
     if (!active || !payload || !payload.length) return null;
@@ -618,9 +659,10 @@ export default function UnifiedDashboardUI() {
               onKeyDown={(e) => { if (e.key === 'Enter') analyzeTicker(ticker); }}
             />
             <button
+              type="button"
               onClick={() => analyzeTicker(ticker)}
-              disabled={loading}
-              style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'var(--accent-blue)', color: 'white', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+              disabled={loading || !searchUpper}
+              style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'var(--accent-blue)', color: 'white', fontWeight: 600, cursor: loading || !searchUpper ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: loading || !searchUpper ? 0.55 : 1 }}
             >
               {loading ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
               Analyze
@@ -649,6 +691,12 @@ export default function UnifiedDashboardUI() {
       {error && (
         <div className="glass-panel" style={{ borderColor: 'var(--accent-red)', padding: '16px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)' }}>
           <p style={{ color: 'var(--accent-red)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}><ShieldAlert size={18} /> {error}</p>
+        </div>
+      )}
+
+      {!loading && !error && !hasDecisionData && !traceData && (
+        <div className="dt-prompt-banner glass-panel" style={{ padding: '16px', marginBottom: 4, color: '#94a3b8', fontSize: '0.9rem' }}>
+          Enter a ticker and click Analyze. First load can take up to a minute (swarm, debate, and decision terminal).
         </div>
       )}
 
@@ -930,7 +978,10 @@ export default function UnifiedDashboardUI() {
                            : <HelpCircle size={18} color="#94a3b8" />}
                      </div>
                      <p style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: 600, color: titleColor }}>
-                        {titleText} (Conf: {(factorData.confidence * 100).toFixed(0)}%)
+                        {titleText}
+                        {factorData.confidence != null
+                          ? ` (Conf: ${(Number(factorData.confidence) * 100).toFixed(0)}%)`
+                          : ''}
                      </p>
                      <p style={{ margin: 0, fontSize: '13px', color: '#cbd5e1', lineHeight: 1.5 }}>
                         {getRationale(key)}

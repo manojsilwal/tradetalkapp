@@ -1,0 +1,11 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - backend/Dockerfile
+      - -t
+      - gcr.io/tradetalkapp-492904/tradetalk-api:latest
+      - ./backend
+images:
+  - gcr.io/tradetalkapp-492904/tradetalk-api:latest

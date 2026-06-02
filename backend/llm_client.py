@@ -3,9 +3,9 @@ LLM Client — OpenAI-compatible HTTP inference (NVIDIA Build or OpenRouter), op
 
   1. NVIDIA Build (preferred when ``NVIDIA_API_KEY`` is set, or ``LLM_HTTP_PROVIDER=nvidia``) —
      OpenAI-compatible ``https://integrate.api.nvidia.com/v1``.
-     Chat order: ``NVIDIA_LLM_MODEL_PRO`` (DeepSeek v4 Pro) → ``NVIDIA_LLM_MODEL_FLASH`` (DeepSeek v4 Flash)
-     → ``GEMINI_MODEL`` (Gemini 3.5 Flash) when a Gemini key is configured.
-     JSON / swarm roles: heavy → Pro, light → Flash on NVIDIA; final fallback Gemini when enabled.
+     Chat / JSON order: ``NVIDIA_LLM_MODEL_PRO`` (default ``moonshotai/kimi-k2.6``) →
+     ``NVIDIA_LLM_MODEL_FLASH`` (default ``deepseek-ai/deepseek-v4-pro``), up to two tries per model,
+     then ``GEMINI_MODEL`` (Gemini 3.5 Flash) when ``GEMINI_LLM_FALLBACK=1`` and a Gemini key is set.
      Embeddings and batch ETL can still use ``OPENROUTER_*`` separately.
 
   2. OpenRouter — when ``LLM_HTTP_PROVIDER=openrouter`` or no NVIDIA keys: ``OPENROUTER_API_KEY``,
@@ -82,8 +82,20 @@ def _nvidia_llm_base_url() -> str:
     return "https://integrate.api.nvidia.com/v1"
 
 
-NVIDIA_LLM_MODEL_PRO = os.environ.get("NVIDIA_LLM_MODEL_PRO", "deepseek-ai/deepseek-v4-pro").strip()
-NVIDIA_LLM_MODEL_FLASH = os.environ.get("NVIDIA_LLM_MODEL_FLASH", "deepseek-ai/deepseek-v4-flash").strip()
+# NVIDIA free-tier cascade (primary → secondary). Override via env without code changes.
+NVIDIA_LLM_MODEL_PRO = os.environ.get("NVIDIA_LLM_MODEL_PRO", "moonshotai/kimi-k2.6").strip()
+NVIDIA_LLM_MODEL_FLASH = os.environ.get(
+    "NVIDIA_LLM_MODEL_FLASH", "deepseek-ai/deepseek-v4-pro"
+).strip()
+
+
+def nvidia_llm_model_cascade() -> List[str]:
+    """Ordered NVIDIA models: Kimi K2.6 first, DeepSeek v4 Pro second (deduped)."""
+    out: List[str] = []
+    for m in (NVIDIA_LLM_MODEL_PRO, NVIDIA_LLM_MODEL_FLASH):
+        if m and m not in out:
+            out.append(m)
+    return out
 GUARDRAILS_ENABLE = os.environ.get("GUARDRAILS_ENABLE", "1").strip() != "0"
 LLM_MAX_CONCURRENCY = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "2")))
 LLM_MAX_TOKENS = max(256, int(os.environ.get("LLM_MAX_TOKENS", "1500")))
@@ -126,9 +138,10 @@ def _model_for_role(role: str) -> str:
 
 
 def _http_openai_model_for_role(provider: str, role: str) -> str:
-    """OpenAI-compatible chat model for JSON / sync paths (NVIDIA vs OpenRouter)."""
+    """First model in the HTTP cascade for this provider (NVIDIA tries full cascade in generate)."""
     if provider == "nvidia":
-        return NVIDIA_LLM_MODEL_FLASH if _tier_for_role(role) == "light" else NVIDIA_LLM_MODEL_PRO
+        cascade = nvidia_llm_model_cascade()
+        return cascade[0] if cascade else NVIDIA_LLM_MODEL_PRO
     return _model_for_role(role)
 
 
@@ -578,11 +591,8 @@ class LLMClient:
                 self._model = NVIDIA_LLM_MODEL_PRO
                 self._endpoint = base
                 logger.info(
-                    "[LLMClient] Backend: NVIDIA Build — chat order: %s → %s → Gemini last | role tiers: %s / %s",
-                    NVIDIA_LLM_MODEL_PRO,
-                    NVIDIA_LLM_MODEL_FLASH,
-                    NVIDIA_LLM_MODEL_PRO,
-                    NVIDIA_LLM_MODEL_FLASH,
+                    "[LLMClient] Backend: NVIDIA Build — cascade: %s → Gemini 3.5 Flash",
+                    " → ".join(nvidia_llm_model_cascade()) or "(none)",
                 )
                 if gemini_primary_enabled() or gemini_llm_fallback_enabled():
                     logger.info("[LLMClient] Gemini available in chat stack — model=%s", GEMINI_MODEL)
@@ -788,8 +798,12 @@ class LLMClient:
             prompt_version = version_override or "candidate"
         else:
             system, prompt_version = self._resolve_system_prompt(role)
-        model = _http_openai_model_for_role(self._provider, role)
         fallback = lambda: (FALLBACK_TEMPLATES.get(role, {}), prompt_version)
+        http_models = (
+            nvidia_llm_model_cascade()
+            if self._provider == "nvidia"
+            else [_http_openai_model_for_role(self._provider, role)]
+        )
 
         # Gemini-primary path (GEMINI_PRIMARY=1): route every role through Gemini
         # 3.5 Flash. On any Gemini failure we go straight to
@@ -818,11 +832,24 @@ class LLMClient:
                 should_try_other_openrouter_keys_on_429()
             )
 
-            def _call_role(sync_client):
-                if GUARDRAILS_ENABLE and policy_guardrails_enabled():
-                    with workload_scope("llm", "llm_inference"):
+            last_err: Optional[Exception] = None
+            for model in http_models:
+                for attempt in range(2):
+
+                    def _call_role(sync_client, _model=model):
+                        if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                            with workload_scope("llm", "llm_inference"):
+                                return sync_client.chat.completions.create(
+                                    model=_model,
+                                    messages=[
+                                        {"role": "system", "content": system},
+                                        {"role": "user", "content": prompt},
+                                    ],
+                                    temperature=0.3,
+                                    max_tokens=LLM_MAX_TOKENS,
+                                )
                         return sync_client.chat.completions.create(
-                            model=model,
+                            model=_model,
                             messages=[
                                 {"role": "system", "content": system},
                                 {"role": "user", "content": prompt},
@@ -830,38 +857,48 @@ class LLMClient:
                             temperature=0.3,
                             max_tokens=LLM_MAX_TOKENS,
                         )
-                return sync_client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.3,
-                    max_tokens=LLM_MAX_TOKENS,
-                )
 
-            completion, err = sync_failover_execute(
-                clients,
-                _call_role,
-                exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
-            )
-            if completion is not None:
-                content = (completion.choices[0].message.content or "").strip()
-                if not content:
-                    logger.warning("[LLMClient] role=%s model=%s empty response", role, model)
-                    return fallback()
-                parsed = self._parse_json_response(content, role)
-                parsed = self._enforce_contract(
-                    parsed, role=role, prompt_version=prompt_version, model=model,
-                )
-                return parsed, prompt_version
-            if err is not None:
-                logger.warning(
-                    "[LLMClient] call failed role=%s model=%s err=%s",
-                    role,
-                    model,
-                    redact_secrets_in_text(str(err)),
-                )
+                    completion, err = sync_failover_execute(
+                        clients,
+                        _call_role,
+                        exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
+                    )
+                    if completion is not None:
+                        content = (completion.choices[0].message.content or "").strip()
+                        if not content:
+                            logger.warning(
+                                "[LLMClient] role=%s model=%s empty response",
+                                role,
+                                model,
+                            )
+                            break
+                        parsed = self._parse_json_response(content, role)
+                        parsed = self._enforce_contract(
+                            parsed,
+                            role=role,
+                            prompt_version=prompt_version,
+                            model=model,
+                        )
+                        return parsed, prompt_version
+                    last_err = err
+                    if err is not None and is_openrouter_rate_limit_error(err) and attempt == 0:
+                        wait = rate_limit_sleep_seconds(err, 2.5)
+                        logger.warning(
+                            "[LLMClient] role=%s model=%s rate limited, retry in %.1fs",
+                            role,
+                            model,
+                            wait,
+                        )
+                        time.sleep(wait)
+                        continue
+                    break
+                if last_err is not None:
+                    logger.warning(
+                        "[LLMClient] NVIDIA/OpenAI call failed role=%s model=%s err=%s",
+                        role,
+                        model,
+                        redact_secrets_in_text(str(last_err)),
+                    )
             g = self._gemini_try_json_role(system, prompt, role)
             if g is not None:
                 g = self._enforce_contract(
@@ -872,9 +909,8 @@ class LLMClient:
             return fallback()
         except Exception as e:
             logger.warning(
-                "[LLMClient] call failed role=%s model=%s err=%s",
+                "[LLMClient] call failed role=%s err=%s",
                 role,
-                model,
                 redact_secrets_in_text(str(e)),
             )
             g = self._gemini_try_json_role(system, prompt, role)
@@ -1214,10 +1250,10 @@ class LLMClient:
         on any Gemini failure returns the untouched ``user`` string — same local
         fallback contract as the JSON inference path. OpenRouter is never called.
         """
-        model = (
-            NVIDIA_LLM_MODEL_FLASH
+        http_models = (
+            nvidia_llm_model_cascade()
             if self._provider == "nvidia"
-            else OPENROUTER_MODEL_LIGHT
+            else [OPENROUTER_MODEL_LIGHT]
         )
 
         if gemini_primary_enabled():
@@ -1228,20 +1264,28 @@ class LLMClient:
 
         try:
             if self._openrouter_pool is None:
-                if gemini_primary_enabled():
-                    g = self._gemini_try_plain_text(system, user)
-                    if g is not None:
-                        return g
                 return user
             clients = self._openrouter_pool.sync_clients_for_request(
                 should_try_other_openrouter_keys_on_429()
             )
 
-            def _call_plain(sync_client):
-                if GUARDRAILS_ENABLE and policy_guardrails_enabled():
-                    with workload_scope("llm", "llm_inference"):
+            for model in http_models:
+                for attempt in range(2):
+
+                    def _call_plain(sync_client, _model=model):
+                        if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                            with workload_scope("llm", "llm_inference"):
+                                return sync_client.chat.completions.create(
+                                    model=_model,
+                                    messages=[
+                                        {"role": "system", "content": system},
+                                        {"role": "user", "content": user},
+                                    ],
+                                    temperature=0.2,
+                                    max_tokens=min(900, LLM_MAX_TOKENS),
+                                )
                         return sync_client.chat.completions.create(
-                            model=model,
+                            model=_model,
                             messages=[
                                 {"role": "system", "content": system},
                                 {"role": "user", "content": user},
@@ -1249,29 +1293,27 @@ class LLMClient:
                             temperature=0.2,
                             max_tokens=min(900, LLM_MAX_TOKENS),
                         )
-                return sync_client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    temperature=0.2,
-                    max_tokens=min(900, LLM_MAX_TOKENS),
-                )
 
-            completion, err = sync_failover_execute(
-                clients,
-                _call_plain,
-                exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
-            )
-            if completion is not None:
-                out = (completion.choices[0].message.content or "").strip()
-                return out if len(out) > 40 else user
-            if err is not None:
-                logger.warning(
-                    "[LLMClient] plain_text_generate failed: %s",
-                    redact_secrets_in_text(str(err)),
-                )
+                    completion, err = sync_failover_execute(
+                        clients,
+                        _call_plain,
+                        exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
+                    )
+                    if completion is not None:
+                        out = (completion.choices[0].message.content or "").strip()
+                        if len(out) > 40:
+                            return out
+                        break
+                    if err is not None and is_openrouter_rate_limit_error(err) and attempt == 0:
+                        time.sleep(rate_limit_sleep_seconds(err, 2.5))
+                        continue
+                    if err is not None:
+                        logger.warning(
+                            "[LLMClient] plain_text_generate model=%s failed: %s",
+                            model,
+                            redact_secrets_in_text(str(err)),
+                        )
+                    break
             g = self._gemini_try_plain_text(system, user)
             if g is not None:
                 return g
@@ -1443,9 +1485,12 @@ class LLMClient:
                             except Exception as e:
                                 if not is_openrouter_rate_limit_error(e):
                                     logger.warning(
-                                        "[LLMClient] stream_chat_plain failed: %s",
+                                        "[LLMClient] stream_chat_plain model=%s failed: %s",
+                                        phase_model,
                                         redact_secrets_in_text(str(e)),
                                     )
+                                    if nvidia_http and phase in ("nvidia_pro", "nvidia_flash"):
+                                        break
                                     yield f"\n\n[Chat error: {redact_secrets_in_text(str(e))[:200]}]"
                                     return
                                 if gemini_instant_openrouter_failover():

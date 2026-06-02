@@ -75,4 +75,4 @@ External evaluator repo runs daily probes against the public API; reports are Ma
 ## Production URLs
 
 - Frontend: `https://frontend-manojsilwals-projects.vercel.app`
-- Backend: `https://tradetalkapp-backend.onrender.com` (see `render.yaml`)
+- Backend: **GCP Cloud Run** — deploy with `bash scripts/deploy_api_cloudrun.sh` ([docs/GCP_API_DEPLOY.md](docs/GCP_API_DEPLOY.md))

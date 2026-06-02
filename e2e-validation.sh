@@ -2,7 +2,7 @@
 # E2E Validation — run after Vercel + Render deploy from latest push.
 # Usage: ./e2e-validation.sh [BACKEND_URL] [FRONTEND_URL]
 
-BACKEND="${1:-https://tradetalkapp-backend.onrender.com}"
+BACKEND="${1:-${TRADETALK_API_BASE:-http://127.0.0.1:8000}}"
 FRONTEND="${2:-https://frontend-manojsilwals-projects.vercel.app}"
 
 echo "=== E2E Validation ==="

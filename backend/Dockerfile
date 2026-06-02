@@ -8,10 +8,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 ENV GUARDRAILS_ENABLE=1 \
-    GUARDRAILS_STRICT_STARTUP=0
+    GUARDRAILS_STRICT_STARTUP=0 \
+    PYTHONPATH=/app
 
 # Copy package into a backend sub-directory so relative imports work
 COPY . ./backend
 
 EXPOSE 8080
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

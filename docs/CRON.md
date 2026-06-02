@@ -38,8 +38,7 @@ If `PIPELINE_CRON_SECRET` is **unset**, behavior matches local dev (open access)
 
 **GitHub Actions:** add repository secrets:
 
-- `TRADETALK_API_BASE` — backend origin (preferred), e.g. `https://tradetalk-api-xxxxx.run.app` (no trailing slash)
-- `RENDER_API_BASE` — optional legacy fallback if `TRADETALK_API_BASE` is unset (older setups)
+- `TRADETALK_API_BASE` — Cloud Run API origin, e.g. `https://tradetalk-api-xxxxx.run.app` (no trailing slash)
 - `PIPELINE_CRON_SECRET` — same value as the backend service env var
 
 ## 3. GitHub Actions workflows

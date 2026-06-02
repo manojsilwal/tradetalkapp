@@ -97,7 +97,7 @@ async def synthesize_narrative(*, tool_json: Dict[str, Any], cycle_id: str) -> s
     """
     Summarize tool outputs only — never recompute prices here.
 
-    Cascade: NVIDIA Pro → NVIDIA Flash → Gemini 3.5 Flash → static fallback.
+    Cascade: NVIDIA Kimi K2.6 → NVIDIA DeepSeek v4 Pro → Gemini 3.5 Flash → static fallback.
     """
     payload = json.dumps(tool_json, sort_keys=True, separators=(",", ":"))
     from .config_loader import load_yaml_cached
@@ -108,27 +108,26 @@ async def synthesize_narrative(*, tool_json: Dict[str, Any], cycle_id: str) -> s
     max_tokens = int(synth.get("max_tokens") or 800)
     timeout = float(os.environ.get("PREDICTOR_SYNTH_TIMEOUT_S", "25") or "25")
 
-    nvidia_pro = os.environ.get("NVIDIA_LLM_MODEL_PRO", "deepseek-ai/deepseek-v4-pro").strip()
-    nvidia_flash = os.environ.get("NVIDIA_LLM_MODEL_FLASH", "deepseek-ai/deepseek-v4-flash").strip()
+    from ..llm_client import nvidia_llm_model_cascade
 
     messages = [
         {"role": "system", "content": _SYS_PROMPT},
         {"role": "user", "content": f"TOOL_JSON:\n{payload}"},
     ]
 
-    # 1) NVIDIA Pro
-    result = await _try_nvidia(messages, model=nvidia_pro, temperature=temp,
-                               max_tokens=max_tokens, timeout=timeout)
-    if result:
-        return result[:1500]
+    for nvidia_model in nvidia_llm_model_cascade():
+        for _attempt in range(2):
+            result = await _try_nvidia(
+                messages,
+                model=nvidia_model,
+                temperature=temp,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            if result:
+                return result[:1500]
 
-    # 2) NVIDIA Flash
-    result = await _try_nvidia(messages, model=nvidia_flash, temperature=temp,
-                               max_tokens=max_tokens, timeout=timeout)
-    if result:
-        return result[:1500]
-
-    # 3) Gemini 3.5 Flash
+    # Gemini 3.5 Flash (paid fallback)
     result = await _try_gemini(messages, temperature=temp, max_tokens=max_tokens)
     if result:
         return result[:1500]

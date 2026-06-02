@@ -30,9 +30,8 @@ test.describe('ConsumerUI (Valuation Dashboard)', () => {
     const tickerInput = page.locator('.dt-search-input');
     await expect(tickerInput).toBeVisible({ timeout: 30000 });
     await tickerInput.fill('INVALIDTICKER123');
-    // Unified dashboard: non–S&P 500 tickers disable Analyze until a suggestion is picked
-    await expect(page.getByRole('button', { name: 'Analyze' })).toBeDisabled();
-    await expect(page.locator('.dt-invalid')).toBeVisible();
+    await page.getByRole('button', { name: 'Analyze' }).click();
+    await expect(page.getByText(/invalid|could not find|market quote/i)).toBeVisible({ timeout: 30000 });
   });
 
   test('negative: handles empty ticker submission', async ({ page }) => {

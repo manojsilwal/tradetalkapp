@@ -29,7 +29,7 @@ def _verify_smoke_request(request: Request) -> None:
 
 
 class SmokeNvidiaBody(BaseModel):
-    """phase=pro uses NVIDIA_LLM_MODEL_PRO; flash uses NVIDIA_LLM_MODEL_FLASH."""
+    """phase=pro uses NVIDIA_LLM_MODEL_PRO (Kimi); flash uses NVIDIA_LLM_MODEL_FLASH (DeepSeek)."""
 
     phase: str = Field(default="pro", description="pro | flash")
     prompt: str = Field(

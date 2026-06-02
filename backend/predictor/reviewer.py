@@ -92,7 +92,7 @@ async def review_narrative(*, synthesis_text: str, tool_json: Dict[str, Any]) ->
     """
     Review predictor synthesis for hallucinations and prompt injection.
 
-    Cascade: NVIDIA Pro → NVIDIA Flash → Gemini 3.5 Flash → static fallback.
+    Cascade: NVIDIA Kimi K2.6 → NVIDIA DeepSeek v4 Pro → Gemini 3.5 Flash → static fallback.
     """
     from .config_loader import load_yaml_cached
 
@@ -102,8 +102,7 @@ async def review_narrative(*, synthesis_text: str, tool_json: Dict[str, Any]) ->
     max_tokens = int(rev.get("max_tokens") or 400)
     timeout = float(os.environ.get("PREDICTOR_REVIEW_TIMEOUT_S", "25") or "25")
 
-    nvidia_pro = os.environ.get("NVIDIA_LLM_MODEL_PRO", "deepseek-ai/deepseek-v4-pro").strip()
-    nvidia_flash = os.environ.get("NVIDIA_LLM_MODEL_FLASH", "deepseek-ai/deepseek-v4-flash").strip()
+    from ..llm_client import nvidia_llm_model_cascade
 
     messages = [
         {"role": "system", "content": _SYS_PROMPT},
@@ -116,19 +115,19 @@ async def review_narrative(*, synthesis_text: str, tool_json: Dict[str, Any]) ->
         },
     ]
 
-    # 1) NVIDIA Pro
-    result = await _try_nvidia(messages, model=nvidia_pro, temperature=temp,
-                               max_tokens=max_tokens, timeout=timeout)
-    if result:
-        return result[:800]
+    for nvidia_model in nvidia_llm_model_cascade():
+        for _attempt in range(2):
+            result = await _try_nvidia(
+                messages,
+                model=nvidia_model,
+                temperature=temp,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            if result:
+                return result[:800]
 
-    # 2) NVIDIA Flash
-    result = await _try_nvidia(messages, model=nvidia_flash, temperature=temp,
-                               max_tokens=max_tokens, timeout=timeout)
-    if result:
-        return result[:800]
-
-    # 3) Gemini 3.5 Flash
+    # Gemini 3.5 Flash (paid fallback)
     result = await _try_gemini(messages, temperature=temp, max_tokens=max_tokens)
     if result:
         return result[:800]

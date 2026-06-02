@@ -1,5 +1,5 @@
 # Daily thematic macro_flow refresh on the FastAPI backend (GCP Cloud Run or other origin).
-# Secrets: TRADETALK_API_BASE (preferred), or legacy RENDER_API_BASE; PIPELINE_CRON_SECRET (must match API env).
+# Secrets: TRADETALK_API_BASE (Cloud Run URL); PIPELINE_CRON_SECRET (must match API env).
 name: Macro flow daily refresh
 
 on:
@@ -14,12 +14,11 @@ jobs:
       - name: POST /macro/flow/cron-refresh
         env:
           TRADETALK_API_BASE: ${{ secrets.TRADETALK_API_BASE }}
-          RENDER_API_BASE: ${{ secrets.RENDER_API_BASE }}
           SECRET: ${{ secrets.PIPELINE_CRON_SECRET }}
         run: |
           set -euo pipefail
-          BASE="${TRADETALK_API_BASE:-${RENDER_API_BASE:-}}"
-          test -n "${BASE:-}" || { echo "Set TRADETALK_API_BASE (or legacy RENDER_API_BASE) in repo secrets"; exit 1; }
+          BASE="${TRADETALK_API_BASE:-}"
+          test -n "${BASE:-}" || { echo "Set TRADETALK_API_BASE (Cloud Run URL) in repo secrets"; exit 1; }
           test -n "${SECRET:-}" || { echo "Set PIPELINE_CRON_SECRET in repo secrets"; exit 1; }
           curl -fsS --max-time 900 -X POST "${BASE}/macro/flow/cron-refresh?interval=1w" \
             -H "Authorization: Bearer ${SECRET}" \

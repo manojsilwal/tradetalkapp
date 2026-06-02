@@ -1,0 +1,18 @@
+# Keep Cloud Run API warm (optional). Set TRADETALK_API_BASE in repo secrets.
+name: GCP API wake
+
+on:
+  schedule:
+    - cron: '*/14 * * * *'
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health
+        env:
+          TRADETALK_API_BASE: ${{ secrets.TRADETALK_API_BASE }}
+        run: |
+          test -n "${TRADETALK_API_BASE:-}" || { echo "Set TRADETALK_API_BASE to your Cloud Run URL"; exit 1; }
+          curl -fsS --max-time 60 "${TRADETALK_API_BASE%/}/daily-brief" || exit 1

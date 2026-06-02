@@ -1,0 +1,44 @@
+# Deploy FastAPI backend to Cloud Run on main (backend changes).
+# Secrets: none required if Workload Identity is wired; otherwise run scripts/deploy_api_cloudrun.sh locally.
+name: Deploy API (GCP Cloud Run)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'cloudbuild.api.yaml'
+      - 'scripts/deploy_api_cloudrun.sh'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+        continue-on-error: true
+
+      - name: Set up Cloud SDK
+        if: steps.auth.outcome == 'success'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Cloud Run API
+        if: steps.auth.outcome == 'success'
+        env:
+          CORS_ORIGINS: https://frontend-manojsilwals-projects.vercel.app
+        run: bash scripts/deploy_api_cloudrun.sh
+
+      - name: Skip (no GCP auth in CI)
+        if: steps.auth.outcome != 'success'
+        run: |
+          echo "GCP Workload Identity not configured — deploy locally:"
+          echo "  bash scripts/deploy_api_cloudrun.sh"
