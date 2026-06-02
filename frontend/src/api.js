@@ -5,8 +5,22 @@
  *   VITE_API_BASE_URL=http://localhost:8000
  *   VITE_GOOGLE_CLIENT_ID=<your_google_client_id>
  */
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const DEFAULT_LOCAL_API = 'http://localhost:8000';
+const DEFAULT_PRODUCTION_API = 'https://tradetalk-api-933081724691.us-central1.run.app';
+
+function resolveApiBaseUrl() {
+  const fromEnv = (import.meta.env.VITE_API_BASE_URL || '').trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname || '';
+    if (host.endsWith('.vercel.app') || host.includes('vercel.app')) {
+      return DEFAULT_PRODUCTION_API;
+    }
+  }
+  return DEFAULT_LOCAL_API;
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export const GOOGLE_CLIENT_ID =
   import.meta.env.VITE_GOOGLE_CLIENT_ID || '';

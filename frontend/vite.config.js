@@ -25,6 +25,14 @@ const API_PATH_PREFIXES = [
   '/docs',
   '/sepl',
   '/resources',
+  '/daily-brief',
+  '/decision-terminal',
+  '/prediction-markets',
+  '/scorecard',
+  '/debate',
+  '/macro',
+  '/chat',
+  '/health',
 ]
 
 // https://vite.dev/config/

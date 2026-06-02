@@ -2,6 +2,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "ignoreCommand": "bash ../scripts/vercel-ignore-build.sh",
+  "env": {
+    "VITE_API_BASE_URL": "https://tradetalk-api-933081724691.us-central1.run.app"
+  },
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
