@@ -145,6 +145,31 @@ TABLE_SCHEMAS = {
         {"name": "spx_return", "type": "FLOAT64", "mode": "NULLABLE"},
         {"name": "risk_regime", "type": "STRING", "mode": "NULLABLE"},
     ],
+    "daily_brief_snapshot": [
+        {"name": "trade_date", "type": "DATE", "mode": "REQUIRED"},
+        {"name": "bucket", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "rank", "type": "INT64", "mode": "REQUIRED"},
+        {"name": "symbol", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "daily_return_pct", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "close", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "volume", "type": "INT64", "mode": "NULLABLE"},
+        {"name": "relative_volume", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "return_zscore_60d", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "market_regime", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "catalyst_status", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "primary_cause_category", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "primary_cause_headline", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "primary_cause_weight", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "verdict", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "one_line_reason", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "adjustment_note", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "verdict_tier", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "scorecard_signal", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "scorecard_ratio", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "valuation_pct_vs_fair", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "is_compelling", "type": "BOOL", "mode": "NULLABLE"},
+        {"name": "updated_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
+    ],
 }
 
 PARTITION_CONFIG = {
@@ -158,6 +183,7 @@ PARTITION_CONFIG = {
     "macro_policy_events": {"field": "published_at", "type": "DAY"},
     "movement_event_links": {"field": "move_date", "type": "DAY"},
     "movement_context_daily": {"field": "trade_date", "type": "DAY"},
+    "daily_brief_snapshot": {"field": "trade_date", "type": "DAY"},
 }
 
 

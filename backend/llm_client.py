@@ -29,7 +29,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Dict, Optional, AsyncIterator
+from typing import Any, Dict, List, Optional, AsyncIterator
 from .agent_policy_guardrails import (
     guard_host,
     is_enabled as policy_guardrails_enabled,
@@ -113,6 +113,7 @@ MODEL_TIER = {
     "sitg_scorer":            "heavy",
     "execution_risk_scorer":  "heavy",
     "scorecard_verdict":      "light",
+    "daily_brief_batch":      "light",
     "news_impact_classifier": "light",
 }
 
@@ -334,6 +335,13 @@ AGENT_SYSTEM_PROMPTS = {
         "  \"reasoning\": \"2-3 sentences citing specific execution signals (sector dynamics, recent earnings, pivots).\"\n"
         "}"
     ),
+    "daily_brief_batch": (
+        "You are a senior equity strategist writing end-of-day brief verdicts for top market movers. "
+        "You ONLY discuss investment topics. "
+        "Respond ONLY with valid JSON: "
+        "{\"rows\": [{\"symbol\": \"TICKER\", \"verdict\": \"Strong Buy|Buy|Hold|Sell\", "
+        "\"one_line_reason\": \"one sentence\"}]}"
+    ),
     "scorecard_verdict": (
         "You are writing a single-sentence verdict per ticker for an investor-facing Risk-Return scorecard. You ONLY discuss investment topics.\n"
         "\n"
@@ -467,6 +475,9 @@ FALLBACK_TEMPLATES = {
     "scorecard_verdict": {
         "verdict": "Balanced",
         "one_line_reason": "Risk/reward is roughly balanced at current prices; monitor catalysts.",
+    },
+    "daily_brief_batch": {
+        "rows": [],
     },
     "news_impact_classifier": {
         "sentiment": "neutral",
@@ -1649,6 +1660,30 @@ class LLMClient:
             "Write the one-sentence verdict."
         )
         return await self.generate("scorecard_verdict", prompt)
+
+    async def generate_daily_brief_batch(self, rows: List[dict]) -> List[dict]:
+        """One LLM call refining verdicts for all daily-brief movers."""
+        slim = []
+        for r in rows:
+            slim.append({
+                "symbol": r.get("symbol"),
+                "bucket": r.get("bucket"),
+                "daily_return_pct": r.get("daily_return_pct"),
+                "catalyst_status": r.get("catalyst_status"),
+                "primary_cause_headline": (r.get("primary_cause_headline") or "")[:200],
+                "scorecard_signal": r.get("scorecard_signal"),
+                "scorecard_ratio": r.get("scorecard_ratio"),
+                "valuation_pct_vs_fair": r.get("valuation_pct_vs_fair"),
+                "heuristic_verdict": r.get("verdict"),
+            })
+        ctx = json.dumps({"rows": slim}, indent=2, default=str)
+        if len(ctx) > 14000:
+            ctx = ctx[:14000] + "\n…(truncated)"
+        prompt = f"Daily movers context JSON:\n{ctx}\n\nReturn refined verdicts for every symbol."
+        out = await self.generate("daily_brief_batch", prompt)
+        if isinstance(out, dict) and isinstance(out.get("rows"), list):
+            return out["rows"]
+        return []
 
     async def generate_rag_polish(self, context_label: str, draft: str) -> str:
         """

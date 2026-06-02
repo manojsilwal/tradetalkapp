@@ -37,7 +37,7 @@ log() { echo "[$(date -u +%H:%M:%S)] $*"; }
 log "=== Daily Market Incremental Job ==="
 log "MCP_DATA_BACKEND=$MCP_DATA_BACKEND"
 
-log "[0/4] Ensure BigQuery tables exist..."
+log "[0/5] Ensure BigQuery tables exist..."
 "$PYTHON" -m backend.mcp_server.bq_schema
 
 EXTRA_ARGS=()
@@ -48,18 +48,18 @@ if [[ -n "$THROUGH_DATE" ]]; then
   EXTRA_ARGS+=(--through "$THROUGH_DATE")
 fi
 
-log "[1/4] Prices + events incremental upsert..."
+log "[1/5] Prices + events incremental upsert..."
 if ((${#EXTRA_ARGS[@]})); then
   "$PYTHON" -m backend.data_lake.daily_market_update "${EXTRA_ARGS[@]}" --skip-links --skip-features
 else
   "$PYTHON" -m backend.data_lake.daily_market_update --skip-links --skip-features
 fi
 
-log "[2/4] Feature mart + gold context..."
+log "[2/5] Feature mart + gold context..."
 "$PYTHON" -m backend.mcp_server.feature_mart
 "$PYTHON" -m backend.mcp_server.gold_context
 
-log "[3/4] Incremental movement links + context..."
+log "[3/5] Incremental movement links + context..."
 "$PYTHON" - <<'PY'
 import os
 from datetime import date, timedelta
@@ -91,7 +91,10 @@ else:
     run_incremental_movement_links(start_date=link_start, end_date=link_end)
 PY
 
-log "[4/4] RAG bridge (last week)..."
+log "[4/5] Materialize daily brief snapshot (heuristic)..."
+"$PYTHON" -m backend.daily_brief --materialize-heuristic || log "Daily brief materialize skipped"
+
+log "[5/5] RAG bridge (last week)..."
 "$PYTHON" -m backend.mcp_server.rag_bridge --week || log "RAG bridge skipped"
 
 log "=== Daily job complete ==="

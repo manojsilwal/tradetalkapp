@@ -1,9 +1,17 @@
-"""Unit tests for daily brief heuristics."""
+"""Unit tests for daily brief heuristics and snapshot helpers."""
 from __future__ import annotations
 
 import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.daily_brief import _value_spike_override, heuristic_verdict
+from backend.daily_brief import (
+    VERDICT_ORDER,
+    _payload_from_rows,
+    _value_spike_override,
+    apply_deep_verdicts,
+    heuristic_verdict,
+    persist_snapshot,
+)
 
 
 class TestDailyBriefHeuristics(unittest.TestCase):
@@ -47,6 +55,35 @@ class TestDailyBriefHeuristics(unittest.TestCase):
         }
         out = heuristic_verdict(row, "loser")
         self.assertEqual(out["verdict"], "Buy")
+
+    def test_payload_from_rows(self):
+        rows = [
+            {"bucket": "loser", "symbol": "AAA", "rank": 1, "is_compelling": True},
+            {"bucket": "gainer", "symbol": "BBB", "rank": 1},
+        ]
+        payload = _payload_from_rows(rows, __import__("datetime").date(2026, 5, 29), "test")
+        self.assertEqual(len(payload["losers"]), 1)
+        self.assertEqual(len(payload["gainers"]), 1)
+        self.assertEqual(payload["verdict_tier"], "heuristic")
+
+    @patch("backend.daily_brief._backend_type", return_value="none")
+    def test_persist_snapshot_skips_without_bq(self, _mock):
+        n = persist_snapshot({"trade_date": "2026-05-29", "rows": [{"symbol": "X"}]})
+        self.assertEqual(n, 0)
+
+    def test_apply_deep_verdicts(self):
+        rows = [{"symbol": "AAPL", "verdict": "Hold", "bucket": "loser"}]
+        llm = MagicMock()
+        llm.generate_daily_brief_batch = AsyncMock(
+            return_value=[{"symbol": "AAPL", "verdict": "Buy", "one_line_reason": "Oversold"}]
+        )
+
+        import asyncio
+
+        out = asyncio.run(apply_deep_verdicts(rows, llm))
+        self.assertEqual(out[0]["verdict"], "Buy")
+        self.assertEqual(out[0]["verdict_tier"], "deep")
+        self.assertIn("Buy", VERDICT_ORDER)
 
 
 if __name__ == "__main__":

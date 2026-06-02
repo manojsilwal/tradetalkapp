@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, RefreshCw, TrendingDown, TrendingUp, Sparkles } from 'lucide-react'
+import { Brain, Loader2, RefreshCw, TrendingDown, TrendingUp, Sparkles } from 'lucide-react'
 import { API_BASE_URL, apiFetch } from './api'
 import { verdictBadgeStyle, verdictRowStyle } from './utils/verdictStyles'
 
@@ -16,7 +16,12 @@ function fmtNum(v, d = 2) {
   return Number(v).toFixed(d)
 }
 
-function BriefTable({ title, icon: Icon, rows, onRowClick }) {
+function tierLabel(tier) {
+  if (tier === 'deep') return 'Deep (batched LLM)'
+  return 'Heuristic'
+}
+
+function BriefTable({ title, rows, onRowClick }) {
   if (!rows?.length) {
     return (
       <p style={{ color: '#94a3b8', fontSize: 13, padding: 16 }}>
@@ -92,18 +97,35 @@ function BriefTable({ title, icon: Icon, rows, onRowClick }) {
 const th = { textAlign: 'left', padding: '10px 12px', fontWeight: 600, whiteSpace: 'nowrap' }
 const td = { padding: '10px 12px', verticalAlign: 'top' }
 
+const btnStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '10px 16px',
+  borderRadius: 10,
+  border: '1px solid rgba(148,163,184,0.25)',
+  background: 'rgba(255,255,255,0.04)',
+  color: '#e2e8f0',
+  cursor: 'pointer',
+}
+
 export default function DailyBriefUI() {
   const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [deepStatus, setDeepStatus] = useState(null)
+  const [deepBusy, setDeepBusy] = useState(false)
+  const pollRef = useRef(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (refresh = false) => {
     setLoading(true)
     setError(null)
     try {
-      const json = await apiFetch(`${API_BASE_URL}/daily-brief`)
+      const q = refresh ? '?refresh=true' : ''
+      const json = await apiFetch(`${API_BASE_URL}/daily-brief${q}`)
       setData(json)
+      if (json.deep_refresh) setDeepStatus(json.deep_refresh)
     } catch (e) {
       setError(e.message || 'Failed to load daily brief')
     } finally {
@@ -111,13 +133,67 @@ export default function DailyBriefUI() {
     }
   }, [])
 
-  useEffect(() => {
-    load()
+  const pollDeepStatus = useCallback(async () => {
+    try {
+      const st = await apiFetch(`${API_BASE_URL}/daily-brief/deep-refresh/status`)
+      setDeepStatus(st)
+      if (st.status === 'done') {
+        setDeepBusy(false)
+        await load(false)
+      } else if (st.status === 'error') {
+        setDeepBusy(false)
+        setError(st.error || 'Deep refresh failed')
+      }
+    } catch (e) {
+      setDeepBusy(false)
+      setError(e.message || 'Failed to poll deep refresh')
+    }
   }, [load])
+
+  useEffect(() => {
+    load(false)
+  }, [load])
+
+  useEffect(() => {
+    if (!deepBusy) {
+      if (pollRef.current) clearInterval(pollRef.current)
+      return undefined
+    }
+    pollRef.current = setInterval(pollDeepStatus, 2500)
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [deepBusy, pollDeepStatus])
+
+  const startDeepRefresh = async () => {
+    setError(null)
+    setDeepBusy(true)
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/daily-brief/deep-refresh`, {
+        method: 'POST',
+      })
+      if (res.deep_refresh) setDeepStatus(res.deep_refresh)
+      if (res.completed && res.rows) {
+        setData(res)
+        setDeepBusy(false)
+        return
+      }
+      if (!res.accepted) {
+        setDeepBusy(false)
+        setError('Deep refresh already running')
+      }
+    } catch (e) {
+      setDeepBusy(false)
+      setError(e.message || 'Failed to start deep refresh')
+    }
+  }
 
   const goAnalyze = (sym) => {
     navigate(`/?ticker=${encodeURIComponent(sym)}`)
   }
+
+  const tier = data?.verdict_tier || 'heuristic'
+  const deepRunning = deepStatus?.status === 'running' || deepBusy
 
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
@@ -125,34 +201,48 @@ export default function DailyBriefUI() {
         <div>
           <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#f8fafc' }}>Daily Brief</h1>
           <p style={{ margin: '8px 0 0', color: '#94a3b8', fontSize: 14, maxWidth: 640 }}>
-            Top movers with movement context and heuristic verdicts. Color-coded rows: dark green = Strong Buy,
-            green = Buy, amber = Hold, red = Sell (event-driven spikes downgrade to Hold).
+            Top movers with movement context and verdicts. Heuristic loads instantly from the data lake;
+            deep refresh runs one batched LLM pass plus scorecard enrichment.
           </p>
           {data && (
             <p style={{ margin: '6px 0 0', fontSize: 12, color: '#64748b' }}>
-              Session {data.trade_date} · source {data.source} · updated {new Date(data.updated_at).toLocaleString()}
+              Session {data.trade_date} · source {data.source} · {tierLabel(tier)}
+              {data.from_snapshot ? ' · snapshot' : ''} · updated{' '}
+              {new Date(data.updated_at).toLocaleString()}
+            </p>
+          )}
+          {deepRunning && deepStatus && (
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: '#a78bfa' }}>
+              Deep refresh: {deepStatus.message || deepStatus.status} ({deepStatus.progress || 0}%)
             </p>
           )}
         </div>
-        <button
-          type="button"
-          onClick={load}
-          disabled={loading}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '10px 16px',
-            borderRadius: 10,
-            border: '1px solid rgba(148,163,184,0.25)',
-            background: 'rgba(255,255,255,0.04)',
-            color: '#e2e8f0',
-            cursor: loading ? 'wait' : 'pointer',
-          }}
-        >
-          {loading ? <Loader2 size={16} className="spinner" /> : <RefreshCw size={16} />}
-          Refresh
-        </button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          <button
+            type="button"
+            onClick={() => load(false)}
+            disabled={loading}
+            style={{ ...btnStyle, cursor: loading ? 'wait' : 'pointer' }}
+          >
+            {loading ? <Loader2 size={16} className="spinner" /> : <RefreshCw size={16} />}
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={startDeepRefresh}
+            disabled={deepRunning || loading}
+            title="Batched LLM + scorecard enrichment (background)"
+            style={{
+              ...btnStyle,
+              borderColor: 'rgba(167,139,250,0.45)',
+              background: 'rgba(124,58,237,0.15)',
+              cursor: deepRunning ? 'wait' : 'pointer',
+            }}
+          >
+            {deepRunning ? <Loader2 size={16} className="spinner" /> : <Brain size={16} />}
+            Deep refresh
+          </button>
+        </div>
       </header>
 
       {error && (

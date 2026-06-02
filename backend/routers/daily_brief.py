@@ -5,19 +5,41 @@ import logging
 from datetime import date
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
-from ..daily_brief import build_daily_brief
+from ..daily_brief import (
+    build_daily_brief,
+    get_deep_refresh_status,
+    materialize_heuristic_snapshot,
+    run_deep_refresh,
+)
+from ..deps import llm_client
 from ..rate_limiter import rate_limit
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/daily-brief", tags=["daily-brief"])
 
 _rl = rate_limit("default")
+_rl_expensive = rate_limit("expensive")
 
 
-@router.get("")
-@_rl
+async def _deep_refresh_task(
+    trade_date: Optional[date],
+    losers: int,
+    gainers: int,
+) -> None:
+    try:
+        await run_deep_refresh(
+            trade_date=trade_date,
+            n_losers=losers,
+            n_gainers=gainers,
+            llm_client=llm_client,
+        )
+    except Exception as e:
+        logger.warning("[DailyBrief] background deep refresh failed: %s", e)
+
+
+@router.get("", dependencies=[Depends(_rl)])
 async def get_daily_brief(
     trade_date: Optional[str] = Query(
         None,
@@ -25,8 +47,70 @@ async def get_daily_brief(
     ),
     losers: int = Query(20, ge=1, le=50),
     gainers: int = Query(10, ge=1, le=30),
+    refresh: bool = Query(
+        False,
+        description="If true, recompute movers instead of reading snapshot",
+    ),
 ) -> Dict[str, Any]:
     td: Optional[date] = None
     if trade_date:
         td = date.fromisoformat(trade_date)
-    return build_daily_brief(trade_date=td, n_losers=losers, n_gainers=gainers)
+    payload = build_daily_brief(
+        trade_date=td,
+        n_losers=losers,
+        n_gainers=gainers,
+        use_snapshot=not refresh,
+        persist=False,
+    )
+    payload["deep_refresh"] = get_deep_refresh_status()
+    return payload
+
+
+@router.post("/deep-refresh", dependencies=[Depends(_rl_expensive)])
+async def post_deep_refresh(
+    background_tasks: BackgroundTasks,
+    trade_date: Optional[str] = Query(None),
+    losers: int = Query(20, ge=1, le=50),
+    gainers: int = Query(10, ge=1, le=30),
+    wait: bool = Query(
+        False,
+        description="If true, block until deep refresh completes (slow)",
+    ),
+) -> Dict[str, Any]:
+    td = date.fromisoformat(trade_date) if trade_date else None
+    status = get_deep_refresh_status()
+    if status.get("status") == "running":
+        return {"accepted": False, "deep_refresh": status}
+
+    if wait:
+        payload = await run_deep_refresh(
+            trade_date=td,
+            n_losers=losers,
+            n_gainers=gainers,
+            llm_client=llm_client,
+        )
+        return {"accepted": True, "completed": True, **payload}
+
+    background_tasks.add_task(_deep_refresh_task, td, losers, gainers)
+    return {
+        "accepted": True,
+        "completed": False,
+        "message": "Deep refresh started in background",
+        "deep_refresh": get_deep_refresh_status(),
+    }
+
+
+@router.get("/deep-refresh/status", dependencies=[Depends(_rl)])
+async def get_deep_refresh_status_route() -> Dict[str, Any]:
+    return get_deep_refresh_status()
+
+
+@router.post("/materialize", dependencies=[Depends(_rl)])
+async def post_materialize_heuristic(
+    trade_date: Optional[str] = Query(None),
+    losers: int = Query(20, ge=1, le=50),
+    gainers: int = Query(10, ge=1, le=30),
+) -> Dict[str, Any]:
+    """Manually persist heuristic snapshot (same as cron step)."""
+    td = date.fromisoformat(trade_date) if trade_date else None
+    return materialize_heuristic_snapshot(td, losers, gainers)
