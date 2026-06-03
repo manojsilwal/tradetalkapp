@@ -37,14 +37,28 @@ class TestDailyBriefHeuristics(unittest.TestCase):
 
     def test_gainer_strong_buy(self):
         row = {
+            "daily_return_pct": 9.68,
+            "catalyst_status": "symbol_specific",
+            "primary_cause_headline": "CRM SEC 8-K — 2026-06-01",
+            "primary_cause_category": "sec_filing",
+            "return_zscore_60d": 3.09,
+            "relative_volume": 1.85,
+        }
+        out = heuristic_verdict(row, "gainer")
+        self.assertEqual(out["verdict"], "Strong Buy")
+        self.assertNotIn("SEC 8-K", out["one_line_reason"])
+        self.assertIn("catalyst", out["one_line_reason"].lower())
+
+    def test_gainer_uses_substantive_earnings_headline(self):
+        row = {
             "daily_return_pct": 5.0,
             "catalyst_status": "symbol_specific",
-            "primary_cause_headline": "Earnings beat",
+            "primary_cause_headline": "Earnings beat on revenue and EPS",
             "primary_cause_category": "earnings",
             "return_zscore_60d": 1.5,
         }
         out = heuristic_verdict(row, "gainer")
-        self.assertEqual(out["verdict"], "Strong Buy")
+        self.assertIn("Earnings beat", out["one_line_reason"])
 
     def test_loser_oversold_buy(self):
         row = {

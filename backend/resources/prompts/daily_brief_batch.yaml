@@ -9,6 +9,8 @@ body: |
 
   Rules:
   - For each ticker output verdict exactly one of: Strong Buy, Buy, Hold, Sell
+  - one_line_reason must explain WHY the verdict fits (move size, catalyst quality, risk/reward) —
+    never echo filing labels like "CRM SEC 8-K — 2026-06-01" or repeat primary_cause_headline verbatim
   - One sentence reason under 32 words
   - If valuation_pct_vs_fair is very positive (>25) AND move is a large gainer on deal/news headline,
     prefer Hold over Sell (event-driven spike)

@@ -6,6 +6,7 @@ MCP_DATA_BACKEND=bigquery; falls back to market_intel live movers.
 """
 from __future__ import annotations
 
+import asyncio
 import argparse
 import json
 import logging
@@ -23,6 +24,16 @@ DEAL_SPIKE_PATTERNS = re.compile(
     re.I,
 )
 
+# Headlines like "CRM SEC 8-K — 2026-06-01" are data-source labels, not investor rationale.
+FILING_STUB_PATTERN = re.compile(
+    r"^\s*[A-Z]{1,5}\s+SEC\s+(8-K|10-K|10-Q|6-K|S-1)\s*[—–-]\s*\d{4}-\d{2}-\d{2}\s*$",
+    re.I,
+)
+CORPORATE_ACTION_STUB = re.compile(
+    r"^\s*[A-Z]{1,5}\s+(dividends?|split|spin-?off)\s*[—–-]\s*\d{4}-\d{2}-\d{2}\s*$",
+    re.I,
+)
+
 VERDICT_ORDER = ("Strong Buy", "Buy", "Hold", "Sell")
 
 
@@ -31,11 +42,45 @@ def _backend_type() -> str:
 
 
 def get_latest_trade_date() -> Optional[date]:
-    if _backend_type() != "bigquery":
-        return None
-    from backend.data_lake.daily_market_update import get_bq_last_trade_date
+    from backend.mcp_server.backend import backend
+    try:
+        rows = backend().query("SELECT MAX(trade_date) AS d FROM daily_prices WHERE close IS NOT NULL")
+        if rows and rows[0].get("d") is not None:
+            val = rows[0]["d"]
+            if isinstance(val, date):
+                return val
+            import pandas as pd
+            return pd.Timestamp(val).date()
+    except Exception as e:
+        logger.warning("[DailyBrief] failed to get latest trade date: %s", e)
+    return None
 
-    return get_bq_last_trade_date()
+
+def classify_company_preset(metrics: Dict[str, Any]) -> str:
+    rev_growth = metrics.get("revenue_growth_pct", 0) or 0
+    div_yield = metrics.get("dividend_yield_pct", 0) or 0
+    
+    # 1. High Growth Profile
+    if rev_growth >= 15.0:
+        return "growth"
+    # 2. Mature Dividend Cash Cow
+    elif div_yield >= 3.0:
+        return "income"
+    # 3. Standard/Value Leader
+    else:
+        return "value"
+
+
+def scorecard_verdict_mapping(signal: str) -> str:
+    sig = (signal or "").lower()
+    if sig in ("exceptional", "strong buy"):
+        return "Strong Buy"
+    elif sig == "favorable":
+        return "Buy"
+    elif sig == "balanced":
+        return "Hold"
+    else:
+        return "Sell"
 
 
 def _value_spike_override(
@@ -52,6 +97,113 @@ def _value_spike_override(
     return bool(DEAL_SPIKE_PATTERNS.search(headline or ""))
 
 
+def _headline_is_metadata_stub(headline: str) -> bool:
+    hl = (headline or "").strip()
+    if not hl:
+        return True
+    if FILING_STUB_PATTERN.match(hl) or CORPORATE_ACTION_STUB.match(hl):
+        return True
+    if re.match(r"^\s*[A-Z]{1,5}\s+SEC\s+\S+\s*[—–-]\s*\d{4}-\d{2}-\d{2}\s*$", hl, re.I):
+        return True
+    return False
+
+
+def _substantive_headline(headline: str) -> str:
+    """Return headline only when it carries real news, not a filing/date stub."""
+    hl = (headline or "").strip()
+    if not hl or _headline_is_metadata_stub(hl):
+        return ""
+    return hl[:120]
+
+
+def _fmt_move_pct(ret: float) -> str:
+    sign = "+" if ret >= 0 else ""
+    return f"{sign}{ret:.1f}%"
+
+
+def _build_one_line_reason(
+    row: Dict[str, Any],
+    bucket: str,
+    verdict: str,
+    *,
+    adjustment_note: Optional[str] = None,
+) -> str:
+    """Explain why the verdict was assigned — never echo raw filing stubs."""
+    if adjustment_note == "value_spike_override":
+        return "Event-driven spike (deal/news); reassess fair value before selling."
+
+    ret = float(row.get("daily_return_pct") or 0)
+    move = _fmt_move_pct(ret)
+    cat_status = row.get("catalyst_status") or "no_catalyst"
+    category = (row.get("primary_cause_category") or "").lower()
+    headline = (row.get("primary_cause_headline") or "").strip()
+    z = row.get("return_zscore_60d")
+    z_val = float(z) if z is not None else None
+    rv = row.get("relative_volume")
+    rv_val = float(rv) if rv is not None else None
+
+    substantive = _substantive_headline(headline)
+    if substantive and category in ("news", "earnings"):
+        return substantive
+
+    vol_note = ""
+    if rv_val is not None and rv_val >= 2.0:
+        vol_note = f" on {rv_val:.1f}× relative volume"
+
+    z_note = ""
+    if z_val is not None and abs(z_val) >= 1.8:
+        z_note = f" ({abs(z_val):.1f}σ vs 60d)"
+
+    if bucket == "gainer":
+        if verdict == "Strong Buy":
+            if category == "sec_filing" or _headline_is_metadata_stub(headline):
+                return f"{move}{vol_note}{z_note}: company filing aligns with sharp rally — catalyst supports momentum."
+            if category == "corporate_action":
+                return f"{move}{vol_note}: corporate action day; move partly explained by the event."
+            if cat_status == "symbol_specific":
+                return f"{move}{vol_note}{z_note}: symbol-specific catalyst backs strong upside bias."
+            return f"{move}{vol_note}: outsized gain with identifiable catalyst — momentum favors bulls."
+
+        if verdict == "Buy":
+            if category == "sec_filing" or _headline_is_metadata_stub(headline):
+                return f"{move}{vol_note}: filing-day move with company-specific catalyst — constructive bias."
+            if cat_status in ("symbol_specific", "macro_only"):
+                return f"{move}{vol_note}: move supported by a linked catalyst, not pure drift."
+            return f"{move}{vol_note}: moderate gain with supporting context — lean constructive."
+
+        if verdict == "Sell":
+            return "Large gain without catalyst — possible overextension."
+
+        if substantive:
+            return substantive
+        if cat_status == "no_catalyst":
+            return f"{move}{vol_note}: strong move lacks a clear catalyst — wait for confirmation."
+        return f"{move}{vol_note}: watch whether catalyst follow-through holds."
+
+    # loser bucket
+    if verdict == "Buy":
+        return f"{move}{z_note or ''}: oversold vs 60-day band — potential mean-reversion setup.".strip()
+
+    if verdict == "Sell":
+        if substantive:
+            return substantive
+        return "Negative company-specific catalyst — downside risk elevated."
+
+    if category == "sec_filing" or _headline_is_metadata_stub(headline):
+        return f"{move}{vol_note}{z_note}: filing-day selloff — verify whether news is material.".strip()
+
+    if category == "corporate_action":
+        return f"{move}{vol_note}: corporate action may explain part of the decline."
+
+    if ret <= -6:
+        return f"{move}{z_note or ''}: sharp drawdown — check fundamentals before adding.".strip()
+
+    if substantive:
+        return substantive
+
+    return f"{move}{vol_note or ''}: monitor for stabilization before acting.".strip()
+
+
 def heuristic_verdict(row: Dict[str, Any], bucket: str) -> Dict[str, str]:
     """Fast verdict from precomputed movement fields (no LLM)."""
     ret = float(row.get("daily_return_pct") or 0)
@@ -60,39 +212,47 @@ def heuristic_verdict(row: Dict[str, Any], bucket: str) -> Dict[str, str]:
     category = row.get("primary_cause_category") or ""
     z = row.get("return_zscore_60d")
     z_val = float(z) if z is not None else 0.0
-    hl = headline.strip()
 
-    if _value_spike_override(bucket, category, hl, ret):
+    if _value_spike_override(bucket, category, headline, ret):
+        verdict = "Hold"
         return {
-            "verdict": "Hold",
-            "one_line_reason": (
-                "Event-driven spike (deal/news); reassess fair value before selling."
+            "verdict": verdict,
+            "one_line_reason": _build_one_line_reason(
+                row, bucket, verdict, adjustment_note="value_spike_override"
             ),
             "adjustment_note": "value_spike_override",
         }
 
     if bucket == "gainer":
         if cat == "symbol_specific" and ret >= 4:
-            return {"verdict": "Strong Buy", "one_line_reason": hl or "Strong catalyst-led rally"}
-        if cat in ("symbol_specific", "macro_only") and ret >= 1.5:
-            return {"verdict": "Buy", "one_line_reason": hl or "Supported by identifiable catalyst"}
-        if ret >= 6 and cat == "no_catalyst":
-            return {
-                "verdict": "Sell",
-                "one_line_reason": "Large gain without catalyst — possible overextension",
-            }
-        return {"verdict": "Hold", "one_line_reason": hl or "Watch for follow-through"}
+            verdict = "Strong Buy"
+        elif cat in ("symbol_specific", "macro_only") and ret >= 1.5:
+            verdict = "Buy"
+        elif ret >= 6 and cat == "no_catalyst":
+            verdict = "Sell"
+        else:
+            verdict = "Hold"
+        return {
+            "verdict": verdict,
+            "one_line_reason": _build_one_line_reason(row, bucket, verdict),
+        }
 
     # loser bucket
     if z_val <= -2.0 and cat == "no_catalyst":
-        return {"verdict": "Buy", "one_line_reason": "Oversold vs 60-day volatility band"}
-    if cat == "symbol_specific" and any(
-        x in hl.lower() for x in ("downgrade", "miss", "cut", "layoff", "probe", "fraud")
+        verdict = "Buy"
+    elif cat == "symbol_specific" and any(
+        x in headline.lower() for x in ("downgrade", "miss", "cut", "layoff", "probe", "fraud")
     ):
-        return {"verdict": "Sell", "one_line_reason": hl or "Negative company-specific catalyst"}
-    if ret <= -6:
-        return {"verdict": "Hold", "one_line_reason": hl or "Sharp drawdown — verify fundamentals"}
-    return {"verdict": "Hold", "one_line_reason": hl or "Monitor for stabilization"}
+        verdict = "Sell"
+    elif ret <= -6:
+        verdict = "Hold"
+    else:
+        verdict = "Hold"
+
+    return {
+        "verdict": verdict,
+        "one_line_reason": _build_one_line_reason(row, bucket, verdict),
+    }
 
 
 def _is_compelling(row: Dict[str, Any]) -> bool:
@@ -240,7 +400,7 @@ def _payload_from_rows(
         "losers": losers,
         "gainers": gainers,
         "compelling": compelling[:15],
-        "rows": losers + gainers,
+        "rows": rows,
     }
 
 
@@ -268,30 +428,43 @@ def _row_to_bq_record(row: Dict[str, Any], trade_date: str, updated_at: str) -> 
         "scorecard_ratio": row.get("scorecard_ratio"),
         "valuation_pct_vs_fair": row.get("valuation_pct_vs_fair"),
         "is_compelling": bool(row.get("is_compelling")),
+        # New columns
+        "preset": row.get("preset"),
+        "revenue_growth_pct": row.get("revenue_growth_pct"),
+        "eps_growth_pct": row.get("eps_growth_pct"),
+        "dividend_yield_pct": row.get("dividend_yield_pct"),
+        "debt_to_equity": row.get("debt_to_equity"),
+        "beta": row.get("beta"),
         "updated_at": updated_at,
     }
 
 
 def persist_snapshot(payload: Dict[str, Any]) -> int:
-    """Upsert daily brief rows into BigQuery daily_brief_snapshot."""
-    if _backend_type() != "bigquery":
+    """Upsert daily brief rows into daily_brief_snapshot table."""
+    if _backend_type() not in ("bigquery", "duckdb"):
         return 0
+    from backend.mcp_server.backend import backend
+    from backend.mcp_server.bq_schema import FULL_DATASET
+
     trade_date = payload.get("trade_date")
     if not trade_date:
         return 0
-
-    from backend.mcp_server.backend import backend
-    from backend.mcp_server.bq_schema import FULL_DATASET
 
     updated_at = datetime.now(timezone.utc).isoformat()
     rows = payload.get("rows") or []
     if not rows:
         return 0
 
-    backend().execute(
-        f"DELETE FROM `{FULL_DATASET}.daily_brief_snapshot` "
-        f"WHERE trade_date = DATE '{trade_date}'"
-    )
+    table_ref = f"`{FULL_DATASET}.daily_brief_snapshot`" if _backend_type() == "bigquery" else "daily_brief_snapshot"
+    
+    try:
+        backend().execute(
+            f"DELETE FROM {table_ref} "
+            f"WHERE trade_date = DATE '{trade_date}'"
+        )
+    except Exception as e:
+        logger.debug("[DailyBrief] Delete snapshot records failed: %s", e)
+
     records = [_row_to_bq_record(r, trade_date, updated_at) for r in rows]
     batch = 100
     total = 0
@@ -302,7 +475,7 @@ def persist_snapshot(payload: Dict[str, Any]) -> int:
 
 
 def load_snapshot(trade_date: Optional[date] = None) -> Optional[Dict[str, Any]]:
-    if _backend_type() != "bigquery":
+    if _backend_type() not in ("bigquery", "duckdb"):
         return None
     from backend.mcp_server.backend import backend
     from backend.mcp_server.bq_schema import FULL_DATASET
@@ -313,20 +486,26 @@ def load_snapshot(trade_date: Optional[date] = None) -> Optional[Dict[str, Any]]
         return None
 
     td = trade_date.isoformat()
+    table_ref = f"`{FULL_DATASET}.daily_brief_snapshot`" if _backend_type() == "bigquery" else "daily_brief_snapshot"
     sql = f"""
         SELECT *
-        FROM `{FULL_DATASET}.daily_brief_snapshot`
+        FROM {table_ref}
         WHERE trade_date = DATE '{td}'
-        ORDER BY bucket, rank
+        ORDER BY symbol
     """
-    raw = backend().query(sql)
+    try:
+        raw = backend().query(sql)
+    except Exception as e:
+        logger.debug("[DailyBrief] Load snapshot failed: %s", e)
+        return None
+
     if not raw:
         return None
 
     rows: List[Dict[str, Any]] = []
     tier = "heuristic"
     updated_at = None
-    source = "bigquery_snapshot"
+    source = "database_snapshot"
     for r in raw:
         tier = r.get("verdict_tier") or tier
         updated_at = r.get("updated_at") or updated_at
@@ -353,6 +532,13 @@ def load_snapshot(trade_date: Optional[date] = None) -> Optional[Dict[str, Any]]
             "scorecard_ratio": _num(r.get("scorecard_ratio")),
             "valuation_pct_vs_fair": _num(r.get("valuation_pct_vs_fair")),
             "is_compelling": bool(r.get("is_compelling")),
+            # New columns
+            "preset": r.get("preset"),
+            "revenue_growth_pct": _num(r.get("revenue_growth_pct")),
+            "eps_growth_pct": _num(r.get("eps_growth_pct")),
+            "dividend_yield_pct": _num(r.get("dividend_yield_pct")),
+            "debt_to_equity": _num(r.get("debt_to_equity")),
+            "beta": _num(r.get("beta")),
         })
     return _payload_from_rows(rows, trade_date, source, verdict_tier=tier)
 
@@ -498,6 +684,239 @@ async def apply_deep_verdicts(rows: List[Dict[str, Any]], llm_client) -> List[Di
     return out
 
 
+def _fetch_all_symbols_from_db(trade_date: date) -> List[Dict[str, Any]]:
+    from backend.mcp_server.backend import backend
+    from backend.mcp_server.bq_schema import FULL_DATASET
+
+    ds = FULL_DATASET
+    td = trade_date.isoformat()
+    is_bq = _backend_type() == "bigquery"
+    
+    dp_ref = f"`{ds}.daily_prices`" if is_bq else "daily_prices"
+    dmf_ref = f"`{ds}.daily_movement_features`" if is_bq else "daily_movement_features"
+    mcd_ref = f"`{ds}.movement_context_daily`" if is_bq else "movement_context_daily"
+
+    try:
+        sql = f"""
+            SELECT
+                p.symbol,
+                p.trade_date,
+                p.close,
+                p.volume,
+                p.daily_return_pct,
+                f.relative_volume,
+                f.return_zscore_60d,
+                COALESCE(c.market_regime, f.market_regime) AS market_regime,
+                c.catalyst_status,
+                c.primary_cause_category,
+                c.primary_cause_headline,
+                c.primary_cause_weight
+            FROM {dp_ref} p
+            LEFT JOIN {dmf_ref} f
+              ON p.symbol = f.symbol AND p.trade_date = f.trade_date
+            LEFT JOIN {mcd_ref} c
+              ON p.symbol = c.symbol AND p.trade_date = c.trade_date
+            WHERE p.trade_date = DATE '{td}'
+        """
+        return backend().query(sql)
+    except Exception as e:
+        logger.debug("[DailyBrief] Full join query failed, trying daily_prices query only: %s", e)
+        try:
+            sql_fallback = f"""
+                SELECT
+                    p.symbol,
+                    p.trade_date,
+                    p.close,
+                    p.volume,
+                    p.daily_return_pct
+                FROM {dp_ref} p
+                WHERE p.trade_date = DATE '{td}'
+            """
+            return backend().query(sql_fallback)
+        except Exception as e_fallback:
+            logger.warning("[DailyBrief] Fallback daily_prices query failed: %s", e_fallback)
+            return []
+
+
+async def run_sp500_screener_pipeline(trade_date: date, llm_client) -> Dict[str, Any]:
+    from backend.connectors.scorecard_data import fetch_basket
+    from backend.scorecard import ScorecardInput, score_basket
+    
+    # 1. Resolve symbols
+    try:
+        from backend.market_intel import _get_sp500_universe
+        symbols = _get_sp500_universe()
+    except Exception:
+        from backend.data_lake.config import SP500_TICKERS
+        symbols = list(SP500_TICKERS)
+        
+    if not symbols:
+        raise ValueError("No S&P 500 symbols found")
+
+    # 2. Fetch scorecard data in throttled chunks
+    _set_deep_job(status="running", progress=10, message="Fetching S&P 500 scorecard metrics...")
+    data_rows = []
+    chunk_size = 50
+    for i in range(0, len(symbols), chunk_size):
+        chunk = symbols[i : i + chunk_size]
+        _set_deep_job(message=f"Fetching metrics: {i}/{len(symbols)} symbols", progress=10 + int((i / len(symbols)) * 25))
+        chunk_data = await fetch_basket(chunk)
+        data_rows.extend(chunk_data)
+        await asyncio.sleep(0.05)
+
+    # 3. Fetch daily price/movement details for all symbols from DB for the target date
+    _set_deep_job(progress=40, message="Loading daily price and movement context...")
+    db_movements = {}
+    try:
+        db_rows = _fetch_all_symbols_from_db(trade_date)
+        db_movements = {r["symbol"].upper(): r for r in db_rows if r.get("symbol")}
+    except Exception as e:
+        logger.warning("[DailyBrief] DB daily movement fetch failed: %s", e)
+
+    # 4. Partition tickers into growth/income/value baskets
+    _set_deep_job(progress=45, message="Segmenting and scoring baskets...")
+    inputs = []
+    for d in data_rows:
+        inputs.append(
+            ScorecardInput(
+                ticker=d.ticker,
+                eps_growth_pct=d.eps_growth_pct,
+                revenue_growth_pct=d.revenue_growth_pct,
+                pt_upside_pct=d.pt_upside_pct,
+                dividend_yield_pct=d.dividend_yield_pct,
+                forward_pe=d.forward_pe,
+                historical_avg_pe=d.historical_avg_pe,
+                beta=d.beta,
+                exec_risk_score=5.0, # baseline
+                debt_to_equity=d.debt_to_equity,
+                sitg_score=3.0,      # baseline
+                ceo_name=d.ceo_name,
+                sitg_archetype="",
+            )
+        )
+        
+    growth_basket = []
+    income_basket = []
+    value_basket = []
+    
+    for inp in inputs:
+        preset = classify_company_preset({
+            "revenue_growth_pct": inp.revenue_growth_pct,
+            "dividend_yield_pct": inp.dividend_yield_pct
+        })
+        if preset == "growth":
+            growth_basket.append(inp)
+        elif preset == "income":
+            income_basket.append(inp)
+        else:
+            value_basket.append(inp)
+
+    # 5. Run scorecard engine on each sub-basket
+    scored_by_ticker = {}
+    
+    if growth_basket:
+        res = score_basket(growth_basket, preset="growth")
+        for r in res.rows:
+            scored_by_ticker[r.ticker] = (r, "growth")
+            
+    if income_basket:
+        res = score_basket(income_basket, preset="income")
+        for r in res.rows:
+            scored_by_ticker[r.ticker] = (r, "income")
+            
+    if value_basket:
+        res = score_basket(value_basket, preset="value")
+        for r in res.rows:
+            scored_by_ticker[r.ticker] = (r, "value")
+
+    # 6. Build raw output rows
+    raw_rows = []
+    for d in data_rows:
+        ticker = d.ticker
+        mv = db_movements.get(ticker.upper()) or {}
+        sc_tuple = scored_by_ticker.get(ticker)
+        
+        sc_row = sc_tuple[0] if sc_tuple else None
+        preset = sc_tuple[1] if sc_tuple else "value"
+        
+        sig = sc_row.signal if sc_row else "Balanced"
+        ratio = sc_row.ratio if sc_row else 1.0
+        
+        verdict = scorecard_verdict_mapping(sig)
+        
+        row = {
+            "rank": 0, # Not ranked for the full screener
+            "bucket": mv.get("bucket") or ("gainer" if (mv.get("daily_return_pct") or 0.0) >= 0 else "loser"),
+            "symbol": ticker,
+            "trade_date": trade_date.isoformat(),
+            "daily_return_pct": _num(mv.get("daily_return_pct")) or 0.0,
+            "close": _num(mv.get("close") or d.current_price),
+            "volume": mv.get("volume") or 0,
+            "relative_volume": _num(mv.get("relative_volume")) or 1.0,
+            "return_zscore_60d": _num(mv.get("return_zscore_60d")) or 0.0,
+            "market_regime": mv.get("market_regime") or "Balanced",
+            "catalyst_status": mv.get("catalyst_status") or "no_catalyst",
+            "primary_cause_category": mv.get("primary_cause_category") or "news",
+            "primary_cause_headline": mv.get("primary_cause_headline") or "",
+            "primary_cause_weight": _num(mv.get("primary_cause_weight")) or 0.0,
+            "verdict": verdict,
+            "one_line_reason": sc_row.action if sc_row else "Hold, monitor catalysts",
+            "adjustment_note": "scorecard_screener",
+            "verdict_tier": "heuristic",
+            "scorecard_signal": sig,
+            "scorecard_ratio": _num(ratio),
+            "valuation_pct_vs_fair": _num(d.forward_pe / d.historical_avg_pe - 1.0) * 100.0 if (d.forward_pe and d.historical_avg_pe) else None,
+            "is_compelling": sig in ("Exceptional", "Strong buy"),
+            # New columns
+            "preset": preset,
+            "revenue_growth_pct": _num(d.revenue_growth_pct),
+            "eps_growth_pct": _num(d.eps_growth_pct),
+            "dividend_yield_pct": _num(d.dividend_yield_pct),
+            "debt_to_equity": _num(d.debt_to_equity),
+            "beta": _num(d.beta),
+        }
+        raw_rows.append(row)
+
+    # 7. Run batch LLM verdict pipeline on actionable signals (verdict IN ("Strong Buy", "Buy", "Sell"))
+    actionable_rows = [r for r in raw_rows if r["verdict"] in ("Strong Buy", "Buy", "Sell")]
+    _set_deep_job(progress=70, message=f"Running batch LLM verdicts for {len(actionable_rows)} actionable tickers...")
+    
+    # We run in chunks of 30
+    llm_rows = []
+    chunk_size = 30
+    for i in range(0, len(actionable_rows), chunk_size):
+        chunk = actionable_rows[i : i + chunk_size]
+        _set_deep_job(message=f"LLM verdicts: {i}/{len(actionable_rows)} tickers", progress=70 + int((i / len(actionable_rows)) * 20))
+        refined_chunk = await apply_deep_verdicts(chunk, llm_client)
+        llm_rows.extend(refined_chunk)
+        
+    # Merge LLM results back
+    llm_by_symbol = {r["symbol"].upper(): r for r in llm_rows}
+    final_rows = []
+    for r in raw_rows:
+        patch = llm_by_symbol.get(r["symbol"].upper())
+        if patch:
+            merged = dict(r)
+            merged["verdict"] = patch.get("verdict", r["verdict"])
+            merged["one_line_reason"] = patch.get("one_line_reason", r["one_line_reason"])
+            merged["verdict_tier"] = "deep"
+            final_rows.append(merged)
+        else:
+            final_rows.append(r)
+
+    # 8. Persist snapshot
+    _set_deep_job(progress=90, message="Persisting S&P 500 snapshot...")
+    payload = {
+        "trade_date": trade_date.isoformat(),
+        "source": "sp500_screener",
+        "verdict_tier": "deep",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "rows": final_rows,
+    }
+    persist_snapshot(payload)
+    return payload
+
+
 # In-process deep-refresh job state (single worker)
 _deep_job_lock = threading.Lock()
 _deep_job: Dict[str, Any] = {
@@ -533,34 +952,16 @@ async def run_deep_refresh(
     if get_deep_refresh_status().get("status") == "running":
         return get_deep_refresh_status()
 
-    _set_deep_job(status="running", progress=5, message="Loading movers", error=None)
+    _set_deep_job(status="running", progress=5, message="Resolving trade date", error=None)
     try:
-        base = build_daily_brief(
-            trade_date=trade_date,
-            n_losers=n_losers,
-            n_gainers=n_gainers,
-            use_snapshot=True,
-            persist=False,
-        )
-        rows = list(base.get("rows") or [])
-        _set_deep_job(progress=25, message="Scorecard + valuation enrichment")
-        rows = await enrich_rows_quant(rows)
-        _set_deep_job(progress=55, message="Batched LLM verdict refinement")
-        rows = await apply_deep_verdicts(rows, llm)
-        payload = _payload_from_rows(
-            rows,
-            date.fromisoformat(base["trade_date"]),
-            base.get("source", "bigquery"),
-            verdict_tier="deep",
-        )
-        _set_deep_job(progress=85, message="Persisting snapshot")
-        if _backend_type() == "bigquery":
-            persist_snapshot(payload)
+        td = trade_date or get_latest_trade_date() or date.today()
+        payload = await run_sp500_screener_pipeline(td, llm)
+        
         _set_deep_job(
             status="done",
             progress=100,
             message="Deep refresh complete",
-            trade_date=base["trade_date"],
+            trade_date=td.isoformat(),
             error=None,
         )
         payload["deep_refresh"] = get_deep_refresh_status()
