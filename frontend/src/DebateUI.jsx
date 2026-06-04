@@ -173,6 +173,8 @@ function ScoreRing({ bullScore, bearScore }) {
   const stroke = 7;
   const norm = 2 * Math.PI * radius;
   const bullArc = (bullScore / total) * norm;
+  const netScore = 2.5 + (bullScore - bearScore) * 0.5;
+  const displayScore = netScore % 1 === 0 ? netScore.toFixed(0) : netScore.toFixed(1);
 
   return (
     <svg width={120} height={120} viewBox="0 0 120 120" style={{ flexShrink: 0 }}>
@@ -188,11 +190,12 @@ function ScoreRing({ bullScore, bearScore }) {
         strokeDasharray={`${bullArc} ${norm}`}
         transform="rotate(-90 60 60)" strokeLinecap="round" style={{ transition: 'all 0.8s ease' }}
       />
-      <text x="60" y="55" textAnchor="middle" fill="#e2e8f0" fontSize="20" fontWeight="700">{bullScore}</text>
+      <text x="60" y="55" textAnchor="middle" fill="#e2e8f0" fontSize="20" fontWeight="700">{displayScore}</text>
       <text x="60" y="72" textAnchor="middle" fill="#64748b" fontSize="10">/ {total}</text>
     </svg>
   );
 }
+
 
 // Knowledge strip
 function KnowledgeStrip({ stats, ticker, onExport }) {
