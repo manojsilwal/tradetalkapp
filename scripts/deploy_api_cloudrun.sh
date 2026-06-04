@@ -45,21 +45,8 @@ else
   echo "[1/2] Skipping build (--skip-build)"
 fi
 
-echo "[2/2] Deploying Cloud Run service..."
-gcloud run deploy "$SERVICE_NAME" \
-  --image "$IMAGE" \
-  --region "$REGION" \
-  --platform managed \
-  --service-account "$SA_EMAIL" \
-  --allow-unauthenticated \
-  --memory 2Gi \
-  --cpu 2 \
-  --timeout 300 \
-  --min-instances 0 \
-  --max-instances 10 \
-  --port 8080 \
-  --set-env-vars "\
-MCP_DATA_BACKEND=bigquery,\
+# Core environment variables
+ENV_VARS="MCP_DATA_BACKEND=bigquery,\
 GCP_PROJECT_ID=${PROJECT_ID},\
 BQ_DATASET_ID=tradetalk_swarm,\
 GCS_BUCKET=tradetalk-data-lake,\
@@ -73,7 +60,49 @@ SP500_INGEST_ON_STARTUP=0,\
 FINCRAWLER_URL=https://fincrawler.onrender.com,\
 SEPL_TOOL_ENABLE=1,\
 SEPL_TOOL_DRY_RUN=0,\
-SEPL_TOOL_AUTOCOMMIT=1" \
+SEPL_TOOL_AUTOCOMMIT=1"
+
+# Load secret keys dynamically from local environment configuration files if present
+for env_file in .env.gcp .env; do
+  if [[ -f "$env_file" ]]; then
+    echo "Found local config $env_file, appending keys..."
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      # Skip comments and empty lines
+      if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "${line// }" ]]; then
+        continue
+      fi
+      # Trim whitespace
+      line=$(echo "$line" | xargs)
+      if [[ "$line" == *"="* ]]; then
+        key="${line%%=*}"
+        val="${line#*=}"
+        # Skip variables that are already in the core list
+        if [[ "$key" == "SUPABASE_URL" || "$key" == "FINCRAWLER_URL" ]]; then
+          continue
+        fi
+        # Only append keys that are not already present in ENV_VARS to prevent duplicates
+        if ! [[ "$ENV_VARS" =~ (^|,)"$key"= ]]; then
+          ENV_VARS="${ENV_VARS},${key}=${val}"
+        fi
+      fi
+    done < "$env_file"
+  fi
+done
+
+echo "[2/2] Deploying Cloud Run service..."
+gcloud run deploy "$SERVICE_NAME" \
+  --image "$IMAGE" \
+  --region "$REGION" \
+  --platform managed \
+  --service-account "$SA_EMAIL" \
+  --allow-unauthenticated \
+  --memory 2Gi \
+  --cpu 2 \
+  --timeout 300 \
+  --min-instances 0 \
+  --max-instances 10 \
+  --port 8080 \
+  --set-env-vars "$ENV_VARS" \
   --quiet
 
 URL="$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')"
