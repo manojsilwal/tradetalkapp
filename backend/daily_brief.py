@@ -143,9 +143,16 @@ def _build_one_line_reason(
 
     # Use substantive headline snippet when available (≤8 words)
     substantive = _substantive_headline(headline)
-    if substantive and category in ("news", "earnings"):
+    if not substantive and category == "sec_filing" and headline:
+        m = re.match(r"^([A-Z]+)\s+SEC\s+(\S+)", headline, re.I)
+        if m:
+            substantive = f"SEC Form {m[2]}"
+        else:
+            substantive = "SEC Filing"
+
+    if substantive and category in ("news", "earnings", "sec_filing"):
         words = substantive.split()
-        return " ".join(words[:8])
+        return f"{verdict} catalyst: " + " ".join(words[:8])
 
     if bucket == "gainer":
         if verdict == "Strong Buy":

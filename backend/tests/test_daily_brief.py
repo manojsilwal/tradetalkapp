@@ -46,8 +46,8 @@ class TestDailyBriefHeuristics(unittest.TestCase):
         }
         out = heuristic_verdict(row, "gainer")
         self.assertEqual(out["verdict"], "Strong Buy")
-        self.assertNotIn("SEC 8-K", out["one_line_reason"])
-        self.assertIn("catalyst", out["one_line_reason"].lower())
+        self.assertIn("SEC Form 8-K", out["one_line_reason"])
+        self.assertIn("Strong Buy catalyst:", out["one_line_reason"])
 
     def test_gainer_uses_substantive_earnings_headline(self):
         row = {

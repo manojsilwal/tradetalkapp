@@ -26,7 +26,15 @@ const CATALYST_LABELS = {
   macro_only: 'Macro-driven',
   no_catalyst: '—',
 }
-function friendlyCatalyst(status) {
+function friendlyCatalyst(status, category) {
+  if (status === 'symbol_specific') {
+    if (category === 'sec_filing') return 'SEC Filing'
+    if (category === 'earnings') return 'Earnings'
+    if (category === 'corporate_action') return 'Corp. Action'
+    if (category === 'news') return 'Company News'
+    if (category === 'insider_trade') return 'Insider'
+    return 'Company event'
+  }
   return CATALYST_LABELS[status] || status || '—'
 }
 
@@ -43,7 +51,16 @@ const CAUSE_LABELS = {
 const STUB_RE = /^\s*[A-Z]{1,5}\s+SEC\s+/i
 function friendlyCause(category, headline) {
   const hl = (headline || '').trim()
-  if (hl && !STUB_RE.test(hl)) {
+  if (hl) {
+    // If it's a standard SEC filing headline with a form type, keep the form type and ticker
+    const m = hl.match(/^([A-Z]+)\s+SEC\s+([A-Z0-9-]+)/i)
+    if (m) {
+      return `${m[1]} SEC ${m[2]}` // e.g. "WDC SEC 8-K"
+    }
+    // If it's a generic stub, fall back to label
+    if (STUB_RE.test(hl) && hl.toLowerCase().includes('filing') && !hl.toLowerCase().includes('8-k') && !hl.toLowerCase().includes('10-k') && !hl.toLowerCase().includes('10-q')) {
+      return CAUSE_LABELS[category] || 'SEC filing'
+    }
     const words = hl.split(/\s+/).slice(0, 6).join(' ')
     return words + (hl.split(/\s+/).length > 6 ? '…' : '')
   }
@@ -96,7 +113,7 @@ function BriefTable({ title, rows, onRowClick }) {
               <td style={td}>${fmtNum(row.close)}</td>
               <td style={td}>{fmtNum(row.relative_volume)}</td>
               <td style={td}>{fmtNum(row.return_zscore_60d)}</td>
-              <td style={td}>{friendlyCatalyst(row.catalyst_status)}</td>
+              <td style={td}>{friendlyCatalyst(row.catalyst_status, row.primary_cause_category)}</td>
               <td style={{ ...td, maxWidth: 220, fontSize: 11, color: '#cbd5e1' }}>
                 {friendlyCause(row.primary_cause_category, row.primary_cause_headline)}
               </td>
