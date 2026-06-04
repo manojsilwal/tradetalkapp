@@ -73,6 +73,63 @@ class CapitalFlowData(BaseModel):
     category: str
     daily_change_pct: float
 
+
+class CapitalFlowBucket(BaseModel):
+    """Enriched per-bucket capital flow with reconciliation data and historical returns."""
+    bucket_id: str
+    proxy_symbol: str
+    display_name: str
+    stance: str  # 'risk_on' | 'safe_haven' | 'cash'
+    region: str  # 'US' | 'INTL_COUNTERPARTY'
+    is_us_destination: bool
+    price_change_pct: float
+    notional_base_usd: float
+    component_flow_usd: float
+    flow_direction: str  # 'inflow_to_us' | 'outflow_from_us' | 'intl_counterparty' | 'non_us_safe_haven' | 'intra_us'
+    historical_returns: Dict[str, float] = Field(default_factory=dict, description="Period returns: 1d, 1w, 1m, 1y, 5y")
+
+
+class CapitalFlowReconciliation(BaseModel):
+    """Reconciliation summary proving components add up."""
+    opening_capital_total_usd: float
+    closing_capital_total_usd: float
+    net_capital_change_usd: float
+    components_sum_usd: float
+    reconciliation_gap_usd: float
+    is_reconciled: bool
+    us_net_increased: bool
+    tolerance_usd: float = 1.0
+
+
+class CapitalFlowDriver(BaseModel):
+    """A driver of capital inflow or outflow."""
+    bucket_id: str
+    proxy_symbol: str
+    display_name: str
+    component_flow_usd: float
+    price_change_pct: float
+    intl_counterparty_symbol: Optional[str] = None
+    intl_index_change_pct: Optional[float] = None
+
+
+class CapitalFlowExplanation(BaseModel):
+    """Two-channel explanation of US net capital change."""
+    us_net_increased: bool
+    net_capital_change_usd: float
+    drivers_inflow_to_us: List[CapitalFlowDriver] = Field(default_factory=list)
+    drivers_outflow_from_us: List[CapitalFlowDriver] = Field(default_factory=list)
+    reconciles_to: float
+    is_reconciled: bool
+
+
+class ReconciledCapitalFlows(BaseModel):
+    """Full reconciled capital-flow picture for one day."""
+    flow_date: str
+    buckets: List[CapitalFlowBucket]
+    reconciliation: CapitalFlowReconciliation
+    explanation: CapitalFlowExplanation
+
+
 class MacroDataResponse(BaseModel):
     """
     Dedicated global macroeconomic payload for the Macro Dashboard.
@@ -83,6 +140,7 @@ class MacroDataResponse(BaseModel):
     sectors: List[SectorData]
     consumer_spending: List[ConsumerSpendingDataPoint]
     capital_flows: List[CapitalFlowData]
+    reconciled_capital_flows: Optional[ReconciledCapitalFlows] = None
     cash_reserves: List[CashReserveDataPoint]
     usd_broad_index: Optional[float] = None
     usd_index_change_5d_pct: Optional[float] = None

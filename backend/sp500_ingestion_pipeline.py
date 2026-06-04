@@ -75,7 +75,8 @@ def _build_fundamental_narrative(ticker: str, info: dict) -> tuple[str, dict]:
     debt_equity = info.get("debtToEquity") or 0.0
     roe         = (info.get("returnOnEquity") or 0) * 100
     beta        = info.get("beta") or 1.0
-    dividend    = (info.get("dividendYield") or 0) * 100
+    from backend.connectors.base import clean_dividend_yield
+    dividend    = clean_dividend_yield(info.get("dividendYield"))
     analyst_rec = info.get("recommendationKey") or "none"
 
     # ── Categorize PE ratio contextually ──────────────────────────────────────

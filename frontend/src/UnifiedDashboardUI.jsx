@@ -364,8 +364,13 @@ function SmallCapPanel({ data, loading, capBucket }) {
 
 export default function UnifiedDashboardUI() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { addAnalysis, getLastAnalysis, recentAnalyses } = useAnalysisHistory();
   const lastAutoTicker = useRef('');
-  const [ticker, setTicker] = useState(() => searchParams.get('ticker')?.trim().toUpperCase() || 'AAPL');
+  const [ticker, setTicker] = useState(() => {
+    const param = searchParams.get('ticker')?.trim().toUpperCase();
+    if (param) return param;
+    return recentAnalyses[0]?.ticker || 'AAPL';
+  });
 
   // From Consumer UI
   // Per-section state — each section loads independently
@@ -392,13 +397,40 @@ export default function UnifiedDashboardUI() {
 
   const [predMarketsData, setPredMarketsData] = useState(null);
   const [predMarketsLoading, setPredMarketsLoading] = useState(false);
+  const [isPredictionMarketsExpanded, setIsPredictionMarketsExpanded] = useState(false);
 
   // Global loading: true only until at least ONE section resolves (optimistic)
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [error, setError] = useState(null);
 
-  const { addAnalysis } = useAnalysisHistory();
+  // Sync page context so the app-level assistant knows what ticker is on screen
+  useEffect(() => {
+    window.__tt_page_context__ = {
+      ...(window.__tt_page_context__ || {}),
+      page: 'dashboard',
+      ticker: ticker || null,
+    };
+  }, [ticker]);
+
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [fadeActive, setFadeActive] = useState(false);
+
+  useEffect(() => {
+    if (loading) {
+      setShowOverlay(true);
+      const frame = requestAnimationFrame(() => {
+        setFadeActive(true);
+      });
+      return () => cancelAnimationFrame(frame);
+    } else {
+      setFadeActive(false);
+      const timer = setTimeout(() => setShowOverlay(false), 500); // matches opacity transition
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
+
+  // useAnalysisHistory context is retrieved at the top
 
   const searchUpper = ticker.trim().toUpperCase();
   const isInSp500 = !!searchUpper && SP500_TICKERS.includes(searchUpper);
@@ -407,7 +439,7 @@ export default function UnifiedDashboardUI() {
     return SP500_TICKERS.filter(t => t.startsWith(searchUpper) || t.includes(searchUpper)).slice(0, 4);
   }, [searchUpper, isInSp500]);
 
-  const analyzeTicker = useCallback(async (overrideTicker = ticker) => {
+  const analyzeTicker = useCallback(async (overrideTicker = ticker, forceRefresh = false) => {
     const sym = (overrideTicker ?? ticker).trim().toUpperCase();
     if (!sym) {
       setError('Enter a ticker symbol to analyze.');
@@ -415,6 +447,32 @@ export default function UnifiedDashboardUI() {
     }
     setTicker(sym);
     setSearchParams({ ticker: sym }, { replace: true });
+
+    if (!forceRefresh) {
+      const cached = getLastAnalysis(sym);
+      if (cached) {
+        setTraceData(cached.trace);
+        setMetricsData(cached.metrics);
+        setCapBucket(cached.capBucket);
+        setSmallCapData(cached.smallCap);
+        setDebateData(cached.debate);
+        setDebateError(null);
+        setDecisionData(cached.dt);
+        setScorecardData(cached.scorecard);
+        setScorecardError(null);
+        setPredMarketsData(cached.predMarkets);
+        
+        setLoading(false);
+        setTraceLoading(false);
+        setMetricsLoading(false);
+        setSmallCapLoading(false);
+        setDebateLoading(false);
+        setDecisionLoading(false);
+        setScorecardLoading(false);
+        setPredMarketsLoading(false);
+        return;
+      }
+    }
 
     // Reset all per-section state
     setLoading(true);
@@ -453,19 +511,10 @@ export default function UnifiedDashboardUI() {
 
     setLoadingStep('Loading data…');
 
-    let firstResolved = false;
     let successCount = 0;
     let lastErr = null;
-    const onFirstResolved = () => {
-      if (!firstResolved) {
-        firstResolved = true;
-        setLoading(false);
-        setLoadingStep('');
-      }
-    };
     const onSuccess = () => {
       successCount += 1;
-      onFirstResolved();
     };
     const onFail = (err) => {
       if (err) lastErr = err;
@@ -525,7 +574,16 @@ export default function UnifiedDashboardUI() {
     ];
 
     Promise.allSettled(jobs).then(whenAllSettled);
-  }, [ticker, setSearchParams]);
+  }, [ticker, setSearchParams, getLastAnalysis]);
+
+  // Default to last analyzed ticker in URL on mount if missing
+  useEffect(() => {
+    const fromUrl = searchParams.get('ticker')?.trim().toUpperCase();
+    if (!fromUrl) {
+      const lastTicker = recentAnalyses[0]?.ticker || 'AAPL';
+      setSearchParams({ ticker: lastTicker }, { replace: true });
+    }
+  }, [searchParams, setSearchParams, recentAnalyses]);
 
   // Deep-link: /?ticker=NVDA from Daily Brief or bookmarks
   useEffect(() => {
@@ -535,19 +593,24 @@ export default function UnifiedDashboardUI() {
     analyzeTicker(fromUrl);
   }, [searchParams, analyzeTicker]);
 
-  // Add to history once decision data arrives
+  // Save current dashboard state to context cache when loaded
   useEffect(() => {
-    if (decisionData && searchUpper) {
+    if (!searchUpper || loading) return;
+    
+    // Only cache if we successfully retrieved some key metrics/data
+    if (metricsData || decisionData || traceData) {
       addAnalysis(searchUpper, {
         trace: traceData,
         debate: debateData,
         metrics: metricsData,
         dt: decisionData,
         scorecard: scorecardData,
+        predMarkets: predMarketsData,
+        smallCap: smallCapData,
+        capBucket: capBucket,
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [decisionData]);
+  }, [searchUpper, loading, metricsData, debateData, traceData, decisionData, scorecardData, predMarketsData, smallCapData, capBucket, addAnalysis]);
 
   useEffect(() => {
     if (!searchUpper || !capBucket || !SMALL_CAP_BUCKETS.has(capBucket)) {
@@ -580,6 +643,43 @@ export default function UnifiedDashboardUI() {
   const q = decisionData?.quality;
   const z = decisionData?.verdict;
   const r = decisionData?.roadmap;
+
+  const getBriefText = () => {
+    if (predMarketsLoading) return 'Loading...';
+    if (!predMarketsData || !predMarketsData.has_relevant_data) return 'No Active Markets';
+    
+    const directEvts = (predMarketsData.events || []).filter(e => e.relevance_type !== 'sector');
+    const directWithProb = directEvts.filter(e => e.probability != null);
+    
+    let prob = null;
+    
+    if (directWithProb.length > 0) {
+      const sum = directWithProb.reduce((acc, e) => acc + e.probability, 0);
+      prob = sum / directWithProb.length;
+    } else if (z?.prediction_market_bullish_pct != null && !z?.polymarket_gated_out) {
+      prob = z.prediction_market_bullish_pct / 100;
+    } else {
+      const sectorEvts = (predMarketsData.events || []).filter(e => e.relevance_type === 'sector');
+      const sectorWithProb = sectorEvts.filter(e => e.probability != null);
+      if (sectorWithProb.length > 0) {
+        const sum = sectorWithProb.reduce((acc, e) => acc + e.probability, 0);
+        prob = sum / sectorWithProb.length;
+      }
+    }
+    
+    if (prob !== null) {
+      const pct = Math.round(prob * 100);
+      if (pct >= 55) {
+        return `Positive Prediction (${pct}% Yes avg)`;
+      } else if (pct <= 45) {
+        return `Negative Prediction (${pct}% Yes avg)`;
+      } else {
+        return `Neutral Prediction (${pct}% Yes avg)`;
+      }
+    }
+    
+    return 'Active Markets Scan';
+  };
 
   const valFill = valuationArcRatio(v?.pct_vs_average);
   const pmFill = z?.polymarket_gated_out ? 0.35 : polymarketArcRatio(z?.prediction_market_bullish_pct);
@@ -637,6 +737,18 @@ export default function UnifiedDashboardUI() {
     );
   };
 
+  const steps = useMemo(() => [
+    { label: 'Validating ticker & format', done: true },
+    { label: 'Retrieving RAG knowledge base & metrics', done: !metricsLoading && !scorecardLoading },
+    { label: 'Assembling multi-agent debate chamber', done: !debateLoading },
+    { label: 'Executing swarm consensus trace', done: !traceLoading },
+    { label: 'Synthesizing valuation terminal & roadmap', done: !decisionLoading },
+    { label: 'Scanning prediction market contracts', done: !predMarketsLoading }
+  ], [metricsLoading, scorecardLoading, debateLoading, traceLoading, decisionLoading, predMarketsLoading]);
+
+  const doneCount = useMemo(() => steps.filter(s => s.done).length, [steps]);
+  const progressPct = useMemo(() => Math.round((doneCount / steps.length) * 100), [doneCount, steps.length]);
+
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
@@ -667,6 +779,31 @@ export default function UnifiedDashboardUI() {
               {loading ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
               Analyze
             </button>
+            {hasDecisionData && (
+              <button
+                type="button"
+                onClick={() => analyzeTicker(ticker, true)}
+                disabled={loading || !searchUpper}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  color: 'white',
+                  fontWeight: 600,
+                  cursor: loading || !searchUpper ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  opacity: loading || !searchUpper ? 0.55 : 1,
+                  transition: 'background 0.2s',
+                }}
+                title="Force refresh data"
+              >
+                {loading ? <Loader2 className="spinner" size={16} /> : <Zap size={16} />}
+                Refresh
+              </button>
+            )}
           </div>
           {!isInSp500 && searchUpper && suggestions.length > 0 && (
             <div className="dt-suggestions" style={{ position: 'absolute', top: '100%', left: 0, width: '160px', background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', marginTop: '4px', zIndex: 10 }}>
@@ -681,12 +818,7 @@ export default function UnifiedDashboardUI() {
         </div>
       </div>
 
-      {loading && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0', color: '#94a3b8', fontSize: 13 }}>
-          <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', color: '#3b82f6', flexShrink: 0 }} />
-          {loadingStep || 'Loading…'}
-        </div>
-      )}
+      {/* Loader is managed via the full-screen LoadingOverlay */}
 
       {error && (
         <div className="glass-panel" style={{ borderColor: 'var(--accent-red)', padding: '16px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)' }}>
@@ -794,97 +926,6 @@ export default function UnifiedDashboardUI() {
           <SmallCapPanel data={smallCapData} loading={smallCapLoading} capBucket={capBucket} />
         )}
 
-        {/* Prediction Markets */}
-        <section className="dt-panel" style={{ gridColumn: '1 / -1' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-            <h2 className="dt-panel-title" style={{ margin: 0 }}>Prediction Markets</h2>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Polymarket · Kalshi</span>
-            {predMarketsData?.context?.sector && (
-              <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: 6, background: 'rgba(99,102,241,0.12)', color: '#818cf8' }}>
-                {predMarketsData.context.sector} · {(predMarketsData.context.indices || []).join(' · ')}
-              </span>
-            )}
-          </div>
-
-          {predMarketsLoading && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 14, fontSize: '0.9rem' }}>
-              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Fetching live prediction markets…
-            </div>
-          )}
-
-          {!predMarketsLoading && predMarketsData?.has_relevant_data && (() => {
-            const directEvts = (predMarketsData.events || []).filter(e => e.relevance_type !== 'sector');
-            const sectorEvts = (predMarketsData.events || []).filter(e => e.relevance_type === 'sector');
-
-            const EventRow = ({ ev }) => {
-              const prob = ev.probability != null ? Math.round(ev.probability * 100) : null;
-              const bullColor = prob != null ? (prob >= 60 ? '#00ff88' : prob >= 40 ? '#eab308' : '#f87171') : '#94a3b8';
-              return (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                  <span style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: 5, background: ev.source === 'Kalshi' ? 'rgba(59,130,246,0.15)' : 'rgba(124,58,237,0.15)', color: ev.source === 'Kalshi' ? '#60a5fa' : '#a78bfa', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                    {ev.source}
-                  </span>
-                  <div style={{ flex: 1, fontSize: '0.875rem', lineHeight: 1.4 }}>
-                    {ev.market_question || ev.title}
-                  </div>
-                  {prob != null && (
-                    <div style={{ textAlign: 'right', minWidth: 56, flexShrink: 0 }}>
-                      <div style={{ fontSize: '1.15rem', fontWeight: 800, fontFamily: 'monospace', color: bullColor }}>{prob}%</div>
-                      <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>Yes</div>
-                    </div>
-                  )}
-                  {ev.volume > 0 && (
-                    <div style={{ textAlign: 'right', minWidth: 56, fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>
-                      ${ev.volume >= 1000 ? `${(ev.volume/1000).toFixed(1)}K` : ev.volume.toFixed(0)} vol
-                    </div>
-                  )}
-                  {ev.url && (
-                    <a href={ev.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-muted)', flexShrink: 0 }} title="Open on market">
-                      <BarChart3 size={14} />
-                    </a>
-                  )}
-                </div>
-              );
-            };
-
-            return (
-              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {directEvts.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
-                      {searchUpper}-specific bets
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {directEvts.map((ev, i) => <EventRow key={`d-${i}`} ev={ev} />)}
-                    </div>
-                  </div>
-                )}
-                {sectorEvts.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
-                      Sector / Index context ({(predMarketsData.context?.indices || []).join(', ')})
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {sectorEvts.map((ev, i) => <EventRow key={`s-${i}`} ev={ev} />)}
-                    </div>
-                  </div>
-                )}
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem', margin: '2px 0 0' }}>
-                  Crowd-sourced probabilities — not financial advice. Sources: Polymarket, Kalshi public APIs.
-                </p>
-              </div>
-            );
-          })()}
-
-          {!predMarketsLoading && !predMarketsData?.has_relevant_data && searchUpper && (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: 12 }}>
-              No active prediction markets found for {searchUpper} on Polymarket or Kalshi.
-            </p>
-          )}
-          {!predMarketsLoading && !searchUpper && (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: 12 }}>Run Analyze to load prediction markets.</p>
-          )}
-        </section>
 
         <DashboardScorecardPanel
           data={scorecardData}
@@ -952,14 +993,28 @@ export default function UnifiedDashboardUI() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
 
               {/* Factor Signals using FactorSignalCard style simplified */}
-              {Object.entries(traceData.factors || {}).map(([key, factorData], idx) => {
+              {Object.entries(traceData?.factors || {}).map(([key, factorData], idx) => {
                  const signal = Number(factorData?.trading_signal ?? 0);
-                 const sentiment = signal > 0 ? 'bullish' : signal < 0 ? 'bearish' : 'neutral';
+                 let sentiment = signal > 0 ? 'bullish' : signal < 0 ? 'bearish' : 'neutral';
+                 if (key === 'polymarket') {
+                   const brief = getBriefText();
+                   if (brief && brief.includes('Negative')) {
+                     sentiment = 'bearish';
+                   } else if (brief && brief.includes('Positive')) {
+                     sentiment = 'bullish';
+                   }
+                 }
                  const titleText = sentiment === 'bullish'
                    ? 'Bullish Signal'
                    : sentiment === 'bearish'
                      ? 'Bearish Signal'
-                     : 'No Market Signal';
+                     : (() => {
+                         if (key === 'short_interest') return 'Neutral (No Squeeze Setup)';
+                         if (key === 'polymarket') return 'Neutral (Mixed Sentiment)';
+                         if (key === 'social_sentiment') return 'Neutral (Mixed Buzz)';
+                         if (key === 'fundamentals') return 'Neutral (Stable Health)';
+                         return 'Neutral';
+                       })();
                  const titleColor = sentiment === 'bullish'
                    ? '#00ff88'
                    : sentiment === 'bearish'
@@ -1033,8 +1088,462 @@ export default function UnifiedDashboardUI() {
             {!debateLoading && debateData && <DebateVerdictSummary result={debateData} />}
           </section>
         )}
+
+        {/* Prediction Markets */}
+        <section className="dt-panel" style={{ gridColumn: '1 / -1' }}>
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between', 
+              cursor: 'pointer', 
+              userSelect: 'none' 
+            }}
+            onClick={() => setIsPredictionMarketsExpanded(v => !v)}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <h2 className="dt-panel-title" style={{ margin: 0 }}>Prediction Markets</h2>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Polymarket · Kalshi</span>
+              {predMarketsData?.context?.sector && (
+                <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: 6, background: 'rgba(99,102,241,0.12)', color: '#818cf8' }}>
+                  {predMarketsData.context.sector} · {(predMarketsData.context.indices || []).join(' · ')}
+                </span>
+              )}
+              {(() => {
+                const brief = getBriefText();
+                if (!brief) return null;
+                const isPos = brief.includes('Positive');
+                const isNeg = brief.includes('Negative');
+                const badgeColor = isPos ? '#00ff88' : isNeg ? '#f87171' : '#eab308';
+                const badgeBg = isPos ? 'rgba(0,255,136,0.1)' : isNeg ? 'rgba(248,113,113,0.1)' : 'rgba(234,179,8,0.1)';
+                return (
+                  <span style={{ 
+                    fontSize: '0.75rem', 
+                    fontWeight: 700, 
+                    padding: '2px 8px', 
+                    borderRadius: 6, 
+                    color: badgeColor, 
+                    background: badgeBg,
+                    border: `1px solid ${badgeColor}22` 
+                  }}>
+                    {brief}
+                  </span>
+                );
+              })()}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+              <span>{isPredictionMarketsExpanded ? 'Collapse' : 'Expand'}</span>
+              <span style={{ transform: isPredictionMarketsExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s', fontSize: '0.8rem' }}>
+                ▼
+              </span>
+            </div>
+          </div>
+
+          {isPredictionMarketsExpanded && (
+            <div style={{ marginTop: 16 }}>
+              {predMarketsLoading && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 14, fontSize: '0.9rem' }}>
+                  <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Fetching live prediction markets…
+                </div>
+              )}
+
+              {!predMarketsLoading && predMarketsData?.has_relevant_data && (() => {
+                const directEvts = (predMarketsData.events || []).filter(e => e.relevance_type !== 'sector');
+                const sectorEvts = (predMarketsData.events || []).filter(e => e.relevance_type === 'sector');
+
+                const EventRow = ({ ev }) => {
+                  const prob = ev.probability != null ? Math.round(ev.probability * 100) : null;
+                  const bullColor = prob != null ? (prob >= 60 ? '#00ff88' : prob >= 40 ? '#eab308' : '#f87171') : '#94a3b8';
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                      <span style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: 5, background: ev.source === 'Kalshi' ? 'rgba(59,130,246,0.15)' : 'rgba(124,58,237,0.15)', color: ev.source === 'Kalshi' ? '#60a5fa' : '#a78bfa', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                        {ev.source}
+                      </span>
+                      <div style={{ flex: 1, fontSize: '0.875rem', lineHeight: 1.4 }}>
+                        {ev.market_question || ev.title}
+                      </div>
+                      {prob != null && (
+                        <div style={{ textAlign: 'right', minWidth: 56, flexShrink: 0 }}>
+                          <div style={{ fontSize: '1.15rem', fontWeight: 800, fontFamily: 'monospace', color: bullColor }}>{prob}%</div>
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>Yes</div>
+                        </div>
+                      )}
+                      {ev.volume > 0 && (
+                        <div style={{ textAlign: 'right', minWidth: 56, fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>
+                          ${ev.volume >= 1000 ? `${(ev.volume/1000).toFixed(1)}K` : ev.volume.toFixed(0)} vol
+                        </div>
+                      )}
+                      {ev.url && (
+                        <a href={ev.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-muted)', flexShrink: 0 }} title="Open on market">
+                          <BarChart3 size={14} />
+                        </a>
+                      )}
+                    </div>
+                  );
+                };
+
+                return (
+                  <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    {directEvts.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                          {searchUpper}-specific bets
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {directEvts.map((ev, i) => <EventRow key={`d-${i}`} ev={ev} />)}
+                        </div>
+                      </div>
+                    )}
+                    {sectorEvts.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                          Sector / Index context ({(predMarketsData.context?.indices || []).join(', ')})
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {sectorEvts.map((ev, i) => <EventRow key={`s-${i}`} ev={ev} />)}
+                        </div>
+                      </div>
+                    )}
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem', margin: '2px 0 0' }}>
+                      Crowd-sourced probabilities — not financial advice. Sources: Polymarket, Kalshi public APIs.
+                    </p>
+                  </div>
+                );
+              })()}
+
+              {!predMarketsLoading && !predMarketsData?.has_relevant_data && searchUpper && (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: 12 }}>
+                  No active prediction markets found for {searchUpper} on Polymarket or Kalshi.
+                </p>
+              )}
+              {!predMarketsLoading && !searchUpper && (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: 12 }}>Run Analyze to load prediction markets.</p>
+              )}
+            </div>
+          )}
+        </section>
       </div>
 
+      {showOverlay && (
+        <LoadingOverlay steps={steps} progressPct={progressPct} visible={fadeActive} />
+      )}
+
+    </div>
+  );
+}
+
+// ── Background Animated Particle Wave Component ─────────────────────────────
+function ParticleWave() {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let animationFrameId;
+
+    let width = (canvas.width = window.innerWidth);
+    let height = (canvas.height = window.innerHeight);
+
+    const handleResize = () => {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    };
+    window.addEventListener('resize', handleResize);
+
+    const particles = [];
+    const numParticles = 80;
+    const waves = 3;
+
+    for (let i = 0; i < numParticles; i++) {
+      particles.push({
+        x: (i / numParticles) * width,
+        y: height / 2,
+        phase: (i / numParticles) * Math.PI * 4,
+      });
+    }
+
+    let t = 0;
+
+    const render = () => {
+      ctx.clearRect(0, 0, width, height);
+
+      const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
+      bgGrad.addColorStop(0, '#06070a');
+      bgGrad.addColorStop(1, '#0c0f16');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, width, height);
+
+      t += 0.01;
+      
+      for (let wave = 0; wave < waves; wave++) {
+        const amp = 40 + wave * 20;
+        const freq = 0.003 - wave * 0.0005;
+        const speed = 0.02 + wave * 0.01;
+        const opacity = 0.15 - wave * 0.03;
+        
+        for (let i = 0; i < numParticles; i++) {
+          const x = (i / numParticles) * width;
+          const y = (height * 0.65) + Math.sin(x * freq + t * speed * 2 + wave * 1.5) * amp;
+          
+          ctx.fillStyle = `rgba(59, 130, 246, ${opacity})`;
+          ctx.beginPath();
+          ctx.arc(x, y, 2.5 - wave * 0.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (i > 0) {
+            const prevX = ((i - 1) / numParticles) * width;
+            const prevY = (height * 0.65) + Math.sin(prevX * freq + t * speed * 2 + wave * 1.5) * amp;
+            ctx.strokeStyle = `rgba(59, 130, 246, ${opacity * 0.5})`;
+            ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(prevX, prevY);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+          }
+        }
+      }
+
+      animationFrameId = requestAnimationFrame(render);
+    };
+
+    render();
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        zIndex: 1,
+        pointerEvents: 'none',
+      }}
+    />
+  );
+}
+
+// ── Google Stitch-Inspired Full-Screen Loading Overlay ───────────────────────
+function LoadingOverlay({ steps, progressPct, visible }) {
+  const activeStep = steps.find((step, idx) => !step.done && (idx === 0 || steps[idx - 1].done));
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        backgroundColor: '#06070a',
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: visible ? 1 : 0,
+        transition: 'opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
+        pointerEvents: visible ? 'all' : 'none',
+      }}
+    >
+      <ParticleWave />
+
+      <div
+        className="glass-panel"
+        style={{
+          width: '90%',
+          maxWidth: '520px',
+          padding: '40px',
+          borderRadius: '24px',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          boxShadow: '0 24px 48px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(59, 130, 246, 0.05)',
+          background: 'rgba(10, 11, 16, 0.65)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          zIndex: 2,
+          textAlign: 'center',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'center' }}>
+          <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path
+              d="M12 24C12 24 20 12 32 12C44 12 52 24 52 24C52 24 44 36 32 36C20 36 12 24 12 24Z"
+              stroke="#3b82f6"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              style={{
+                strokeDasharray: '200',
+                strokeDashoffset: '0',
+                animation: 'weave 3s cubic-bezier(0.4, 0, 0.2, 1) infinite',
+                filter: 'drop-shadow(0 0 8px rgba(59, 130, 246, 0.6))',
+              }}
+            />
+            <path
+              d="M20 40C20 40 26 48 32 48C38 48 44 40 44 40"
+              stroke="#8b5cf6"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              style={{
+                strokeDasharray: '100',
+                strokeDashoffset: '0',
+                animation: 'weave-short 3s cubic-bezier(0.4, 0, 0.2, 1) infinite',
+                filter: 'drop-shadow(0 0 6px rgba(139, 92, 246, 0.5))',
+              }}
+            />
+            <circle
+              cx="32"
+              cy="24"
+              r="4"
+              fill="#fff"
+              style={{
+                animation: 'pulse-glow 1.5s ease-in-out infinite',
+                filter: 'drop-shadow(0 0 6px #fff)',
+              }}
+            />
+          </svg>
+        </div>
+
+        <style dangerouslySetInnerHTML={{ __html: `
+          @keyframes weave {
+            0% { stroke-dashoffset: 200; }
+            50% { stroke-dashoffset: 0; }
+            100% { stroke-dashoffset: -200; }
+          }
+          @keyframes weave-short {
+            0% { stroke-dashoffset: 100; }
+            50% { stroke-dashoffset: 0; }
+            100% { stroke-dashoffset: -100; }
+          }
+          @keyframes pulse-glow {
+            0%, 100% { transform: scale(1); opacity: 0.6; }
+            50% { transform: scale(1.3); opacity: 1; }
+          }
+          .glow-text {
+            background: linear-gradient(135deg, #ffffff 30%, #3b82f6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+          }
+          .step-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            transition: all 0.3s ease;
+            text-align: left;
+          }
+          .step-row.pending {
+            color: rgba(255, 255, 255, 0.25);
+          }
+          .step-row.active {
+            color: #3b82f6;
+            background: rgba(59, 130, 246, 0.05);
+            font-weight: 500;
+          }
+          .step-row.done {
+            color: #f8fafc;
+          }
+        ` }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginBottom: '8px' }}>
+          <h1 className="glow-text" style={{ fontSize: '2.0rem', fontWeight: 800, margin: 0, letterSpacing: '0.04em' }}>
+            TradeTalk
+          </h1>
+          <span
+            style={{
+              fontSize: '0.65rem',
+              padding: '2px 8px',
+              borderRadius: '12px',
+              border: '1px solid rgba(59, 130, 246, 0.3)',
+              color: '#3b82f6',
+              fontWeight: 700,
+              background: 'rgba(59, 130, 246, 0.08)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}
+          >
+            Beta
+          </span>
+        </div>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0 0 28px 0', letterSpacing: '0.02em' }}>
+          Consensus-Driven Intelligence Platform
+        </p>
+
+        <div
+          style={{
+            background: 'rgba(255, 255, 255, 0.01)',
+            border: '1px solid rgba(255, 255, 255, 0.04)',
+            borderRadius: '16px',
+            padding: '16px',
+            marginBottom: '28px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '4px',
+          }}
+        >
+          {steps.map((step, idx) => {
+            const isActive = !step.done && (idx === 0 || steps[idx - 1].done);
+            const isDone = step.done;
+            const statusClass = isDone ? 'done' : isActive ? 'active' : 'pending';
+
+            return (
+              <div key={idx} className={`step-row ${statusClass}`}>
+                <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '20px', height: '20px' }}>
+                  {isDone ? (
+                    <span style={{ color: '#10b981', fontWeight: 'bold', fontSize: '1rem' }}>✓</span>
+                  ) : isActive ? (
+                    <div
+                      style={{
+                        width: '12px',
+                        height: '12px',
+                        borderRadius: '50%',
+                        border: '2px solid #3b82f6',
+                        borderTopColor: 'transparent',
+                        animation: 'spin 1s linear infinite',
+                      }}
+                    />
+                  ) : (
+                    <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'rgba(255, 255, 255, 0.15)' }} />
+                  )}
+                </div>
+                <div style={{ flex: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                  {step.label}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 500 }}>
+            <span>{activeStep ? `${activeStep.label}...` : 'Analysis complete!'}</span>
+            <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{progressPct}%</span>
+          </div>
+          <div style={{ width: '100%', height: '6px', borderRadius: '3px', background: 'rgba(255, 255, 255, 0.05)', overflow: 'hidden' }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${progressPct}%`,
+                background: 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
+                borderRadius: '3px',
+                transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: '0 0 10px rgba(59, 130, 246, 0.5)',
+              }}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

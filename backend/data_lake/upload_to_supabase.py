@@ -29,7 +29,7 @@ DEFAULT_BATCH_SIZE = 50
 
 def _get_vector_backend():
     """Instantiate the appropriate vector backend from env vars."""
-    backend_type = os.environ.get("VECTOR_BACKEND", "chroma").lower()
+    backend_type = os.environ.get("VECTOR_BACKEND", "supabase").lower()
     if backend_type == "supabase":
         url = os.environ.get("SUPABASE_URL", "")
         key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")

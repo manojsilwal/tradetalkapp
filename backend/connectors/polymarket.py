@@ -108,6 +108,11 @@ class PolymarketConnector(DataConnector):
                 and any(term.lower() in combined_text for term in index_terms)
             )
 
+            if is_sector:
+                sector_blacklist = ["spacex", "anthropic", "bitcoin", "ethereum", "crypto", "cryptocurrency", "nasdaq private", "private market", "npm price", "solana", "dogecoin"]
+                if any(bl_term in combined_text for bl_term in sector_blacklist):
+                    is_sector = False
+
             if not is_direct and not is_sector:
                 continue
 

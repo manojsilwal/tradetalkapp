@@ -19,16 +19,13 @@ test.describe('Global Macro Dashboard', () => {
     await expect(page.getByTestId('macro-consumer-spending-chart')).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId('macro-cash-reserves-chart')).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId('macro-regime-impact-matrix')).toBeVisible({ timeout: 30000 });
-    await expect(page.getByTestId('macro-capital-flows')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId('macro-flow-section')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId('global-markets-chart')).toBeVisible({ timeout: 30000 });
 
     // Validate chart renderers produced SVG output.
     await expect(page.locator('[data-testid="macro-consumer-spending-chart"] svg').first()).toBeVisible();
     await expect(page.locator('[data-testid="macro-cash-reserves-chart"] svg').first()).toBeVisible();
-
-    // Ensure at least one capital flow tile and value change badge rendered.
-    const cards = page.locator('[data-testid^="macro-flow-"]:not([data-testid$="-change"])');
-    await expect(cards.first()).toBeVisible();
-    const changes = page.locator('[data-testid^="macro-flow-"][data-testid$="-change"]');
-    await expect(changes.first()).toBeVisible();
+    await expect(page.locator('[data-testid="global-markets-chart"] svg').first()).toBeVisible({ timeout: 30000 });
   });
+
 });

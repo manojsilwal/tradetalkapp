@@ -137,6 +137,8 @@ class ChatMessageRequest(BaseModel):
     session_id: str = Field(..., min_length=8)
     message: str = Field(..., min_length=1, max_length=12000)
     history: list = Field(default_factory=list)
+    page_context: Optional[str] = Field(None, max_length=500)
+
 
 class ChatRefreshRequest(BaseModel):
     session_id: str = Field(..., min_length=8)
@@ -280,7 +282,12 @@ async def chat_send_message(
         knowledge_store, sess, body.message.strip(), user_ctx=user_ctx
     )
     full_system = fresh_prompt + rag_block
+    # Append page context if the client sent it (app-level assistant panel)
+    if body.page_context and body.page_context.strip():
+        pc = body.page_context.strip()[:400]
+        full_system += f"\n\n[App context: {pc}]\n"
     memory_ok = bool(uid and sess.user_id and sess.user_id == uid)
+
     if memory_ok:
         mem_hits = agent_memory.search_memory(
             knowledge_store, uid, body.message.strip(), n_results=4
@@ -389,7 +396,8 @@ async def chat_send_message(
                 short_float = info.get("shortPercentOfFloat")
                 name = info.get("shortName") or info.get("longName") or sym
                 beta = info.get("beta")
-                dividend_yield = info.get("dividendYield")
+                from ..connectors.base import clean_dividend_yield
+                dividend_yield_pct = clean_dividend_yield(info.get("dividendYield"))
 
                 # Format all fields
                 def fmt_num(n, prefix="$", suffix="", decimals=2):
@@ -418,8 +426,8 @@ async def chat_send_message(
                 ]
                 if short_float:
                     lines.append(f"- Short Float: {short_float*100:.1f}%")
-                if dividend_yield:
-                    lines.append(f"- Dividend Yield: {dividend_yield*100:.2f}%")
+                if dividend_yield_pct > 0:
+                    lines.append(f"- Dividend Yield: {dividend_yield_pct:.2f}%")
 
                 return "\n".join(lines)
 

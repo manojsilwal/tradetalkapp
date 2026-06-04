@@ -181,6 +181,20 @@ class LedgerBackend(ABC):
         decision_id: str = "",
     ) -> None: ...
 
+    @abstractmethod
+    def log_llm_call(
+        self,
+        *,
+        timestamp: float,
+        query_brief: str,
+        llm_used: str,
+        cost: float,
+        time_taken: float,
+    ) -> None: ...
+
+    @abstractmethod
+    def list_llm_calls(self, limit: int = 100) -> List[Dict[str, Any]]: ...
+
     # ── read API (used by grader + replay) ───────────────────────────────
 
     @abstractmethod
@@ -448,6 +462,61 @@ class SQLiteLedgerBackend(LedgerBackend):
                 resource_name, code, e,
             )
 
+    def log_llm_call(
+        self,
+        *,
+        timestamp: float,
+        query_brief: str,
+        llm_used: str,
+        cost: float,
+        time_taken: float,
+    ) -> None:
+        try:
+            with self._write_lock:
+                conn = self._conn()
+                conn.execute(
+                    """INSERT INTO llm_api_calls
+                       (timestamp, query_brief, llm_used, cost, time_taken)
+                       VALUES (?,?,?,?,?)""",
+                    (
+                        float(timestamp),
+                        query_brief or "",
+                        llm_used or "",
+                        float(cost),
+                        float(time_taken),
+                    ),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.warning(
+                "[DecisionLedger] log_llm_call failed: %s", e
+            )
+
+    def list_llm_calls(self, limit: int = 100) -> List[Dict[str, Any]]:
+        try:
+            conn = self._conn()
+            rows = conn.execute(
+                """SELECT * FROM llm_api_calls
+                   ORDER BY timestamp DESC LIMIT ?""",
+                (int(limit),),
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "timestamp": float(row["timestamp"]),
+                    "query_brief": row["query_brief"],
+                    "llm_used": row["llm_used"],
+                    "cost": float(row["cost"]),
+                    "time_taken": float(row["time_taken"]),
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.warning(
+                "[DecisionLedger] list_llm_calls failed: %s", e
+            )
+            return []
+
     # ── read API ────────────────────────────────────────────────────────
 
     @staticmethod
@@ -575,6 +644,20 @@ class NullLedgerBackend(LedgerBackend):
 
     def record_violation(self, **_kw: Any) -> None:
         return None
+
+    def log_llm_call(
+        self,
+        *,
+        timestamp: float,
+        query_brief: str,
+        llm_used: str,
+        cost: float,
+        time_taken: float,
+    ) -> None:
+        return None
+
+    def list_llm_calls(self, limit: int = 100) -> List[Dict[str, Any]]:
+        return []
 
     def get_decision(self, decision_id: str) -> Optional[DecisionEvent]:
         return None
@@ -732,6 +815,45 @@ class SupabaseLedgerBackend(LedgerBackend):
             logger.warning(
                 "[DecisionLedger][supabase] record_violation failed: %s", e
             )
+
+    def log_llm_call(
+        self,
+        *,
+        timestamp: float,
+        query_brief: str,
+        llm_used: str,
+        cost: float,
+        time_taken: float,
+    ) -> None:
+        try:
+            payload = {
+                "timestamp": float(timestamp),
+                "query_brief": query_brief or "",
+                "llm_used": llm_used or "",
+                "cost": float(cost),
+                "time_taken": float(time_taken),
+            }
+            self._client.table("llm_api_calls").insert(payload).execute()
+        except Exception as e:
+            logger.warning(
+                "[DecisionLedger][supabase] log_llm_call failed: %s", e
+            )
+
+    def list_llm_calls(self, limit: int = 100) -> List[Dict[str, Any]]:
+        try:
+            res = (
+                self._client.table("llm_api_calls")
+                .select("*")
+                .order("timestamp", desc=True)
+                .limit(int(limit))
+                .execute()
+            )
+            return getattr(res, "data", None) or []
+        except Exception as e:
+            logger.warning(
+                "[DecisionLedger][supabase] list_llm_calls failed: %s", e
+            )
+            return []
 
     # ── reads ─────────────────────────────────────────────────────────
 
@@ -1126,3 +1248,59 @@ def install_contract_validator_sink() -> None:
         logger.warning(
             "[DecisionLedger] install_contract_validator_sink failed: %s", e
         )
+
+
+def log_llm_api_call(
+    prompt_text: str,
+    model: str,
+    latency: float,
+    response_text: Optional[str] = None,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> None:
+    """Log an LLM API call details to the decisions DB, calculating estimated cost."""
+    # 1. Clean prompt text to query brief (120 chars)
+    cleaned = " ".join((prompt_text or "").split())
+    if len(cleaned) > 120:
+        query_brief = cleaned[:117] + "..."
+    else:
+        query_brief = cleaned
+
+    # 2. Token counts fallback
+    if not prompt_tokens and prompt_text:
+        prompt_tokens = max(1, int(len(prompt_text) / 4))
+    if not completion_tokens and response_text:
+        completion_tokens = max(1, int(len(response_text) / 4))
+
+    # 3. Cost calculation
+    # Rates per token (using 1M pricing)
+    # Default: $0.15/1M in, $0.60/1M out
+    in_rate = 0.00000015
+    out_rate = 0.00000060
+
+    model_lower = (model or "").lower()
+    if "gemini-3.5-flash" in model_lower or "flash" in model_lower:
+        # $0.075 / 1M in, $0.30 / 1M out
+        in_rate = 0.000000075
+        out_rate = 0.00000030
+    elif "kimi" in model_lower or "moonshot" in model_lower:
+        # $0.15 / 1M in, $0.60 / 1M out
+        in_rate = 0.00000015
+        out_rate = 0.00000060
+    elif "deepseek" in model_lower:
+        # $0.14 / 1M in, $0.28 / 1M out
+        in_rate = 0.00000014
+        out_rate = 0.00000028
+
+    cost = (prompt_tokens * in_rate) + (completion_tokens * out_rate)
+
+    try:
+        get_ledger().log_llm_call(
+            timestamp=time.time(),
+            query_brief=query_brief,
+            llm_used=model or "unknown",
+            cost=cost,
+            time_taken=latency,
+        )
+    except Exception as e:
+        logger.debug("[DecisionLedger] log_llm_api_call failed: %s", e)

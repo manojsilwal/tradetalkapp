@@ -96,6 +96,10 @@ def _fetch_kalshi_events(
                 title = (ev.get("title") or "").lower()
                 is_direct = any(kw.lower() in title for kw in company_keywords)
                 is_sector = not is_direct and any(t.lower() in title for t in index_terms)
+                if is_sector:
+                    sector_blacklist = ["spacex", "anthropic", "bitcoin", "ethereum", "crypto", "cryptocurrency", "nasdaq private", "private market", "npm price", "solana", "dogecoin"]
+                    if any(bl_term in title for bl_term in sector_blacklist):
+                        is_sector = False
                 if is_direct or is_sector:
                     mapped = _map_event(ev, relevance_type="direct" if is_direct else "sector")
                     _add(mapped)
@@ -114,6 +118,10 @@ def _fetch_kalshi_events(
                 blob = ((m.get("title") or "") + " " + (m.get("question") or "")).lower()
                 is_direct = any(kw.lower() in blob for kw in company_keywords)
                 is_sector = not is_direct and any(t.lower() in blob for t in index_terms)
+                if is_sector:
+                    sector_blacklist = ["spacex", "anthropic", "bitcoin", "ethereum", "crypto", "cryptocurrency", "nasdaq private", "private market", "npm price", "solana", "dogecoin"]
+                    if any(bl_term in blob for bl_term in sector_blacklist):
+                        is_sector = False
                 if is_direct or is_sector:
                     mapped = _map_market(m, relevance_type="direct" if is_direct else "sector")
                     _add(mapped)

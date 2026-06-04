@@ -328,6 +328,15 @@ export default function BacktestUI() {
   const [showExamples, setShowExamples] = useState(false);
   const loadingWatchdogRef = useRef(null);
 
+  // Sync page context for the app-level assistant
+  useEffect(() => {
+    window.__tt_page_context__ = {
+      ...(window.__tt_page_context__ || {}),
+      page: 'strategy lab (backtest)',
+      extra: presetId ? `preset: ${presetId}` : strategyText ? `strategy: ${strategyText.slice(0, 80)}` : null,
+    };
+  }, [presetId, strategyText]);
+
   useEffect(() => {
     if (!loading) {
       if (loadingWatchdogRef.current) {

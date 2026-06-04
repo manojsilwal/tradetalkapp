@@ -858,11 +858,13 @@ class LLMClient:
                             max_tokens=LLM_MAX_TOKENS,
                         )
 
+                    start_time = time.time()
                     completion, err = sync_failover_execute(
                         clients,
                         _call_role,
                         exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
                     )
+                    latency = time.time() - start_time
                     if completion is not None:
                         content = (completion.choices[0].message.content or "").strip()
                         if not content:
@@ -872,6 +874,26 @@ class LLMClient:
                                 model,
                             )
                             break
+
+                        prompt_tokens = 0
+                        completion_tokens = 0
+                        try:
+                            if hasattr(completion, "usage") and completion.usage:
+                                prompt_tokens = getattr(completion.usage, "prompt_tokens", 0) or 0
+                                completion_tokens = getattr(completion.usage, "completion_tokens", 0) or 0
+                        except Exception:
+                            pass
+
+                        from .decision_ledger import log_llm_api_call
+                        log_llm_api_call(
+                            prompt_text=f"{system}\n{prompt}" if system else prompt,
+                            model=model,
+                            latency=latency,
+                            response_text=content,
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                        )
+
                         parsed = self._parse_json_response(content, role)
                         parsed = self._enforce_contract(
                             parsed,
@@ -1294,14 +1316,34 @@ class LLMClient:
                             max_tokens=min(900, LLM_MAX_TOKENS),
                         )
 
+                    start_time = time.time()
                     completion, err = sync_failover_execute(
                         clients,
                         _call_plain,
                         exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
                     )
+                    latency = time.time() - start_time
                     if completion is not None:
                         out = (completion.choices[0].message.content or "").strip()
                         if len(out) > 40:
+                            prompt_tokens = 0
+                            completion_tokens = 0
+                            try:
+                                if hasattr(completion, "usage") and completion.usage:
+                                    prompt_tokens = getattr(completion.usage, "prompt_tokens", 0) or 0
+                                    completion_tokens = getattr(completion.usage, "completion_tokens", 0) or 0
+                            except Exception:
+                                pass
+
+                            from .decision_ledger import log_llm_api_call
+                            log_llm_api_call(
+                                prompt_text=f"{system}\n{user}" if system else user,
+                                model=model,
+                                latency=latency,
+                                response_text=out,
+                                prompt_tokens=prompt_tokens,
+                                completion_tokens=completion_tokens,
+                            )
                             return out
                         break
                     if err is not None and is_openrouter_rate_limit_error(err) and attempt == 0:
@@ -1456,6 +1498,8 @@ class LLMClient:
                                 if tools:
                                     kwargs["tools"] = tools
 
+                                accumulated_response = []
+                                start_time = time.time()
                                 async with self._sem_for_current_loop():
                                     stream = await async_client.chat.completions.create(**kwargs)
 
@@ -1478,9 +1522,18 @@ class LLMClient:
 
                                     ch = getattr(delta, "content", None)
                                     if ch:
+                                        accumulated_response.append(ch)
                                         yield ch
 
                                 stream_ok = True
+                                latency = time.time() - start_time
+                                from .decision_ledger import log_llm_api_call
+                                log_llm_api_call(
+                                    prompt_text=str(msgs[-1].get("content") or ""),
+                                    model=phase_model,
+                                    latency=latency,
+                                    response_text=f"Tool call: {tool_name}" if is_tool_call else "".join(accumulated_response),
+                                )
                                 break
                             except Exception as e:
                                 if not is_openrouter_rate_limit_error(e):

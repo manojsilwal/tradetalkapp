@@ -426,8 +426,8 @@ def _metric(
         return float(v) * 100 if v else None
 
     if metric == "dividend_yield":
-        v = info.get("dividendYield")
-        return float(v) * 100 if v else None
+        from .connectors.base import clean_dividend_yield
+        return clean_dividend_yield(info.get("dividendYield"))
 
     if metric == "gross_margins":
         v = info.get("grossMargins")

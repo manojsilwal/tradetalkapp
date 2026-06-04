@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+from .base import clean_dividend_yield
+
 
 async def fetch_debate_data(ticker: str) -> dict:
     """
@@ -131,7 +133,7 @@ def _enrich_fundamentals(ticker: str, info: Dict[str, Any], base: Dict[str, Any]
             "free_cashflow": info.get("freeCashflow"),
             "revenue_growth": round(float(info.get("revenueGrowth") or 0.0) * 100, 2),
             "gross_margins": round(float(info.get("grossMargins") or 0.0) * 100, 2),
-            "dividend_yield": round(float(info.get("dividendYield") or 0.0) * 100, 2),
+            "dividend_yield": round(clean_dividend_yield(info.get("dividendYield")), 2),
             "sector": info.get("sector", "Unknown"),
             "industry": info.get("industry", "Unknown"),
             "company_name": info.get("longName", ticker.upper()),

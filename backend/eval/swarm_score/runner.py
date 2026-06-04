@@ -133,21 +133,12 @@ def _load_configs(configs_dir: Path) -> dict[str, dict[str, Any]]:
     return out
 
 
-def run_swarm_score(
-    *,
-    repo_root: Path,
-    mode: str = "fixture",
-    write_outputs: bool = True,
-) -> dict[str, Any]:
-    now = utc_now()
-    timestamp = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    run_id = make_run_id(now)
-
-    datasets_dir = repo_root / "evals" / "datasets"
-    configs_dir = repo_root / "evals" / "configs"
-    missing_inputs: list[str] = []
-    skipped_tests: list[dict[str, str]] = []
-
+def _load_evaluation_datasets(
+    datasets_dir: Path,
+    mode: str,
+    missing_inputs: list[str],
+    skipped_tests: list[dict[str, str]],
+) -> list[dict[str, Any]]:
     all_rows: list[dict[str, Any]] = []
     for name in REQUIRED_DATASETS:
         path = datasets_dir / name
@@ -157,12 +148,15 @@ def run_swarm_score(
             continue
         if mode == "fixture":
             all_rows.extend(_load_jsonl(path))
+    return all_rows
 
-    configs = _load_configs(configs_dir)
-    for name in REQUIRED_CONFIGS:
-        if name.replace(".yaml", "") not in configs:
-            missing_inputs.append(f"Missing config: /evals/configs/{name}")
 
+def _evaluate_variants(
+    configs: dict[str, dict[str, Any]],
+    mode: str,
+    all_rows: list[dict[str, Any]],
+    skipped_tests: list[dict[str, str]],
+) -> tuple[dict[str, VariantMetrics], dict[str, float | None], list[VariantScore]]:
     variant_metrics: dict[str, VariantMetrics] = {}
     score_map: dict[str, float | None] = {}
     variant_rows = []
@@ -194,6 +188,12 @@ def run_swarm_score(
         score_map[key] = aes
         variant_rows.append(to_variant_score(merged, aes))
 
+    return variant_metrics, score_map, variant_rows
+
+
+def _evaluate_winner(
+    score_map: dict[str, float | None],
+) -> tuple[str, float | None]:
     production_aes = score_map.get("production_swarm")
     winner_key = "production_swarm"
     winner_aes = production_aes
@@ -203,6 +203,63 @@ def run_swarm_score(
         if winner_aes is None or aes > winner_aes:
             winner_key = key
             winner_aes = aes
+    return winner_key, winner_aes
+
+
+def _generate_recommendations(
+    candidate_beats: bool,
+    winner_key: str,
+    ablations: list[ComponentAblationResult],
+) -> list[str]:
+    recommendations: list[str] = []
+    if candidate_beats:
+        recommendations.append(f"Shadow deploy {VARIANT_NAME_MAP.get(winner_key, winner_key)} and monitor real traffic.")
+    else:
+        recommendations.append("Keep production swarm as baseline until a candidate clearly wins.")
+    for row in ablations:
+        if row.recommendation in {"Remove or redesign", "Disable by default", "Make conditional"}:
+            recommendations.append(f"{row.component}: {row.recommendation}.")
+    if not recommendations:
+        recommendations.append("No immediate architecture changes recommended.")
+    return recommendations
+
+
+def run_swarm_score(
+    *,
+    repo_root: Path,
+    mode: str = "fixture",
+    write_outputs: bool = True,
+) -> dict[str, Any]:
+    now = utc_now()
+    timestamp = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    run_id = make_run_id(now)
+
+    datasets_dir = repo_root / "evals" / "datasets"
+    configs_dir = repo_root / "evals" / "configs"
+    missing_inputs: list[str] = []
+    skipped_tests: list[dict[str, str]] = []
+
+    all_rows = _load_evaluation_datasets(
+        datasets_dir=datasets_dir,
+        mode=mode,
+        missing_inputs=missing_inputs,
+        skipped_tests=skipped_tests,
+    )
+
+    configs = _load_configs(configs_dir)
+    for name in REQUIRED_CONFIGS:
+        if name.replace(".yaml", "") not in configs:
+            missing_inputs.append(f"Missing config: /evals/configs/{name}")
+
+    variant_metrics, score_map, variant_rows = _evaluate_variants(
+        configs=configs,
+        mode=mode,
+        all_rows=all_rows,
+        skipped_tests=skipped_tests,
+    )
+
+    production_aes = score_map.get("production_swarm")
+    winner_key, winner_aes = _evaluate_winner(score_map)
 
     candidate_beats = (
         winner_key != "production_swarm"
@@ -262,16 +319,11 @@ def run_swarm_score(
         else:
             ablations.append(build_ablation_row(label, production_aes, without))
 
-    recommendations: list[str] = []
-    if candidate_beats:
-        recommendations.append(f"Shadow deploy {VARIANT_NAME_MAP.get(winner_key, winner_key)} and monitor real traffic.")
-    else:
-        recommendations.append("Keep production swarm as baseline until a candidate clearly wins.")
-    for row in ablations:
-        if row.recommendation in {"Remove or redesign", "Disable by default", "Make conditional"}:
-            recommendations.append(f"{row.component}: {row.recommendation}.")
-    if not recommendations:
-        recommendations.append("No immediate architecture changes recommended.")
+    recommendations = _generate_recommendations(
+        candidate_beats=candidate_beats,
+        winner_key=winner_key,
+        ablations=ablations,
+    )
 
     report_rel_path = f"/evals/reports/{timestamp[:10]}/weekly_swarm_effectiveness_report.md"
     dashboard_summary = build_dashboard_summary(

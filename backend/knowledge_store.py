@@ -36,7 +36,7 @@ def _coerce_stored_embedding(raw):
 
 # Persist to disk so knowledge survives restarts
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "./chroma_db")
-VECTOR_BACKEND = os.environ.get("VECTOR_BACKEND", "chroma").lower()
+VECTOR_BACKEND = os.environ.get("VECTOR_BACKEND", "supabase").lower()
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
@@ -356,20 +356,56 @@ class KnowledgeStore:
             count = col.count()
             if count == 0:
                 return []
-            actual_n = min(n_results, count)
-            oversample = min(actual_n * 3, count)
-            rows = col.query(query_texts=[query_text], n_results=oversample, where=filters)
-            docs = rows.get("documents", [[]])[0]
-            metas = rows.get("metadatas", [[]])[0]
-            ranked = sorted(
-                zip(docs, metas),
-                key=lambda x: (
-                    float(x[1].get("effectiveness_score", 0.5)),
-                    x[1].get("date", ""),
-                ),
-                reverse=True,
-            )
-            return [d for d, _ in ranked[:actual_n]]
+
+            def _get_ranked_docs(q_text: str, limit: int) -> list[str]:
+                oversample = min(limit * 3, count)
+                rows = col.query(query_texts=[q_text], n_results=oversample, where=filters)
+                docs = rows.get("documents", [[]])[0]
+                metas = rows.get("metadatas", [[]])[0]
+                
+                words = q_text.split()
+                ticker = words[-2].lower() if len(words) >= 3 else None
+
+                def sort_key(x):
+                    doc, meta = x
+                    is_specific = 1 if (ticker and ticker in doc.lower()) else 0
+                    return (
+                        is_specific,
+                        float(meta.get("effectiveness_score", 0.5)),
+                        meta.get("date", ""),
+                    )
+
+                ranked = sorted(
+                    zip(docs, metas),
+                    key=sort_key,
+                    reverse=True,
+                )
+                seen = set()
+                result_docs = []
+                for d, _ in ranked:
+                    d_strip = d.strip()
+                    if d_strip and d_strip not in seen:
+                        seen.add(d_strip)
+                        result_docs.append(d_strip)
+                return result_docs
+
+            results = _get_ranked_docs(query_text, n_results)
+
+            # Fallback if we didn't find enough specific results
+            if len(results) < n_results:
+                words = query_text.split()
+                if len(words) >= 3:
+                    regime = words[-1]
+                    factor = " ".join(words[:-2])
+                    fallback_query = f"{factor} {regime}"
+                    fallback_results = _get_ranked_docs(fallback_query, n_results - len(results))
+                    for fr in fallback_results:
+                        if fr not in results:
+                            results.append(fr)
+                            if len(results) >= n_results:
+                                break
+
+            return results[:n_results]
         except Exception as e:
             logger.warning(f"[KnowledgeStore] query_swarm_reflections failed: {e}")
             return []

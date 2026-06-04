@@ -246,8 +246,11 @@ class ShortInterestAgentPair(AgentPair):
                 signal = 0
                 rationale = f"Initial Analysis: SIR at {sir}% is below squeeze threshold."
         else:
-            rationale = f"Revised Analysis: High SIR confirmed ({sir}%). Additionally, days to cover sits at {dtc}, confirming squeeze pressure and difficulty to exit."
             signal = classify_short_interest(data, cfg, revision=True)
+            if signal == 1:
+                rationale = f"Revised Analysis: High SIR confirmed ({sir}%). Additionally, days to cover sits at {dtc}, confirming squeeze pressure and difficulty to exit."
+            else:
+                rationale = f"Revised Analysis: Low/moderate SIR confirmed ({sir}%). Days to cover sits at {dtc}, confirming no squeeze pressure."
 
         return {"rationale": rationale, "trading_signal": signal}
 

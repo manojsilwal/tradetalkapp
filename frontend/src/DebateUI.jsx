@@ -271,6 +271,15 @@ export default function DebateUI() {
   const verdictRef = useRef(null);
   const { recentDebates, addDebate } = useAnalysisHistory();
 
+  // Sync page context for the app-level assistant
+  useEffect(() => {
+    window.__tt_page_context__ = {
+      ...(window.__tt_page_context__ || {}),
+      page: 'AI debate',
+      ticker: ticker || null,
+    };
+  }, [ticker]);
+
   const handleCopyMarkdown = (data) => {
     if (!data) return;
     const md = `## AI Debate: ${ticker}\n\n` +

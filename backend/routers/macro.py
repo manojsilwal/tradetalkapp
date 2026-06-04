@@ -35,6 +35,7 @@ async def get_macro_data():
         sectors=data["sectors"],
         consumer_spending=data["consumer_spending"],
         capital_flows=data["capital_flows"],
+        reconciled_capital_flows=data.get("reconciled_capital_flows"),
         cash_reserves=data["cash_reserves"],
         usd_broad_index=ind.get("usd_broad_index"),
         usd_index_change_5d_pct=ind.get("usd_index_change_5d_pct"),
@@ -347,3 +348,87 @@ async def supply_chain_sector_sankey_timeline(
 ):
     from ..supply_chain.sector_rollup import sector_sankey_timeline
     return {"year_from": year_from, "year_to": year_to, "snapshots": sector_sankey_timeline(year_from, year_to)}
+
+
+@router.get("/macro/global-markets")
+async def get_global_markets(
+    period: str = Query("3M"),
+    tickers: str = Query("SPY,TLT"),
+):
+    """
+    Returns normalized price series for a list of tickers over a specified period.
+    """
+    import yfinance as yf
+    import pandas as pd
+    import asyncio
+
+    # Parse tickers
+    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    if not ticker_list:
+        return {"dates": [], "series": {}}
+
+    # Map period
+    # Supported periods: 1W, 1M, 3M, 6M, YTD, 1Y
+    period_map = {
+        "1W": ("1mo", 7),
+        "1M": ("1mo", None),
+        "3M": ("3mo", None),
+        "6M": ("6mo", None),
+        "YTD": ("ytd", None),
+        "1Y": ("1y", None),
+    }
+    
+    yf_period, limit = period_map.get(period.upper(), ("3mo", None))
+
+    def _fetch():
+        try:
+            # We fetch daily data
+            df = yf.download(ticker_list, period=yf_period, interval="1d", auto_adjust=True)
+            if df.empty or "Close" not in df:
+                return {"dates": [], "series": {}}
+            
+            close_df = df["Close"]
+            if isinstance(close_df, pd.Series):
+                close_df = close_df.to_frame()
+                if len(ticker_list) == 1:
+                    close_df.columns = ticker_list
+
+            if limit is not None:
+                close_df = close_df.iloc[-limit:]
+
+            # Forward fill first, then backward fill to handle any initial NaNs
+            close_df = close_df.ffill().bfill()
+
+            dates = [d.strftime("%Y-%m-%d") for d in close_df.index]
+            series_data = {}
+            for ticker in ticker_list:
+                if ticker in close_df.columns:
+                    col = close_df[ticker]
+                    first_val = None
+                    for val in col:
+                        if not pd.isna(val) and val > 0:
+                            first_val = val
+                            break
+                    
+                    if first_val is not None:
+                        series_data[ticker] = [
+                            round(((float(val) - first_val) / first_val) * 100.0, 4)
+                            if not pd.isna(val) else None
+                            for val in col
+                        ]
+                    else:
+                        series_data[ticker] = [None] * len(dates)
+                else:
+                    series_data[ticker] = [None] * len(dates)
+            
+            return {"dates": dates, "series": series_data}
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error fetching global markets: {e}", exc_info=True)
+            return {"dates": [], "series": {}}
+
+    # Run yfinance blocking calls in a thread pool to avoid blocking the event loop
+    result = await asyncio.to_thread(_fetch)
+    return result
+

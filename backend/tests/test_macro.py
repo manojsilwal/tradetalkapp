@@ -81,5 +81,37 @@ class TestMacroFlowCronRefresh(unittest.TestCase):
         mock_pipe.assert_called_once()
 
 
+
+class TestMacroGlobalMarkets(unittest.TestCase):
+    @patch("yfinance.download")
+    def test_get_global_markets_success(self, mock_download):
+        import pandas as pd
+        # Create a mock DataFrame
+        dates = pd.date_range(start="2026-05-01", periods=3, freq="D")
+        columns = pd.MultiIndex.from_tuples([
+            ("Close", "SPY"),
+            ("Close", "TLT")
+        ])
+        data = [
+            [100.0, 50.0],
+            [105.0, 49.0],
+            [102.0, 51.0]
+        ]
+        mock_df = pd.DataFrame(data, index=dates, columns=columns)
+        mock_download.return_value = mock_df
+
+        with TestClient(app) as client:
+            response = client.get("/macro/global-markets?period=3M&tickers=SPY,TLT")
+        
+        self.assertEqual(response.status_code, 200)
+        res = response.json()
+        self.assertIn("dates", res)
+        self.assertIn("series", res)
+        self.assertEqual(res["dates"], ["2026-05-01", "2026-05-02", "2026-05-03"])
+        self.assertEqual(res["series"]["SPY"], [0.0, 5.0, 2.0])
+        self.assertEqual(res["series"]["TLT"], [0.0, -2.0, 2.0])
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -105,6 +105,46 @@ async def get_deep_refresh_status_route() -> Dict[str, Any]:
     return get_deep_refresh_status()
 
 
+@router.get("/screener", dependencies=[Depends(_rl)])
+async def get_screener_results(
+    trade_date: Optional[str] = Query(
+        None,
+        description="ISO date YYYY-MM-DD; default = latest in database",
+    ),
+) -> Dict[str, Any]:
+    td: Optional[date] = None
+    if trade_date:
+        td = date.fromisoformat(trade_date)
+    else:
+        from ..daily_brief import get_latest_trade_date
+        td = get_latest_trade_date() or date.today()
+        
+    from ..daily_brief import load_snapshot
+    snapshot = load_snapshot(td)
+    if not snapshot or not snapshot.get("rows"):
+        return {
+            "trade_date": td.isoformat() if isinstance(td, date) else str(td),
+            "source": "none",
+            "verdict_tier": "deep",
+            "rows": [],
+            "message": "No pre-scored daily snapshot found for this session.",
+        }
+
+    rows = snapshot["rows"]
+    buy_sell_signals = [
+        r for r in rows
+        if r.get("verdict") in ("Strong Buy", "Buy", "Sell")
+    ]
+    
+    return {
+        "trade_date": snapshot.get("trade_date"),
+        "source": snapshot.get("source"),
+        "verdict_tier": snapshot.get("verdict_tier"),
+        "updated_at": snapshot.get("updated_at"),
+        "rows": buy_sell_signals,
+    }
+
+
 @router.post("/materialize", dependencies=[Depends(_rl)])
 async def post_materialize_heuristic(
     trade_date: Optional[str] = Query(None),

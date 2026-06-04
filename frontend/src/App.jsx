@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, MessageCircle, Scale, Sparkles, Newspaper } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -9,6 +9,7 @@ import { useAuth } from './AuthContext'
 import { AUTH_REQUIRED } from './authConfig'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
 import { API_BASE_URL, getToken } from './api'
+import AppAssistantPanel from './AppAssistantPanel'
 
 const ConsumerUI = React.lazy(() => import('./UnifiedDashboardUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
@@ -27,6 +28,7 @@ const LearningPathUI = React.lazy(() => import('./LearningPathUI'))
 const ChatUI = React.lazy(() => import('./ChatUI'))
 const ScorecardUI = React.lazy(() => import('./ScorecardUI'))
 const DailyBriefUI = React.lazy(() => import('./DailyBriefUI'))
+const LlmCallsUI = React.lazy(() => import('./LlmCallsUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when auth is required and user is not signed in.
@@ -54,6 +56,7 @@ const ROUTE_TO_KEY = {
     '/portfolio': 'portfolio',
     '/learning': 'learning',
     '/chat': 'chat',
+    '/llm-calls': 'llm_calls',
 }
 
 function App() {
@@ -76,6 +79,17 @@ function App() {
     }, [])
 
     const activeTab = ROUTE_TO_KEY[location.pathname] || 'consumer'
+
+    // Keep page context in sync so AppAssistantPanel knows which page the user is on
+    React.useEffect(() => {
+        const pageName = location.pathname === '/'
+            ? 'dashboard'
+            : location.pathname.replace('/', '').replace('-', ' ')
+        window.__tt_page_context__ = {
+            ...(window.__tt_page_context__ || {}),
+            page: pageName,
+        }
+    }, [location.pathname])
 
     const handleXpGained = useCallback((progress) => {
         if (!progress) return
@@ -203,15 +217,6 @@ function App() {
                     </button>
 
                     <button
-                        className={`nav-btn ${activeTab === 'chat' ? 'active' : ''}`}
-                        onClick={() => { navigate('/chat'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/chat' ? 'page' : undefined}
-                    >
-                        <MessageCircle size={20} />
-                        <span>Assistant</span>
-                    </button>
-
-                    <button
                         className={`nav-btn ${activeTab === 'debate' ? 'active' : ''}`}
                         onClick={() => { navigate('/debate'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/debate' ? 'page' : undefined}
@@ -289,6 +294,15 @@ function App() {
                     </button>
 
                     <button
+                        className={`nav-btn ${activeTab === 'llm_calls' ? 'active' : ''}`}
+                        onClick={() => { navigate('/llm-calls'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/llm-calls' ? 'page' : undefined}
+                    >
+                        <Cpu size={20} />
+                        <span>LLM Call Log</span>
+                    </button>
+
+                    <button
                         className={`nav-btn ${activeTab === 'swarm_score' ? 'active' : ''}`}
                         onClick={() => { navigate('/swarm-score'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/swarm-score' ? 'page' : undefined}
@@ -355,6 +369,7 @@ function App() {
                                     <PaperPortfolioUI onXpGained={handleXpGained} />
                                 </GamificationTab>
                             } />
+                            <Route path="/llm-calls" element={<LlmCallsUI />} />
                             <Route path="/learning" element={
                                 <GamificationTab user={user} featureName="Learning Path" featureIcon="📚">
                                     <LearningPathUI onXpGained={handleXpGained} />
@@ -364,6 +379,9 @@ function App() {
                     </Suspense>
                 </div>
             </main>
+
+            {/* App-level persistent assistant panel — always available, survives route changes */}
+            <AppAssistantPanel prefetch={chatPrefetch} />
         </div>
     )
 }

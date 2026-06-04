@@ -1,7 +1,7 @@
 import asyncio
 import yfinance as yf
 from typing import Dict, Any, List, Tuple, Optional
-from .base import DataConnector
+from .base import DataConnector, clean_dividend_yield
 from .debate_data import fetch_debate_data
 from ..paper_portfolio import _classify_market_cap
 
@@ -90,9 +90,7 @@ class InvestorMetricsConnector(DataConnector):
             gross_margin = _num(info.get("grossMargins")) * 100
             op_margin = _num(info.get("operatingMargins")) * 100
             
-            # --- 9. Shareholder Yield (Dividend Yield + Net Buyback Yield) ---
-            dividend_yield = _num(info.get("dividendYield"))
-            dividend_yield_pct = dividend_yield * 100
+            dividend_yield_pct = clean_dividend_yield(info.get("dividendYield"))
             # Approximate buyback yield from share repurchase data
             shares_outstanding = _num(info.get("sharesOutstanding"), 1.0)
             # yfinance doesn't directly expose buyback $ easily; approximate from 

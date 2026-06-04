@@ -21,6 +21,35 @@ function tierLabel(tier) {
   return 'Heuristic'
 }
 
+const CATALYST_LABELS = {
+  symbol_specific: 'Company event',
+  macro_only: 'Macro-driven',
+  no_catalyst: '—',
+}
+function friendlyCatalyst(status) {
+  return CATALYST_LABELS[status] || status || '—'
+}
+
+const CAUSE_LABELS = {
+  sec_filing: 'SEC filing',
+  earnings: 'Earnings',
+  corporate_action: 'Corp. action',
+  news: 'News event',
+  macro_data: 'Macro data',
+  geopolitical: 'Geopolitical',
+  tariff_policy: 'Trade policy',
+  insider_trade: 'Insider activity',
+}
+const STUB_RE = /^\s*[A-Z]{1,5}\s+SEC\s+/i
+function friendlyCause(category, headline) {
+  const hl = (headline || '').trim()
+  if (hl && !STUB_RE.test(hl)) {
+    const words = hl.split(/\s+/).slice(0, 6).join(' ')
+    return words + (hl.split(/\s+/).length > 6 ? '…' : '')
+  }
+  return CAUSE_LABELS[category] || (category ? category.replace(/_/g, ' ') : '—')
+}
+
 function BriefTable({ title, rows, onRowClick }) {
   if (!rows?.length) {
     return (
@@ -67,15 +96,9 @@ function BriefTable({ title, rows, onRowClick }) {
               <td style={td}>${fmtNum(row.close)}</td>
               <td style={td}>{fmtNum(row.relative_volume)}</td>
               <td style={td}>{fmtNum(row.return_zscore_60d)}</td>
-              <td style={td}>{row.catalyst_status || '—'}</td>
-              <td style={{ ...td, maxWidth: 220 }}>
-                <div style={{ fontSize: 11, color: '#cbd5e1' }}>
-                  {row.primary_cause_category || '—'}
-                </div>
-                <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
-                  {(row.primary_cause_headline || '').slice(0, 80)}
-                  {(row.primary_cause_headline || '').length > 80 ? '…' : ''}
-                </div>
+              <td style={td}>{friendlyCatalyst(row.catalyst_status)}</td>
+              <td style={{ ...td, maxWidth: 220, fontSize: 11, color: '#cbd5e1' }}>
+                {friendlyCause(row.primary_cause_category, row.primary_cause_headline)}
               </td>
               <td style={td}>
                 <span style={verdictBadgeStyle(row.verdict)}>{row.verdict}</span>
@@ -84,6 +107,108 @@ function BriefTable({ title, rows, onRowClick }) {
                 )}
               </td>
               <td style={{ ...td, maxWidth: 280, color: '#94a3b8', fontSize: 11 }}>
+                {row.one_line_reason || '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ScreenerTable({ title, rows, preset, onRowClick }) {
+  if (!rows?.length) {
+    return (
+      <p style={{ color: '#94a3b8', fontSize: 13, padding: 24, textAlign: 'center' }}>
+        No actionable {title.toLowerCase()} found for this session.
+      </p>
+    )
+  }
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 960 }}>
+        <thead>
+          <tr style={{ background: 'rgba(15,23,42,0.55)', color: '#e2e8f0' }}>
+            <th style={th}>Symbol</th>
+            <th style={th}>Verdict</th>
+            <th style={th}>Close</th>
+            <th style={th}>Move</th>
+            
+            {preset === 'growth' && (
+              <>
+                <th style={th}>Revenue Growth</th>
+                <th style={th}>EPS Growth</th>
+              </>
+            )}
+            {preset === 'income' && (
+              <>
+                <th style={th}>Dividend Yield</th>
+                <th style={th}>Debt / Equity</th>
+              </>
+            )}
+            {preset === 'value' && (
+              <>
+                <th style={th}>PE vs 5y Avg</th>
+                <th style={th}>Scorecard Ratio</th>
+              </>
+            )}
+            
+            <th style={th}>Beta</th>
+            <th style={th}>Catalyst Category</th>
+            <th style={th}>Rationale</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr
+              key={row.symbol}
+              style={{
+                borderBottom: '1px solid rgba(148,163,184,0.08)',
+                cursor: 'pointer',
+                ...verdictRowStyle(row.verdict),
+              }}
+              onClick={() => onRowClick(row.symbol)}
+              title={`Analyze ${row.symbol}`}
+            >
+              <td style={{ ...td, fontWeight: 800, color: '#f8fafc' }}>{row.symbol}</td>
+              <td style={td}>
+                <span style={verdictBadgeStyle(row.verdict)}>{row.verdict}</span>
+              </td>
+              <td style={td}>${fmtNum(row.close)}</td>
+              <td style={{ ...td, color: row.daily_return_pct >= 0 ? '#10b981' : '#f87171' }}>
+                {fmtPct(row.daily_return_pct)}
+              </td>
+              
+              {preset === 'growth' && (
+                <>
+                  <td style={{ ...td, fontWeight: 600, color: '#a78bfa' }}>
+                    {fmtPct(row.revenue_growth_pct)}
+                  </td>
+                  <td style={td}>{fmtPct(row.eps_growth_pct)}</td>
+                </>
+              )}
+              {preset === 'income' && (
+                <>
+                  <td style={{ ...td, fontWeight: 600, color: '#60a5fa' }}>
+                    {fmtPct(row.dividend_yield_pct)}
+                  </td>
+                  <td style={td}>{fmtNum(row.debt_to_equity)}x</td>
+                </>
+              )}
+              {preset === 'value' && (
+                <>
+                  <td style={{ ...td, fontWeight: 600, color: '#fbbf24' }}>
+                    {row.valuation_pct_vs_fair != null ? `${row.valuation_pct_vs_fair > 0 ? '+' : ''}${fmtNum(row.valuation_pct_vs_fair)}%` : '—'}
+                  </td>
+                  <td style={td}>{fmtNum(row.scorecard_ratio, 3)}</td>
+                </>
+              )}
+              
+              <td style={td}>{fmtNum(row.beta, 2)}</td>
+              <td style={td}>{friendlyCause(row.primary_cause_category, row.primary_cause_headline)}</td>
+              <td style={{ ...td, maxWidth: 300, color: '#cbd5e1', fontSize: 11 }}>
                 {row.one_line_reason || '—'}
               </td>
             </tr>
@@ -112,6 +237,8 @@ const btnStyle = {
 export default function DailyBriefUI() {
   const navigate = useNavigate()
   const [data, setData] = useState(null)
+  const [screenerData, setScreenerData] = useState(null)
+  const [activeTab, setActiveTab] = useState('movers')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [deepStatus, setDeepStatus] = useState(null)
@@ -123,9 +250,24 @@ export default function DailyBriefUI() {
     setError(null)
     try {
       const q = refresh ? '?refresh=true' : ''
-      const json = await apiFetch(`${API_BASE_URL}/daily-brief${q}`)
-      setData(json)
-      if (json.deep_refresh) setDeepStatus(json.deep_refresh)
+      const briefJson = await apiFetch(`${API_BASE_URL}/daily-brief${q}`)
+      setData(briefJson)
+      if (briefJson.deep_refresh) setDeepStatus(briefJson.deep_refresh)
+
+      try {
+        const screenerJson = await apiFetch(`${API_BASE_URL}/daily-brief/screener`)
+        if (screenerJson && screenerJson.rows && screenerJson.rows.length > 0) {
+          setScreenerData(screenerJson)
+          setActiveTab('growth')
+        } else {
+          setScreenerData(null)
+          setActiveTab('movers')
+        }
+      } catch (screenerErr) {
+        console.warn('Failed to load screener data, falling back to movers', screenerErr)
+        setScreenerData(null)
+        setActiveTab('movers')
+      }
     } catch (e) {
       setError(e.message || 'Failed to load daily brief')
     } finally {
@@ -240,7 +382,7 @@ export default function DailyBriefUI() {
             }}
           >
             {deepRunning ? <Loader2 size={16} className="spinner" /> : <Brain size={16} />}
-            Deep refresh
+            Actionable Companies
           </button>
         </div>
       </header>
@@ -290,21 +432,104 @@ export default function DailyBriefUI() {
             </section>
           )}
 
-          <section className="glass-panel" style={{ padding: 16, marginBottom: 20 }}>
-            <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <TrendingDown size={18} color="#f87171" />
-              Top 20 losers
-            </h2>
-            <BriefTable title="Losers" rows={data.losers} onRowClick={goAnalyze} />
-          </section>
+          {/* Screener Tabs */}
+          {screenerData && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20, borderBottom: '1px solid rgba(148,163,184,0.1)', paddingBottom: 12 }}>
+              {[
+                { id: 'growth', label: 'Growth Buy/Sells' },
+                { id: 'value', label: 'Value Buy/Sells' },
+                { id: 'income', label: 'Income Buy/Sells' },
+                { id: 'movers', label: 'Movers (Daily)' },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setActiveTab(t.id)}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 8,
+                    border: '1px solid',
+                    borderColor: activeTab === t.id ? 'rgba(167,139,250,0.45)' : 'transparent',
+                    background: activeTab === t.id ? 'rgba(124,58,237,0.15)' : 'transparent',
+                    color: activeTab === t.id ? '#e9d5ff' : '#94a3b8',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    fontWeight: activeTab === t.id ? 700 : 500,
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
 
-          <section className="glass-panel" style={{ padding: 16 }}>
-            <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <TrendingUp size={18} color="#10b981" />
-              Top 10 gainers
-            </h2>
-            <BriefTable title="Gainers" rows={data.gainers} onRowClick={goAnalyze} />
-          </section>
+          {(activeTab === 'movers' || !screenerData) ? (
+            <>
+              <section className="glass-panel" style={{ padding: 16, marginBottom: 20 }}>
+                <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <TrendingDown size={18} color="#f87171" />
+                  Top 20 losers
+                </h2>
+                <BriefTable title="Losers" rows={data.losers} onRowClick={goAnalyze} />
+              </section>
+
+              <section className="glass-panel" style={{ padding: 16 }}>
+                <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <TrendingUp size={18} color="#10b981" />
+                  Top 10 gainers
+                </h2>
+                <BriefTable title="Gainers" rows={data.gainers} onRowClick={goAnalyze} />
+              </section>
+            </>
+          ) : (
+            <>
+              {activeTab === 'growth' && (
+                <section className="glass-panel" style={{ padding: 16 }}>
+                  <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Sparkles size={18} color="#a78bfa" />
+                    Growth Actionable Signals (Revenue Growth ≥ 15%)
+                  </h2>
+                  <ScreenerTable
+                    title="Growth Signals"
+                    rows={screenerData.rows.filter((r) => r.preset === 'growth')}
+                    preset="growth"
+                    onRowClick={goAnalyze}
+                  />
+                </section>
+              )}
+
+              {activeTab === 'value' && (
+                <section className="glass-panel" style={{ padding: 16 }}>
+                  <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Brain size={18} color="#fbbf24" />
+                    Value Actionable Signals (Standard/Value Leaders)
+                  </h2>
+                  <ScreenerTable
+                    title="Value Signals"
+                    rows={screenerData.rows.filter((r) => r.preset === 'value')}
+                    preset="value"
+                    onRowClick={goAnalyze}
+                  />
+                </section>
+              )}
+
+              {activeTab === 'income' && (
+                <section className="glass-panel" style={{ padding: 16 }}>
+                  <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <TrendingUp size={18} color="#60a5fa" />
+                    Income Actionable Signals (Dividend Yield ≥ 3%)
+                  </h2>
+                  <ScreenerTable
+                    title="Income Signals"
+                    rows={screenerData.rows.filter((r) => r.preset === 'income')}
+                    preset="income"
+                    onRowClick={goAnalyze}
+                  />
+                </section>
+              )}
+            </>
+          )}
         </>
       )}
     </div>

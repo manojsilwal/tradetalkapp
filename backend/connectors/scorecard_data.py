@@ -123,7 +123,9 @@ def _sync_fetch(ticker: str) -> ScorecardData:
     else:
         missing.append("analyst_pt")
 
-    dividend_yield_pct = _as_float(info.get("dividendYield"), default=0.0) * 100.0
+    from .base import clean_dividend_yield
+    dividend_yield_pct = clean_dividend_yield(info.get("dividendYield"))
+
 
     # yfinance debtToEquity is reported as a percentage (e.g. 146 means 1.46x).
     # Normalize to ratio scale so Step 2d math matches the methodology (NEE D/E = 1.46).

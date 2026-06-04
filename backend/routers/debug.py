@@ -192,3 +192,10 @@ async def learning_health_endpoint():
             "errors": pipeline_status.get("errors"),
         },
     }
+
+
+@router.get("/llm/calls")
+async def get_llm_calls(limit: int = Query(100, description="Max calls to return")):
+    """Get the history of recent LLM API calls."""
+    from ..decision_ledger import get_ledger
+    return get_ledger().list_llm_calls(limit=limit)

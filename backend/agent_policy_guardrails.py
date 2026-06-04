@@ -208,7 +208,7 @@ def validate_startup_secrets() -> list[str]:
     if not openrouter_key:
         issues.append("OPENROUTER_API_KEY is not set — LLM inference will use rule-based fallback.")
 
-    vector_backend = os.environ.get("VECTOR_BACKEND", "chroma").strip().lower()
+    vector_backend = os.environ.get("VECTOR_BACKEND", "supabase").strip().lower()
     if vector_backend == "supabase" and not os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip():
         issues.append("VECTOR_BACKEND=supabase requires SUPABASE_SERVICE_ROLE_KEY.")
 

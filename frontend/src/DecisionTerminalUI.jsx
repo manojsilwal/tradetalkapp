@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useId } from 'react';
+import React, { useState, useCallback, useMemo, useId, useEffect } from 'react';
 import {
   Loader2,
   HelpCircle,
@@ -140,6 +140,16 @@ export default function DecisionTerminalUI() {
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Sync page context so the app-level assistant knows which ticker is being analyzed
+  useEffect(() => {
+    window.__tt_page_context__ = {
+      ...(window.__tt_page_context__ || {}),
+      page: 'decision terminal',
+      ticker: ticker || null,
+    };
+  }, [ticker]);
+
 
   const searchUpper = ticker.trim().toUpperCase();
   const isValid = !searchUpper || SP500_TICKERS.includes(searchUpper);

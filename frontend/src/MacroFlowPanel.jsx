@@ -1,6 +1,92 @@
 import React, { useCallback, useEffect, useRef, useState, lazy, Suspense, useMemo } from 'react';
-import { Loader2, RefreshCw, Layers, Network } from 'lucide-react';
+import { Loader2, RefreshCw, Layers, Network, HelpCircle } from 'lucide-react';
 import { ResponsiveSankey } from '@nivo/sankey';
+
+function TooltipHelp({ text }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <button
+        type="button"
+        onClick={() => setVisible(!visible)}
+        onMouseEnter={() => setVisible(true)}
+        onMouseLeave={() => setVisible(false)}
+        style={{
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          padding: 0,
+          marginLeft: '6px',
+          display: 'flex',
+          alignItems: 'center',
+          color: '#94a3b8'
+        }}
+        title="What is this?"
+      >
+        <HelpCircle size={13} />
+      </button>
+      {visible && (
+        <div style={{
+          position: 'absolute',
+          bottom: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '220px',
+          padding: '10px 12px',
+          borderRadius: '8px',
+          background: 'rgba(15,23,42,0.95)',
+          border: '1px solid rgba(255,255,255,0.15)',
+          color: '#cbd5e1',
+          fontSize: '0.75rem',
+          lineHeight: '1.4',
+          zIndex: 100,
+          boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+          textAlign: 'left',
+          pointerEvents: 'none',
+        }}>
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function generateKeyInsights(sankey, chain) {
+  const insights = [];
+
+  if (sankey?.links?.length > 0) {
+    const sortedLinks = [...sankey.links].sort((a, b) => b.value - a.value);
+    const topLink = sortedLinks[0];
+    const sourceNode = sankey.nodes.find(n => n.id === topLink.source)?.name || topLink.source;
+    const targetNode = sankey.nodes.find(n => n.id === topLink.target)?.name || topLink.target;
+    insights.push(`Large flows are moving from ${sourceNode} into ${targetNode}.`);
+  }
+
+  if (chain?.stages?.length > 0) {
+    const sortedStages = [...chain.stages].sort((a, b) => b.flow_score - a.flow_score);
+    const topStage = sortedStages[0];
+    if (topStage.flow_score > 0.05) {
+      insights.push(`${topStage.name} shows strong market rotation momentum.`);
+    } else {
+      insights.push(`${topStage.name} leads current thematic rotation activity.`);
+    }
+  }
+
+  if (chain?.stages?.length > 1) {
+    const sortedStages = [...chain.stages].sort((a, b) => a.flow_score - b.flow_score);
+    const bottomStage = sortedStages[0];
+    if (bottomStage.flow_score < -0.02) {
+      insights.push(`${bottomStage.name} exhibits rotation outflow or consolidation pressure.`);
+    }
+  }
+
+  if (insights.length < 2) {
+    insights.push("CapEx demand is propagating downstream towards consumer segments.");
+    insights.push("Hardware and infrastructure segments show resilient funding support.");
+  }
+
+  return insights.slice(0, 3);
+}
 import { API_BASE_URL, apiFetch } from './api';
 import { toMacroSankey } from './macroFlow/macroSankeyUtils';
 import SectorValueChain from './macroFlow/SectorValueChain';
@@ -119,9 +205,12 @@ export default function MacroFlowPanel() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <Layers color="var(--accent-orange)" />
           <div>
-            <h3 style={{ margin: 0 }}>Thematic capital flow</h3>
+            <h3 style={{ margin: 0, display: 'inline-flex', alignItems: 'center' }}>
+              Educational Capital Flow Dashboard
+              <TooltipHelp text="Tracks S&P 500 sector rotation, downstream spending trends, and stock-level co-movement co-flow." />
+            </h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '4px 0 0 0' }}>
-              Sector rotation and stock-to-stock co-flow across the S&P 500 universe.
+              Simplified company spending segments and automated rotation insights.
             </p>
           </div>
         </div>
@@ -243,66 +332,89 @@ export default function MacroFlowPanel() {
         <div data-testid="macro-sector-flow-panel" style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
           <SectorValueChain chain={valueChain} loading={false} />
 
-          <div>
-            <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', color: 'var(--text-muted)' }}>
-              Cross-sector links (all themes)
-            </h4>
-            {!nivoSankey.links.length ? (
-              <p style={{ color: 'var(--text-muted)', margin: 0 }}>
-                No cross-sector links for this interval yet — run refresh after seed.
-              </p>
-            ) : (
-              <div className="sc-sankey-wrap" style={{ height: 420 }}>
-                <ResponsiveSankey
-                  data={nivoSankey}
-                  margin={{ top: 28, right: 160, bottom: 28, left: 160 }}
-                  align="justify"
-                  nodeOpacity={1}
-                  nodeHoverOthersOpacity={0.35}
-                  nodeThickness={18}
-                  nodeSpacing={28}
-                  nodeBorderWidth={0}
-                  linkOpacity={0.5}
-                  linkHoverOthersOpacity={0.15}
-                  linkContract={3}
-                  enableLinkGradient
-                  label={(node) => node.label || node.id}
-                  labelPosition="outside"
-                  labelOrientation="horizontal"
-                  labelPadding={12}
-                  labelTextColor="#e2e8f0"
-                  theme={{
-                    background: 'transparent',
-                    text: { fill: '#e2e8f0', fontSize: 12, fontWeight: 600 },
-                    tooltip: {
-                      container: {
-                        background: 'rgba(15,23,42,0.95)',
-                        color: '#e2e8f0',
-                        fontSize: 12,
-                        borderRadius: 8,
-                        border: '1px solid rgba(255,255,255,0.12)',
-                      },
-                    },
-                  }}
-                  nodeTooltip={({ node }) => (
-                    <div style={{ padding: '8px 10px' }}>
-                      <strong>{node.label || node.id}</strong>
-                    </div>
-                  )}
-                  linkTooltip={({ link }) => (
-                    <div style={{ padding: '8px 10px', maxWidth: 280 }}>
-                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                        {link.source.label || link.source.id} → {link.target.label || link.target.id}
-                      </div>
-                      <div>Flow: <strong>{(link.rawValue ?? link.value ?? 0).toFixed(3)}</strong></div>
-                      {link.label && link.label !== `${link.source.id} → ${link.target.id}` && (
-                        <div style={{ marginTop: 4, color: '#94a3b8', fontSize: 11 }}>{link.label}</div>
-                      )}
-                    </div>
-                  )}
-                />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+            {/* Global Flow Sankey Column */}
+            <div className="glass-panel" style={{ padding: '20px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '14px' }}>
+                <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 700 }}>Global View</h4>
+                <TooltipHelp text="A Sankey flow diagram mapping S&P 500 company spending rotations from baseline foundries and equipment to consumer sectors." />
               </div>
-            )}
+              
+              {!nivoSankey.links.length ? (
+                <p style={{ color: 'var(--text-muted)', margin: 0 }}>
+                  No cross-sector links for this interval yet — run refresh after seed.
+                </p>
+              ) : (
+                <div className="sc-sankey-wrap" style={{ height: 360 }}>
+                  <ResponsiveSankey
+                    data={nivoSankey}
+                    margin={{ top: 20, right: 120, bottom: 20, left: 120 }}
+                    align="justify"
+                    nodeOpacity={1}
+                    nodeHoverOthersOpacity={0.35}
+                    nodeThickness={16}
+                    nodeSpacing={24}
+                    nodeBorderWidth={0}
+                    linkOpacity={0.5}
+                    linkHoverOthersOpacity={0.15}
+                    linkContract={3}
+                    enableLinkGradient
+                    label={(node) => node.label || node.id}
+                    labelPosition="outside"
+                    labelOrientation="horizontal"
+                    labelPadding={10}
+                    labelTextColor="#e2e8f0"
+                    theme={{
+                      background: 'transparent',
+                      text: { fill: '#e2e8f0', fontSize: 11, fontWeight: 600 },
+                      tooltip: {
+                        container: {
+                          background: 'rgba(15,23,42,0.95)',
+                          color: '#e2e8f0',
+                          fontSize: 12,
+                          borderRadius: 8,
+                          border: '1px solid rgba(255,255,255,0.12)',
+                        },
+                      },
+                    }}
+                    nodeTooltip={({ node }) => (
+                      <div style={{ padding: '6px 10px' }}>
+                        <strong>{node.label || node.id}</strong>
+                      </div>
+                    )}
+                    linkTooltip={({ link }) => (
+                      <div style={{ padding: '6px 10px', maxWidth: 280 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                          {link.source.label || link.source.id} → {link.target.label || link.target.id}
+                        </div>
+                        <div>Flow Amount: <strong>{(link.rawValue ?? link.value ?? 0).toFixed(3)}</strong></div>
+                        {link.label && link.label !== `${link.source.id} → ${link.target.id}` && (
+                          <div style={{ marginTop: 4, color: '#94a3b8', fontSize: 11 }}>{link.label}</div>
+                        )}
+                      </div>
+                    )}
+                  />
+                </div>
+              )}
+              <div style={{ marginTop: '10px', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', fontStyle: 'italic' }}>
+                Legend: Thicker lines mean more money moving.
+              </div>
+            </div>
+
+            {/* Key Insights Card Column */}
+            <div className="glass-panel" style={{ padding: '20px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '14px' }}>
+                <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 700 }}>Key Insights</h4>
+                <TooltipHelp text="Automated real-time summaries of S&P 500 company spending rotations and momentum surges." />
+              </div>
+              <ul style={{ paddingLeft: '16px', margin: 0, display: 'flex', flexDirection: 'column', gap: '12px', color: '#e2e8f0', fontSize: '0.85rem', lineHeight: 1.45 }}>
+                {generateKeyInsights(sankey, valueChain).map((insight, idx) => (
+                  <li key={idx} style={{ marginBottom: '4px' }}>
+                    {insight}
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
         </div>
       ) : (

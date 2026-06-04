@@ -168,6 +168,12 @@ TABLE_SCHEMAS = {
         {"name": "scorecard_ratio", "type": "FLOAT64", "mode": "NULLABLE"},
         {"name": "valuation_pct_vs_fair", "type": "FLOAT64", "mode": "NULLABLE"},
         {"name": "is_compelling", "type": "BOOL", "mode": "NULLABLE"},
+        {"name": "preset", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "revenue_growth_pct", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "eps_growth_pct", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "dividend_yield_pct", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "debt_to_equity", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "beta", "type": "FLOAT64", "mode": "NULLABLE"},
         {"name": "updated_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
     ],
 }

@@ -45,3 +45,4 @@ playwright-report/
 
 # Pytest-generated video artifacts (do not commit)
 backend/static/videos/pytest_smoke/
+.vercel

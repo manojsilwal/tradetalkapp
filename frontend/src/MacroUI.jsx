@@ -1,10 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { Globe, TrendingUp, DollarSign, Loader2, AlertTriangle, ArrowRightLeft, Wallet } from 'lucide-react';
+import { Globe, TrendingUp, DollarSign, Loader2, AlertTriangle, ArrowRightLeft, Wallet, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { API_BASE_URL, apiFetch } from './api';
 import MacroFlowPanel from './MacroFlowPanel';
+import GlobalMarketsChart from './GlobalMarketsChart';
 
-/** Static regime-to-sector themes (educational heuristic; not a live signal). */
+const FLOW_PERIODS = [
+    { id: '1d', label: '1D' },
+    { id: '1w', label: '1W' },
+    { id: '1m', label: '1M' },
+    { id: '1y', label: '1Y' },
+    { id: '5y', label: '5Y' },
+];
+
+function formatCompactUSD(value) {
+    const abs = Math.abs(value);
+    const sign = value >= 0 ? '+' : '-';
+    if (abs >= 1_000_000_000_000) return `${sign}$${(abs / 1_000_000_000_000).toFixed(2)}T`;
+    if (abs >= 1_000_000_000) return `${sign}$${(abs / 1_000_000_000).toFixed(2)}B`;
+    if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+    if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(0)}K`;
+    return `${sign}$${abs.toFixed(0)}`;
+}
+
+function formatLargeUSD(value) {
+    const abs = Math.abs(value);
+    if (abs >= 1_000_000_000_000) return `$${(abs / 1_000_000_000_000).toFixed(2)}T`;
+    if (abs >= 1_000_000_000) return `$${(abs / 1_000_000_000).toFixed(1)}B`;
+    if (abs >= 1_000_000) return `$${(abs / 1_000_000).toFixed(0)}M`;
+    return `$${abs.toLocaleString()}`;
+}
+
+
 const REGIME_IMPACT_MATRIX = {
     BULL_NORMAL: {
         favor: 'Technology, Discretionary, Industrials',
@@ -32,6 +59,8 @@ export default function MacroUI() {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [flowPeriod, setFlowPeriod] = useState('1d');
+    const [showExplanation, setShowExplanation] = useState(false);
 
     useEffect(() => {
         const fetchMacro = async () => {
@@ -234,40 +263,9 @@ export default function MacroUI() {
 
             </div>
 
-            {/* Global Capital Flows (Phase 10) */}
-            <div className="dash-card glass-panel fade-in" data-testid="macro-capital-flows" style={{ padding: '24px', borderRadius: '16px', marginTop: '24px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                    <ArrowRightLeft color="var(--accent-blue)" />
-                    <div>
-                        <h3 style={{ margin: 0 }}>Global Capital Flows</h3>
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '4px 0 0 0' }}>Track money moving out of the USA and into Japan or Safe Havens.</p>
-                    </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-                    {data.capital_flows.map(flow => (
-                        <div key={flow.asset} data-testid={`macro-flow-${flow.asset}`} style={{
-                            padding: '16px',
-                            background: 'rgba(255,255,255,0.03)',
-                            borderRadius: '12px',
-                            borderLeft: `4px solid ${flow.daily_change_pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}`
-                        }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                                <div>
-                                    <strong style={{ display: 'block', fontSize: '1.2rem' }}>{flow.asset}</strong>
-                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{flow.category}</span>
-                                </div>
-                                <div data-testid={`macro-flow-${flow.asset}-change`} style={{
-                                    color: flow.daily_change_pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)',
-                                    fontWeight: 'bold',
-                                    fontSize: '1.3rem'
-                                }}>
-                                    {flow.daily_change_pct > 0 ? '+' : ''}{flow.daily_change_pct}%
-                                </div>
-                            </div>
-                            <div style={{ fontSize: '0.9rem' }}>{flow.name}</div>
-                        </div>
-                    ))}
-                </div>
+            {/* ── Global Markets Normalized Performance chart ─────────────── */}
+            <div style={{ marginTop: '24px' }}>
+                <GlobalMarketsChart />
             </div>
 
         </div>

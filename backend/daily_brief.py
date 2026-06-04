@@ -128,12 +128,10 @@ def _build_one_line_reason(
     *,
     adjustment_note: Optional[str] = None,
 ) -> str:
-    """Explain why the verdict was assigned — never echo raw filing stubs."""
+    """Concise 2–5 word rationale for the verdict."""
     if adjustment_note == "value_spike_override":
-        return "Event-driven spike (deal/news); reassess fair value before selling."
+        return "Event spike, reassess value"
 
-    ret = float(row.get("daily_return_pct") or 0)
-    move = _fmt_move_pct(ret)
     cat_status = row.get("catalyst_status") or "no_catalyst"
     category = (row.get("primary_cause_category") or "").lower()
     headline = (row.get("primary_cause_headline") or "").strip()
@@ -141,67 +139,51 @@ def _build_one_line_reason(
     z_val = float(z) if z is not None else None
     rv = row.get("relative_volume")
     rv_val = float(rv) if rv is not None else None
+    ret = float(row.get("daily_return_pct") or 0)
 
+    # Use substantive headline snippet when available (≤8 words)
     substantive = _substantive_headline(headline)
     if substantive and category in ("news", "earnings"):
-        return substantive
-
-    vol_note = ""
-    if rv_val is not None and rv_val >= 2.0:
-        vol_note = f" on {rv_val:.1f}× relative volume"
-
-    z_note = ""
-    if z_val is not None and abs(z_val) >= 1.8:
-        z_note = f" ({abs(z_val):.1f}σ vs 60d)"
+        words = substantive.split()
+        return " ".join(words[:8])
 
     if bucket == "gainer":
         if verdict == "Strong Buy":
-            if category == "sec_filing" or _headline_is_metadata_stub(headline):
-                return f"{move}{vol_note}{z_note}: company filing aligns with sharp rally — catalyst supports momentum."
-            if category == "corporate_action":
-                return f"{move}{vol_note}: corporate action day; move partly explained by the event."
-            if cat_status == "symbol_specific":
-                return f"{move}{vol_note}{z_note}: symbol-specific catalyst backs strong upside bias."
-            return f"{move}{vol_note}: outsized gain with identifiable catalyst — momentum favors bulls."
-
+            if rv_val and rv_val >= 2.0:
+                return "High-volume catalyst breakout"
+            return "Strong catalyst rally"
         if verdict == "Buy":
-            if category == "sec_filing" or _headline_is_metadata_stub(headline):
-                return f"{move}{vol_note}: filing-day move with company-specific catalyst — constructive bias."
-            if cat_status in ("symbol_specific", "macro_only"):
-                return f"{move}{vol_note}: move supported by a linked catalyst, not pure drift."
-            return f"{move}{vol_note}: moderate gain with supporting context — lean constructive."
-
+            return "Catalyst-supported upside"
         if verdict == "Sell":
-            return "Large gain without catalyst — possible overextension."
-
+            return "Overextended, no catalyst"
+        # Hold
         if substantive:
-            return substantive
+            words = substantive.split()
+            return " ".join(words[:6])
         if cat_status == "no_catalyst":
-            return f"{move}{vol_note}: strong move lacks a clear catalyst — wait for confirmation."
-        return f"{move}{vol_note}: watch whether catalyst follow-through holds."
+            return "Drifting, await catalyst"
+        return "Monitor follow-through"
 
     # loser bucket
     if verdict == "Buy":
-        return f"{move}{z_note or ''}: oversold vs 60-day band — potential mean-reversion setup.".strip()
-
+        if z_val is not None and z_val <= -2.5:
+            return "Deeply oversold, bounce likely"
+        return "Oversold bounce setup"
     if verdict == "Sell":
         if substantive:
-            return substantive
-        return "Negative company-specific catalyst — downside risk elevated."
-
-    if category == "sec_filing" or _headline_is_metadata_stub(headline):
-        return f"{move}{vol_note}{z_note}: filing-day selloff — verify whether news is material.".strip()
-
-    if category == "corporate_action":
-        return f"{move}{vol_note}: corporate action may explain part of the decline."
-
+            words = substantive.split()
+            return " ".join(words[:6])
+        return "Negative catalyst, avoid"
+    # Hold
     if ret <= -6:
-        return f"{move}{z_note or ''}: sharp drawdown — check fundamentals before adding.".strip()
-
-    if substantive:
-        return substantive
-
-    return f"{move}{vol_note or ''}: monitor for stabilization before acting.".strip()
+        return "Sharp drop, watch closely"
+    if category == "corporate_action":
+        return "Corporate action decline"
+    if z_val is not None and abs(z_val) >= 1.8:
+        return "Oversold vs 60-day band"
+    if ret <= -3:
+        return "No clear driver"
+    return "Broad market move"
 
 
 def heuristic_verdict(row: Dict[str, Any], bucket: str) -> Dict[str, str]:
@@ -375,7 +357,14 @@ def _fetch_movers_from_intel(n_losers: int, n_gainers: int) -> List[Dict[str, An
                 "trade_date": today,
                 "close": m.get("price"),
                 "daily_return_pct": m.get("pct"),
-                "catalyst_status": "no_catalyst",
+                "volume": m.get("volume", 0),
+                "relative_volume": m.get("relative_volume", 1.0),
+                "return_zscore_60d": m.get("return_zscore_60d", 0.0),
+                "catalyst_status": m.get("catalyst_status", "no_catalyst"),
+                "primary_cause_category": m.get("primary_cause_category", "none"),
+                "primary_cause_headline": m.get("primary_cause_headline", ""),
+                "primary_cause_weight": m.get("primary_cause_weight", 0.0),
+                "market_regime": m.get("market_regime", "Balanced"),
             }
             rows.append(_normalize_row(raw, bucket, i))
     return rows

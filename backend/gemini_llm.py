@@ -235,10 +235,15 @@ def gemini_simple_completion_sync(
     cheap/fast paths like ``swarm_analyst`` factor checks.
     """
     from google.genai import types
+    import time
+    from .decision_ledger import log_llm_api_call
 
     chosen_model = (model or GEMINI_MODEL).strip() or GEMINI_MODEL
+    start_time = time.time()
+    response_text = ""
 
     def _call() -> str:
+        nonlocal response_text
         client = _genai_client()
         cfg = types.GenerateContentConfig(
             system_instruction=system or None,
@@ -252,7 +257,27 @@ def gemini_simple_completion_sync(
             contents=user,
             config=cfg,
         )
-        return _response_text(response)
+        response_text = _response_text(response)
+
+        prompt_tokens = 0
+        completion_tokens = 0
+        try:
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                prompt_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0) or 0
+                completion_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0) or 0
+        except Exception:
+            pass
+
+        latency = time.time() - start_time
+        log_llm_api_call(
+            prompt_text=f"{system}\n{user}" if system else user,
+            model=chosen_model,
+            latency=latency,
+            response_text=response_text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        return response_text
 
     return _with_llm_guard(_call)
 
@@ -277,6 +302,8 @@ def gemini_chat_turn_result_sync(
     chosen_model = (model or GEMINI_MODEL).strip() or GEMINI_MODEL
 
     def _call() -> Dict[str, Any]:
+        import time
+        from .decision_ledger import log_llm_api_call
         client = _genai_client()
         gen_tools = _openai_tools_to_genai(tools)
         cfg_kwargs: Dict[str, Any] = {
@@ -291,6 +318,7 @@ def gemini_chat_turn_result_sync(
         if not contents:
             return {"ok": False, "error": "empty_messages"}
 
+        start_time = time.time()
         try:
             response = client.models.generate_content(
                 model=chosen_model,
@@ -301,28 +329,57 @@ def gemini_chat_turn_result_sync(
             logger.warning("[GeminiLLM] generate_content failed: %s", e)
             return {"ok": False, "error": str(e)[:500]}
 
+        latency = time.time() - start_time
+        prompt_text = ""
+        if openai_messages:
+            prompt_text = str(openai_messages[-1].get("content") or "")
+
+        prompt_tokens = 0
+        completion_tokens = 0
+        try:
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                prompt_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0) or 0
+                completion_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0) or 0
+        except Exception:
+            pass
+
+        result_text = ""
+        fc = None
         try:
             cand = response.candidates[0]
+            for part in cand.content.parts:
+                fc_part = getattr(part, "function_call", None)
+                if fc_part:
+                    fc = fc_part
+                    result_text = f"Tool call: {getattr(fc, 'name', '')}"
+                    break
+                if getattr(part, "text", None):
+                    result_text = part.text
         except Exception:
-            return {"ok": False, "error": "no_candidates"}
+            pass
 
-        for part in cand.content.parts:
-            fc = getattr(part, "function_call", None)
-            if fc:
-                name = getattr(fc, "name", "") or ""
-                raw_args = getattr(fc, "args", None)
-                try:
-                    if isinstance(raw_args, dict):
-                        args_s = json.dumps(raw_args)
-                    elif raw_args is None:
-                        args_s = "{}"
-                    else:
-                        args_s = json.dumps(dict(raw_args)) if hasattr(raw_args, "keys") else str(raw_args)
-                except Exception:
+        log_llm_api_call(
+            prompt_text=f"{system}\n{prompt_text}" if system else prompt_text,
+            model=chosen_model,
+            latency=latency,
+            response_text=result_text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+
+        if fc:
+            name = getattr(fc, "name", "") or ""
+            raw_args = getattr(fc, "args", None)
+            try:
+                if isinstance(raw_args, dict):
+                    args_s = json.dumps(raw_args)
+                elif raw_args is None:
                     args_s = "{}"
-                return {"ok": True, "kind": "tool", "name": name, "args": args_s}
-            if getattr(part, "text", None):
-                return {"ok": True, "kind": "text", "text": part.text}
+                else:
+                    args_s = json.dumps(dict(raw_args)) if hasattr(raw_args, "keys") else str(raw_args)
+            except Exception:
+                args_s = "{}"
+            return {"ok": True, "kind": "tool", "name": name, "args": args_s}
 
         txt = _response_text(response)
         if txt:
@@ -365,6 +422,8 @@ def gemini_extract_holdings_from_image(
     vision_model = os.environ.get("GEMINI_VISION_MODEL", "").strip() or "gemini-3.5-flash"
 
     def _call() -> str:
+        import time
+        from .decision_ledger import log_llm_api_call
         client = _genai_client()
         parts = [
             types.Part(inline_data=types.Blob(data=image_bytes, mime_type=mt)),
@@ -376,12 +435,33 @@ def gemini_extract_holdings_from_image(
             max_output_tokens=max_tokens,
             response_mime_type="application/json",
         )
+        start_time = time.time()
         response = client.models.generate_content(
             model=vision_model,
             contents=contents,
             config=cfg,
         )
-        return _response_text(response)
+        response_text = _response_text(response)
+        latency = time.time() - start_time
+
+        prompt_tokens = 0
+        completion_tokens = 0
+        try:
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                prompt_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0) or 0
+                completion_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0) or 0
+        except Exception:
+            pass
+
+        log_llm_api_call(
+            prompt_text="[Image Holdings Extraction] " + _HOLDINGS_VISION_INSTRUCTION,
+            model=vision_model,
+            latency=latency,
+            response_text=response_text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        return response_text
 
     return _with_llm_guard(_call)
 

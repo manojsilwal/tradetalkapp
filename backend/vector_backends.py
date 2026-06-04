@@ -208,10 +208,34 @@ class ChromaVectorBackend(VectorBackendBase):
         col = self._col(collection)
         if not col:
             return
-        if embeddings:
-            col.add(documents=documents, metadatas=metadatas, ids=ids, embeddings=embeddings)
-        else:
-            col.add(documents=documents, metadatas=metadatas, ids=ids)
+        try:
+            if embeddings:
+                col.add(documents=documents, metadatas=metadatas, ids=ids, embeddings=embeddings)
+            else:
+                col.add(documents=documents, metadatas=metadatas, ids=ids)
+        except Exception as e:
+            if "does not match collection dimensionality" in str(e):
+                logger.warning(
+                    "[ChromaVectorBackend] Dimension mismatch for collection '%s': %s. "
+                    "Recreating collection to heal mismatch.",
+                    collection,
+                    e,
+                )
+                try:
+                    self._client.delete_collection(name=collection)
+                    self.ensure_collection(collection)
+                    col = self._col(collection)
+                    if col:
+                        if embeddings:
+                            col.add(documents=documents, metadatas=metadatas, ids=ids, embeddings=embeddings)
+                        else:
+                            col.add(documents=documents, metadatas=metadatas, ids=ids)
+                        logger.info("[ChromaVectorBackend] Successfully recreated and populated collection '%s'", collection)
+                except Exception as retry_err:
+                    logger.error("[ChromaVectorBackend] Failed to heal collection '%s': %s", collection, retry_err)
+                    raise retry_err
+            else:
+                raise e
 
     def query(
         self,
@@ -230,13 +254,29 @@ class ChromaVectorBackend(VectorBackendBase):
         params = {"query_texts": [query_text], "n_results": n_results}
         if normalized_where:
             params["where"] = normalized_where
-        result = col.query(**params)
-        return {
-            "documents": result.get("documents", [[]])[0],
-            "metadatas": result.get("metadatas", [[]])[0],
-            "ids": result.get("ids", [[]])[0],
-            "distances": result.get("distances", [[]])[0],
-        }
+        try:
+            result = col.query(**params)
+            return {
+                "documents": result.get("documents", [[]])[0],
+                "metadatas": result.get("metadatas", [[]])[0],
+                "ids": result.get("ids", [[]])[0],
+                "distances": result.get("distances", [[]])[0],
+            }
+        except Exception as e:
+            if "does not match collection dimensionality" in str(e):
+                logger.warning(
+                    "[ChromaVectorBackend] Dimension mismatch for collection '%s' during query: %s. "
+                    "Recreating collection to heal mismatch.",
+                    collection,
+                    e,
+                )
+                try:
+                    self._client.delete_collection(name=collection)
+                    self.ensure_collection(collection)
+                    return {"documents": [], "metadatas": [], "ids": [], "distances": []}
+                except Exception as retry_err:
+                    logger.error("[ChromaVectorBackend] Failed to heal collection '%s' on query: %s", collection, retry_err)
+            raise e
 
     def get(self, collection: str) -> Dict[str, List[Any]]:
         col = self._col(collection)

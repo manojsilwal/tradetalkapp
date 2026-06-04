@@ -119,22 +119,156 @@ def _fast_info_mover_row(sym: str) -> Optional[Dict[str, Any]]:
 
 def _compute_live_movers_parallel() -> Dict[str, Any]:
     """
-    Scan curated universe with parallel fast_info — closer to 'today' than 1d batch bars.
+    Scan curated universe with a single batch download — much faster and doesn't exhaust connections.
     """
+    import yfinance as yf
     syms = _get_sp500_universe()
-    workers = max(4, min(32, int(os.environ.get("MIL_LIVE_MOVERS_WORKERS", "16"))))
     movers: List[Dict[str, Any]] = []
     t0 = time.time()
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {ex.submit(_fast_info_mover_row, s): s for s in syms}
-        for fut in as_completed(futures):
-            try:
-                row = fut.result()
-                if row:
-                    movers.append(row)
-            except Exception:
-                continue
+    try:
+        raw = yf.download(
+            tickers=syms,
+            period="60d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+        close = raw.get("Close")
+        volume = raw.get("Volume")
+        if close is not None and close.shape[0] >= 2:
+            prev_close = close.iloc[-2]
+            last_close = close.iloc[-1]
+            pct_changes = ((last_close - prev_close) / prev_close * 100).dropna()
+            
+            # Compute daily returns for standard deviation and mean over the last 60 days
+            daily_returns = close.pct_change() * 100
+            mean_ret = daily_returns.mean()
+            std_ret = daily_returns.std()
+            
+            # Compute average volume
+            mean_vol = volume.mean() if volume is not None else None
+            last_vol = volume.iloc[-1] if volume is not None else None
+            
+            for sym, pct in pct_changes.items():
+                price = float(last_close.get(sym, 0))
+                if price <= 0:
+                    continue
+                
+                # Z-score of daily returns over 60 days
+                z_val = 0.0
+                sym_std = std_ret.get(sym) if std_ret is not None else None
+                sym_mean = mean_ret.get(sym) if mean_ret is not None else None
+                sym_daily_ret = daily_returns.iloc[-1].get(sym) if not daily_returns.empty else None
+                if sym_std and sym_std > 0 and sym_mean is not None and sym_daily_ret is not None:
+                    z_val = (sym_daily_ret - sym_mean) / sym_std
+                
+                # Relative volume (volume of last day / mean volume of last 60 days)
+                rel_vol = 1.0
+                sym_mean_vol = mean_vol.get(sym) if mean_vol is not None else None
+                sym_last_vol = last_vol.get(sym) if last_vol is not None else None
+                if sym_mean_vol and sym_mean_vol > 0 and sym_last_vol is not None:
+                    rel_vol = sym_last_vol / sym_mean_vol
+                
+                vol_val = int(sym_last_vol) if sym_last_vol is not None else 0
+                
+                movers.append({
+                    "sym": sym,
+                    "price": round(price, 2),
+                    "pct": round(float(pct), 2),
+                    "volume": vol_val,
+                    "relative_volume": round(float(rel_vol), 4),
+                    "return_zscore_60d": round(float(z_val), 4),
+                })
+    except Exception as e:
+        logger.warning("[MarketIntel] live movers batch download failed: %s", e)
+
+    # Fallback to individual fast_info only for a very small set of priority tickers if batch fails
+    if not movers:
+        logger.info("[MarketIntel] falling back to priority tickers fast_info...")
+        priority_syms = [
+            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
+            "JPM", "JNJ", "UNH", "V", "PG", "HD", "MA", "XOM", "CVX",
+            "ABBV", "MRK", "PFE", "WMT",
+        ]
+        for sym in priority_syms:
+            row = _fast_info_mover_row(sym)
+            if row:
+                row.update({
+                    "volume": 0,
+                    "relative_volume": 1.0,
+                    "return_zscore_60d": 0.0,
+                })
+                movers.append(row)
+
     movers.sort(key=lambda x: x["pct"])
+    
+    # Concurrently fetch news headlines for the top 5 losers and top 5 gainers
+    extreme_movers = movers[:5] + list(reversed(movers))[:5]
+    extreme_syms = list({m["sym"] for m in extreme_movers})
+    
+    news_map = {}
+    if extreme_syms:
+        def _get_ticker_news(sym: str) -> tuple[str, Dict[str, Any]]:
+            try:
+                import yfinance as yf
+                ticker = yf.Ticker(sym)
+                news = ticker.news or []
+                if news:
+                    first_article = news[0]
+                    title = first_article.get("title", "")
+                    title_lower = title.lower()
+                    catalyst_keywords = (
+                        "earnings", "dividend", "acquisition", "merger", "fda", "buyback",
+                        "downgrade", "upgrade", "probe", "fraud", "miss", "beat", "ceo", "lawsuit", "guidance",
+                        "regulatory", "investigation", "layoff", "restructur", "bankrupt"
+                    )
+                    has_cat = any(kw in title_lower for kw in catalyst_keywords)
+                    category = "none"
+                    if "earnings" in title_lower or "eps" in title_lower or "beat" in title_lower or "miss" in title_lower:
+                        category = "earnings"
+                    elif "dividend" in title_lower or "buyback" in title_lower:
+                        category = "corporate_action"
+                    elif has_cat:
+                        category = "news"
+                    
+                    return sym, {
+                        "catalyst_status": "symbol_specific" if has_cat else "no_catalyst",
+                        "primary_cause_category": category,
+                        "primary_cause_headline": title,
+                        "primary_cause_weight": 0.8 if has_cat else 0.0
+                    }
+            except Exception:
+                pass
+            return sym, {
+                "catalyst_status": "no_catalyst",
+                "primary_cause_category": "none",
+                "primary_cause_headline": "",
+                "primary_cause_weight": 0.0
+            }
+            
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_sym = {executor.submit(_get_ticker_news, sym): sym for sym in extreme_syms}
+            for future in as_completed(future_to_sym):
+                try:
+                    sym, cat_info = future.result()
+                    news_map[sym] = cat_info
+                except Exception:
+                    pass
+
+    # Update movers with catalyst info and default regime/other fields
+    for m in movers:
+        sym = m["sym"]
+        cat_info = news_map.get(sym, {
+            "catalyst_status": "no_catalyst",
+            "primary_cause_category": "none",
+            "primary_cause_headline": "",
+            "primary_cause_weight": 0.0
+        })
+        m.update(cat_info)
+        m.setdefault("market_regime", "Balanced")
+
     elapsed = time.time() - t0
     logger.info("[MarketIntel] live movers: %d/%d symbols in %.2fs", len(movers), len(syms), elapsed)
     return {
@@ -145,20 +279,24 @@ def _compute_live_movers_parallel() -> Dict[str, Any]:
         "n_ok": len(movers),
         "elapsed_s": round(elapsed, 2),
         "methodology": (
-            "Source: Yahoo Finance `fast_info` (last vs previous close). "
+            "Source: Yahoo Finance batch download (last vs previous close). "
             "May be delayed ~15 minutes vs exchange; not identical to every public 'top losers' table."
         ),
     }
 
 
+
 def get_live_movers_snapshot(force_refresh: bool = False) -> Dict[str, Any]:
     """
     Cached live movers snapshot (TTL default 120s). Thread-safe.
-    Set MIL_LIVE_MOVERS_TTL_SEC to tune freshness vs Yahoo load.
+    Stale-while-revalidate: returns cached/fallback data immediately and
+    revalidates in a background thread to prevent blocking web requests.
     """
     global _live_movers_cache, _live_movers_cache_ts
     ttl = float(os.environ.get("MIL_LIVE_MOVERS_TTL_SEC", "120"))
     now = time.time()
+    
+    # Check if cache is still fresh
     with _live_movers_lock:
         if (
             not force_refresh
@@ -166,10 +304,46 @@ def get_live_movers_snapshot(force_refresh: bool = False) -> Dict[str, Any]:
             and (now - _live_movers_cache_ts) < ttl
         ):
             return _live_movers_cache
-        snap = _compute_live_movers_parallel()
-        _live_movers_cache = snap
-        _live_movers_cache_ts = now
-        return snap
+
+        # If cache is expired or missing, trigger revalidation in background thread
+        # to avoid blocking the HTTP request thread.
+        # We only start one background update at a time.
+        is_updating = getattr(get_live_movers_snapshot, "_is_updating", False)
+        
+        if not is_updating:
+            get_live_movers_snapshot._is_updating = True
+            
+            def _bg_update():
+                try:
+                    logger.info("[MarketIntel] revalidating live movers in background...")
+                    snap = _compute_live_movers_parallel()
+                    with _live_movers_lock:
+                        global _live_movers_cache, _live_movers_cache_ts
+                        _live_movers_cache = snap
+                        _live_movers_cache_ts = time.time()
+                except Exception as ex:
+                    logger.warning("[MarketIntel] background live movers update failed: %s", ex)
+                finally:
+                    get_live_movers_snapshot._is_updating = False
+
+            threading.Thread(target=_bg_update, daemon=True).start()
+
+        # Return cached value if we have one (even if stale)
+        if _live_movers_cache is not None:
+            return _live_movers_cache
+
+        # Otherwise, return fallback from get_intel() immediately
+        intel = get_intel()
+        fallback_snap = {
+            "losers": intel.get("top_losers", []),
+            "gainers": intel.get("top_gainers", []),
+            "computed_at": now,
+            "n_scanned": len(_get_sp500_universe()),
+            "n_ok": len(intel.get("top_losers", [])) + len(intel.get("top_gainers", [])),
+            "elapsed_s": 0.0,
+            "methodology": "Source: Scheduled daily batch (yf.download 1d bars) cached in memory.",
+        }
+        return fallback_snap
 
 
 def format_movers_reply_for_chat(direction: str) -> str:
@@ -394,24 +568,33 @@ def _fetch_movers_and_sectors() -> Dict[str, Any]:
     all_syms = list(set(sp500 + sector_syms))
 
     try:
-        # Single batch request — much faster than 500 individual calls
+        # Single batch request
         raw = yf.download(
             tickers=all_syms,
-            period="2d",
+            period="60d",
             interval="1d",
             auto_adjust=True,
             progress=False,
             threads=True,
         )
 
-        # raw["Close"] is a DataFrame: rows=dates, cols=tickers
-        close = raw["Close"]
-        if close.shape[0] < 2:
+        close = raw.get("Close")
+        volume = raw.get("Volume")
+        if close is None or close.shape[0] < 2:
             raise ValueError("Not enough rows in batch download")
 
         prev_close = close.iloc[-2]
         last_close = close.iloc[-1]
         pct_changes = ((last_close - prev_close) / prev_close * 100).dropna()
+
+        # Compute daily returns for standard deviation and mean over the last 60 days
+        daily_returns = close.pct_change() * 100
+        mean_ret = daily_returns.mean()
+        std_ret = daily_returns.std()
+        
+        # Compute average volume
+        mean_vol = volume.mean() if volume is not None else None
+        last_vol = volume.iloc[-1] if volume is not None else None
 
         movers: List[Dict[str, Any]] = []
         sector_perf: Dict[str, Any] = {}
@@ -420,7 +603,7 @@ def _fetch_movers_and_sectors() -> Dict[str, Any]:
             price = float(last_close.get(sym, 0))
             if price <= 0:
                 continue
-            entry = {"sym": sym, "price": round(price, 2), "pct": round(float(pct), 2)}
+            
             if sym in _SECTOR_ETFS:
                 sector_perf[sym] = {
                     "sym": sym,
@@ -429,9 +612,101 @@ def _fetch_movers_and_sectors() -> Dict[str, Any]:
                     "pct": round(float(pct), 2),
                 }
             else:
+                # Z-score of daily returns over 60 days
+                z_val = 0.0
+                sym_std = std_ret.get(sym) if std_ret is not None else None
+                sym_mean = mean_ret.get(sym) if mean_ret is not None else None
+                sym_daily_ret = daily_returns.iloc[-1].get(sym) if not daily_returns.empty else None
+                if sym_std and sym_std > 0 and sym_mean is not None and sym_daily_ret is not None:
+                    z_val = (sym_daily_ret - sym_mean) / sym_std
+                
+                # Relative volume (volume of last day / mean volume of last 60 days)
+                rel_vol = 1.0
+                sym_mean_vol = mean_vol.get(sym) if mean_vol is not None else None
+                sym_last_vol = last_vol.get(sym) if last_vol is not None else None
+                if sym_mean_vol and sym_mean_vol > 0 and sym_last_vol is not None:
+                    rel_vol = sym_last_vol / sym_mean_vol
+                
+                vol_val = int(sym_last_vol) if sym_last_vol is not None else 0
+                
+                entry = {
+                    "sym": sym,
+                    "price": round(price, 2),
+                    "pct": round(float(pct), 2),
+                    "volume": vol_val,
+                    "relative_volume": round(float(rel_vol), 4),
+                    "return_zscore_60d": round(float(z_val), 4),
+                }
                 movers.append(entry)
 
         movers.sort(key=lambda x: x["pct"])
+        
+        # Concurrently fetch news headlines for the top 5 losers and top 5 gainers
+        extreme_movers = movers[:5] + list(reversed(movers))[:5]
+        extreme_syms = list({m["sym"] for m in extreme_movers})
+        
+        news_map = {}
+        if extreme_syms:
+            def _get_ticker_news(sym: str) -> tuple[str, Dict[str, Any]]:
+                try:
+                    import yfinance as yf
+                    ticker = yf.Ticker(sym)
+                    news = ticker.news or []
+                    if news:
+                        first_article = news[0]
+                        title = first_article.get("title", "")
+                        title_lower = title.lower()
+                        catalyst_keywords = (
+                            "earnings", "dividend", "acquisition", "merger", "fda", "buyback",
+                            "downgrade", "upgrade", "probe", "fraud", "miss", "beat", "ceo", "lawsuit", "guidance",
+                            "regulatory", "investigation", "layoff", "restructur", "bankrupt"
+                        )
+                        has_cat = any(kw in title_lower for kw in catalyst_keywords)
+                        category = "none"
+                        if "earnings" in title_lower or "eps" in title_lower or "beat" in title_lower or "miss" in title_lower:
+                            category = "earnings"
+                        elif "dividend" in title_lower or "buyback" in title_lower:
+                            category = "corporate_action"
+                        elif has_cat:
+                            category = "news"
+                        
+                        return sym, {
+                            "catalyst_status": "symbol_specific" if has_cat else "no_catalyst",
+                            "primary_cause_category": category,
+                            "primary_cause_headline": title,
+                            "primary_cause_weight": 0.8 if has_cat else 0.0
+                        }
+                except Exception:
+                    pass
+                return sym, {
+                    "catalyst_status": "no_catalyst",
+                    "primary_cause_category": "none",
+                    "primary_cause_headline": "",
+                    "primary_cause_weight": 0.0
+                }
+                
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_sym = {executor.submit(_get_ticker_news, sym): sym for sym in extreme_syms}
+                for future in as_completed(future_to_sym):
+                    try:
+                        sym, cat_info = future.result()
+                        news_map[sym] = cat_info
+                    except Exception:
+                        pass
+
+        # Update movers with catalyst info and default regime/other fields
+        for m in movers:
+            sym = m["sym"]
+            cat_info = news_map.get(sym, {
+                "catalyst_status": "no_catalyst",
+                "primary_cause_category": "none",
+                "primary_cause_headline": "",
+                "primary_cause_weight": 0.0
+            })
+            m.update(cat_info)
+            m.setdefault("market_regime", "Balanced")
+
         logger.info("[MarketIntel] batch movers: %d tickers, %d sectors", len(movers), len(sector_perf))
         return {
             "losers": movers[:25],
@@ -441,17 +716,28 @@ def _fetch_movers_and_sectors() -> Dict[str, Any]:
 
     except Exception as e:
         logger.warning("[MarketIntel] batch download failed (%s), falling back to fast_info", e)
-        # Fallback: individual fast_info for a smaller set
         movers = []
         sector_perf = {}
-        for sym in sp500[:100] + sector_syms:  # limit fallback to 100 + sectors
+        for sym in sp500[:100] + sector_syms:
             try:
                 fi = yf.Ticker(sym).fast_info
                 price = fi.get("lastPrice")
                 prev = fi.get("previousClose")
                 if price and prev and prev > 0:
                     pct = (price - prev) / prev * 100
-                    entry = {"sym": sym, "price": round(price, 2), "pct": round(pct, 2)}
+                    entry = {
+                        "sym": sym,
+                        "price": round(price, 2),
+                        "pct": round(pct, 2),
+                        "volume": 0,
+                        "relative_volume": 1.0,
+                        "return_zscore_60d": 0.0,
+                        "catalyst_status": "no_catalyst",
+                        "primary_cause_category": "none",
+                        "primary_cause_headline": "",
+                        "primary_cause_weight": 0.0,
+                        "market_regime": "Balanced",
+                    }
                     if sym in _SECTOR_ETFS:
                         sector_perf[sym] = {"sym": sym, "name": _SECTOR_ETFS[sym],
                                             "price": round(price, 2), "pct": round(pct, 2)}
