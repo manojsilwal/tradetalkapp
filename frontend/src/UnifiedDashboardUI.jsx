@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useId, useEffect, useCallback, useRef } from 'react';
-import { createPortal } from 'react-dom';
+
 import { useSearchParams } from 'react-router-dom';
 import { TrendingUp, Shield, CircleDollarSign, Wallet, PieChart, Scale, CheckCircle2, ArrowUpRight, HelpCircle, Loader2, Search, Zap, CheckCircle, BarChart3, TrendingDown, Target, Activity, ShieldAlert, XCircle } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, LineChart as ReLineChart, Line, Legend } from 'recharts';
@@ -656,8 +656,8 @@ export default function UnifiedDashboardUI() {
             <button
               type="button"
               onClick={() => analyzeTicker(ticker)}
-              disabled={loading || !searchUpper}
-              style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'var(--accent-blue)', color: 'white', fontWeight: 600, cursor: loading || !searchUpper ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: loading || !searchUpper ? 0.55 : 1 }}
+              disabled={loading}
+              style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'var(--accent-blue)', color: 'white', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: loading ? 0.55 : 1 }}
             >
               {loading ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
               Analyze
@@ -666,7 +666,7 @@ export default function UnifiedDashboardUI() {
               <button
                 type="button"
                 onClick={() => analyzeTicker(ticker, true)}
-                disabled={loading || !searchUpper}
+                disabled={loading}
                 style={{
                   padding: '10px 14px',
                   borderRadius: '8px',
@@ -674,11 +674,11 @@ export default function UnifiedDashboardUI() {
                   background: 'rgba(255, 255, 255, 0.05)',
                   color: 'white',
                   fontWeight: 600,
-                  cursor: loading || !searchUpper ? 'not-allowed' : 'pointer',
+                  cursor: loading ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
-                  opacity: loading || !searchUpper ? 0.55 : 1,
+                  opacity: loading ? 0.55 : 1,
                   transition: 'background 0.2s',
                 }}
                 title="Force refresh data"
@@ -1107,9 +1107,8 @@ export default function UnifiedDashboardUI() {
         </section>
       </div>
 
-      {showOverlay && createPortal(
-        <LoadingOverlay steps={steps} progressPct={progressPct} visible={fadeActive} />,
-        document.body
+      {showOverlay && (
+        <LoadingOverlay steps={steps} progressPct={progressPct} visible={fadeActive} />
       )}
 
     </div>
@@ -1219,21 +1218,14 @@ function ParticleWave() {
 function LoadingOverlay({ steps, progressPct, visible }) {
   const activeStep = steps.find((step, idx) => !step.done && (idx === 0 || steps[idx - 1].done));
 
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, []);
-
   return (
     <div
       style={{
-        position: 'fixed',
+        position: 'absolute',
         top: 0,
         left: 0,
-        width: '100vw',
-        height: '100vh',
+        right: 0,
+        bottom: 0,
         backgroundColor: '#06070a',
         zIndex: 9999,
         display: 'flex',
@@ -1243,6 +1235,7 @@ function LoadingOverlay({ steps, progressPct, visible }) {
         opacity: visible ? 1 : 0,
         transition: 'opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
         pointerEvents: visible ? 'all' : 'none',
+        minHeight: '100%',
       }}
     >
       <ParticleWave />
