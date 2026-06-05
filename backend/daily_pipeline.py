@@ -54,11 +54,12 @@ async def run_daily_pipeline(knowledge_store, llm_client=None) -> dict:
 
     # Outcome tracking runs after ingestion so price data is fresh
     try:
-        outcome_result = await _track_swarm_outcomes(knowledge_store, llm_client)
-        summary.update(outcome_result)
+        from .outcome_grader import run_grader_pass
+        grader_result = await run_grader_pass(knowledge_store, llm_client)
+        summary["swarm_outcomes_tracked"] = grader_result.get("total_graded", 0)
     except Exception as e:
         summary["errors"].append(f"swarm_outcomes: {e}")
-        logger.warning(f"[DailyPipeline] swarm outcome tracking failed: {e}")
+        logger.warning(f"[DailyPipeline] outcome grader pass failed: {e}")
 
     knowledge_store.update_pipeline_status(**summary)
 
@@ -212,96 +213,7 @@ async def _ingest_youtube(knowledge_store) -> dict:
     return {"youtube_videos_added": count}
 
 
-async def _track_swarm_outcomes(knowledge_store, llm_client=None) -> dict:
-    """
-    Fetch yesterday's swarm analyses, compare signals to T+1 price change,
-    and write LLM-generated reflections for future learning.
-    """
-    ensure_capability("scheduler", "market_data_read")
-    import yfinance as yf
-    from datetime import timedelta
-
-    col = knowledge_store._safe_col("swarm_history")
-    if not col or col.count() == 0:
-        return {"swarm_outcomes_tracked": 0}
-
-    yesterday = str((datetime.now(timezone.utc) - timedelta(days=1)).date())
-    rows = col.get(include=["documents", "metadatas"])
-    all_metas = rows.get("metadatas", [])
-
-    yesterday_analyses = [m for m in all_metas if m and m.get("date") == yesterday]
-    if not yesterday_analyses:
-        return {"swarm_outcomes_tracked": 0}
-
-    tracked = 0
-    for meta in yesterday_analyses:
-        ticker = meta.get("ticker", "")
-        if not ticker:
-            continue
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(period="5d")
-            if hist.empty or len(hist) < 2:
-                continue
-            price_yesterday = hist["Close"].iloc[-2]
-            price_today = hist["Close"].iloc[-1]
-            price_change_pct = ((price_today - price_yesterday) / price_yesterday) * 100
-
-            signal = int(meta.get("confidence", 0.5) > 0.5)  # simplified
-            verdict = meta.get("verdict", "NEUTRAL")
-            confidence = float(meta.get("confidence", 0.5))
-            regime = meta.get("market_regime", "BULL_NORMAL") if "market_regime" in meta else "BULL_NORMAL"
-
-            was_bullish = "BUY" in verdict.upper() or "STRONG" in verdict.upper()
-            correct = (was_bullish and price_change_pct > 0) or (not was_bullish and price_change_pct <= 0)
-
-            lesson = f"Signal was {'correct' if correct else 'incorrect'} — verdict {verdict} vs {price_change_pct:+.1f}% move."
-            if llm_client:
-                try:
-                    llm_result = await llm_client.generate_swarm_reflection(
-                        ticker, 1 if was_bullish else 0, verdict,
-                        confidence, price_change_pct, regime,
-                    )
-                    lesson = llm_result.get("lesson", lesson)
-                except Exception:
-                    pass
-
-            # RSPL lineage: attribute the reflection primarily to the ORIGINAL
-            # swarm-time versions (carried on swarm_history metadata). Also
-            # capture the version of the reflection-writer prompt active *now*.
-            prompt_versions: dict = {}
-            snapshot_id = ""
-            try:
-                import json as _json
-                raw_versions = meta.get("prompt_versions", "")
-                if raw_versions:
-                    prompt_versions = _json.loads(raw_versions) or {}
-                snapshot_id = meta.get("registry_snapshot_id", "") or ""
-            except Exception:
-                prompt_versions = {}
-            try:
-                from .deps import resource_registry as _rr
-                reflect_ver = _rr.active_version("swarm_reflection_writer")
-                if reflect_ver:
-                    prompt_versions.setdefault("swarm_reflection_writer", reflect_ver)
-            except Exception:
-                pass
-
-            knowledge_store.add_swarm_reflection(
-                ticker=ticker, signal=1 if was_bullish else 0,
-                verdict=verdict, confidence=confidence,
-                price_change_pct=price_change_pct,
-                lesson=lesson, regime=regime, correct=correct,
-                prompt_versions=prompt_versions,
-                registry_snapshot_id=snapshot_id,
-            )
-            tracked += 1
-        except Exception as e:
-            logger.warning(f"[DailyPipeline] outcome tracking for {ticker} failed: {e}")
-            continue
-
-    logger.info(f"[DailyPipeline] Tracked outcomes for {tracked} swarm analyses")
-    return {"swarm_outcomes_tracked": tracked}
+# Legacy _track_swarm_outcomes was removed here (maintainability refactoring — unified with outcome_grader.run_grader_pass).
 
 
 def start_scheduler(knowledge_store, llm_client=None) -> None:
