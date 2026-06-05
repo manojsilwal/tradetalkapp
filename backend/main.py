@@ -227,6 +227,8 @@ async def startup_event():
             raise RuntimeError("Agent policy guardrails startup validation failed. See logs.")
 
     asyncio.create_task(news_scan_loop())
+    from .ingestion_agent import start_ingestion_worker
+    start_ingestion_worker()
     from .daily_pipeline import start_scheduler
     start_scheduler(knowledge_store, llm_client=llm_client)
 

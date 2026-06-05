@@ -1,5 +1,5 @@
 """Knowledge store endpoints — stats, export, pipeline, S&P 500."""
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from fastapi.responses import Response
@@ -133,3 +133,66 @@ async def sp500_ingestion_stats():
         "earnings_memory":               collections.get("earnings_memory", 0),
         "vector_backend":                stats.get("vector_backend", "unknown"),
     }
+
+
+class IngestCandidateRequest(BaseModel):
+    source_type: str
+    symbols: list[str]
+    triggered_by: str
+    raw_payload: Any
+    user_id: Optional[str] = None
+    feed_source: Optional[str] = None
+    as_of_ts: Optional[str] = None
+
+
+@router.post("/ingest/candidate", dependencies=[Depends(require_cron_secret)])
+async def ingest_candidate_api(body: IngestCandidateRequest):
+    """Webhook to ingest a new data candidate asynchronously."""
+    from ..ingestion_agent import emit_ingestion_candidate
+    candidate = await emit_ingestion_candidate(
+        source_type=body.source_type,
+        symbols=body.symbols,
+        triggered_by=body.triggered_by,
+        raw_payload=body.raw_payload,
+        user_id=body.user_id,
+        feed_source=body.feed_source,
+        as_of_ts=body.as_of_ts,
+    )
+    return {"status": "queued", "candidate_id": candidate.candidate_id}
+
+
+@router.get("/retrieve")
+async def retrieve_knowledge_context(
+    query: str = Query(...),
+    symbols: str = Query("", description="Comma-separated ticker list"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    mode: str = Query("semantic", description="semantic | exact"),
+    decision_time: Optional[str] = Query(None),
+):
+    """Retrieve scored, deduplicated knowledge base context (enforcing point-in-time constraints)."""
+    from ..ingestion_agent import retrieveContext
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    date_range = (start_date, end_date) if (start_date and end_date) else None
+    return await retrieveContext(query, sym_list, date_range, mode, decision_time)
+
+
+@router.get("/history/{ticker}")
+async def get_ticker_history(ticker: str, cutoff: Optional[str] = Query(None)):
+    """Retrieve structured ticker price facts up to a point-in-time cutoff."""
+    from ..ingestion_agent import getSymbolHistory
+    return await getSymbolHistory(ticker, cutoff)
+
+
+@router.get("/macro-around")
+async def get_macro_data_around(target_date: str = Query(...)):
+    """Retrieve structured macro releases surrounding a specific date (+/- 5 days)."""
+    from ..ingestion_agent import getMacroAround
+    return await getMacroAround(target_date)
+
+
+@router.get("/flow-snapshot")
+async def get_flow_snapshot_data(target_date: str = Query(...)):
+    """Retrieve capital flow snapshot for a specific date."""
+    from ..ingestion_agent import getFlowSnapshot
+    return await getFlowSnapshot(target_date)

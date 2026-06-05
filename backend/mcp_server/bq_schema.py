@@ -176,6 +176,57 @@ TABLE_SCHEMAS = {
         {"name": "beta", "type": "FLOAT64", "mode": "NULLABLE"},
         {"name": "updated_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
     ],
+    "rag_price_facts": [
+        {"name": "symbol", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "trade_date", "type": "DATE", "mode": "REQUIRED"},
+        {"name": "daily_return_pct", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "return_zscore_60d", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "relative_volume", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "close", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "volume", "type": "INT64", "mode": "NULLABLE"},
+        {"name": "ingested_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
+    ],
+    "rag_macro_facts": [
+        {"name": "release_name", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "release_date", "type": "DATE", "mode": "REQUIRED"},
+        {"name": "actual_value", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "consensus_value", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "prior_value", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "surprise_sign", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "ingested_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
+    ],
+    "rag_flow_snapshots": [
+        {"name": "flow_date", "type": "DATE", "mode": "REQUIRED"},
+        {"name": "opening_capital_total_usd", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "closing_capital_total_usd", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "net_capital_change_usd", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "reconciliation_gap_usd", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "is_reconciled", "type": "BOOL", "mode": "NULLABLE"},
+        {"name": "us_net_increased", "type": "BOOL", "mode": "NULLABLE"},
+        {"name": "tolerance_usd", "type": "FLOAT64", "mode": "NULLABLE"},
+        {"name": "raw_payload_json", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "ingested_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
+    ],
+    "rag_symbol_interest": [
+        {"name": "symbol", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "search_count", "type": "INT64", "mode": "REQUIRED"},
+        {"name": "last_searched", "type": "TIMESTAMP", "mode": "REQUIRED"},
+        {"name": "distinct_users_json", "type": "STRING", "mode": "NULLABLE"},
+    ],
+    "rag_ingestion_log": [
+        {"name": "candidate_id", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "source_type", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "triggered_by", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "symbols", "type": "STRING", "mode": "REPEATED"},
+        {"name": "as_of_ts", "type": "TIMESTAMP", "mode": "REQUIRED"},
+        {"name": "decision", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "decision_reason", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "keep_as", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "raw_payload_ref", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "agent_version", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "model_version", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "created_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
+    ],
 }
 
 PARTITION_CONFIG = {
@@ -190,6 +241,10 @@ PARTITION_CONFIG = {
     "movement_event_links": {"field": "move_date", "type": "DAY"},
     "movement_context_daily": {"field": "trade_date", "type": "DAY"},
     "daily_brief_snapshot": {"field": "trade_date", "type": "DAY"},
+    "rag_price_facts": {"field": "trade_date", "type": "DAY"},
+    "rag_macro_facts": {"field": "release_date", "type": "DAY"},
+    "rag_flow_snapshots": {"field": "flow_date", "type": "DAY"},
+    "rag_ingestion_log": {"field": "as_of_ts", "type": "DAY"},
 }
 
 

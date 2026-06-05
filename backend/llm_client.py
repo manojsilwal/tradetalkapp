@@ -514,6 +514,16 @@ FALLBACK_TEMPLATES = {
         ],
         "confidence_0_1": 0.45,
     },
+    "ingestion_judge": {
+        "keep_as": "discard",
+        "reusability": 0.0,
+        "durability": "ephemeral",
+        "tags": [],
+        "linked_symbols": [],
+        "linked_event": None,
+        "flow_date": None,
+        "one_line_reason": "Default fallback: discard.",
+    },
 }
 
 

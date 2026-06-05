@@ -61,6 +61,7 @@ COLLECTIONS = [
     "pipeline_rag_index",            # BQ pipeline_snapshots indexed for RAG retrieval
     "events_semantic",               # BQ events_curated indexed with semantic embeddings
     "agent_learnings_rag",           # BQ agent_learnings indexed for cross-agent RAG
+    "rag_chunks",                    # Durable Knowledge Layer narrative chunks
 ]
 
 class _CollectionProxy:

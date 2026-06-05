@@ -27,6 +27,30 @@ async def _ensure_macro_flow_snapshot(interval: str) -> None:
 async def get_macro_data():
     """Global Macro Analysis Endpoint."""
     data = await macro_connector.fetch_data()
+    try:
+        from ..ingestion_agent import emit_ingestion_candidate
+        import asyncio
+        asyncio.create_task(
+            emit_ingestion_candidate(
+                source_type="macro_pull",
+                symbols=[],
+                triggered_by="user",
+                raw_payload=data,
+                feed_source="yfinance/fred",
+            )
+        )
+        if data.get("reconciled_capital_flows"):
+            asyncio.create_task(
+                emit_ingestion_candidate(
+                    source_type="capital_flow_pull",
+                    symbols=["SPY", "EFA", "EWJ", "TLT", "GLD", "BIL"],
+                    triggered_by="user",
+                    raw_payload=data.get("reconciled_capital_flows"),
+                    feed_source="capital_flows",
+                )
+            )
+    except Exception:
+        pass
     ind = data["indicators"]
     return MacroDataResponse(
         vix_level=ind["vix_level"],
@@ -58,6 +82,20 @@ async def get_macro_data():
 async def get_investor_metrics(ticker: str):
     """Fetches live fundamental metrics."""
     data = await investor_metrics_connector.fetch_data(ticker=ticker)
+    try:
+        from ..ingestion_agent import emit_ingestion_candidate
+        import asyncio
+        asyncio.create_task(
+            emit_ingestion_candidate(
+                source_type="single_stock_search",
+                symbols=[ticker.upper()],
+                triggered_by="user",
+                raw_payload=data,
+                feed_source="yfinance_metrics",
+            )
+        )
+    except Exception:
+        pass
     if "error" in data:
         return InvestorMetricsResponse(ticker=ticker.upper(), metrics={})
     return InvestorMetricsResponse(

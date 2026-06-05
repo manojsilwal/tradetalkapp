@@ -89,6 +89,20 @@ async def _ingest_price_movements(knowledge_store) -> dict:
             context=mover.get("context", ""),
         )
         count += 1
+        
+    try:
+        from .ingestion_agent import emit_ingestion_candidate
+        symbols_list = [m["ticker"] for m in movers if m.get("ticker")]
+        # Await because we are running in an async pipeline step
+        await emit_ingestion_candidate(
+            source_type="daily_brief",
+            symbols=symbols_list,
+            triggered_by="scheduler",
+            raw_payload={"rows": movers},
+            feed_source="yfinance_movers",
+        )
+    except Exception as e:
+        logger.warning("[IngestionHook] Top movers candidate failed: %s", e)
 
     # Persist to BigQuery permanently (never deleted)
     try:
@@ -136,15 +150,25 @@ async def _ingest_macro_snapshot(knowledge_store) -> dict:
     except Exception as e:
         logger.warning(f"[DailyPipeline] FRED merge failed: {e}")
 
-    knowledge_store.add_macro_snapshot(ind)
-
-    # Persist to BigQuery permanently
     try:
-        from .mcp_server.persist import persist_pipeline_snapshot
-        narrative = ind.get("macro_narrative", "")
-        persist_pipeline_snapshot("macro_snapshot", ind, narrative)
+        from .ingestion_agent import emit_ingestion_candidate
+        await emit_ingestion_candidate(
+            source_type="macro_pull",
+            symbols=[],
+            triggered_by="scheduler",
+            raw_payload=data,
+            feed_source="yfinance/fred",
+        )
+        if data.get("reconciled_capital_flows"):
+            await emit_ingestion_candidate(
+                source_type="capital_flow_pull",
+                symbols=["SPY", "EFA", "EWJ", "TLT", "GLD", "BIL"],
+                triggered_by="scheduler",
+                raw_payload=data.get("reconciled_capital_flows"),
+                feed_source="capital_flows",
+            )
     except Exception as e:
-        logger.debug("[DailyPipeline] BQ persist skipped: %s", e)
+        logger.warning("[IngestionHook] Macro/Flow candidate failed: %s", e)
 
     return {"macro_snapshot_added": True, "keys": list(ind.keys())}
 

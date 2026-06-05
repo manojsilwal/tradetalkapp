@@ -252,8 +252,20 @@ async def _execute_swarm_trace(
                 prompt_versions=_prompt_versions,
                 registry_snapshot_id=_snapshot_id,
             )
+            # Emit ingestion candidate
+            from ..ingestion_agent import emit_ingestion_candidate
+            asyncio.create_task(
+                emit_ingestion_candidate(
+                    source_type="single_stock_search",
+                    symbols=[ticker.upper()],
+                    triggered_by="user",
+                    raw_payload=consensus.model_dump() if hasattr(consensus, "model_dump") else consensus,
+                    user_id=str(_auth_user.id) if _auth_user else None,
+                    feed_source="swarm",
+                )
+            )
         except Exception as e:
-            print(f"[KnowledgeHook] add_swarm_analysis failed: {e}")
+            print(f"[KnowledgeHook] add_swarm_analysis or ingestion trigger failed: {e}")
 
         try:
             hub_record_attempt(
@@ -319,8 +331,20 @@ async def _execute_debate(
     try:
         ensure_capability("debate", "knowledge_write")
         knowledge_store.add_debate(result)
+        # Emit ingestion candidate
+        from ..ingestion_agent import emit_ingestion_candidate
+        asyncio.create_task(
+            emit_ingestion_candidate(
+                source_type="single_stock_search",
+                symbols=[ticker.upper()],
+                triggered_by="user",
+                raw_payload=result.model_dump() if hasattr(result, "model_dump") else result,
+                user_id=str(_auth_user.id) if _auth_user else None,
+                feed_source="debate",
+            )
+        )
     except Exception as e:
-        print(f"[KnowledgeHook] add_debate failed: {redact_secrets_in_text(str(e))}")
+        print(f"[KnowledgeHook] add_debate or ingestion trigger failed: {redact_secrets_in_text(str(e))}")
 
     if _auth_user and award_debate_xp:
         try:

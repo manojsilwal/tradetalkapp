@@ -910,6 +910,22 @@ async def run_sp500_screener_pipeline(trade_date: date, llm_client) -> Dict[str,
         "rows": final_rows,
     }
     persist_snapshot(payload)
+    # Emit daily_brief ingestion candidate
+    try:
+        from backend.ingestion_agent import emit_ingestion_candidate
+        symbols_list = [r["symbol"] for r in final_rows if r.get("symbol")]
+        asyncio.create_task(
+            emit_ingestion_candidate(
+                source_type="daily_brief",
+                symbols=symbols_list,
+                triggered_by="scheduler",
+                raw_payload=payload,
+                feed_source="sp500_screener",
+                as_of_ts=payload["updated_at"],
+            )
+        )
+    except Exception as e:
+        logger.warning("[IngestionHook] Daily brief candidate failed: %s", e)
     return payload
 
 
