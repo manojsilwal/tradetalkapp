@@ -1218,6 +1218,16 @@ function ParticleWave() {
 function LoadingOverlay({ steps, progressPct, visible }) {
   const activeStep = steps.find((step, idx) => !step.done && (idx === 0 || steps[idx - 1].done));
 
+  useEffect(() => {
+    const mainContent = document.querySelector('.main-content');
+    if (!mainContent) return;
+    const originalOverflow = mainContent.style.overflowY;
+    mainContent.style.overflowY = 'hidden';
+    return () => {
+      mainContent.style.overflowY = originalOverflow;
+    };
+  }, []);
+
   return (
     <div
       style={{
