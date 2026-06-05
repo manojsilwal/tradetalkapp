@@ -19,5 +19,22 @@ test.describe('Your Morning smoke', () => {
     expect(body).toHaveProperty('headline');
     expect(body).toHaveProperty('cards');
     expect(Array.isArray(body.cards)).toBeTruthy();
+    expect(body).toHaveProperty('market_session');
+    expect(body).toHaveProperty('continuity_moments');
+    expect(Array.isArray(body.continuity_moments)).toBeTruthy();
+  });
+
+  test('track record and timeline APIs respond', async ({ request }) => {
+    const tr = await request.get('http://127.0.0.1:8000/portfolio/track-record');
+    expect(tr.ok()).toBeTruthy();
+    const trBody = await tr.json();
+    expect(trBody).toHaveProperty('headline');
+    expect(trBody).toHaveProperty('graded_count');
+
+    const tl = await request.get('http://127.0.0.1:8000/portfolio/timeline?limit=5');
+    expect(tl.ok()).toBeTruthy();
+    const tlBody = await tl.json();
+    expect(tlBody).toHaveProperty('items');
+    expect(Array.isArray(tlBody.items)).toBeTruthy();
   });
 });

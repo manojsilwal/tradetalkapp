@@ -44,20 +44,24 @@ _live_movers_lock = threading.Lock()
 _live_movers_cache: Optional[Dict[str, Any]] = None
 _live_movers_cache_ts: float = 0.0
 
-# Full S&P 500 universe imported from the backtest connector (already maintained)
+# Full S&P 500 universe — use the comprehensive data_lake list for daily brief scanning
 def _get_sp500_universe() -> List[str]:
     try:
-        from .connectors.backtest_data import SP500_UNIVERSE
-        return list(SP500_UNIVERSE)
+        from .data_lake.config import SP500_TICKERS
+        return list(SP500_TICKERS)
     except Exception:
-        # Fallback: broad large-cap list if import fails
-        return [
-            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
-            "JPM", "JNJ", "UNH", "V", "PG", "HD", "MA", "XOM", "CVX",
-            "ABBV", "MRK", "PFE", "WMT", "COST", "BAC", "LLY", "AVGO",
-            "KO", "PEP", "TMO", "ORCL", "NFLX", "DIS", "ADBE", "CRM",
-            "AMD", "INTC", "QCOM", "TXN", "MU", "SPY", "QQQ", "IWM",
-        ]
+        try:
+            from .connectors.backtest_data import SP500_UNIVERSE
+            return list(SP500_UNIVERSE)
+        except Exception:
+            # Fallback: broad large-cap list if imports fail
+            return [
+                "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
+                "JPM", "JNJ", "UNH", "V", "PG", "HD", "MA", "XOM", "CVX",
+                "ABBV", "MRK", "PFE", "WMT", "COST", "BAC", "LLY", "AVGO",
+                "KO", "PEP", "TMO", "ORCL", "NFLX", "DIS", "ADBE", "CRM",
+                "AMD", "INTC", "QCOM", "TXN", "MU", "SPY", "QQQ", "IWM",
+            ]
 
 _SECTOR_ETFS = {
     "XLK": "Technology",
@@ -99,6 +103,110 @@ def is_stale(max_age_seconds: float = 600) -> bool:
 
 def updated_at_epoch() -> float:
     return _updated_at
+
+
+# ── Real-time quote overlay ───────────────────────────────────────────────────
+_rt_quotes_lock = threading.Lock()
+_rt_quotes_cache: Optional[Dict[str, Dict[str, Any]]] = None
+_rt_quotes_cache_ts: float = 0.0
+_RT_QUOTES_TTL = float(os.environ.get("RT_QUOTES_TTL_SEC", "60"))
+
+
+def is_market_open() -> bool:
+    """Return True if US equity market is currently in regular session (9:30–16:00 ET, weekdays)."""
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    if now_et.weekday() >= 5:
+        return False
+    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    return market_open <= now_et <= market_close
+
+
+def needs_realtime_overlay() -> bool:
+    """
+    Return True when real-time Yahoo quotes should overlay stale DB data.
+    Covers the full trading day window: weekdays 4 AM – 11:59 PM ET.
+    After market close, BigQuery EOD ingestion may lag by hours, so users
+    still need fresh prices from Yahoo in the evening.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    if now_et.weekday() >= 5:
+        return False
+    # From 4 AM (pre-market) to midnight on weekdays
+    return now_et.hour >= 4
+
+
+def _fetch_single_rt_quote(sym: str) -> Optional[tuple]:
+    """Fetch one real-time quote via yfinance fast_info. Returns (sym, {price, pct, prev_close})."""
+    try:
+        import yfinance as yf
+        fi = yf.Ticker(sym).fast_info
+        price = fi.get("lastPrice") or fi.get("regularMarketPrice")
+        prev = fi.get("previousClose")
+        if price is None or prev is None or float(prev) <= 0:
+            return None
+        price_f = round(float(price), 2)
+        prev_f = round(float(prev), 2)
+        pct = round((price_f - prev_f) / prev_f * 100.0, 2)
+        return (sym, {"price": price_f, "pct": pct, "previous_close": prev_f})
+    except Exception:
+        return None
+
+
+def fetch_realtime_quotes(symbols: List[str], *, force: bool = False) -> Dict[str, Dict[str, Any]]:
+    """
+    Parallel real-time quotes for a list of symbols via Yahoo fast_info.
+    Returns {SYMBOL: {price, pct, previous_close}} with a short TTL cache.
+    Only fetches on weekday trading windows unless force=True.
+    """
+    global _rt_quotes_cache, _rt_quotes_cache_ts
+
+    if not force and not needs_realtime_overlay():
+        return {}
+
+    now = time.time()
+    with _rt_quotes_lock:
+        if (
+            not force
+            and _rt_quotes_cache is not None
+            and (now - _rt_quotes_cache_ts) < _RT_QUOTES_TTL
+        ):
+            # Return subset of cached quotes for requested symbols
+            return {s: _rt_quotes_cache[s] for s in symbols if s in _rt_quotes_cache}
+
+    # Fetch in parallel
+    t0 = time.time()
+    results: Dict[str, Dict[str, Any]] = {}
+    max_workers = min(30, len(symbols)) if symbols else 1
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_fetch_single_rt_quote, sym): sym for sym in symbols}
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                if result:
+                    results[result[0]] = result[1]
+            except Exception:
+                pass
+
+    elapsed = time.time() - t0
+    logger.info("[MarketIntel] RT quotes: %d/%d symbols in %.2fs", len(results), len(symbols), elapsed)
+
+    # Update cache with new results (merge with existing)
+    with _rt_quotes_lock:
+        if _rt_quotes_cache is None:
+            _rt_quotes_cache = {}
+        _rt_quotes_cache.update(results)
+        _rt_quotes_cache_ts = time.time()
+
+    return {s: results[s] for s in symbols if s in results}
 
 
 def _fast_info_mover_row(sym: str) -> Optional[Dict[str, Any]]:

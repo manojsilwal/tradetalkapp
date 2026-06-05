@@ -162,6 +162,11 @@ body {
   50% { opacity: 0; }
 }
 
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 .chat-typing-indicator {
   display: inline-flex;
   align-items: center;

@@ -288,10 +288,23 @@ export default function DailyBriefUI() {
             deep refresh runs one batched LLM pass plus scorecard enrichment.
           </p>
           {data && (
-            <p style={{ margin: '6px 0 0', fontSize: 12, color: '#64748b' }}>
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: '#64748b', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               Session {data.trade_date} · source {data.source} · {tierLabel(tier)}
               {data.from_snapshot ? ' · snapshot' : ''} · updated{' '}
               {new Date(data.updated_at).toLocaleString()}
+              {data.realtime_overlay && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '2px 8px', borderRadius: 12,
+                  background: 'rgba(16,185,129,0.15)',
+                  border: '1px solid rgba(16,185,129,0.35)',
+                  color: '#10b981', fontSize: 11, fontWeight: 700,
+                  animation: 'pulse 2s ease-in-out infinite',
+                }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
+                  Live · {data.rt_overlay_count} quotes
+                </span>
+              )}
             </p>
           )}
           {deepRunning && deepStatus && (

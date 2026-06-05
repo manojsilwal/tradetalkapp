@@ -563,6 +563,72 @@ def _compute_movers(
     return td, source, rows
 
 
+def overlay_realtime_quotes(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    On trading days, overlay live Yahoo Finance quotes on top of
+    EOD-based daily brief data.  Mutates payload in-place and adds a
+    ``realtime_overlay`` flag so the frontend can show a "Live" badge.
+    Active from 4 AM to midnight ET on weekdays; off on weekends.
+    """
+    from backend.market_intel import needs_realtime_overlay, fetch_realtime_quotes
+
+    if not needs_realtime_overlay():
+        payload["realtime_overlay"] = False
+        return payload
+
+    rows = payload.get("rows") or []
+    symbols = [r["symbol"] for r in rows if r.get("symbol")]
+    if not symbols:
+        payload["realtime_overlay"] = False
+        return payload
+
+    try:
+        quotes = fetch_realtime_quotes(symbols)
+    except Exception as e:
+        logger.warning("[DailyBrief] RT quote overlay failed: %s", e)
+        payload["realtime_overlay"] = False
+        return payload
+
+    if not quotes:
+        payload["realtime_overlay"] = False
+        return payload
+
+    overlaid = 0
+    for row in rows:
+        sym = row.get("symbol", "").upper()
+        q = quotes.get(sym)
+        if q:
+            row["close"] = q["price"]
+            row["daily_return_pct"] = q["pct"]
+            row["_rt_previous_close"] = q["previous_close"]
+            overlaid += 1
+
+    # Also update losers / gainers / compelling sub-lists (they share row refs)
+    if payload.get("losers"):
+        for r in payload["losers"]:
+            q = quotes.get((r.get("symbol") or "").upper())
+            if q:
+                r["close"] = q["price"]
+                r["daily_return_pct"] = q["pct"]
+    if payload.get("gainers"):
+        for r in payload["gainers"]:
+            q = quotes.get((r.get("symbol") or "").upper())
+            if q:
+                r["close"] = q["price"]
+                r["daily_return_pct"] = q["pct"]
+    if payload.get("compelling"):
+        for r in payload["compelling"]:
+            q = quotes.get((r.get("symbol") or "").upper())
+            if q:
+                r["close"] = q["price"]
+                r["daily_return_pct"] = q["pct"]
+
+    payload["realtime_overlay"] = overlaid > 0
+    payload["rt_overlay_count"] = overlaid
+    logger.info("[DailyBrief] RT overlay: %d/%d symbols updated", overlaid, len(symbols))
+    return payload
+
+
 def build_daily_brief(
     trade_date: Optional[date] = None,
     n_losers: int = 20,

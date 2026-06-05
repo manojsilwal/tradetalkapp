@@ -11,6 +11,7 @@ from ..daily_brief import (
     build_daily_brief,
     get_deep_refresh_status,
     materialize_heuristic_snapshot,
+    overlay_realtime_quotes,
     run_deep_refresh,
 )
 from ..deps import llm_client
@@ -62,6 +63,7 @@ async def get_daily_brief(
         use_snapshot=not refresh,
         persist=False,
     )
+    payload = overlay_realtime_quotes(payload)
     payload["deep_refresh"] = get_deep_refresh_status()
     return payload
 
@@ -136,13 +138,14 @@ async def get_screener_results(
         if r.get("verdict") in ("Strong Buy", "Buy", "Sell")
     ]
     
-    return {
+    result = {
         "trade_date": snapshot.get("trade_date"),
         "source": snapshot.get("source"),
         "verdict_tier": snapshot.get("verdict_tier"),
         "updated_at": snapshot.get("updated_at"),
         "rows": buy_sell_signals,
     }
+    return overlay_realtime_quotes(result)
 
 
 @router.post("/materialize", dependencies=[Depends(_rl)])

@@ -127,6 +127,20 @@ def get_morning_brief(user: UserInfo = Depends(get_current_user_or_dev)):
     return build_morning_brief(user.id)
 
 
+@router.get("/track-record")
+def get_portfolio_track_record(
+    window_days: int = 30,
+    user: UserInfo = Depends(get_current_user_or_dev),
+):
+    """Personal track record from decision ledger (portfolio-scoped)."""
+    from .. import paper_portfolio as pp
+    from ..portfolio_track_record import build_track_record
+
+    positions = pp.get_positions(user.id, include_closed=False)
+    symbols = list({p["ticker"] for p in positions if p.get("ticker")})
+    return build_track_record(user.id, symbols, window_days=min(max(window_days, 7), 90))
+
+
 @router.get("/timeline")
 def get_portfolio_timeline(
     limit: int = 20,

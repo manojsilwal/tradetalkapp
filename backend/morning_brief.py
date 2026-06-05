@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from . import paper_portfolio as pp
 from . import portfolio_memory as pm
+from .portfolio_continuity import find_continuity_moments
 from .portfolio_holdings_reconcile import aggregate_open_long_positions
 
 logger = logging.getLogger(__name__)
@@ -327,6 +328,52 @@ def _continue_where_you_left_off(user_id: str, holdings: List[str]) -> Optional[
     return None
 
 
+def _market_session_context() -> Dict[str, Any]:
+    """US cash session hint for copy (weekend / after-hours vs open)."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        et = datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        et = datetime.now(timezone.utc)
+    if et.weekday() >= 5:
+        return {
+            "status": "weekend",
+            "message": "Markets are closed today. Here's what changed during the last trading session.",
+        }
+    minutes = et.hour * 60 + et.minute
+    if minutes < 9 * 60 + 30 or minutes >= 16 * 60:
+        return {
+            "status": "after_hours",
+            "message": "Here's what changed in your portfolio during the last trading session.",
+        }
+    return {"status": "open", "message": None}
+
+
+def _emit_morning_brief_decision(user_id: str, brief: Dict[str, Any]) -> None:
+    try:
+        from . import decision_ledger as dl
+        from .decision_ledger_registry import registry_attribution
+
+        pv, snap_id = registry_attribution()
+        dl.emit_decision(
+            decision_type="morning_brief",
+            user_id=user_id,
+            output={
+                "headline": brief.get("headline"),
+                "summary": brief.get("summary"),
+                "card_count": len(brief.get("cards") or []),
+            },
+            verdict=(brief.get("headline") or "morning_brief")[:120],
+            horizon_hint="1d",
+            prompt_versions=pv,
+            registry_snapshot_id=snap_id,
+            source_route="backend/morning_brief.py::build_morning_brief",
+        )
+    except Exception as exc:
+        logger.debug("[morning_brief] ledger emit skipped: %s", exc)
+
+
 def _headline_from_summary(daily_return_pct: Optional[float]) -> str:
     if daily_return_pct is None:
         return "Here is what we noticed in your portfolio today."
@@ -348,6 +395,8 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
         "cards": [],
         "watch_next": [],
         "continue_where_you_left_off": None,
+        "continuity_moments": [],
+        "market_session": _market_session_context(),
         "has_portfolio": False,
         "disclaimer": (
             "This is informational analysis, not financial advice. "
@@ -475,4 +524,11 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
     base["cards"] = cards[:_MAX_CARDS]
     base["watch_next"] = watch_next
     base["continue_where_you_left_off"] = _continue_where_you_left_off(user_id, symbols)
+    base["continuity_moments"] = find_continuity_moments(
+        user_id,
+        symbols=symbols,
+        today_daily_return_pct=float(daily_return_pct) if daily_return_pct is not None else None,
+        top_movers=selected,
+    )
+    _emit_morning_brief_decision(user_id, base)
     return base
