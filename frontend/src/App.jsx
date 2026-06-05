@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2 } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -10,6 +10,7 @@ import { AUTH_REQUIRED } from './authConfig'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
 import { API_BASE_URL, getToken } from './api'
 import AppAssistantPanel from './AppAssistantPanel'
+import { useAnalysisHistory } from './AnalysisContext.jsx'
 
 const ConsumerUI = React.lazy(() => import('./UnifiedDashboardUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
@@ -358,6 +359,76 @@ function App() {
 
             {/* App-level persistent assistant panel — always available, survives route changes */}
             <AppAssistantPanel prefetch={chatPrefetch} />
+
+            {/* Global floating loader bar (Bottom-Left Corner) */}
+            <GlobalLoadingBar />
+        </div>
+    )
+}
+
+function GlobalLoadingBar() {
+    const { analyses } = useAnalysisHistory()
+    const loadingTicker = Object.keys(analyses).find(ticker => analyses[ticker]?.loading)
+    const activeAnalysis = loadingTicker ? analyses[loadingTicker] : null
+
+    if (!activeAnalysis) return null
+
+    const steps = [
+        { label: 'Retrieving RAG knowledge base & metrics', done: !activeAnalysis.metricsLoading && !activeAnalysis.scorecardLoading },
+        { label: 'Assembling multi-agent debate chamber', done: !activeAnalysis.debateLoading },
+        { label: 'Executing swarm consensus trace', done: !activeAnalysis.traceLoading },
+        { label: 'Synthesizing valuation terminal & roadmap', done: !activeAnalysis.decisionLoading },
+        { label: 'Scanning prediction market contracts', done: !activeAnalysis.predMarketsLoading }
+    ]
+
+    const doneCount = steps.filter(s => s.done).length
+    const progressPct = Math.round((doneCount / steps.length) * 100)
+    const activeStep = steps.find(s => !s.done)?.label || 'Completing analysis...'
+
+    return (
+        <div className="global-loader-bar">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', flexShrink: 0 }}>
+                        <Loader2
+                            size={16}
+                            style={{
+                                color: '#3b82f6',
+                                animation: 'spin 1s linear infinite'
+                            }}
+                        />
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span>Analyzing {loadingTicker}</span>
+                            <span style={{ fontSize: '0.7rem', color: '#3b82f6', padding: '1px 6px', borderRadius: '4px', background: 'rgba(59, 130, 246, 0.15)', fontWeight: 600, border: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                                Swarm Engine
+                            </span>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>
+                            {activeStep}
+                        </div>
+                    </div>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#fff', fontFamily: 'monospace' }}>
+                        {progressPct}%
+                    </span>
+                </div>
+            </div>
+
+            <div style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255, 255, 255, 0.05)', overflow: 'hidden' }}>
+                <div
+                    style={{
+                        height: '100%',
+                        width: `${progressPct}%`,
+                        background: 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
+                        borderRadius: '2px',
+                        transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                        boxShadow: '0 0 8px rgba(59, 130, 246, 0.5)',
+                    }}
+                />
+            </div>
         </div>
     )
 }

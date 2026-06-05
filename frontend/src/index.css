@@ -167,6 +167,11 @@ body {
   50% { opacity: 0.6; }
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .chat-typing-indicator {
   display: inline-flex;
   align-items: center;
@@ -412,3 +417,39 @@ body {
     margin-right: 720px;
   }
 }
+
+/* ── Global Loading Bar (Bottom-Left Corner) ─────────────────────────── */
+.global-loader-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  width: calc(100% - 48px);
+  max-width: 420px;
+  background: rgba(10, 11, 16, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6), inset 0 0 12px rgba(59, 130, 246, 0.1);
+  padding: 16px 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: slideUpLeft 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: all;
+}
+
+@keyframes slideUpLeft {
+  from { transform: translateY(40px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@media (min-width: 769px) {
+  .global-loader-bar {
+    left: 304px; /* 280px sidebar + 24px spacing */
+    width: auto;
+    min-width: 380px;
+  }
+}
+
