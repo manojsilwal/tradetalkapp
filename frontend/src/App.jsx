@@ -135,7 +135,7 @@ function App() {
                         <button className="mobile-menu-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label="Toggle navigation menu">
                             <Menu size={20} />
                         </button>
-                        {user ? (
+                        {user && !user.guest ? (
                             <button
                                 onClick={logout}
                                 title={`${user.name || user.email} — click to sign out`}
@@ -153,7 +153,7 @@ function App() {
                             </button>
                         ) : (
                             <button
-                                onClick={() => navigate('/challenge')}
+                                onClick={() => navigate('/login')}
                                 title="Sign in to track XP, streaks & portfolio"
                                 style={{
                                     width: 30, height: 30, borderRadius: '50%', border: '1px solid rgba(167,139,250,0.4)',
@@ -345,6 +345,7 @@ function App() {
                                 </GamificationTab>
                             } />
                             <Route path="/llm-calls" element={<LlmCallsUI />} />
+                            <Route path="/login" element={<AuthGate featureName="Your Account" featureIcon="👤" />} />
                             <Route path="/learning" element={
                                 <GamificationTab user={user} featureName="Learning Path" featureIcon="📚">
                                     <LearningPathUI onXpGained={handleXpGained} />

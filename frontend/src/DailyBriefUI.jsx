@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Brain, Loader2, RefreshCw, TrendingDown, TrendingUp, Sparkles } from 'lucide-react'
 import { API_BASE_URL, apiFetch } from './api'
 import { verdictBadgeStyle, verdictRowStyle } from './utils/verdictStyles'
+import { useAnalysisHistory } from './AnalysisContext'
 
 function fmtPct(v) {
   if (v == null || Number.isNaN(Number(v))) return '—'
@@ -253,99 +254,22 @@ const btnStyle = {
 
 export default function DailyBriefUI() {
   const navigate = useNavigate()
-  const [data, setData] = useState(null)
-  const [screenerData, setScreenerData] = useState(null)
-  const [activeTab, setActiveTab] = useState('movers')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [deepStatus, setDeepStatus] = useState(null)
-  const [deepBusy, setDeepBusy] = useState(false)
-  const pollRef = useRef(null)
-
-  const load = useCallback(async (refresh = false) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const q = refresh ? '?refresh=true' : ''
-      const briefJson = await apiFetch(`${API_BASE_URL}/daily-brief${q}`)
-      setData(briefJson)
-      if (briefJson.deep_refresh) setDeepStatus(briefJson.deep_refresh)
-
-      try {
-        const screenerJson = await apiFetch(`${API_BASE_URL}/daily-brief/screener`)
-        if (screenerJson && screenerJson.rows && screenerJson.rows.length > 0) {
-          setScreenerData(screenerJson)
-          setActiveTab('growth')
-        } else {
-          setScreenerData(null)
-          setActiveTab('movers')
-        }
-      } catch (screenerErr) {
-        console.warn('Failed to load screener data, falling back to movers', screenerErr)
-        setScreenerData(null)
-        setActiveTab('movers')
-      }
-    } catch (e) {
-      setError(e.message || 'Failed to load daily brief')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  const pollDeepStatus = useCallback(async () => {
-    try {
-      const st = await apiFetch(`${API_BASE_URL}/daily-brief/deep-refresh/status`)
-      setDeepStatus(st)
-      if (st.status === 'done') {
-        setDeepBusy(false)
-        await load(false)
-      } else if (st.status === 'error') {
-        setDeepBusy(false)
-        setError(st.error || 'Deep refresh failed')
-      }
-    } catch (e) {
-      setDeepBusy(false)
-      setError(e.message || 'Failed to poll deep refresh')
-    }
-  }, [load])
+  const { dailyBriefState, loadDailyBrief, startDailyBriefDeepRefresh, setDailyBriefActiveTab } = useAnalysisHistory()
+  const { data, screenerData, activeTab, loading, error, deepStatus, deepBusy } = dailyBriefState
 
   useEffect(() => {
-    load(false)
-  }, [load])
+    loadDailyBrief(false)
+  }, [loadDailyBrief])
 
-  useEffect(() => {
-    if (!deepBusy) {
-      if (pollRef.current) clearInterval(pollRef.current)
-      return undefined
-    }
-    pollRef.current = setInterval(pollDeepStatus, 2500)
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
-  }, [deepBusy, pollDeepStatus])
-
-  const startDeepRefresh = async () => {
-    setError(null)
-    setDeepBusy(true)
-    try {
-      const res = await apiFetch(`${API_BASE_URL}/daily-brief/deep-refresh`, {
-        method: 'POST',
-      })
-      if (res.deep_refresh) setDeepStatus(res.deep_refresh)
-      if (res.completed && res.rows) {
-        setData(res)
-        setDeepBusy(false)
-        return
-      }
-      if (!res.accepted) {
-        setDeepBusy(false)
-        setError('Deep refresh already running')
-      }
-    } catch (e) {
-      setDeepBusy(false)
-      setError(e.message || 'Failed to start deep refresh')
-    }
+  const load = (refresh = false) => {
+    loadDailyBrief(refresh)
   }
+
+  const startDeepRefresh = () => {
+    startDailyBriefDeepRefresh()
+  }
+
+  const setActiveTab = setDailyBriefActiveTab
 
   const goAnalyze = (sym) => {
     navigate(`/?ticker=${encodeURIComponent(sym)}`)

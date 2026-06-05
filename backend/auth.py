@@ -17,6 +17,8 @@ import time
 import sqlite3
 import threading
 import logging
+import hashlib
+import secrets
 from dataclasses import dataclass
 from typing import Optional
 
@@ -50,18 +52,62 @@ def _get_conn():
     return _local.conn
 
 
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac(
+        'sha256',
+        password.encode('utf-8'),
+        salt.encode('utf-8'),
+        100000
+    )
+    return f"pbkdf2_sha256$100000${salt}${key.hex()}"
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    if not password_hash:
+        return False
+    try:
+        algorithm, iterations, salt, key_hex = password_hash.split('$')
+        if algorithm != 'pbkdf2_sha256':
+            return False
+        key = hashlib.pbkdf2_hmac(
+            'sha256',
+            password.encode('utf-8'),
+            salt.encode('utf-8'),
+            int(iterations)
+        )
+        return secrets.compare_digest(key.hex(), key_hex)
+    except Exception:
+        return False
+
+
 def init_users_db():
     conn = _get_conn()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id         TEXT PRIMARY KEY,
-            email      TEXT NOT NULL,
-            name       TEXT DEFAULT '',
-            avatar     TEXT DEFAULT '',
-            created_at REAL DEFAULT 0
+            id            TEXT PRIMARY KEY,
+            email         TEXT NOT NULL,
+            name          TEXT DEFAULT '',
+            avatar        TEXT DEFAULT '',
+            password_hash TEXT DEFAULT NULL,
+            created_at    REAL DEFAULT 0
         )
     """)
     conn.commit()
+
+    # Alter table if password_hash does not exist (for existing tables)
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT DEFAULT NULL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # already exists
+
+    # Ensure unique index on email
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
 
 
 @dataclass
@@ -186,6 +232,58 @@ def login_with_google(token: str) -> dict:
         "email":   user.email,
         "name":    user.name,
         "avatar":  user.avatar,
+        "dev_mode": DEV_MODE,
+    }
+
+
+def create_manual_user(email: str, password: str, name: str = "") -> dict:
+    email_clean = email.strip().lower()
+    if not email_clean or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long")
+    conn = _get_conn()
+    existing = conn.execute("SELECT id FROM users WHERE LOWER(email) = ?", (email_clean,)).fetchone()
+    if existing:
+        raise HTTPException(status_code=400, detail="A user with this email is already registered")
+
+    user_id = f"manual_user_{int(time.time())}_{secrets.token_hex(4)}"
+    pw_hash = hash_password(password)
+    user_name = name.strip() or email_clean.split('@')[0]
+    
+    conn.execute("""
+        INSERT INTO users (id, email, name, avatar, password_hash, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, email_clean, user_name, "", pw_hash, time.time()))
+    conn.commit()
+    
+    jwt_token = _issue_jwt(user_id)
+    return {
+        "token":   jwt_token,
+        "user_id": user_id,
+        "email":   email_clean,
+        "name":    user_name,
+        "avatar":  "",
+        "dev_mode": DEV_MODE,
+    }
+
+
+def login_with_password(email: str, password: str) -> dict:
+    email_clean = email.strip().lower()
+    if not email_clean or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM users WHERE LOWER(email) = ?", (email_clean,)).fetchone()
+    if not row or not row["password_hash"] or not verify_password(password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    jwt_token = _issue_jwt(row["id"])
+    return {
+        "token":   jwt_token,
+        "user_id": row["id"],
+        "email":   row["email"],
+        "name":    row["name"],
+        "avatar":  row["avatar"] or "",
         "dev_mode": DEV_MODE,
     }
 

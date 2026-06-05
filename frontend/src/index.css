@@ -392,3 +392,18 @@ body {
   box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
   outline: none;
 }
+
+/* Shift main content to the left when assistant panel is open (only on viewport min-width: 601px) */
+@media (min-width: 601px) {
+  .main-content {
+    transition: margin-right 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  body.assistant-open .main-content {
+    margin-right: 360px;
+  }
+
+  body.assistant-open.assistant-expanded .main-content {
+    margin-right: 720px;
+  }
+}

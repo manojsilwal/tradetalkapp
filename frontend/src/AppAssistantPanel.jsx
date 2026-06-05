@@ -235,6 +235,25 @@ export default function AppAssistantPanel({ prefetch = null }) {
     if (prefetch?.boot) setBootstrap(prefetch.boot)
   }, [prefetch])
 
+  // Class toggles on document body for shifting main content when open/expanded
+  useEffect(() => {
+    if (open) {
+      document.body.classList.add('assistant-open');
+      if (expanded) {
+        document.body.classList.add('assistant-expanded');
+      } else {
+        document.body.classList.remove('assistant-expanded');
+      }
+    } else {
+      document.body.classList.remove('assistant-open');
+      document.body.classList.remove('assistant-expanded');
+    }
+    return () => {
+      document.body.classList.remove('assistant-open');
+      document.body.classList.remove('assistant-expanded');
+    };
+  }, [open, expanded]);
+
   // Auto-scroll chat to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })

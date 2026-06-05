@@ -4,6 +4,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { API_BASE_URL, apiFetch } from './api';
 import MacroFlowPanel from './MacroFlowPanel';
 import GlobalMarketsChart from './GlobalMarketsChart';
+import { useAnalysisHistory } from './AnalysisContext';
 
 const FLOW_PERIODS = [
     { id: '1d', label: '1D' },
@@ -56,25 +57,15 @@ const REGIME_IMPACT_MATRIX = {
 };
 
 export default function MacroUI() {
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [flowPeriod, setFlowPeriod] = useState('1d');
+    const { macroState, loadMacro, setMacroFlowPeriod } = useAnalysisHistory();
+    const { data, loading, error, flowPeriod } = macroState;
     const [showExplanation, setShowExplanation] = useState(false);
 
     useEffect(() => {
-        const fetchMacro = async () => {
-            try {
-                const json = await apiFetch(`${API_BASE_URL}/macro`);
-                setData(json);
-            } catch (err) {
-                setError(err.message);
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchMacro();
-    }, []);
+        loadMacro();
+    }, [loadMacro]);
+
+    const setFlowPeriod = setMacroFlowPeriod;
 
     if (loading) {
         return (
@@ -100,59 +91,64 @@ export default function MacroUI() {
 
     return (
         <div className="consumer-container fade-in">
-            <div className="header-section" style={{ marginBottom: '24px' }}>
+            <div className="header-section" style={{ marginBottom: '20px' }}>
                 <div className="title-group">
                     <h2>Global Macroeconomic Grounding</h2>
                     <p>Live indicators and thematic capital flow</p>
                 </div>
             </div>
 
-            {/* Top Level KPIs */}
-            <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '24px', marginBottom: '24px' }}>
-                <div className="dash-card glass-panel fade-in" data-testid="macro-vix-card" style={{ padding: '24px', borderRadius: '16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                        <Globe color="var(--accent-blue)" />
-                        <h3 style={{ margin: 0 }}>CBOE ^VIX Volatility</h3>
+            {/* ── Global Markets Normalized Performance chart ─────────────── */}
+            <div style={{ marginBottom: '24px' }}>
+                <GlobalMarketsChart />
+            </div>
+
+            {/* Top Level KPIs (Scaled Down) */}
+            <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+                <div className="dash-card glass-panel fade-in" data-testid="macro-vix-card" style={{ padding: '16px', borderRadius: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                        <Globe color="var(--accent-blue)" size={18} />
+                        <h3 style={{ margin: 0, fontSize: '0.92rem' }}>CBOE ^VIX Volatility</h3>
                     </div>
-                    <h1 data-testid="macro-vix-value" style={{ fontSize: '2.5rem', margin: 0 }}>{data.vix_level}</h1>
-                    <p style={{ color: 'var(--text-muted)', margin: '8px 0 0 0' }}>Market Expectation of near-term risk</p>
+                    <h1 data-testid="macro-vix-value" style={{ fontSize: '2rem', margin: 0, fontWeight: 800 }}>{data.vix_level}</h1>
+                    <p style={{ color: 'var(--text-muted)', margin: '6px 0 0 0', fontSize: '0.78rem' }}>Market Expectation of near-term risk</p>
                 </div>
 
-                <div className="dash-card glass-panel fade-in" data-testid="macro-consumer-spending-chart" style={{ padding: '24px', borderRadius: '16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                        <Wallet color="var(--accent-green)" />
-                        <h3 style={{ margin: 0 }}>Total Cash Reserves</h3>
+                <div className="dash-card glass-panel fade-in" data-testid="macro-consumer-spending-chart" style={{ padding: '16px', borderRadius: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                        <Wallet color="var(--accent-green)" size={18} />
+                        <h3 style={{ margin: 0, fontSize: '0.92rem' }}>Total Cash Reserves</h3>
                     </div>
-                    <h1 style={{ fontSize: '2.5rem', margin: 0 }}>
+                    <h1 style={{ fontSize: '2rem', margin: 0, fontWeight: 800 }}>
                         ${data.cash_reserves && data.cash_reserves.length > 0
                             ? (data.cash_reserves[data.cash_reserves.length - 1].institutional_cash + data.cash_reserves[data.cash_reserves.length - 1].retail_cash).toFixed(2)
                             : '0.00'}T
                     </h1>
-                    <p style={{ color: 'var(--text-muted)', margin: '8px 0 0 0' }}>Sitting on the sidelines</p>
+                    <p style={{ color: 'var(--text-muted)', margin: '6px 0 0 0', fontSize: '0.78rem' }}>Sitting on the sidelines</p>
                 </div>
 
-                <div className="dash-card glass-panel fade-in" data-testid="macro-cash-reserves-chart" style={{ padding: '24px', borderRadius: '16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                        {isStress ? <AlertTriangle color="var(--accent-red)" /> : <TrendingUp color="var(--accent-green)" />}
-                        <h3 style={{ margin: 0 }}>Market Regime</h3>
+                <div className="dash-card glass-panel fade-in" data-testid="macro-cash-reserves-chart" style={{ padding: '16px', borderRadius: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                        {isStress ? <AlertTriangle color="var(--accent-red)" size={18} /> : <TrendingUp color="var(--accent-green)" size={18} />}
+                        <h3 style={{ margin: 0, fontSize: '0.92rem' }}>Market Regime</h3>
                     </div>
-                    <h1 style={{ fontSize: '1.8rem', margin: 0, color: isStress ? 'var(--accent-red)' : 'var(--accent-green)' }}>
+                    <h1 style={{ fontSize: '1.6rem', margin: 0, fontWeight: 800, color: isStress ? 'var(--accent-red)' : 'var(--accent-green)' }}>
                         {data.market_regime.replace('_', ' ')}
                     </h1>
-                    <p style={{ color: 'var(--text-muted)', margin: '8px 0 0 0' }}>Stress Index: {data.credit_stress_index}</p>
+                    <p style={{ color: 'var(--text-muted)', margin: '6px 0 0 0', fontSize: '0.78rem' }}>Stress Index: {data.credit_stress_index}</p>
                 </div>
             </div>
 
-            {/* Middle Grid: Charts */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+            {/* Middle Grid: Charts (Scaled Down) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', marginBottom: '24px' }}>
 
                 {/* Spending Chart */}
-                <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                        <DollarSign color="var(--accent-purple)" />
-                        <h3 style={{ margin: 0 }}>Historic Consumer Spending Index</h3>
+                <div className="dash-card glass-panel fade-in" style={{ padding: '16px', borderRadius: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                        <DollarSign color="var(--accent-purple)" size={18} />
+                        <h3 style={{ margin: 0, fontSize: '0.92rem' }}>Historic Consumer Spending Index</h3>
                     </div>
-                    <div style={{ width: '100%', height: '300px' }}>
+                    <div style={{ width: '100%', height: '220px' }}>
                         <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={data.consumer_spending}>
                                 <defs>
@@ -162,25 +158,25 @@ export default function MacroUI() {
                                     </linearGradient>
                                 </defs>
                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" vertical={false} />
-                                <XAxis dataKey="month" stroke="var(--text-muted)" tickMargin={10} />
-                                <YAxis stroke="var(--text-muted)" domain={['dataMin - 2', 'dataMax + 2']} />
+                                <XAxis dataKey="month" stroke="var(--text-muted)" tickMargin={10} style={{ fontSize: '0.75rem' }} />
+                                <YAxis stroke="var(--text-muted)" domain={['dataMin - 2', 'dataMax + 2']} style={{ fontSize: '0.75rem' }} />
                                 <Tooltip
                                     contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }}
                                     itemStyle={{ color: '#fff' }}
                                 />
-                                <Area type="monotone" dataKey="value" stroke="var(--accent-purple)" fillOpacity={1} fill="url(#colorValue)" strokeWidth={3} />
+                                <Area type="monotone" dataKey="value" stroke="var(--accent-purple)" fillOpacity={1} fill="url(#colorValue)" strokeWidth={2.5} />
                             </AreaChart>
                         </ResponsiveContainer>
                     </div>
                 </div>
 
                 {/* Cash Reserves Stacked Bar Chart */}
-                <div className="dash-card glass-panel fade-in" style={{ padding: '24px', borderRadius: '16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                        <Wallet color="var(--accent-green)" />
-                        <h3 style={{ margin: 0 }}>Cash on the Sidelines (Trillions USD)</h3>
+                <div className="dash-card glass-panel fade-in" style={{ padding: '16px', borderRadius: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                        <Wallet color="var(--accent-green)" size={18} />
+                        <h3 style={{ margin: 0, fontSize: '0.92rem' }}>Cash on the Sidelines (Trillions USD)</h3>
                     </div>
-                    <div style={{ width: '100%', height: '300px' }}>
+                    <div style={{ width: '100%', height: '220px' }}>
                         <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={data.cash_reserves}>
                                 <defs>
@@ -194,8 +190,8 @@ export default function MacroUI() {
                                     </linearGradient>
                                 </defs>
                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" vertical={false} />
-                                <XAxis dataKey="month" stroke="var(--text-muted)" tickMargin={10} />
-                                <YAxis stroke="var(--text-muted)" domain={[0, 7]} />
+                                <XAxis dataKey="month" stroke="var(--text-muted)" tickMargin={10} style={{ fontSize: '0.75rem' }} />
+                                <YAxis stroke="var(--text-muted)" domain={[0, 7]} style={{ fontSize: '0.75rem' }} />
                                 <Tooltip
                                     contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }}
                                     itemStyle={{ color: '#fff' }}
@@ -261,11 +257,6 @@ export default function MacroUI() {
                     </div>
                 </div>
 
-            </div>
-
-            {/* ── Global Markets Normalized Performance chart ─────────────── */}
-            <div style={{ marginTop: '24px' }}>
-                <GlobalMarketsChart />
             </div>
 
         </div>

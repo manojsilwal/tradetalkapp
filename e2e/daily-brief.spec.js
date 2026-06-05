@@ -38,7 +38,7 @@ test.describe('Daily Brief & Screener', () => {
     const losersText = page.getByText(/Top 20 losers/i)
     const growthTab = page.getByRole('button', { name: 'Growth Buy/Sells' })
     
-    await expect(losersText.or(growthTab)).toBeVisible({ timeout: 90_000 })
+    await expect(losersText.or(growthTab).first()).toBeVisible({ timeout: 90_000 })
   })
 })
 

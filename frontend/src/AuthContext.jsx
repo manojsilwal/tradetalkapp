@@ -28,6 +28,38 @@ export function AuthProvider({ children }) {
         return data;
     }, []);
 
+    const loginManual = useCallback(async (email, password) => {
+        const data = await apiFetch(`${API_BASE_URL}/auth/login-manual`, {
+            method: 'POST',
+            body:   JSON.stringify({ email, password }),
+        });
+        setToken(data.token);
+        setUser({
+            user_id:  data.user_id,
+            email:    data.email,
+            name:     data.name,
+            avatar:   data.avatar,
+            dev_mode: data.dev_mode,
+        });
+        return data;
+    }, []);
+
+    const signup = useCallback(async (email, password, name) => {
+        const data = await apiFetch(`${API_BASE_URL}/auth/signup`, {
+            method: 'POST',
+            body:   JSON.stringify({ email, password, name }),
+        });
+        setToken(data.token);
+        setUser({
+            user_id:  data.user_id,
+            email:    data.email,
+            name:     data.name,
+            avatar:   data.avatar,
+            dev_mode: data.dev_mode,
+        });
+        return data;
+    }, []);
+
     const trySilentDevLogin = useCallback(async () => {
         try {
             await login('dev');
@@ -90,7 +122,7 @@ export function AuthProvider({ children }) {
     }, []);
 
     return (
-        <AuthContext.Provider value={{ user, loading, login, logout }}>
+        <AuthContext.Provider value={{ user, loading, login, loginManual, signup, logout }}>
             {children}
         </AuthContext.Provider>
     );

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useId, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { TrendingUp, Shield, CircleDollarSign, Wallet, PieChart, Scale, CheckCircle2, ArrowUpRight, HelpCircle, Loader2, Search, Zap, CheckCircle, BarChart3, TrendingDown, Target, Activity, ShieldAlert, XCircle } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, LineChart as ReLineChart, Line, Legend } from 'recharts';
@@ -364,7 +365,7 @@ function SmallCapPanel({ data, loading, capBucket }) {
 
 export default function UnifiedDashboardUI() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { addAnalysis, getLastAnalysis, recentAnalyses } = useAnalysisHistory();
+  const { analyses, analyzeTicker: contextAnalyzeTicker, recentAnalyses } = useAnalysisHistory();
   const lastAutoTicker = useRef('');
   const [ticker, setTicker] = useState(() => {
     const param = searchParams.get('ticker')?.trim().toUpperCase();
@@ -372,37 +373,8 @@ export default function UnifiedDashboardUI() {
     return recentAnalyses[0]?.ticker || 'AAPL';
   });
 
-  // From Consumer UI
-  // Per-section state — each section loads independently
-  const [traceData, setTraceData] = useState(null);
-  const [traceLoading, setTraceLoading] = useState(false);
-
-  const [metricsData, setMetricsData] = useState(null);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  const [capBucket, setCapBucket] = useState(null);
-
-  const [smallCapData, setSmallCapData] = useState(null);
-  const [smallCapLoading, setSmallCapLoading] = useState(false);
-
-  const [debateData, setDebateData] = useState(null);
-  const [debateLoading, setDebateLoading] = useState(false);
-  const [debateError, setDebateError] = useState(null);
-
-  const [decisionData, setDecisionData] = useState(null);
-  const [decisionLoading, setDecisionLoading] = useState(false);
-
-  const [scorecardData, setScorecardData] = useState(null);
-  const [scorecardError, setScorecardError] = useState(null);
-  const [scorecardLoading, setScorecardLoading] = useState(false);
-
-  const [predMarketsData, setPredMarketsData] = useState(null);
-  const [predMarketsLoading, setPredMarketsLoading] = useState(false);
   const [isPredictionMarketsExpanded, setIsPredictionMarketsExpanded] = useState(false);
-
-  // Global loading: true only until at least ONE section resolves (optimistic)
-  const [loading, setLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState('');
-  const [error, setError] = useState(null);
+  const [localError, setLocalError] = useState(null);
 
   // Sync page context so the app-level assistant knows what ticker is on screen
   useEffect(() => {
@@ -412,6 +384,95 @@ export default function UnifiedDashboardUI() {
       ticker: ticker || null,
     };
   }, [ticker]);
+
+  const searchUpper = ticker.trim().toUpperCase();
+  const isInSp500 = !!searchUpper && SP500_TICKERS.includes(searchUpper);
+  const suggestions = useMemo(() => {
+    if (!searchUpper || isInSp500) return [];
+    return SP500_TICKERS.filter(t => t.startsWith(searchUpper) || t.includes(searchUpper)).slice(0, 4);
+  }, [searchUpper, isInSp500]);
+
+  const currentAnalysis = useMemo(() => {
+    const normalized = searchUpper;
+    if (analyses[normalized]) return analyses[normalized];
+    
+    // Fallback to recentAnalyses if it's cached there
+    const cached = recentAnalyses.find(a => a.ticker === normalized)?.result;
+    if (cached) {
+      return {
+        status: 'success',
+        loadingStep: '',
+        error: null,
+        loading: false,
+        traceData: cached.trace,
+        traceLoading: false,
+        metricsData: cached.metrics,
+        metricsLoading: false,
+        capBucket: cached.capBucket,
+        smallCapData: cached.smallCap,
+        smallCapLoading: false,
+        debateData: cached.debate,
+        debateLoading: false,
+        debateError: null,
+        decisionData: cached.dt,
+        decisionLoading: false,
+        scorecardData: cached.scorecard,
+        scorecardLoading: false,
+        scorecardError: null,
+        predMarketsData: cached.predMarkets,
+        predMarketsLoading: false,
+      };
+    }
+    
+    return {
+      status: 'idle',
+      loadingStep: '',
+      error: null,
+      loading: false,
+      traceData: null,
+      traceLoading: false,
+      metricsData: null,
+      metricsLoading: false,
+      capBucket: null,
+      smallCapData: null,
+      smallCapLoading: false,
+      debateData: null,
+      debateLoading: false,
+      debateError: null,
+      decisionData: null,
+      decisionLoading: false,
+      scorecardData: null,
+      scorecardLoading: false,
+      scorecardError: null,
+      predMarketsData: null,
+      predMarketsLoading: false,
+    };
+  }, [analyses, recentAnalyses, searchUpper]);
+
+  const {
+    loading,
+    loadingStep,
+    error: analysisError,
+    traceData,
+    traceLoading,
+    metricsData,
+    metricsLoading,
+    capBucket,
+    smallCapData,
+    smallCapLoading,
+    debateData,
+    debateLoading,
+    debateError,
+    decisionData,
+    decisionLoading,
+    scorecardData,
+    scorecardLoading,
+    scorecardError,
+    predMarketsData,
+    predMarketsLoading,
+  } = currentAnalysis;
+
+  const error = localError || analysisError;
 
   const [showOverlay, setShowOverlay] = useState(false);
   const [fadeActive, setFadeActive] = useState(false);
@@ -430,151 +491,17 @@ export default function UnifiedDashboardUI() {
     }
   }, [loading]);
 
-  // useAnalysisHistory context is retrieved at the top
-
-  const searchUpper = ticker.trim().toUpperCase();
-  const isInSp500 = !!searchUpper && SP500_TICKERS.includes(searchUpper);
-  const suggestions = useMemo(() => {
-    if (!searchUpper || isInSp500) return [];
-    return SP500_TICKERS.filter(t => t.startsWith(searchUpper) || t.includes(searchUpper)).slice(0, 4);
-  }, [searchUpper, isInSp500]);
-
-  const analyzeTicker = useCallback(async (overrideTicker = ticker, forceRefresh = false) => {
+  const analyzeTicker = useCallback((overrideTicker = ticker, forceRefresh = false) => {
     const sym = (overrideTicker ?? ticker).trim().toUpperCase();
     if (!sym) {
-      setError('Enter a ticker symbol to analyze.');
+      setLocalError('Enter a ticker symbol to analyze.');
       return;
     }
+    setLocalError(null);
     setTicker(sym);
     setSearchParams({ ticker: sym }, { replace: true });
-
-    if (!forceRefresh) {
-      const cached = getLastAnalysis(sym);
-      if (cached) {
-        setTraceData(cached.trace);
-        setMetricsData(cached.metrics);
-        setCapBucket(cached.capBucket);
-        setSmallCapData(cached.smallCap);
-        setDebateData(cached.debate);
-        setDebateError(null);
-        setDecisionData(cached.dt);
-        setScorecardData(cached.scorecard);
-        setScorecardError(null);
-        setPredMarketsData(cached.predMarkets);
-        
-        setLoading(false);
-        setTraceLoading(false);
-        setMetricsLoading(false);
-        setSmallCapLoading(false);
-        setDebateLoading(false);
-        setDecisionLoading(false);
-        setScorecardLoading(false);
-        setPredMarketsLoading(false);
-        return;
-      }
-    }
-
-    // Reset all per-section state
-    setLoading(true);
-    setError(null);
-    setLoadingStep('Validating symbol…');
-    setTraceData(null); setTraceLoading(true);
-    setMetricsData(null); setMetricsLoading(true); setCapBucket(null);
-    setSmallCapData(null); setSmallCapLoading(false);
-    setDebateData(null); setDebateLoading(true); setDebateError(null);
-    setDecisionData(null); setDecisionLoading(true);
-    setScorecardData(null); setScorecardLoading(true); setScorecardError(null);
-    setPredMarketsData(null); setPredMarketsLoading(true);
-
-    let validationFailed = false;
-
-    // Symbol validation first (fast)
-    try {
-      const probe = await apiFetch(`${API_BASE_URL}/metrics/validate/${encodeURIComponent(sym)}`).catch(() => null);
-      const probeSoftFail = probe?.reason === 'probe_timeout' || probe?.reason === 'probe_failed';
-      if (probe && probe.exists === false && !probeSoftFail) {
-        const msg = probe.reason === 'invalid_format'
-          ? `Ticker "${sym}" looks invalid. Check the symbol format and try again.`
-          : `Could not find a market quote for "${sym}". Check the symbol and try again.`;
-        setError(msg);
-        validationFailed = true;
-      }
-    } catch (_) { /* continue */ }
-
-    if (validationFailed) {
-      setLoading(false);
-      setLoadingStep('');
-      setTraceLoading(false); setMetricsLoading(false); setDebateLoading(false);
-      setDecisionLoading(false); setScorecardLoading(false); setPredMarketsLoading(false);
-      return;
-    }
-
-    setLoadingStep('Loading data…');
-
-    let successCount = 0;
-    let lastErr = null;
-    const onSuccess = () => {
-      successCount += 1;
-    };
-    const onFail = (err) => {
-      if (err) lastErr = err;
-    };
-    const whenAllSettled = () => {
-      setLoading(false);
-      setLoadingStep('');
-      if (successCount === 0) {
-        const msg = lastErr?.message || String(lastErr || '');
-        if (/failed to fetch|network|load failed/i.test(msg)) {
-          setError(
-            `Cannot reach the API at ${API_BASE_URL}. Check VITE_API_BASE_URL (Vercel) and that the backend allows your origin (CORS).`,
-          );
-        } else {
-          setError(msg || 'Analysis failed — all API requests returned errors.');
-        }
-      }
-    };
-
-    const jobs = [
-      apiFetch(`${API_BASE_URL}/metrics/${sym}`)
-        .then((res) => {
-          setMetricsData(res?.metrics ?? null);
-          setCapBucket(res?.cap_bucket ?? null);
-          onSuccess();
-        })
-        .catch((err) => { onFail(err); setMetricsData(null); setCapBucket(null); })
-        .finally(() => setMetricsLoading(false)),
-      apiFetch(`${API_BASE_URL}/prediction-markets?ticker=${sym}`)
-        .then((res) => { setPredMarketsData(res); onSuccess(); })
-        .catch((err) => { onFail(err); setPredMarketsData(null); })
-        .finally(() => setPredMarketsLoading(false)),
-      apiFetch(`${API_BASE_URL}/trace?ticker=${sym}`)
-        .then((res) => { setTraceData(res); onSuccess(); })
-        .catch((err) => { onFail(err); setTraceData(null); })
-        .finally(() => setTraceLoading(false)),
-      apiFetch(`${API_BASE_URL}/debate?ticker=${sym}`)
-        .then((res) => { setDebateData(res); setDebateError(null); onSuccess(); })
-        .catch((err) => {
-          onFail(err);
-          setDebateError('Debate temporarily unavailable.');
-          setDebateData(null);
-        })
-        .finally(() => setDebateLoading(false)),
-      apiFetch(`${API_BASE_URL}/decision-terminal?ticker=${sym}`)
-        .then((res) => { setDecisionData(res); onSuccess(); })
-        .catch((err) => { onFail(err); setDecisionData(null); })
-        .finally(() => setDecisionLoading(false)),
-      apiFetch(`${API_BASE_URL}/scorecard/${encodeURIComponent(sym)}?preset=balanced`)
-        .then((res) => { setScorecardData(res); setScorecardError(null); onSuccess(); })
-        .catch((err) => {
-          onFail(err);
-          setScorecardError(err?.message || 'Scorecard unavailable');
-          setScorecardData(null);
-        })
-        .finally(() => setScorecardLoading(false)),
-    ];
-
-    Promise.allSettled(jobs).then(whenAllSettled);
-  }, [ticker, setSearchParams, getLastAnalysis]);
+    contextAnalyzeTicker(sym, forceRefresh);
+  }, [ticker, setSearchParams, contextAnalyzeTicker]);
 
   // Default to last analyzed ticker in URL on mount if missing
   useEffect(() => {
@@ -592,50 +519,6 @@ export default function UnifiedDashboardUI() {
     lastAutoTicker.current = fromUrl;
     analyzeTicker(fromUrl);
   }, [searchParams, analyzeTicker]);
-
-  // Save current dashboard state to context cache when loaded
-  useEffect(() => {
-    if (!searchUpper || loading) return;
-    
-    // Only cache if we successfully retrieved some key metrics/data
-    if (metricsData || decisionData || traceData) {
-      addAnalysis(searchUpper, {
-        trace: traceData,
-        debate: debateData,
-        metrics: metricsData,
-        dt: decisionData,
-        scorecard: scorecardData,
-        predMarkets: predMarketsData,
-        smallCap: smallCapData,
-        capBucket: capBucket,
-      });
-    }
-  }, [searchUpper, loading, metricsData, debateData, traceData, decisionData, scorecardData, predMarketsData, smallCapData, capBucket, addAnalysis]);
-
-  useEffect(() => {
-    if (!searchUpper || !capBucket || !SMALL_CAP_BUCKETS.has(capBucket)) {
-      setSmallCapData(null);
-      setSmallCapLoading(false);
-      return undefined;
-    }
-
-    let cancelled = false;
-    setSmallCapLoading(true);
-    setSmallCapData(null);
-
-    apiFetch(`${API_BASE_URL}/small-cap-assessment/${encodeURIComponent(searchUpper)}`)
-      .then(res => {
-        if (!cancelled) setSmallCapData(res);
-      })
-      .catch(() => {
-        if (!cancelled) setSmallCapData(null);
-      })
-      .finally(() => {
-        if (!cancelled) setSmallCapLoading(false);
-      });
-
-    return () => { cancelled = true; };
-  }, [searchUpper, capBucket]);
 
   // Decision Terminal Extracted Variables
   const hasDecisionData = decisionData != null;
@@ -1224,8 +1107,9 @@ export default function UnifiedDashboardUI() {
         </section>
       </div>
 
-      {showOverlay && (
-        <LoadingOverlay steps={steps} progressPct={progressPct} visible={fadeActive} />
+      {showOverlay && createPortal(
+        <LoadingOverlay steps={steps} progressPct={progressPct} visible={fadeActive} />,
+        document.body
       )}
 
     </div>
@@ -1334,6 +1218,14 @@ function ParticleWave() {
 // ── Google Stitch-Inspired Full-Screen Loading Overlay ───────────────────────
 function LoadingOverlay({ steps, progressPct, visible }) {
   const activeStep = steps.find((step, idx) => !step.done && (idx === 0 || steps[idx - 1].done));
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
+
   return (
     <div
       style={{
