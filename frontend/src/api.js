@@ -69,6 +69,15 @@ export async function apiFetch(url, options = {}) {
   return res.json();
 }
 
+/** JSON POST with auth headers (fire-and-forget safe). */
+export async function apiPost(url, body, options = {}) {
+  return apiFetch(url, {
+    method: 'POST',
+    body: JSON.stringify(body ?? {}),
+    ...options,
+  });
+}
+
 /**
  * Multipart POST (e.g. image upload). Do not set Content-Type — browser sets boundary.
  */

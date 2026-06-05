@@ -18,6 +18,7 @@ class TestMigrationRunner(unittest.TestCase):
         try:
             applied = run_migrations(db_path, "progress")
             self.assertIn("001_initial_schema.sql", applied)
+            self.assertIn("002_portfolio_memory.sql", applied)
 
             conn = sqlite3.connect(db_path)
             tables = {row[0] for row in conn.execute(
@@ -26,6 +27,8 @@ class TestMigrationRunner(unittest.TestCase):
             self.assertIn("users", tables)
             self.assertIn("user_progress", tables)
             self.assertIn("xp_history", tables)
+            self.assertIn("portfolio_events", tables)
+            self.assertIn("portfolio_snapshots", tables)
             self.assertIn("_schema_migrations", tables)
             conn.close()
         finally:

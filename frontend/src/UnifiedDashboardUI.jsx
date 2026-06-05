@@ -7,6 +7,7 @@ import { API_BASE_URL, apiFetch } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
 import DashboardScorecardPanel from './components/DashboardScorecardPanel';
+import YourMorningHero from './components/YourMorningHero';
 import DebateThreadPanel from './components/debate/DebateThreadPanel';
 import DebateVerdictSummary from './components/debate/DebateVerdictSummary';
 import './DecisionTerminalUI.css';
@@ -634,6 +635,7 @@ export default function UnifiedDashboardUI() {
 
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <YourMorningHero />
 
       {/* Search Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>

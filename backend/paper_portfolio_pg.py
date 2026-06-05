@@ -41,11 +41,15 @@ def _get_conn():
 
 
 def init_schema() -> None:
-    sql_path = Path(__file__).resolve().parent / "migrations" / "postgres" / "001_paper_portfolio.sql"
-    ddl = sql_path.read_text(encoding="utf-8")
+    mig_dir = Path(__file__).resolve().parent / "migrations" / "postgres"
     conn = _get_conn()
     with conn.cursor() as cur:
-        cur.execute(ddl)
+        for name in (
+            "001_paper_portfolio.sql",
+            "002_portfolio_memory.sql",
+            "003_snapshot_spy_return.sql",
+        ):
+            cur.execute((mig_dir / name).read_text(encoding="utf-8"))
     conn.commit()
     logger.info("[paper_portfolio_pg] schema ready on %s", postgres_connection_kwargs()["host"])
 
@@ -187,11 +191,25 @@ def _pg_add_position_impl(
         )
     conn.commit()
     pp.invalidate_portfolio_performance_cache(user_id)
-    return {
+    result = {
         "id": pos_id, "ticker": ticker.upper(), "direction": direction.upper(),
         "entry_price": price, "entry_date": date.today().isoformat(),
         "shares": shares, "allocated": allocated, **profile,
     }
+    try:
+        from . import portfolio_memory as pm
+
+        pm.emit_position_added(
+            user_id,
+            ticker.upper(),
+            shares=shares,
+            entry_price=price,
+            sector=profile.get("sector", ""),
+            source=source,
+        )
+    except Exception:
+        pass
+    return result
 
 
 def _quiet_close_open_long(conn, user_id: str, ticker: str, today_iso: str) -> int:
@@ -262,11 +280,14 @@ def apply_holdings_import(
     conn = _get_conn()
     today = date.today().isoformat()
     current = aggregate_open_long_positions(get_positions(user_id, include_closed=False))
+    prior_aggregated = dict(current)
     item_tickers = {normalize_ticker(str(i.get("ticker") or "")) for i in items}
+    removed_tickers: List[str] = []
 
     if full_snapshot:
         for t in list(current.keys()):
             if t not in item_tickers:
+                removed_tickers.append(t)
                 _quiet_close_open_long(conn, user_id, t, today)
 
     for it in items:
@@ -288,6 +309,28 @@ def apply_holdings_import(
 
     conn.commit()
     pp.invalidate_portfolio_performance_cache(user_id)
+    items_by_ticker = {
+        normalize_ticker(str(it.get("ticker") or "")): {
+            "shares": float(it["shares"]) if it.get("shares") is not None else 0.0,
+            "avg_cost": float(it["avg_cost"]) if it.get("avg_cost") is not None else None,
+        }
+        for it in items
+        if normalize_ticker(str(it.get("ticker") or ""))
+    }
+    try:
+        from . import portfolio_memory as pm
+
+        pm.emit_import_events(
+            user_id,
+            applied_tickers=applied,
+            removed_tickers=removed_tickers,
+            items_by_ticker=items_by_ticker,
+            prior_aggregated=prior_aggregated,
+            source=source,
+            full_snapshot=full_snapshot,
+        )
+    except Exception:
+        pass
     return {"applied": applied, "errors": errors}
 
 
@@ -323,4 +366,16 @@ def close_position(user_id: str, position_id: str) -> Dict[str, Any]:
         )
     conn.commit()
     pp.invalidate_portfolio_performance_cache(user_id)
-    return {"closed": True, "realised_pnl": round(pnl, 2), "exit_price": exit_price}
+    result = {"closed": True, "realised_pnl": round(pnl, 2), "exit_price": exit_price}
+    try:
+        from . import portfolio_memory as pm
+
+        pm.emit_position_removed(
+            user_id,
+            row["ticker"],
+            reason="closed",
+            realised_pnl=round(pnl, 2),
+        )
+    except Exception:
+        pass
+    return result

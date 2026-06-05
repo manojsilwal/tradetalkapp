@@ -290,11 +290,23 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
         else:
             grader_msg = " + outcome grader DISABLED"
 
+        # Portfolio snapshots (Your Morning v0) — after US cash close (~22:30 UTC).
+        scheduler.add_job(
+            _portfolio_snapshots_job,
+            trigger="cron",
+            hour=22,
+            minute=30,
+            id="portfolio_snapshots_daily",
+            replace_existing=True,
+            max_instances=1,
+        )
+        snap_msg = " + portfolio snapshots 22:30 UTC"
+
         scheduler.start()
         logger.info(
             "[DailyPipeline] APScheduler started — daily 00:00 UTC + L1 every 15m + "
-            "CORAL heartbeat every %dm + dreaming 01:40 UTC + meta-harness Sun 03:10 UTC%s",
-            hb_min, grader_msg,
+            "CORAL heartbeat every %dm + dreaming 01:40 UTC + meta-harness Sun 03:10 UTC%s%s",
+            hb_min, grader_msg, snap_msg,
         )
     except Exception as e:
         logger.warning(f"[DailyPipeline] Scheduler start failed: {e}")
@@ -350,6 +362,17 @@ async def _outcome_grader_job() -> None:
         logger.info("[DailyPipeline] outcome_grader_pass result=%s", result)
     except Exception as e:
         logger.warning("[DailyPipeline] outcome grader failed: %s", e)
+
+
+async def _portfolio_snapshots_job() -> None:
+    """Per-user portfolio snapshots for Your Morning (idempotent per user+date)."""
+    try:
+        from .portfolio_snapshots_job import run_portfolio_snapshots_job
+
+        result = await run_portfolio_snapshots_job()
+        logger.info("[DailyPipeline] portfolio_snapshots result=%s", result)
+    except Exception as e:
+        logger.warning("[DailyPipeline] portfolio snapshots failed: %s", e)
 
 
 async def _meta_harness_weekly_job() -> None:

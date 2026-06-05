@@ -3,9 +3,10 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..auth import get_current_user_or_dev, UserInfo
+from ..cron_auth import require_cron_secret
 from ..gemini_llm import gemini_extract_holdings_from_image, resolve_gemini_api_key
 from .. import paper_portfolio as pp
 from .. import user_progress as up
@@ -51,6 +52,20 @@ class ApplyHoldingsRequest(BaseModel):
     full_snapshot: bool = False
     source: str = Field(default="holdings_import", max_length=64)
     note: str = Field(default="", max_length=2000)
+
+
+class UserActionLogRequest(BaseModel):
+    action_type: str = Field(..., min_length=1, max_length=64)
+    entity_type: Optional[str] = Field(default=None, max_length=64)
+    entity_id: Optional[str] = Field(default=None, max_length=128)
+    symbol: Optional[str] = Field(default=None, max_length=16)
+    page: Optional[str] = Field(default=None, max_length=64)
+    metadata: Optional[dict] = None
+
+    @field_validator("symbol")
+    @classmethod
+    def _upper_symbol(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip().upper() if v else v
 
 
 def _reconcile_payload(user_id: str, raw_items: list, full_snapshot: bool) -> dict:
@@ -102,6 +117,52 @@ def add_position(req: AddPositionRequest, user: UserInfo = Depends(get_current_u
     )
     up.award_xp(user.id, "prediction_log", note=req.ticker)
     return result
+
+
+@router.get("/morning-brief")
+def get_morning_brief(user: UserInfo = Depends(get_current_user_or_dev)):
+    """Personalized Your Morning brief for the authenticated user's portfolio."""
+    from ..morning_brief import build_morning_brief
+
+    return build_morning_brief(user.id)
+
+
+@router.get("/timeline")
+def get_portfolio_timeline(
+    limit: int = 20,
+    user: UserInfo = Depends(get_current_user_or_dev),
+):
+    """Recent portfolio memory timeline (events + reaction memory)."""
+    from ..portfolio_timeline import build_timeline
+
+    return {"items": build_timeline(user.id, limit=limit)}
+
+
+@router.post("/user-actions/log")
+def log_user_action_route(
+    body: UserActionLogRequest,
+    user: UserInfo = Depends(get_current_user_or_dev),
+):
+    """Log implicit behavioural signal (non-blocking for callers)."""
+    from .. import portfolio_memory as pm
+    from .. import user_preferences as uprefs
+
+    action_id = pm.log_user_action(
+        user.id,
+        body.action_type,
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+        symbol=body.symbol,
+        page=body.page,
+        metadata=body.metadata,
+    )
+    # Dual-write favourites for chat personalization
+    try:
+        ctx = {"ticker": body.symbol} if body.symbol else {}
+        uprefs.learn_from_action(user.id, body.action_type, ctx)
+    except Exception:
+        pass
+    return {"ok": True, "action_id": action_id}
 
 
 @router.get("/positions")
@@ -175,6 +236,14 @@ async def parse_holdings_image(
     if parse_errors:
         payload["parse_warnings"] = parse_errors
     return payload
+
+
+@router.post("/snapshots/cron", dependencies=[Depends(require_cron_secret)])
+async def run_portfolio_snapshots_cron():
+    """Nightly portfolio snapshot job (cron / GitHub Actions). Idempotent per user+date."""
+    from ..portfolio_snapshots_job import run_portfolio_snapshots_job
+
+    return await run_portfolio_snapshots_job()
 
 
 @router.post("/apply-holdings-import")
