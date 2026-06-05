@@ -44,35 +44,7 @@ test.describe('Investor Use Cases', () => {
     await expect(page.getByRole('heading', { name: 'Global Capital Flows' })).toBeVisible({ timeout: 60000 });
   });
 
-  test('gold advisor shows macro inputs and briefing (FaultHunter: gold-hedge-week)', async ({ page }) => {
-    await page.goto('/gold');
-    await dismissOnboarding(page);
-    await expect(page.getByRole('heading', { name: 'Gold Advisor' })).toBeVisible({ timeout: 30000 });
-    await expectOneOf(page, ['AI briefing', 'DXY', '10Y TIPS real yield %', 'GC=F', /Gold.*Advisor/i], 240000);
-    await expectNoGenericFetchFailure(page);
-  });
 
-  test('debate flow produces a panel verdict (FaultHunter: debate-tsla-thesis)', async ({ page }) => {
-    await page.goto('/debate');
-    await dismissOnboarding(page);
-    await expect(page.getByPlaceholder('TICKER')).toBeVisible({ timeout: 15000 });
-    await page.getByPlaceholder('TICKER').fill('TSLA');
-    await page.getByRole('button', { name: 'Start Debate' }).click();
-    const marker = await expectOneOf(
-      page,
-      ['Panel Verdict', 'Bull Analyst', 'Moderator', /HTTP 429/i, /Too Many Requests/i, /rate limit/i],
-      180000,
-    );
-    const markerText = (await marker.textContent()) || '';
-    if (/429|too many requests|rate limit/i.test(markerText)) {
-      test.info().annotations.push({
-        type: 'note',
-        description: 'Debate endpoint was rate-limited under full-suite load; treating as non-regression.',
-      });
-      return;
-    }
-    await expectNoGenericFetchFailure(page);
-  });
 
   test('observer swarm trace loads for NVDA (FaultHunter: trace-nvda-today)', async ({ page }) => {
     test.setTimeout(180000);

@@ -14,8 +14,7 @@ import AppAssistantPanel from './AppAssistantPanel'
 const ConsumerUI = React.lazy(() => import('./UnifiedDashboardUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
 const MacroUI = React.lazy(() => import('./MacroUI'))
-const GoldAdvisorUI = React.lazy(() => import('./GoldAdvisorUI'))
-const DebateUI = React.lazy(() => import('./DebateUI'))
+
 const BacktestUI = React.lazy(() => import('./BacktestUI'))
 const ObserverUI = React.lazy(() => import('./ObserverUI'))
 const SwarmScoreUI = React.lazy(() => import('./SwarmScoreUI'))
@@ -26,7 +25,7 @@ const DailyChallengeUI = React.lazy(() => import('./DailyChallengeUI'))
 const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
 const LearningPathUI = React.lazy(() => import('./LearningPathUI'))
 const ChatUI = React.lazy(() => import('./ChatUI'))
-const ScorecardUI = React.lazy(() => import('./ScorecardUI'))
+
 const DailyBriefUI = React.lazy(() => import('./DailyBriefUI'))
 const LlmCallsUI = React.lazy(() => import('./LlmCallsUI'))
 
@@ -43,10 +42,9 @@ const ROUTE_TO_KEY = {
     '/': 'consumer',
     '/decision-terminal': 'decision_terminal',
     '/macro': 'macro',
-    '/gold': 'gold',
-    '/debate': 'debate',
+
     '/backtest': 'backtest',
-    '/scorecard': 'scorecard',
+
     '/daily-brief': 'daily_brief',
     '/observer': 'observer',
     '/swarm-score': 'swarm_score',
@@ -207,23 +205,7 @@ function App() {
                         <span>Global Macro</span>
                     </button>
 
-                    <button
-                        className={`nav-btn ${activeTab === 'gold' ? 'active' : ''}`}
-                        onClick={() => { navigate('/gold'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/gold' ? 'page' : undefined}
-                    >
-                        <Coins size={20} />
-                        <span>Gold Advisor</span>
-                    </button>
 
-                    <button
-                        className={`nav-btn ${activeTab === 'debate' ? 'active' : ''}`}
-                        onClick={() => { navigate('/debate'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/debate' ? 'page' : undefined}
-                    >
-                        <Swords size={20} />
-                        <span>AI Debate</span>
-                    </button>
 
                     <button
                         className={`nav-btn ${activeTab === 'backtest' ? 'active' : ''}`}
@@ -234,14 +216,7 @@ function App() {
                         <span>Strategy Lab</span>
                     </button>
 
-                    <button
-                        className={`nav-btn ${activeTab === 'scorecard' ? 'active' : ''}`}
-                        onClick={() => { navigate('/scorecard'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/scorecard' ? 'page' : undefined}
-                    >
-                        <Scale size={20} />
-                        <span>Risk/Return Scorecard</span>
-                    </button>
+
 
                     {/* --- Engagement features --- */}
                     <div style={{ fontSize: 9, color: '#475569', fontWeight: 700, letterSpacing: 1.5, padding: '12px 12px 4px' }}>
@@ -348,11 +323,11 @@ function App() {
                             <Route path="/" element={<ConsumerUI />} />
                             <Route path="/decision-terminal" element={<DecisionTerminalUI />} />
                             <Route path="/macro" element={<MacroUI />} />
-                            <Route path="/gold" element={<GoldAdvisorUI />} />
+
                             <Route path="/chat" element={<ChatUI prefetch={chatPrefetch} />} />
-                            <Route path="/debate" element={<DebateUI />} />
+
                             <Route path="/backtest" element={<BacktestUI />} />
-                            <Route path="/scorecard" element={<ScorecardUI />} />
+
                             <Route path="/daily-brief" element={<DailyBriefUI />} />
                             <Route path="/observer" element={<ObserverUI />} />
                             <Route path="/swarm-score" element={<SwarmScoreUI />} />

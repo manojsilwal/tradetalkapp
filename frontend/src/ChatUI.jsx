@@ -468,8 +468,6 @@ export default function ChatUI({ prefetch = null }) {
       </p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
         {[
-          { to: '/debate', label: 'Debate' },
-          { to: '/scorecard', label: 'Scorecard' },
           { to: '/backtest', label: 'Backtest' },
           { to: '/decision-terminal', label: 'Decision' },
           { to: '/portfolio', label: 'Portfolio' },

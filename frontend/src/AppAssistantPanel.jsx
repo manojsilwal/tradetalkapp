@@ -45,10 +45,7 @@ const PAGE_QUICK_ACTIONS = {
   '/':                  ['What are the top movers today?', 'Give me a quick market summary', 'What is the current market regime?'],
   '/daily-brief':       ['Summarize today\'s key market themes', 'What events should I watch today?', 'Any macro catalysts today?'],
   '/macro':             ['Explain current capital flows', 'What sectors are rotating right now?', 'How does macro affect tech stocks?'],
-  '/gold':              ['Is gold a buy right now?', 'What is driving gold prices?', 'Gold vs USD correlation today?'],
-  '/debate':            ['Start an AAPL bull vs bear debate', 'What are the bears saying about NVDA?', 'Make the bull case for MSFT'],
   '/backtest':          ['What does a 50/200 MA crossover backtest look like?', 'Run a momentum backtest on SPY', 'What strategy works in bull markets?'],
-  '/scorecard':         ['What is the risk/return on AAPL?', 'Score NVDA vs AMD for risk-adjusted returns', 'What does the scorecard say about energy stocks?'],
   '/decision-terminal': ['Should I buy TSLA today?', 'Analyze the decision for entering AMZN', 'What is the 21-day outlook for SPY?'],
   '/observer':          ['What traces are running?', 'Show me recent RAG lookups', 'What tools did the last chat turn use?'],
   '/portfolio':         ['How is my paper portfolio performing?', 'What positions should I trim?', 'Add AAPL to my paper portfolio'],
@@ -66,7 +63,7 @@ const cleanText = (text) =>
 function linkifyContent(text) {
   if (!text) return null
   const re =
-    /(https?:\/\/[^\s<]+[^<>\s.,;)]*)|(\/(debate|backtest|decision-terminal|portfolio|macro|gold|chat|observer|challenge|learning|academy|scorecard|daily-brief|swarm-score|systemmap)(?:\?[^\s<]*)?)/gi
+    /(https?:\/\/[^\s<]+[^<>\s.,;)]*)|(\/(backtest|decision-terminal|portfolio|macro|chat|observer|challenge|learning|academy|daily-brief|swarm-score|systemmap)(?:\?[^\s<]*)?)/gi
   const out = []
   let last = 0
   let mi = 0

@@ -50,11 +50,7 @@ test.describe('UI manual tour (all routes)', () => {
     });
   });
 
-  test('04 Gold Advisor', async ({ page }) => {
-    await page.goto('/gold');
-    await dismissOnboarding(page);
-    await expect(page.getByRole('heading', { name: 'Gold Advisor' })).toBeVisible({ timeout: 60000 });
-  });
+
 
   test('05 Assistant (chat)', async ({ page }) => {
     await page.goto('/chat');
@@ -62,11 +58,7 @@ test.describe('UI manual tour (all routes)', () => {
     await expect(page.getByTestId('chat-input')).toBeVisible({ timeout: 60000 });
   });
 
-  test('06 AI Debate', async ({ page }) => {
-    await page.goto('/debate');
-    await dismissOnboarding(page);
-    await expect(page.getByPlaceholder('TICKER')).toBeVisible({ timeout: 30000 });
-  });
+
 
   test('07 Strategy Lab', async ({ page }) => {
     await page.goto('/backtest');
@@ -74,13 +66,7 @@ test.describe('UI manual tour (all routes)', () => {
     await expect(page.getByRole('heading', { name: 'Strategy Lab' })).toBeVisible({ timeout: 30000 });
   });
 
-  test('08 Risk-Return Scorecard', async ({ page }) => {
-    await page.goto('/scorecard');
-    await dismissOnboarding(page);
-    await expect(page.getByRole('heading', { name: 'Risk-Return Scorecard' })).toBeVisible({
-      timeout: 30000,
-    });
-  });
+
 
   test('09 Developer Trace', async ({ page }) => {
     await page.goto('/observer');

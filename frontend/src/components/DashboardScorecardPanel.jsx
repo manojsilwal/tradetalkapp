@@ -94,24 +94,6 @@ export default function DashboardScorecardPanel({ data, ticker, loading, error }
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => navigate('/scorecard')}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '8px 12px',
-            borderRadius: 8,
-            border: '1px solid rgba(255,255,255,0.12)',
-            background: 'rgba(255,255,255,0.04)',
-            color: 'var(--text-primary)',
-            fontSize: '0.85rem',
-            cursor: 'pointer',
-          }}
-        >
-          Full scorecard <ExternalLink size={14} />
-        </button>
       </div>
 
       {loading && (
