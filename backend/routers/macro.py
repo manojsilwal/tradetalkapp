@@ -96,7 +96,7 @@ async def get_investor_metrics(ticker: str):
         )
     except Exception:
         pass
-    if "error" in data:
+    if "error" in data and not data.get("metrics"):
         return InvestorMetricsResponse(ticker=ticker.upper(), metrics={})
     return InvestorMetricsResponse(
         ticker=ticker.upper(),

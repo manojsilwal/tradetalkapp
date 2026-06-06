@@ -10,7 +10,7 @@ import { AUTH_REQUIRED } from './authConfig'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
 import { API_BASE_URL, getToken } from './api'
 import AppAssistantPanel from './AppAssistantPanel'
-import { useAnalysisHistory } from './AnalysisContext.jsx'
+import { useAnalysisHistory, analysisStillRunning } from './AnalysisContext.jsx'
 
 const ConsumerUI = React.lazy(() => import('./UnifiedDashboardUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
@@ -368,7 +368,10 @@ function App() {
 
 function GlobalLoadingBar() {
     const { analyses } = useAnalysisHistory()
-    const loadingTicker = Object.keys(analyses).find(ticker => analyses[ticker]?.loading)
+    const pageTicker = (window.__tt_page_context__?.ticker || '').trim().toUpperCase()
+    const loadingTicker = (pageTicker && analysisStillRunning(analyses[pageTicker]))
+        ? pageTicker
+        : Object.keys(analyses).find((ticker) => analysisStillRunning(analyses[ticker]))
     const activeAnalysis = loadingTicker ? analyses[loadingTicker] : null
 
     if (!activeAnalysis) return null

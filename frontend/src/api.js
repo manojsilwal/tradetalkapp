@@ -69,6 +69,22 @@ export async function apiFetch(url, options = {}) {
   return res.json();
 }
 
+/** apiFetch with AbortController timeout — prevents hung LLM routes from blocking the UI forever. */
+export async function apiFetchTimed(url, options = {}, timeoutMs = 90000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await apiFetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** JSON POST with auth headers (fire-and-forget safe). */
 export async function apiPost(url, body, options = {}) {
   return apiFetch(url, {

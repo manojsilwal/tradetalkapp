@@ -1,57 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, ArrowRight, X, MessageCircle, Search } from 'lucide-react';
-import { API_BASE_URL, apiFetch, apiPost } from '../api';
+import { API_BASE_URL, apiFetchTimed, apiPost } from '../api';
 import PortfolioTimeline from './PortfolioTimeline';
+import MorningBriefTile from './MorningBriefTile';
+import './YourMorningHero.css';
 
 function logUserAction(payload) {
   apiPost(`${API_BASE_URL}/portfolio/user-actions/log`, payload).catch(() => {});
-}
-
-function MorningBriefCard({ card, onOpen }) {
-  const metricColor =
-    card.primary_metric && String(card.primary_metric).startsWith('+')
-      ? '#10b981'
-      : card.primary_metric && String(card.primary_metric).startsWith('-')
-        ? '#ef4444'
-        : '#e2e8f0';
-
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(card)}
-      style={{
-        borderRadius: 16,
-        border: '1px solid rgba(148,163,184,0.2)',
-        background: 'rgba(255,255,255,0.03)',
-        padding: '16px 18px',
-        textAlign: 'left',
-        cursor: 'pointer',
-        transition: 'box-shadow 0.2s, border-color 0.2s',
-        width: '100%',
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
-        <div>
-          <p style={{ margin: 0, fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.6 }}>
-            {card.symbol || card.type}
-          </p>
-          <h3 style={{ margin: '6px 0 0', fontSize: 15, fontWeight: 600, color: '#f8fafc', lineHeight: 1.35 }}>
-            {card.title}
-          </h3>
-        </div>
-        <span style={{ fontSize: 18, fontWeight: 700, color: metricColor, whiteSpace: 'nowrap' }}>
-          {card.primary_metric}
-        </span>
-      </div>
-      {card.body && (
-        <p style={{ margin: '12px 0 0', fontSize: 13, color: '#cbd5e1', lineHeight: 1.5 }}>{card.body}</p>
-      )}
-      {card.memory_context && (
-        <p style={{ margin: '10px 0 0', fontSize: 12, color: '#94a3b8', lineHeight: 1.45 }}>{card.memory_context}</p>
-      )}
-    </button>
-  );
 }
 
 function CardDetailPanel({ card, onClose, onAction }) {
@@ -68,13 +24,18 @@ function CardDetailPanel({ card, onClose, onAction }) {
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
         <div>
-          <p style={{ margin: 0, fontSize: 11, color: '#a78bfa', textTransform: 'uppercase' }}>What we noticed</p>
-          <h3 style={{ margin: '6px 0 0', fontSize: 17, color: '#f8fafc' }}>{card.title}</h3>
+          <p className="ym-drawer-label">Details</p>
+          <h3 style={{ margin: '6px 0 0', fontSize: 17, color: '#f8fafc' }}>
+            {card.symbol || card.sector_name || card.title}
+          </h3>
         </div>
         <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
           <X size={18} />
         </button>
       </div>
+      {card.impact_label && (
+        <p style={{ margin: '10px 0 0', fontSize: 12, color: '#94a3b8' }}>{card.impact_label}</p>
+      )}
       {card.body && <p style={{ margin: '12px 0 0', fontSize: 13, color: '#cbd5e1', lineHeight: 1.55 }}>{card.body}</p>}
       {card.memory_context && (
         <p style={{ margin: '10px 0 0', fontSize: 12, color: '#94a3b8' }}>{card.memory_context}</p>
@@ -114,13 +75,13 @@ export default function YourMorningHero() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedCard, setSelectedCard] = useState(null);
-  const [showTimeline, setShowTimeline] = useState(false);
+  const [showMore, setShowMore] = useState(false);
 
   useEffect(() => {
     logUserAction({ action_type: 'page_open', page: 'your_morning' });
     Promise.all([
-      apiFetch(`${API_BASE_URL}/portfolio/morning-brief`),
-      apiFetch(`${API_BASE_URL}/portfolio/track-record`).catch(() => null),
+      apiFetchTimed(`${API_BASE_URL}/portfolio/morning-brief`, {}, 45000),
+      apiFetchTimed(`${API_BASE_URL}/portfolio/track-record`, {}, 20000).catch(() => null),
     ])
       .then(([brief, tr]) => {
         setData(brief);
@@ -202,7 +163,7 @@ export default function YourMorningHero() {
           Your Morning starts once you add your portfolio.
         </h2>
         <p style={{ margin: '0 0 16px', fontSize: 13, color: '#94a3b8', maxWidth: 520, lineHeight: 1.55 }}>
-          Connect or import holdings to see what moved your money, since-you-added history, and holding-specific news.
+          Connect or import holdings to see what moved your money and holding-specific context.
         </p>
         <button
           type="button"
@@ -229,8 +190,9 @@ export default function YourMorningHero() {
   }
 
   const sessionMsg = data.market_session?.message;
-  const subhead =
-    sessionMsg || "Here's what changed for your money today.";
+  const portDaily = data.summary?.daily_return_pct;
+  const hasMoreContext =
+    (data.continuity_moments?.length > 0) || trackRecord || data.continue_where_you_left_off;
 
   return (
     <section style={{ marginBottom: 32 }}>
@@ -238,27 +200,41 @@ export default function YourMorningHero() {
         Your Morning
       </p>
       <h2 style={{ margin: '8px 0 4px', fontSize: 22, fontWeight: 800, color: '#f8fafc' }}>{data.headline}</h2>
-      <p style={{ margin: '0 0 18px', fontSize: 13, color: '#94a3b8' }}>{subhead}</p>
-
-      {data.summary && (
-        <p style={{ margin: '0 0 16px', fontSize: 12, color: '#64748b' }}>
-          Portfolio value ${Number(data.summary.total_value).toLocaleString()}
-          {data.summary.benchmark_context?.spy_daily_return_pct != null && (
-            <> · SPY {data.summary.benchmark_context.spy_daily_return_pct > 0 ? '+' : ''}
-            {Number(data.summary.benchmark_context.spy_daily_return_pct).toFixed(1)}%</>
-          )}
-        </p>
+      {sessionMsg && (
+        <p style={{ margin: '0 0 12px', fontSize: 13, color: '#94a3b8' }}>{sessionMsg}</p>
       )}
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: 14,
-        }}
-      >
+      {data.summary && (
+        <div className="ym-hero-kpis">
+          <div className="ym-kpi ym-kpi-portfolio">
+            <span className="ym-kpi-label">Portfolio</span>
+            <span className="ym-kpi-value">
+              ${Number(data.summary.total_value).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </span>
+          </div>
+          {portDaily != null && (
+            <div className={`ym-kpi ym-kpi-today ${portDaily < -0.05 ? 'ym-kpi-down' : portDaily > 0.05 ? 'ym-kpi-up' : 'ym-kpi-flat'}`}>
+              <span className="ym-kpi-label">Today</span>
+              <span className="ym-kpi-value ym-kpi-value-hero">
+                {portDaily > 0 ? '+' : ''}{Number(portDaily).toFixed(1)}%
+              </span>
+            </div>
+          )}
+          {data.summary.benchmark_context?.spy_daily_return_pct != null && (
+            <div className="ym-kpi ym-kpi-benchmark">
+              <span className="ym-kpi-label">vs SPY</span>
+              <span className="ym-kpi-value">
+                {data.summary.benchmark_context.spy_daily_return_pct > 0 ? '+' : ''}
+                {Number(data.summary.benchmark_context.spy_daily_return_pct).toFixed(1)}%
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="ym-tile-grid">
         {(data.cards || []).slice(0, 3).map((card) => (
-          <MorningBriefCard key={card.id} card={card} onOpen={handleCardOpen} />
+          <MorningBriefTile key={card.id} card={card} onOpen={handleCardOpen} />
         ))}
       </div>
 
@@ -268,112 +244,83 @@ export default function YourMorningHero() {
         onAction={handleCardAction}
       />
 
-      {data.continuity_moments?.length > 0 && (
-        <div style={{ marginTop: 16, padding: '14px 16px', borderRadius: 12, background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.2)' }}>
-          <p style={{ margin: 0, fontSize: 11, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: 0.6 }}>
-            You were here before
-          </p>
-          {data.continuity_moments.map((m, idx) => (
-            <div key={idx} style={{ marginTop: 10 }}>
-              <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{m.title}</p>
-              <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94a3b8', lineHeight: 1.5 }}>{m.body}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {trackRecord && (
-        <div style={{ marginTop: 16, padding: '14px 16px', borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(148,163,184,0.15)' }}>
-          <p style={{ margin: 0, fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.6 }}>
-            What we noticed — track record
-          </p>
-          <p style={{ margin: '8px 0 0', fontSize: 13, color: '#cbd5e1', lineHeight: 1.5 }}>{trackRecord.headline}</p>
-          {trackRecord.graded_count > 0 && (
-            <p style={{ margin: '6px 0 0', fontSize: 12, color: '#94a3b8' }}>
-              {trackRecord.directionally_right} right · {trackRecord.wrong} wrong · {trackRecord.neutral} neutral
-            </p>
-          )}
-        </div>
-      )}
-
       {data.watch_next?.length > 0 && (
-        <div
-          style={{
-            marginTop: 16,
-            padding: '14px 16px',
-            borderRadius: 12,
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(148,163,184,0.15)',
-          }}
-        >
-          <p style={{ margin: 0, fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.6 }}>
-            What to watch next
-          </p>
-          {data.watch_next.map((item, idx) => (
-            <p key={idx} style={{ margin: '8px 0 0', fontSize: 13, color: '#cbd5e1' }}>
-              <strong style={{ color: '#e2e8f0' }}>{item.title}</strong>
-              {item.reason ? ` — ${item.reason}` : ''}
-            </p>
+        <div className="ym-watch-chips">
+          {data.watch_next.slice(0, 2).map((item, idx) => (
+            <span key={idx} className="ym-watch-chip">
+              {item.title}{item.reason ? ` · ${item.reason}` : ''}
+            </span>
           ))}
         </div>
       )}
 
-      <div style={{ marginTop: 18 }}>
-        <button
-          type="button"
-          onClick={() => {
-            setShowTimeline((v) => !v);
-            logUserAction({ action_type: 'page_open', page: 'your_morning_timeline' });
-          }}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: '#a78bfa',
-            fontSize: 13,
-            cursor: 'pointer',
-            padding: 0,
-          }}
-        >
-          {showTimeline ? 'Hide portfolio memory' : 'View your portfolio memory'} →
-        </button>
-        {showTimeline && (
-          <div style={{ marginTop: 12 }}>
-            <PortfolioTimeline limit={15} />
-          </div>
+      {hasMoreContext && (
+        <>
+          <button
+            type="button"
+            className="ym-more-toggle"
+            onClick={() => {
+              setShowMore((v) => !v);
+              if (!showMore) {
+                logUserAction({ action_type: 'page_open', page: 'your_morning_more' });
+              }
+            }}
+          >
+            {showMore ? 'Hide more context' : 'More context'} →
+          </button>
+          {showMore && (
+            <div className="ym-more-panel">
+              {trackRecord && (
+                <div className="ym-more-section">
+                  <p className="ym-more-label">Observation history</p>
+                  <p className="ym-more-text">{trackRecord.headline}</p>
+                  {trackRecord.graded_count > 0 && (
+                    <p className="ym-more-text" style={{ fontSize: 12, color: '#94a3b8' }}>
+                      {trackRecord.directionally_right} right · {trackRecord.wrong} wrong · {trackRecord.neutral} neutral
+                    </p>
+                  )}
+                </div>
+              )}
+              {data.continuity_moments?.map((m, idx) => (
+                <div key={idx} className="ym-more-section">
+                  <p className="ym-more-label">{m.title}</p>
+                  <p className="ym-more-text">{m.body}</p>
+                </div>
+              ))}
+              <div className="ym-more-section">
+                <p className="ym-more-label">Portfolio memory</p>
+                <PortfolioTimeline limit={10} compact />
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="ym-footer-links">
+        {data.continue_where_you_left_off && (
+          <button
+            type="button"
+            className="ym-footer-link"
+            onClick={() => {
+              const sym = data.continue_where_you_left_off.symbol;
+              if (sym) {
+                logUserAction({
+                  action_type: 'ticker_click',
+                  symbol: sym,
+                  page: 'your_morning',
+                  metadata: { source: 'continue_where_you_left_off' },
+                });
+                navigate(`/?ticker=${encodeURIComponent(sym)}`);
+              }
+            }}
+          >
+            {data.continue_where_you_left_off.label} →
+          </button>
         )}
       </div>
 
-      {data.continue_where_you_left_off && (
-        <button
-          type="button"
-          onClick={() => {
-            const sym = data.continue_where_you_left_off.symbol;
-            if (sym) {
-              logUserAction({
-                action_type: 'ticker_click',
-                symbol: sym,
-                page: 'your_morning',
-                metadata: { source: 'continue_where_you_left_off' },
-              });
-              navigate(`/?ticker=${encodeURIComponent(sym)}`);
-            }
-          }}
-          style={{
-            marginTop: 14,
-            background: 'transparent',
-            border: 'none',
-            color: '#a78bfa',
-            fontSize: 13,
-            cursor: 'pointer',
-            padding: 0,
-          }}
-        >
-          {data.continue_where_you_left_off.label} →
-        </button>
-      )}
-
       {data.disclaimer && (
-        <p style={{ margin: '16px 0 0', fontSize: 11, color: '#475569', lineHeight: 1.45 }}>{data.disclaimer}</p>
+        <p style={{ margin: '12px 0 0', fontSize: 11, color: '#475569', lineHeight: 1.45 }}>{data.disclaimer}</p>
       )}
     </section>
   );

@@ -145,5 +145,33 @@
     "overall_score": 93.51,
     "grade": "A",
     "status": "pass"
+  },
+  {
+    "run_id": "uiux_eval_20260606_014154",
+    "timestamp": "2026-06-06T01:41:54.680766+00:00",
+    "overall_score": 93.51,
+    "grade": "A",
+    "status": "pass"
+  },
+  {
+    "run_id": "uiux_eval_20260606_014154",
+    "timestamp": "2026-06-06T01:41:54.689443+00:00",
+    "overall_score": 93.51,
+    "grade": "A",
+    "status": "pass"
+  },
+  {
+    "run_id": "uiux_eval_20260606_144844",
+    "timestamp": "2026-06-06T14:48:44.246337+00:00",
+    "overall_score": 93.51,
+    "grade": "A",
+    "status": "pass"
+  },
+  {
+    "run_id": "uiux_eval_20260606_144844",
+    "timestamp": "2026-06-06T14:48:44.256502+00:00",
+    "overall_score": 93.51,
+    "grade": "A",
+    "status": "pass"
   }
 ]

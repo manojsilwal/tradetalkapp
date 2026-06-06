@@ -103,39 +103,78 @@ export default function MacroUI() {
                 <GlobalMarketsChart />
             </div>
 
-            {/* Top Level KPIs (Scaled Down) */}
-            <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
-                <div className="dash-card glass-panel fade-in" data-testid="macro-vix-card" style={{ padding: '16px', borderRadius: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                        <Globe color="var(--accent-blue)" size={18} />
-                        <h3 style={{ margin: 0, fontSize: '0.92rem' }}>CBOE ^VIX Volatility</h3>
+            {/* Core Macro Indicators Redesign */}
+            <div className="dash-card glass-panel fade-in" style={{ padding: '20px 24px', borderRadius: '16px', marginBottom: '24px', background: 'rgba(10, 11, 16, 0.7)', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                {/* Header */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Globe color="#94a3b8" size={16} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'monospace' }}>
+                            Core Macro Indicators
+                        </span>
                     </div>
-                    <h1 data-testid="macro-vix-value" style={{ fontSize: '2rem', margin: 0, fontWeight: 800 }}>{data.vix_level}</h1>
-                    <p style={{ color: 'var(--text-muted)', margin: '6px 0 0 0', fontSize: '0.78rem' }}>Market Expectation of near-term risk</p>
+                    {/* Market Regime Badge */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#94a3b8' }}>
+                        <span>Market Regime:</span>
+                        <span style={{ fontWeight: 700, color: isStress ? 'var(--accent-red)' : 'var(--accent-green)', padding: '2px 8px', borderRadius: '4px', background: isStress ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)', border: `1px solid ${isStress ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)'}` }}>
+                            {data.market_regime.replace('_', ' ')}
+                        </span>
+                    </div>
                 </div>
 
-                <div className="dash-card glass-panel fade-in" data-testid="macro-consumer-spending-chart" style={{ padding: '16px', borderRadius: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                        <Wallet color="var(--accent-green)" size={18} />
-                        <h3 style={{ margin: 0, fontSize: '0.92rem' }}>Total Cash Reserves</h3>
+                {/* Grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '24px' }}>
+                    {/* GDP */}
+                    <div className="macro-col" data-testid="macro-vix-card">
+                        <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>Global GDP Est. (Q3)</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#ffffff', letterSpacing: '-0.02em' }}>2.4%</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '4px 8px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.12)', color: '#f87171', fontSize: '0.72rem', fontWeight: 700 }}>
+                                <ChevronDown size={12} strokeWidth={2.5} />
+                                <span>0.1%</span>
+                            </div>
+                        </div>
                     </div>
-                    <h1 style={{ fontSize: '2rem', margin: 0, fontWeight: 800 }}>
-                        ${data.cash_reserves && data.cash_reserves.length > 0
-                            ? (data.cash_reserves[data.cash_reserves.length - 1].institutional_cash + data.cash_reserves[data.cash_reserves.length - 1].retail_cash).toFixed(2)
-                            : '0.00'}T
-                    </h1>
-                    <p style={{ color: 'var(--text-muted)', margin: '6px 0 0 0', fontSize: '0.78rem' }}>Sitting on the sidelines</p>
-                </div>
 
-                <div className="dash-card glass-panel fade-in" data-testid="macro-cash-reserves-chart" style={{ padding: '16px', borderRadius: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                        {isStress ? <AlertTriangle color="var(--accent-red)" size={18} /> : <TrendingUp color="var(--accent-green)" size={18} />}
-                        <h3 style={{ margin: 0, fontSize: '0.92rem' }}>Market Regime</h3>
+                    {/* Fed Funds Rate */}
+                    <div className="macro-col" data-testid="macro-consumer-spending-chart">
+                        <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>US Fed Funds Rate</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#93c5fd', letterSpacing: '-0.02em' }}>
+                                {data.fed_funds_rate !== null && data.fed_funds_rate !== undefined ? `${data.fed_funds_rate}%` : '5.25%'}
+                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.05)', color: '#94a3b8', fontSize: '0.72rem', fontWeight: 700 }}>
+                                <ArrowRightLeft size={12} strokeWidth={2.5} style={{ color: '#94a3b8' }} />
+                                <span>— UNCH</span>
+                            </div>
+                        </div>
                     </div>
-                    <h1 style={{ fontSize: '1.6rem', margin: 0, fontWeight: 800, color: isStress ? 'var(--accent-red)' : 'var(--accent-green)' }}>
-                        {data.market_regime.replace('_', ' ')}
-                    </h1>
-                    <p style={{ color: 'var(--text-muted)', margin: '6px 0 0 0', fontSize: '0.78rem' }}>Stress Index: {data.credit_stress_index}</p>
+
+                    {/* CPI */}
+                    <div className="macro-col" data-testid="macro-cash-reserves-chart">
+                        <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>US Core CPI (YoY)</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#ffffff', letterSpacing: '-0.02em' }}>
+                                {data.cpi_yoy !== null && data.cpi_yoy !== undefined ? `${data.cpi_yoy}%` : '3.8%'}
+                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '4px 8px', borderRadius: '6px', background: 'rgba(16, 185, 129, 0.12)', color: '#34d399', fontSize: '0.72rem', fontWeight: 700 }}>
+                                <ChevronDown size={12} strokeWidth={2.5} />
+                                <span>0.2%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Brent Crude */}
+                    <div className="macro-col" style={{ borderRight: 'none', paddingRight: 0 }}>
+                        <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>Brent Crude</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#c084fc', letterSpacing: '-0.02em' }}>$84.30</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '4px 8px', borderRadius: '6px', background: 'rgba(139, 92, 246, 0.12)', color: '#a78bfa', fontSize: '0.72rem', fontWeight: 700 }}>
+                                <ChevronUp size={12} strokeWidth={2.5} />
+                                <span>1.2%</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 

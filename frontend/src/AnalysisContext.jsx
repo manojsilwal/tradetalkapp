@@ -1,5 +1,27 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
-import { API_BASE_URL, apiFetch } from './api';
+import { API_BASE_URL, apiFetch, apiFetchTimed } from './api';
+
+const FAST_TIMEOUT_MS = 30000;
+const LLM_TIMEOUT_MS = 120000;
+
+function metricsKeyActivityMissing(metrics) {
+    if (!metrics || Object.keys(metrics).length === 0) return true;
+    const cur = metrics?.momentum_rsi?.current;
+    return !cur || cur === 'N/A';
+}
+
+export function analysisStillRunning(state) {
+    if (!state || state.status !== 'loading') return false;
+    return (
+        state.metricsLoading ||
+        state.scorecardLoading ||
+        state.debateLoading ||
+        state.traceLoading ||
+        state.decisionLoading ||
+        state.predMarketsLoading ||
+        state.smallCapLoading
+    );
+}
 
 const AnalysisContext = createContext(null);
 
@@ -102,9 +124,9 @@ export function AnalysisProvider({ children }) {
             return;
         }
 
-        // Check if already fetched
+        // Check if already fetched (re-fetch when key metrics were empty from a prior rate-limit)
         const existing = getAnalysisState(sym);
-        if (existing?.status === 'success' && !forceRefresh) {
+        if (existing?.status === 'success' && !forceRefresh && !metricsKeyActivityMissing(existing.metricsData)) {
             if (!analysesRef.current[sym]) {
                 setAnalyses(prev => ({
                     ...prev,
@@ -139,10 +161,28 @@ export function AnalysisProvider({ children }) {
             predMarketsLoading: true,
         };
 
-        setAnalyses(prev => ({
-            ...prev,
-            [sym]: initialTickerState
-        }));
+        setAnalyses(prev => {
+            const next = { ...prev };
+            for (const key of Object.keys(next)) {
+                if (key !== sym && next[key]?.status === 'loading') {
+                    next[key] = {
+                        ...next[key],
+                        status: 'cancelled',
+                        loading: false,
+                        loadingStep: '',
+                        metricsLoading: false,
+                        scorecardLoading: false,
+                        debateLoading: false,
+                        traceLoading: false,
+                        decisionLoading: false,
+                        predMarketsLoading: false,
+                        smallCapLoading: false,
+                    };
+                }
+            }
+            next[sym] = initialTickerState;
+            return next;
+        });
 
         let validationFailed = false;
 
@@ -177,14 +217,6 @@ export function AnalysisProvider({ children }) {
 
         if (validationFailed) return;
 
-        setAnalyses(prev => ({
-            ...prev,
-            [sym]: {
-                ...prev[sym],
-                loadingStep: 'Loading data…'
-            }
-        }));
-
         let successCount = 0;
         let lastErr = null;
 
@@ -208,22 +240,43 @@ export function AnalysisProvider({ children }) {
             });
         };
 
+        updateTickerState({
+            loading: false,
+            loadingStep: 'Loading data…',
+        });
+
         const SMALL_CAP_BUCKETS = new Set(['Small Cap', 'Micro Cap']);
 
         const jobs = [
-            apiFetch(`${API_BASE_URL}/metrics/${sym}`)
-                .then((res) => {
+            apiFetchTimed(`${API_BASE_URL}/metrics/${sym}`, {}, FAST_TIMEOUT_MS)
+                .then(async (res) => {
+                    let metrics = res?.metrics ?? null;
+                    if (metricsKeyActivityMissing(metrics)) {
+                        try {
+                            const retry = await apiFetchTimed(
+                                `${API_BASE_URL}/metrics/${sym}`,
+                                {},
+                                FAST_TIMEOUT_MS,
+                            );
+                            if (retry?.metrics && !metricsKeyActivityMissing(retry.metrics)) {
+                                metrics = retry.metrics;
+                                res = retry;
+                            }
+                        } catch {
+                            /* keep first response */
+                        }
+                    }
                     const bucket = res?.cap_bucket ?? null;
                     onSuccess();
                     updateTickerState({
-                        metricsData: res?.metrics ?? null,
+                        metricsData: metrics,
                         capBucket: bucket,
                         metricsLoading: false
                     });
 
                     if (bucket && SMALL_CAP_BUCKETS.has(bucket)) {
                         updateTickerState({ smallCapLoading: true });
-                        apiFetch(`${API_BASE_URL}/small-cap-assessment/${encodeURIComponent(sym)}`)
+                        apiFetchTimed(`${API_BASE_URL}/small-cap-assessment/${encodeURIComponent(sym)}`, {}, FAST_TIMEOUT_MS)
                             .then(smallCapRes => {
                                 updateTickerState({ smallCapData: smallCapRes, smallCapLoading: false });
                             })
@@ -245,7 +298,7 @@ export function AnalysisProvider({ children }) {
                     });
                 }),
 
-            apiFetch(`${API_BASE_URL}/prediction-markets?ticker=${sym}`)
+            apiFetchTimed(`${API_BASE_URL}/prediction-markets?ticker=${sym}`, {}, FAST_TIMEOUT_MS)
                 .then((res) => {
                     onSuccess();
                     updateTickerState({ predMarketsData: res, predMarketsLoading: false });
@@ -255,7 +308,7 @@ export function AnalysisProvider({ children }) {
                     updateTickerState({ predMarketsData: null, predMarketsLoading: false });
                 }),
 
-            apiFetch(`${API_BASE_URL}/trace?ticker=${sym}`)
+            apiFetchTimed(`${API_BASE_URL}/trace?ticker=${sym}`, {}, LLM_TIMEOUT_MS)
                 .then((res) => {
                     onSuccess();
                     updateTickerState({ traceData: res, traceLoading: false });
@@ -265,7 +318,7 @@ export function AnalysisProvider({ children }) {
                     updateTickerState({ traceData: null, traceLoading: false });
                 }),
 
-            apiFetch(`${API_BASE_URL}/debate?ticker=${sym}`)
+            apiFetchTimed(`${API_BASE_URL}/debate?ticker=${sym}`, {}, LLM_TIMEOUT_MS)
                 .then((res) => {
                     onSuccess();
                     updateTickerState({ debateData: res, debateError: null, debateLoading: false });
@@ -279,7 +332,7 @@ export function AnalysisProvider({ children }) {
                     });
                 }),
 
-            apiFetch(`${API_BASE_URL}/decision-terminal?ticker=${sym}`)
+            apiFetchTimed(`${API_BASE_URL}/decision-terminal?ticker=${sym}`, {}, LLM_TIMEOUT_MS)
                 .then((res) => {
                     onSuccess();
                     updateTickerState({ decisionData: res, decisionLoading: false });
@@ -289,7 +342,11 @@ export function AnalysisProvider({ children }) {
                     updateTickerState({ decisionData: null, decisionLoading: false });
                 }),
 
-            apiFetch(`${API_BASE_URL}/scorecard/${encodeURIComponent(sym)}?preset=balanced`)
+            apiFetchTimed(
+                `${API_BASE_URL}/scorecard/${encodeURIComponent(sym)}?preset=balanced&skip_llm_scores=true`,
+                {},
+                FAST_TIMEOUT_MS,
+            )
                 .then((res) => {
                     onSuccess();
                     updateTickerState({ scorecardData: res, scorecardError: null, scorecardLoading: false });

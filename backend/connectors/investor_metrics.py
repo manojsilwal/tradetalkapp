@@ -39,6 +39,46 @@ class InvestorMetricsConnector(DataConnector):
             rs = avg_gain / avg_loss
             return 100.0 - (100.0 / (1.0 + rs))
         
+        def _blank_key_activity() -> Dict[str, Dict[str, Any]]:
+            empty = {"current": "N/A", "historical": "N/A", "trend": "N/A", "history": []}
+            return {
+                "momentum_rsi": dict(empty),
+                "institutional_ownership": dict(empty),
+                "short_interest": dict(empty),
+            }
+
+        def _hydrate_key_activity(
+            metrics_dict: Dict[str, Any], fallback: Dict[str, Any]
+        ) -> None:
+            """Fill RSI / ownership / short interest from debate_data when Yahoo is thin."""
+            for key in ("momentum_rsi", "institutional_ownership", "short_interest"):
+                if key not in metrics_dict or not isinstance(metrics_dict[key], dict):
+                    metrics_dict[key] = {
+                        "current": "N/A",
+                        "historical": "N/A",
+                        "trend": "N/A",
+                        "history": [],
+                    }
+            rsi = metrics_dict["momentum_rsi"]
+            if rsi.get("current") in ("N/A", "", None):
+                one_m = fallback.get("price_return_1m")
+                if one_m is not None:
+                    proxy = max(5.0, min(95.0, 50.0 + float(one_m) * 1.2))
+                    rsi["current"] = f"{proxy:.1f}"
+                    rsi["trend"] = "Proxy"
+            inst = metrics_dict["institutional_ownership"]
+            if inst.get("current") in ("N/A", "", None):
+                inst_pct = fallback.get("held_percent_institutions")
+                if inst_pct is not None and float(inst_pct) > 0:
+                    inst["current"] = f"{float(inst_pct):.1f}%"
+                    inst["trend"] = "Fallback"
+            short = metrics_dict["short_interest"]
+            if short.get("current") in ("N/A", "", None):
+                spf = fallback.get("short_percent_float")
+                if spf is not None and float(spf) > 0:
+                    short["current"] = f"{float(spf):.1f}%"
+                    short["trend"] = "Fallback"
+
         def get_all_metrics() -> Tuple[Dict[str, Any], Optional[float]]:
             ticker = yf.Ticker(ticker_sym)
             info = ticker.info or {}
@@ -248,29 +288,41 @@ class InvestorMetricsConnector(DataConnector):
 
             if isinstance(fallback, Exception):
                 fallback = {}
+            if not isinstance(fallback, dict):
+                fallback = {}
 
-            # Hydrate key activity fields from fallback path when yfinance path is missing.
-            if metrics_dict:
-                if metrics_dict.get("momentum_rsi", {}).get("current") in ("N/A", "", None):
-                    one_m = fallback.get("price_return_1m")
-                    if one_m is not None:
-                        # Approximate RSI proxy from 1m return when history is unavailable.
-                        proxy = max(5.0, min(95.0, 50.0 + float(one_m) * 1.2))
-                        metrics_dict["momentum_rsi"]["current"] = f"{proxy:.1f}"
-                        metrics_dict["momentum_rsi"]["trend"] = "Proxy"
-                if metrics_dict.get("short_interest", {}).get("current") in ("N/A", "", None):
-                    spf = fallback.get("short_percent_float")
-                    if spf is not None and float(spf) > 0:
-                        metrics_dict["short_interest"]["current"] = f"{float(spf):.1f}%"
-                        metrics_dict["short_interest"]["trend"] = "Fallback"
+            if not metrics_dict and fallback:
+                metrics_dict = _blank_key_activity()
+                market_cap = fallback.get("market_cap") or market_cap
+
+            _hydrate_key_activity(metrics_dict, fallback)
 
             return {
                 "ticker": ticker_sym,
-                "metrics": metrics_dict or {},
+                "metrics": metrics_dict,
                 "market_cap": market_cap,
                 "cap_bucket": _classify_market_cap(market_cap),
             }
         except Exception as e:
-            # Safe Fallback
-            return {"ticker": ticker_sym, "error": str(e), "metrics": {}, "market_cap": None, "cap_bucket": None}
+            try:
+                fallback = await fetch_debate_data(ticker_sym)
+            except Exception:
+                fallback = {}
+            if isinstance(fallback, dict) and fallback:
+                metrics_dict = _blank_key_activity()
+                _hydrate_key_activity(metrics_dict, fallback)
+                mc = fallback.get("market_cap")
+                return {
+                    "ticker": ticker_sym,
+                    "metrics": metrics_dict,
+                    "market_cap": mc,
+                    "cap_bucket": _classify_market_cap(mc),
+                }
+            return {
+                "ticker": ticker_sym,
+                "error": str(e),
+                "metrics": _blank_key_activity(),
+                "market_cap": None,
+                "cap_bucket": None,
+            }
 

@@ -97,7 +97,8 @@ def rank_card_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any
     ranked = []
     for c in candidates:
         impact = float(c.get("portfolio_impact_pct") or 0)
-        move = float(c.get("daily_return_pct") or 0)
+        daily_raw = c.get("daily_return_pct")
+        move = float(daily_raw) if daily_raw is not None else 0.0
         interest = float(c.get("user_interest_score") or _DEFAULT_INTEREST)
         novelty = float(c.get("novelty_score") or 0.5)
         reason = _reason_confidence(
@@ -114,6 +115,130 @@ def rank_card_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any
         ranked.append({**c, "rank_score": round(rank_score, 4)})
     ranked.sort(key=lambda x: x["rank_score"], reverse=True)
     return ranked
+
+
+def _resolve_trade_date() -> date:
+    try:
+        from .daily_brief import get_latest_trade_date
+
+        return get_latest_trade_date() or date.today()
+    except Exception:
+        return date.today()
+
+
+def _daily_pct_from_hist(hist) -> Optional[float]:
+    if hist is None or hist.empty or len(hist) < 2:
+        return None
+    prev_close = float(hist["Close"].iloc[-2])
+    last_close = float(hist["Close"].iloc[-1])
+    if prev_close <= 0:
+        return None
+    return round((last_close - prev_close) / prev_close * 100, 4)
+
+
+def _fetch_daily_returns_batch(symbols: List[str], trade_date: date) -> Dict[str, Optional[float]]:
+    """Batch Yahoo session % for many tickers (one network round-trip)."""
+    out: Dict[str, Optional[float]] = {s.upper(): None for s in symbols}
+    if not symbols:
+        return out
+    try:
+        from datetime import timedelta
+
+        import yfinance as yf
+
+        start = trade_date - timedelta(days=10)
+        end = trade_date + timedelta(days=1)
+        tickers = list(dict.fromkeys(s.upper() for s in symbols))
+        if len(tickers) == 1:
+            hist = yf.Ticker(tickers[0]).history(
+                start=start.isoformat(), end=end.isoformat(), auto_adjust=True
+            )
+            out[tickers[0]] = _daily_pct_from_hist(hist)
+            return out
+        raw = yf.download(
+            tickers,
+            start=start.isoformat(),
+            end=end.isoformat(),
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+        if raw is None or raw.empty:
+            return out
+        for sym in tickers:
+            try:
+                if len(tickers) > 1:
+                    closes = raw["Close"][sym].dropna()
+                else:
+                    closes = raw["Close"].dropna()
+                if len(closes) < 2:
+                    continue
+                prev_close = float(closes.iloc[-2])
+                last_close = float(closes.iloc[-1])
+                if prev_close > 0:
+                    out[sym] = round((last_close - prev_close) / prev_close * 100, 4)
+            except Exception:
+                continue
+    except Exception as exc:
+        logger.debug("[morning_brief] batch daily return fetch failed: %s", exc)
+    return out
+
+
+def _looks_like_pnl_not_session(daily: float, pnl_pct: Optional[float]) -> bool:
+    """Detect lifetime P&L copied into a daily field (e.g. MRVL +341%)."""
+    if pnl_pct is None:
+        return abs(daily) > 35.0
+    pnl = float(pnl_pct)
+    if abs(daily) > 15.0 and abs(abs(daily) - abs(pnl)) < 1.0:
+        return True
+    return abs(daily) > 50.0
+
+
+def _daily_returns_for_symbols(
+    symbols: List[str],
+    movement: Dict[str, Dict[str, Any]],
+    trade_date: Optional[date] = None,
+    *,
+    pnl_by_symbol: Optional[Dict[str, float]] = None,
+) -> Dict[str, Optional[float]]:
+    """Per-symbol session daily % — movement when sane, batched Yahoo for gaps."""
+    td = trade_date or _resolve_trade_date()
+    pnl_map = pnl_by_symbol or {}
+    out: Dict[str, Optional[float]] = {}
+    need_yahoo: List[str] = []
+    for sym in symbols:
+        s = sym.upper()
+        mov = movement.get(s) or {}
+        raw = mov.get("daily_return_pct")
+        if raw is not None:
+            daily = float(raw)
+            if not _looks_like_pnl_not_session(daily, pnl_map.get(s)):
+                out[s] = daily
+                continue
+        need_yahoo.append(s)
+    if need_yahoo:
+        yahoo = _fetch_daily_returns_batch(need_yahoo, td)
+        for s in need_yahoo:
+            out[s] = yahoo.get(s)
+    return out
+
+
+def _impact_label(impact_pct: Optional[float]) -> Optional[str]:
+    if impact_pct is None:
+        return None
+    return f"{_fmt_pct(float(impact_pct))} of portfolio"
+
+
+def _direction_and_chip(daily: Optional[float], card_type: str) -> tuple[str, str]:
+    if card_type == "macro_sector_watch":
+        return "flat", "EXPOSURE"
+    if daily is None:
+        return "flat", "PENDING"
+    if daily < -0.05:
+        return "down", "DRAG"
+    if daily > 0.05:
+        return "up", "LIFT"
+    return "flat", "FLAT"
 
 
 def _movement_rows_for_symbols(symbols: List[str], trade_date: Optional[date] = None) -> Dict[str, Dict[str, Any]]:
@@ -134,24 +259,6 @@ def _movement_rows_for_symbols(symbols: List[str], trade_date: Optional[date] = 
                 out[sym] = row
     except Exception as exc:
         logger.debug("[morning_brief] daily_brief filter failed: %s", exc)
-
-    missing = [s for s in symbols if s.upper() not in out]
-    for sym in missing[:10]:
-        try:
-            from .mcp_server.tools import get_movement_context
-
-            ctx = get_movement_context(sym, td.isoformat())
-            price = ctx.get("price") or {}
-            out[sym.upper()] = {
-                "symbol": sym.upper(),
-                "daily_return_pct": price.get("daily_return_pct"),
-                "primary_cause_category": ctx.get("primary_cause_category"),
-                "primary_cause_headline": ctx.get("primary_cause_headline"),
-                "one_line_reason": ctx.get("one_line_reason"),
-                "primary_cause_weight": ctx.get("primary_cause_weight"),
-            }
-        except Exception:
-            pass
     return out
 
 
@@ -160,6 +267,7 @@ def _build_candidates_from_positions(
     positions: List[Dict[str, Any]],
     total_value: float,
     movement: Dict[str, Dict[str, Any]],
+    daily_returns: Dict[str, Optional[float]],
 ) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
     for p in positions:
@@ -168,16 +276,23 @@ def _build_candidates_from_positions(
             continue
         pos_value = float(p.get("current_value") or 0)
         weight = (pos_value / total_value) if total_value > 0 else 0.0
-        daily_ret = float(p.get("daily_return_pct") or p.get("pnl_pct") or 0)
         mov = movement.get(sym) or {}
-        if mov.get("daily_return_pct") is not None:
-            daily_ret = float(mov["daily_return_pct"])
-        impact = round(weight * daily_ret, 4)
+        daily_ret = daily_returns.get(sym)
+        daily_verified = daily_ret is not None
+        daily_for_math = float(daily_ret) if daily_verified else 0.0
+        impact = round(weight * daily_for_math, 4) if daily_verified else None
         cum = float(p.get("pnl_pct") or 0)
+        card_type = "holding_move"
+        if daily_verified:
+            if daily_for_math < -0.05:
+                card_type = "top_negative_contributor"
+            elif daily_for_math > 0.05:
+                card_type = "top_positive_contributor"
         candidates.append({
             "symbol": sym,
-            "type": "top_negative_contributor" if daily_ret < 0 else "top_positive_contributor",
+            "type": card_type,
             "daily_return_pct": daily_ret,
+            "daily_verified": daily_verified,
             "portfolio_weight": weight,
             "portfolio_impact_pct": impact,
             "primary_cause_category": mov.get("primary_cause_category"),
@@ -195,41 +310,52 @@ def _build_candidates_from_positions(
 def _card_from_candidate(c: Dict[str, Any], idx: int) -> Dict[str, Any]:
     sym = c.get("symbol") or ""
     card_type = c.get("type") or ""
-    daily = float(c.get("daily_return_pct") or 0)
-    is_neg = daily < 0
+    daily_raw = c.get("daily_return_pct")
+    daily = float(daily_raw) if daily_raw is not None else None
+    direction, chip = _direction_and_chip(daily, card_type)
+    sector_name = c.get("sector_name")
+    allocation_pct = c.get("allocation_pct")
+
     if card_type == "macro_sector_watch":
-        title = "What may matter to your portfolio"
-        primary_metric = "—"
+        title = sector_name or "Sector exposure"
+        primary_metric = f"{allocation_pct:.0f}%" if allocation_pct is not None else "—"
     elif card_type == "quiet_day":
-        title = c.get("title") or "Your portfolio was quiet today"
+        title = c.get("title") or "Quiet session"
         primary_metric = _fmt_pct(daily)
     elif sym:
-        title = (
-            f"{sym} moved your portfolio lower"
-            if is_neg
-            else f"{sym} helped your portfolio today"
-        )
-        primary_metric = _fmt_pct(daily)
+        title = sym
+        primary_metric = _fmt_pct(daily) if daily is not None else "—"
     else:
-        title = "What moved your money today"
-        primary_metric = _fmt_pct(daily)
+        title = "Portfolio"
+        primary_metric = _fmt_pct(daily) if daily is not None else "—"
+
     body = (c.get("one_line_reason") or "").strip()
-    if not body:
-        body = "Price moved on market activity today."
+    if not body and daily is not None:
+        body = "Session move from latest market close."
+    elif not body and card_type == "macro_sector_watch":
+        body = "Largest sector allocation in your portfolio."
+
     memory = _since_entry_line(
         sym,
         c.get("entry_date"),
         c.get("cumulative_return_since_entry_pct"),
     )
+    impact = c.get("portfolio_impact_pct")
     return {
         "id": f"card_{idx + 1}",
-        "type": card_type or ("top_negative_contributor" if is_neg else "top_positive_contributor"),
+        "type": card_type,
         "symbol": sym or None,
+        "sector_name": sector_name,
+        "allocation_pct": allocation_pct,
         "title": title,
         "primary_metric": primary_metric,
-        "body": body[:240],
+        "direction": direction,
+        "chip": chip,
+        "impact_label": _impact_label(impact) if impact is not None else None,
+        "body": body[:240] if body else "",
         "memory_context": memory,
-        "portfolio_impact_pct": c.get("portfolio_impact_pct"),
+        "portfolio_impact_pct": impact,
+        "daily_return_pct": daily,
         "rank_score": c.get("rank_score"),
         "actions": [
             {"label": "View why", "action": "open_trace"},
@@ -259,8 +385,11 @@ def _macro_watch_card(
         reason = row.get("one_line_reason") or reason
     return {
         "symbol": None,
+        "sector_name": sector_name,
+        "allocation_pct": round(weight * 100, 1),
         "type": "macro_sector_watch",
         "daily_return_pct": 0.0,
+        "daily_verified": True,
         "portfolio_weight": weight,
         "portfolio_impact_pct": 0.0,
         "one_line_reason": reason,
@@ -272,59 +401,87 @@ def _macro_watch_card(
     }
 
 
-def _select_cards(ranked: List[Dict[str, Any]], max_cards: int = _MAX_CARDS) -> List[Dict[str, Any]]:
-    """Preferred mix: negative, positive, macro/watch."""
-    neg = [c for c in ranked if float(c.get("daily_return_pct") or 0) < -0.05]
-    pos = [c for c in ranked if float(c.get("daily_return_pct") or 0) > 0.05]
+def _select_cards(
+    ranked: List[Dict[str, Any]],
+    *,
+    portfolio_daily_pct: Optional[float] = None,
+    max_cards: int = _MAX_CARDS,
+) -> List[Dict[str, Any]]:
+    """Pick tiles aligned with portfolio day direction; verified daily moves only."""
     macro = [c for c in ranked if c.get("type") == "macro_sector_watch"]
-    other = [c for c in ranked if c not in neg and c not in pos and c not in macro]
+    holdings = [
+        c for c in ranked
+        if c.get("type") != "macro_sector_watch" and c.get("daily_verified")
+    ]
+    by_impact = sorted(
+        holdings,
+        key=lambda x: abs(float(x.get("portfolio_impact_pct") or 0)),
+        reverse=True,
+    )
+    neg = [c for c in by_impact if float(c.get("daily_return_pct") or 0) < -0.05]
+    pos = [c for c in by_impact if float(c.get("daily_return_pct") or 0) > 0.05]
+
+    port_down = portfolio_daily_pct is not None and portfolio_daily_pct < -0.05
+    port_up = portfolio_daily_pct is not None and portfolio_daily_pct > 0.05
+    reserve = 1 if macro else 0
+    slot_count = max(0, max_cards - reserve)
 
     picked: List[Dict[str, Any]] = []
-    if neg:
-        picked.append(neg[0])
-    if pos:
-        picked.append(pos[0])
+    if port_down:
+        for c in neg[:slot_count]:
+            picked.append(c)
+        if len(picked) < slot_count and pos:
+            picked.append(pos[0])
+    elif port_up:
+        for c in pos[:slot_count]:
+            picked.append(c)
+        if len(picked) < slot_count and neg:
+            picked.append(neg[0])
+    else:
+        for c in by_impact[:slot_count]:
+            picked.append(c)
+
     if macro and len(picked) < max_cards:
         picked.append(macro[0])
-    for pool in (ranked, other):
-        for c in pool:
-            if len(picked) >= max_cards:
-                break
-            if c not in picked:
-                picked.append(c)
-    return picked[:max_cards]
+
+    seen: set[str] = set()
+    deduped: List[Dict[str, Any]] = []
+    for c in picked:
+        key = c.get("type", "") + ":" + str(c.get("symbol") or c.get("sector_name") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(c)
+    return deduped[:max_cards]
 
 
-def _continue_where_you_left_off(user_id: str, holdings: List[str]) -> Optional[Dict[str, Any]]:
-    actions = pm.list_user_actions(user_id, limit=30)
+def _continue_where_you_left_off(
+    user_id: str,
+    holdings: List[str],
+    *,
+    featured_symbols: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Prefer tickers from today's brief cards, not stale MSFT clicks."""
     hold_set = {h.upper() for h in holdings}
+    for sym in featured_symbols or []:
+        s = (sym or "").upper()
+        if s and s in hold_set:
+            return {
+                "type": "ticker",
+                "symbol": s,
+                "label": f"Continue reviewing {s}",
+            }
+
+    actions = pm.list_user_actions(user_id, limit=30)
+    featured_set = {(s or "").upper() for s in (featured_symbols or [])}
     for a in actions:
         sym = (a.get("symbol") or "").upper()
-        if sym and sym in hold_set:
+        if sym and sym in hold_set and sym in featured_set:
             return {
                 "type": "ticker",
                 "symbol": sym,
                 "label": f"Continue reviewing {sym}",
             }
-    try:
-        from . import user_preferences as uprefs
-
-        prefs = uprefs.get_preferences(user_id)
-        for sym in prefs.get("favorite_tickers") or []:
-            if sym.upper() in hold_set:
-                return {
-                    "type": "ticker",
-                    "symbol": sym.upper(),
-                    "label": f"Continue reviewing {sym.upper()}",
-                }
-    except Exception:
-        pass
-    if holdings:
-        return {
-            "type": "ticker",
-            "symbol": holdings[0].upper(),
-            "label": f"Continue reviewing {holdings[0].upper()}",
-        }
     return None
 
 
@@ -438,19 +595,28 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
         elif isinstance(raw_sectors, dict):
             sector_exposures = raw_sectors
 
+    trade_date = _resolve_trade_date()
+    movement = _movement_rows_for_symbols(symbols, trade_date)
+    pnl_by_symbol = {
+        (p.get("ticker") or "").upper(): float(p.get("pnl_pct") or 0)
+        for p in enriched
+        if p.get("ticker")
+    }
+    daily_returns = _daily_returns_for_symbols(
+        symbols, movement, trade_date, pnl_by_symbol=pnl_by_symbol
+    )
+
     # Live fallback when no snapshot yet today
     if daily_return_pct is None:
-        movement_pre = _movement_rows_for_symbols(symbols)
         impact_sum = 0.0
         total_w = 0.0
         for p in enriched:
             sym = p["ticker"].upper()
             w = float(p.get("current_value") or 0) / total_value if total_value else 0
-            m = movement_pre.get(sym) or {}
-            dr = float(m.get("daily_return_pct") or 0)
-            impact_sum += w * dr
-            p["daily_return_pct"] = dr
-            total_w += w
+            dr = daily_returns.get(sym)
+            if dr is not None:
+                impact_sum += w * float(dr)
+                total_w += w
         daily_return_pct = round(impact_sum, 4) if total_w else 0.0
 
     by_sector = perf.get("analysis", {}).get("by_sector") or {}
@@ -459,52 +625,60 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
             k: round(v / total_value, 4) for k, v in by_sector.items()
         }
 
-    movement = _movement_rows_for_symbols(symbols)
     candidates = _build_candidates_from_positions(
-        user_id, enriched, total_value, movement
+        user_id, enriched, total_value, movement, daily_returns
     )
     macro_c = _macro_watch_card(sector_exposures, movement)
     if macro_c:
         candidates.append(macro_c)
 
+    port_daily = float(daily_return_pct) if daily_return_pct is not None else None
     ranked = rank_card_candidates(candidates)
-    selected = _select_cards(ranked)
+    selected = _select_cards(ranked, portfolio_daily_pct=port_daily)
     cards = [_card_from_candidate(c, i) for i, c in enumerate(selected)]
 
-    if not cards or all(abs(float(c.get("portfolio_impact_pct") or 0)) < 0.01 for c in selected):
+    has_mover = any(
+        c.get("daily_verified") and abs(float(c.get("portfolio_impact_pct") or 0)) >= 0.01
+        for c in selected
+        if c.get("type") != "macro_sector_watch"
+    )
+    if not cards or not has_mover:
         longest = min(enriched, key=lambda p: p.get("entry_date") or "9999")
-        cards = [{
-            "id": "card_1",
+        cards = [_card_from_candidate({
             "type": "quiet_day",
             "symbol": longest.get("ticker"),
-            "title": "Your portfolio was quiet today",
-            "primary_metric": _fmt_pct(daily_return_pct),
-            "body": "No large holding moves stood out in the latest session.",
-            "memory_context": _since_entry_line(
-                longest.get("ticker", ""),
-                longest.get("entry_date"),
-                longest.get("pnl_pct"),
-            ),
+            "title": "Quiet session",
+            "daily_return_pct": port_daily,
+            "daily_verified": port_daily is not None,
             "portfolio_impact_pct": 0.0,
+            "one_line_reason": "No large holding moves stood out in the latest session.",
+            "entry_date": longest.get("entry_date"),
+            "cumulative_return_since_entry_pct": longest.get("pnl_pct"),
             "rank_score": 0.5,
-            "actions": [{"label": "Ask AI", "action": "open_chat"}],
-        }]
+        }, 0)]
 
     contributors = sorted(
-        ranked,
+        [c for c in ranked if c.get("daily_verified")],
         key=lambda c: abs(float(c.get("portfolio_impact_pct") or 0)),
         reverse=True,
     )
-    top_pos = next((c for c in contributors if float(c.get("daily_return_pct") or 0) > 0), None)
-    top_neg = next((c for c in contributors if float(c.get("daily_return_pct") or 0) < 0), None)
+    top_pos = next(
+        (c for c in contributors if float(c.get("daily_return_pct") or 0) > 0.05),
+        None,
+    )
+    top_neg = next(
+        (c for c in contributors if float(c.get("daily_return_pct") or 0) < -0.05),
+        None,
+    )
 
+    has_macro_card = any(c.get("type") == "macro_sector_watch" for c in cards)
     watch_next: List[Dict[str, Any]] = []
-    if sector_exposures:
+    if not has_macro_card and sector_exposures:
         top_s = max(sector_exposures.items(), key=lambda x: x[1])
         watch_next.append({
             "type": "sector_exposure",
-            "title": f"{top_s[0]} is your largest sector exposure",
-            "reason": f"About {top_s[1] * 100:.0f}% of your portfolio sits in {top_s[0]}.",
+            "title": f"{top_s[0]} exposure",
+            "reason": f"{top_s[1] * 100:.0f}% of portfolio",
         })
 
     base["headline"] = _headline_from_summary(
@@ -523,7 +697,13 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
     }
     base["cards"] = cards[:_MAX_CARDS]
     base["watch_next"] = watch_next
-    base["continue_where_you_left_off"] = _continue_where_you_left_off(user_id, symbols)
+    featured = [
+        c.get("symbol") for c in cards
+        if c.get("symbol") and c.get("type") != "macro_sector_watch"
+    ]
+    base["continue_where_you_left_off"] = _continue_where_you_left_off(
+        user_id, symbols, featured_symbols=featured
+    )
     base["continuity_moments"] = find_continuity_moments(
         user_id,
         symbols=symbols,

@@ -22,6 +22,15 @@ test.describe('Your Morning smoke', () => {
     expect(body).toHaveProperty('market_session');
     expect(body).toHaveProperty('continuity_moments');
     expect(Array.isArray(body.continuity_moments)).toBeTruthy();
+    if (body.has_portfolio && body.cards?.length > 0) {
+      expect(body.cards[0]).toHaveProperty('chip');
+      expect(body.cards[0]).toHaveProperty('direction');
+      const hasMacro = body.cards.some((c) => c.type === 'macro_sector_watch');
+      if (hasMacro) {
+        const sectorDup = (body.watch_next || []).filter((w) => w.type === 'sector_exposure');
+        expect(sectorDup.length).toBe(0);
+      }
+    }
   });
 
   test('track record and timeline APIs respond', async ({ request }) => {

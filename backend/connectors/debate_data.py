@@ -134,6 +134,9 @@ def _enrich_fundamentals(ticker: str, info: Dict[str, Any], base: Dict[str, Any]
             "revenue_growth": round(float(info.get("revenueGrowth") or 0.0) * 100, 2),
             "gross_margins": round(float(info.get("grossMargins") or 0.0) * 100, 2),
             "dividend_yield": round(clean_dividend_yield(info.get("dividendYield")), 2),
+            "held_percent_institutions": round(
+                float(info.get("heldPercentInstitutions") or 0.0) * 100, 2
+            ),
             "sector": info.get("sector", "Unknown"),
             "industry": info.get("industry", "Unknown"),
             "company_name": info.get("longName", ticker.upper()),

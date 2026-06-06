@@ -451,6 +451,7 @@ export default function UnifiedDashboardUI() {
   }, [analyses, recentAnalyses, searchUpper]);
 
   const {
+    status: analysisStatus,
     loading,
     loadingStep,
     error: analysisError,
@@ -474,12 +475,13 @@ export default function UnifiedDashboardUI() {
   } = currentAnalysis;
 
   const error = localError || analysisError;
+  const isAnalyzing = analysisStatus === 'loading';
 
   const [showOverlay, setShowOverlay] = useState(false);
   const [fadeActive, setFadeActive] = useState(false);
 
   useEffect(() => {
-    if (loading) {
+    if (isAnalyzing) {
       setShowOverlay(true);
       const frame = requestAnimationFrame(() => {
         setFadeActive(true);
@@ -490,7 +492,7 @@ export default function UnifiedDashboardUI() {
       const timer = setTimeout(() => setShowOverlay(false), 500); // matches opacity transition
       return () => clearTimeout(timer);
     }
-  }, [loading]);
+  }, [isAnalyzing]);
 
   const analyzeTicker = useCallback((overrideTicker = ticker, forceRefresh = false) => {
     const sym = (overrideTicker ?? ticker).trim().toUpperCase();
@@ -658,17 +660,17 @@ export default function UnifiedDashboardUI() {
             <button
               type="button"
               onClick={() => analyzeTicker(ticker)}
-              disabled={loading}
-              style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'var(--accent-blue)', color: 'white', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: loading ? 0.55 : 1 }}
+              disabled={isAnalyzing}
+              style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'var(--accent-blue)', color: 'white', fontWeight: 600, cursor: isAnalyzing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: isAnalyzing ? 0.55 : 1 }}
             >
-              {loading ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
+              {isAnalyzing ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
               Analyze
             </button>
             {hasDecisionData && (
               <button
                 type="button"
                 onClick={() => analyzeTicker(ticker, true)}
-                disabled={loading}
+                disabled={isAnalyzing}
                 style={{
                   padding: '10px 14px',
                   borderRadius: '8px',
@@ -676,16 +678,16 @@ export default function UnifiedDashboardUI() {
                   background: 'rgba(255, 255, 255, 0.05)',
                   color: 'white',
                   fontWeight: 600,
-                  cursor: loading ? 'not-allowed' : 'pointer',
+                  cursor: isAnalyzing ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
-                  opacity: loading ? 0.55 : 1,
+                  opacity: isAnalyzing ? 0.55 : 1,
                   transition: 'background 0.2s',
                 }}
                 title="Force refresh data"
               >
-                {loading ? <Loader2 className="spinner" size={16} /> : <Zap size={16} />}
+                {isAnalyzing ? <Loader2 className="spinner" size={16} /> : <Zap size={16} />}
                 Refresh
               </button>
             )}
@@ -711,7 +713,7 @@ export default function UnifiedDashboardUI() {
         </div>
       )}
 
-      {!loading && !error && !hasDecisionData && !traceData && (
+      {!isAnalyzing && !error && !hasDecisionData && !traceData && (
         <div className="dt-prompt-banner glass-panel" style={{ padding: '16px', marginBottom: 4, color: '#94a3b8', fontSize: '0.9rem' }}>
           Enter a ticker and click Analyze. First load can take up to a minute (swarm, debate, and decision terminal).
         </div>
@@ -931,22 +933,28 @@ export default function UnifiedDashboardUI() {
               })}
             </div>
 
-            {metricsData && (
+            {(metricsLoading || metricsData) && (
                <div>
                  <h3 style={{ fontSize: '14px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '20px', marginBottom: '16px' }}>Key Metrics Activity</h3>
                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-                    <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', borderLeft: '3px solid #38bdf8' }}>
-                      <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px' }}>RSI (14D)</div>
-                      <div style={{ fontSize: '24px', fontWeight: 700 }}>{metricsData.momentum_rsi?.current || 'N/A'}</div>
-                    </div>
-                    <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', borderLeft: '3px solid #00ff88' }}>
-                      <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px' }}>Inst. Ownership</div>
-                      <div style={{ fontSize: '24px', fontWeight: 700 }}>{metricsData.institutional_ownership?.current || 'N/A'}</div>
-                    </div>
-                    <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', borderLeft: '3px solid #f87171' }}>
-                      <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px' }}>Short Interest</div>
-                      <div style={{ fontSize: '24px', fontWeight: 700 }}>{metricsData.short_interest?.current || 'N/A'}</div>
-                    </div>
+                    {[
+                      { key: 'momentum_rsi', label: 'RSI (14D)', color: '#38bdf8' },
+                      { key: 'institutional_ownership', label: 'Inst. Ownership', color: '#00ff88' },
+                      { key: 'short_interest', label: 'Short Interest', color: '#f87171' },
+                    ].map(({ key, label, color }) => {
+                      const raw = metricsData?.[key]?.current;
+                      const value = raw && raw !== 'N/A' ? raw : null;
+                      return (
+                        <div key={key} style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', borderLeft: `3px solid ${color}` }}>
+                          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px' }}>{label}</div>
+                          <div style={{ fontSize: '24px', fontWeight: 700 }}>
+                            {metricsLoading
+                              ? <Loader2 size={22} style={{ animation: 'spin 1s linear infinite', color: '#94a3b8' }} />
+                              : (value || 'N/A')}
+                          </div>
+                        </div>
+                      );
+                    })}
                  </div>
                </div>
             )}
