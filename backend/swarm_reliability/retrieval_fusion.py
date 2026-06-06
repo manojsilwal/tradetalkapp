@@ -5,7 +5,9 @@ from typing import Any, Dict, List
 
 
 def _rrf_score(rank: int, k: int) -> float:
-    return 1.0 / float(k + rank + 1)
+    # Protect against division by zero or negative k
+    k_val = max(1, k)
+    return 1.0 / float(k_val + rank + 1)
 
 
 def _allowed_meta(meta: dict[str, Any], allowed_fields: List[str]) -> dict[str, Any]:
@@ -67,14 +69,45 @@ def fuse_and_cap_hits(
         for rank, h in enumerate(hits or []):
             if not isinstance(h, dict):
                 continue
-            key = str(h.get("id") or f"{collection}:{rank}:{h.get('document','')[:80]}")
+            
+            # Use document ID if present, else fall back to a normalized text content key
+            # so that duplicate documents across different sources/channels are correctly fused.
+            doc_text = str(h.get("document") or "").strip()
+            doc_norm = " ".join(doc_text.lower().split())
+            key = str(h.get("id") or f"doc:{doc_norm[:120]}")
+            
             row = by_key.get(key)
             if row is None:
                 row = dict(h)
                 row["collection"] = str(h.get("collection") or collection or "")
                 row["_rrf"] = 0.0
                 by_key[key] = row
-            boost = float(h.get("_harness_weight", 1.0))
+            else:
+                # Keep the minimum distance (representing highest similarity) across all occurrences of the same document
+                dist_val = h.get("distance")
+                if dist_val is not None:
+                    try:
+                        dist_float = float(dist_val)
+                        if "distance" not in row or row["distance"] is None:
+                            row["distance"] = dist_float
+                        else:
+                            row["distance"] = min(float(row["distance"]), dist_float)
+                    except (ValueError, TypeError):
+                        pass
+
+                # Merge metadata keys to ensure all retrieved contexts retain source/symbol metadata for downstream citation
+                if "metadata" not in row or not isinstance(row["metadata"], dict):
+                    row["metadata"] = {}
+                h_meta = h.get("metadata")
+                if isinstance(h_meta, dict):
+                    for k_meta, v_meta in h_meta.items():
+                        if v_meta is not None and row["metadata"].get(k_meta) is None:
+                            row["metadata"][k_meta] = v_meta
+
+            try:
+                boost = float(h.get("_harness_weight", 1.0))
+            except (ValueError, TypeError):
+                boost = 1.0
             row["_rrf"] = float(row.get("_rrf", 0.0)) + _rrf_score(rank, rrf_k) * boost
 
     ranked = sorted(by_key.values(), key=lambda x: float(x.get("_rrf", 0.0)), reverse=True)
