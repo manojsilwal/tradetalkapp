@@ -1,46 +1,116 @@
-import React, { useState, useEffect } from 'react';
-import { BookOpen, CheckCircle2, Lock, ChevronRight, Star, Zap, Award, Film, Play } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { BookOpen, CheckCircle2, Lock, ChevronRight, Star, Zap, Award, Film, Play, XCircle, Clock, Trophy, ArrowRightLeft } from 'lucide-react';
 import VideoPlayer from './VideoPlayer';
 import { API_BASE_URL, apiFetch } from './api';
 
-export default function LearningPathUI({ onXpGained }) {
+const TYPE_LABELS = { A: '📊 Market Call', B: '⚔️ Debate Duel', C: '🎓 Strategy Quiz' };
+const TYPE_DESC   = {
+    A: 'Predict which direction the market will move tomorrow',
+    B: 'Pick your side in today\'s AI debate — bull or bear',
+    C: 'Answer an investment knowledge question',
+};
+
+export default function AcademyUI({ onXpGained }) {
+    // ── Unified Loading & Error States ───────────────────────────────────────
+    const [loading, setLoading]       = useState(true);
+    const [error, setError]           = useState(null);
+
+    // ── Daily Challenge States ────────────────────────────────────────────────
+    const [challenge, setChallenge]   = useState(null);
+    const [yesterday, setYesterday]   = useState(null);
+    const [selectedChallengeOpt, setSelectedChallengeOpt] = useState(null);
+    const [challengeResult, setChallengeResult] = useState(null);
+    const [submittingChallenge, setSubmittingChallenge] = useState(false);
+
+    // ── Learning Path States ──────────────────────────────────────────────────
     const [curriculum, setCurriculum] = useState(null);
     const [activeModule, setActiveModule] = useState(null);
     const [moduleDetail, setModuleDetail] = useState(null);
     const [quizState, setQuizState]   = useState(null);   // {answers: {}, submitted: bool, score: int}
-    const [loading, setLoading]       = useState(true);
-    const [generating, setGenerating] = useState(false);
+    const [generatingVideo, setGeneratingVideo] = useState(false);
     const [showVideo, setShowVideo]   = useState(false);
     const [pollInterval, setPollInterval] = useState(null);
-    const [submitting, setSubmitting] = useState(false);
-    const [error, setError]           = useState(null);
+    const [submittingQuiz, setSubmittingQuiz] = useState(false);
 
+    // ── Fetch Initial Dashboard Data ─────────────────────────────────────────
     useEffect(() => {
+        Promise.all([
+            apiFetch(`${API_BASE_URL}/challenge/today`).catch(() => null),
+            apiFetch(`${API_BASE_URL}/challenge/yesterday`).catch(() => null),
+            apiFetch(`${API_BASE_URL}/learning/curriculum`).catch(() => null),
+        ])
+            .then(([today, yest, curr]) => {
+                if (today) {
+                    setChallenge(today);
+                    if (today.answered) {
+                        setSelectedChallengeOpt(today.user_answer);
+                        if (today.resolved) {
+                            setChallengeResult({ resolved: true, correct: today.correct, xp_awarded: today.xp_awarded });
+                        }
+                    }
+                }
+                setYesterday(yest);
+                setCurriculum(curr);
+            })
+            .catch(err => {
+                setError('Failed to load Academy dashboard. Please try again.');
+                console.error('[Academy] init error:', err);
+            })
+            .finally(() => setLoading(false));
+
         return () => {
             if (pollInterval) clearInterval(pollInterval);
         };
     }, [pollInterval]);
 
-    useEffect(() => {
-        apiFetch(`${API_BASE_URL}/learning/curriculum`)
-            .then(data => setCurriculum(data))
-            .catch(err => {
-                setError('Failed to load curriculum. Please try again.');
-                console.error('[LearningPath] curriculum load error:', err);
-            })
-            .finally(() => setLoading(false));
-    }, []);
+    // ── Daily Challenge Handlers ──────────────────────────────────────────────
+    const handleChallengeSubmit = async () => {
+        if (selectedChallengeOpt === null || submittingChallenge) return;
+        setSubmittingChallenge(true);
+        try {
+            const data = await apiFetch(`${API_BASE_URL}/challenge/answer`, {
+                method: 'POST',
+                body: JSON.stringify({ answer: String(selectedChallengeOpt) }),
+            });
+            setChallengeResult(data);
+            if (data.progress && onXpGained) {
+                onXpGained(data.progress);
+            }
+            // Refresh today's challenge state
+            const updated = await apiFetch(`${API_BASE_URL}/challenge/today`);
+            setChallenge(updated);
+        } catch (err) {
+            console.error('[Academy] challenge submission failed:', err);
+        } finally {
+            setSubmittingChallenge(false);
+        }
+    };
 
+    const timeUntilMidnight = () => {
+        const now   = new Date();
+        const end   = new Date(now);
+        end.setHours(24, 0, 0, 0);
+        const diff  = end - now;
+        const h = Math.floor(diff / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        return `${h}h ${m}m`;
+    };
+
+    // ── Learning Path Handlers ────────────────────────────────────────────────
     const openModule = async (modId) => {
         if (pollInterval) clearInterval(pollInterval);
         setShowVideo(false);
         setActiveModule(modId);
         setQuizState({ answers: {}, submitted: false, score: 0 });
-        const data = await apiFetch(`${API_BASE_URL}/learning/module/${modId}`);
-        setModuleDetail(data);
+        try {
+            const data = await apiFetch(`${API_BASE_URL}/learning/module/${modId}`);
+            setModuleDetail(data);
 
-        if (data?.lesson?.status === 'generating') {
-            startPolling(modId);
+            if (data?.lesson?.status === 'generating') {
+                startPolling(modId);
+            }
+        } catch (err) {
+            console.error('[Academy] failed to open module:', err);
         }
     };
 
@@ -58,14 +128,16 @@ export default function LearningPathUI({ onXpGained }) {
 
     const handleGenerateVideo = async () => {
         if (!moduleDetail?.lesson?.id) return;
-        setGenerating(true);
+        setGeneratingVideo(true);
         try {
             await apiFetch(`${API_BASE_URL}/academy/lesson/${moduleDetail.lesson.id}/generate`, { method: 'POST' });
             const data = await apiFetch(`${API_BASE_URL}/learning/module/${activeModule}`);
             setModuleDetail(data);
             startPolling(activeModule);
+        } catch (err) {
+            console.error('[Academy] failed to generate video:', err);
         } finally {
-            setGenerating(false);
+            setGeneratingVideo(false);
         }
     };
 
@@ -84,11 +156,11 @@ export default function LearningPathUI({ onXpGained }) {
     };
 
     const submitQuiz = async () => {
-        if (!moduleDetail || submitting) return;
+        if (!moduleDetail || submittingQuiz) return;
         const quiz  = moduleDetail.quiz || [];
         const score = quiz.reduce((acc, q, i) =>
             quizState.answers[i] === q.a ? acc + 1 : acc, 0);
-        setSubmitting(true);
+        setSubmittingQuiz(true);
         try {
             const data = await apiFetch(`${API_BASE_URL}/learning/module/${activeModule}/complete`, {
                 method: 'POST',
@@ -96,14 +168,17 @@ export default function LearningPathUI({ onXpGained }) {
             });
             setQuizState(s => ({ ...s, submitted: true, score, result: data }));
             if (data.progress && onXpGained) onXpGained(data.progress);
-            // Refresh curriculum
+            // Refresh curriculum overview status
             const updated = await apiFetch(`${API_BASE_URL}/learning/curriculum`);
             setCurriculum(updated);
+        } catch (err) {
+            console.error('[Academy] failed to submit quiz:', err);
         } finally {
-            setSubmitting(false);
+            setSubmittingQuiz(false);
         }
     };
 
+    // ── Renders ──────────────────────────────────────────────────────────────
     if (loading) return (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
             <div style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#a78bfa', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -118,7 +193,7 @@ export default function LearningPathUI({ onXpGained }) {
         </div>
     );
 
-    // Module detail view
+    // Module Detail Focused View
     if (activeModule && moduleDetail) {
         const quiz   = moduleDetail.quiz || [];
         const isQuiz = quiz.length > 0;
@@ -126,12 +201,12 @@ export default function LearningPathUI({ onXpGained }) {
         const result = quizState?.result;
 
         return (
-            <div style={{ maxWidth: 680, margin: '0 auto', padding: '0 16px' }}>
+            <div className="fade-in" style={{ maxWidth: 680, margin: '0 auto', padding: '0 16px' }}>
                 <button
                     onClick={() => { setActiveModule(null); setModuleDetail(null); }}
                     style={{ background: 'none', border: 'none', color: '#a78bfa', fontSize: 13, cursor: 'pointer', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 6 }}
                 >
-                    ← Back to curriculum
+                    ← Back to Academy
                 </button>
 
                 {/* Module header */}
@@ -143,10 +218,10 @@ export default function LearningPathUI({ onXpGained }) {
                     <div style={{ fontSize: 11, color: '#a78bfa', fontWeight: 700, letterSpacing: 1.5, marginBottom: 4 }}>
                         LEVEL {moduleDetail.level} · {moduleDetail.level_title}
                     </div>
-                    <h2 style={{ margin: '0 0 8px', fontSize: 22, color: '#fff' }}>{moduleDetail.title}</h2>
-                    <p style={{ margin: 0, fontSize: 13, color: '#94a3b8' }}>{moduleDetail.description}</p>
+                    <h2 style={{ margin: '0 0 8px', fontSize: 22, color: '#fff', fontWeight: 800 }}>{moduleDetail.title}</h2>
+                    <p style={{ margin: 0, fontSize: 13, color: '#94a3b8', lineHeight: 1.5 }}>{moduleDetail.description}</p>
                     {moduleDetail.app_feature && (
-                        <div style={{ marginTop: 10, fontSize: 12, color: '#f59e0b' }}>
+                        <div style={{ marginTop: 10, fontSize: 12, color: '#f59e0b', fontWeight: 600 }}>
                             📍 Practice in: {featureName(moduleDetail.app_feature)}
                         </div>
                     )}
@@ -178,13 +253,13 @@ export default function LearningPathUI({ onXpGained }) {
                                             Generating...
                                         </div>
                                     ) : (
-                                        <button onClick={handleGenerateVideo} disabled={generating} style={{
+                                        <button onClick={handleGenerateVideo} disabled={generatingVideo} style={{
                                             padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(124,58,237,0.3)',
                                             background: 'rgba(124,58,237,0.1)',
-                                            color: '#a78bfa', fontSize: 13, fontWeight: 700, cursor: generating ? 'not-allowed' : 'pointer',
+                                            color: '#a78bfa', fontSize: 13, fontWeight: 700, cursor: generatingVideo ? 'not-allowed' : 'pointer',
                                             display: 'flex', alignItems: 'center', gap: 6,
                                         }}>
-                                            <Zap size={14} /> {generating ? 'Starting...' : 'Generate Lesson'}
+                                            <Zap size={14} /> {generatingVideo ? 'Starting...' : 'Generate Lesson'}
                                         </button>
                                     )}
                                 </div>
@@ -244,7 +319,7 @@ export default function LearningPathUI({ onXpGained }) {
                         {!submitted ? (
                             <button
                                 onClick={submitQuiz}
-                                disabled={Object.keys(quizState?.answers || {}).length < quiz.length || submitting}
+                                disabled={Object.keys(quizState?.answers || {}).length < quiz.length || submittingQuiz}
                                 style={{
                                     width: '100%', padding: '14px', borderRadius: 12, border: 'none',
                                     background: Object.keys(quizState?.answers || {}).length >= quiz.length
@@ -253,7 +328,7 @@ export default function LearningPathUI({ onXpGained }) {
                                     fontSize: 15, fontWeight: 700, cursor: 'pointer',
                                 }}
                             >
-                                {submitting ? 'Submitting...' : 'Submit Quiz'}
+                                {submittingQuiz ? 'Submitting...' : 'Submit Quiz'}
                             </button>
                         ) : (
                             <QuizResult result={result} score={quizState.score} total={quiz.length} />
@@ -277,14 +352,14 @@ export default function LearningPathUI({ onXpGained }) {
                         {!submitted ? (
                             <button
                                 onClick={submitQuiz}
-                                disabled={Object.keys(quizState?.answers || {}).length < quiz.length || submitting}
+                                disabled={Object.keys(quizState?.answers || {}).length < quiz.length || submittingQuiz}
                                 style={{
                                     width: '100%', padding: '14px', borderRadius: 12, border: 'none',
                                     background: 'linear-gradient(135deg, #d97706, #f59e0b)',
                                     color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer',
                                 }}
                             >
-                                {submitting ? 'Submitting...' : 'Submit Assessment'}
+                                {submittingQuiz ? 'Submitting...' : 'Submit Assessment'}
                             </button>
                         ) : (
                             <QuizResult result={result} score={quizState.score} total={quiz.length} passScore={moduleDetail.pass_score} />
@@ -295,22 +370,229 @@ export default function LearningPathUI({ onXpGained }) {
         );
     }
 
-    // Curriculum overview
+    // Academy Dashboard View
     return (
-        <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 16px' }}>
+        <div className="fade-in" style={{ maxWidth: 800, margin: '0 auto', padding: '0 16px' }}>
+            
+            {/* Dismissible yesterday outcome banner */}
+            {yesterday && yesterday.resolved && (
+                <div style={{
+                    marginBottom: 20,
+                    padding: '14px 18px',
+                    borderRadius: 12,
+                    background: yesterday.correct
+                        ? 'rgba(16,185,129,0.08)'
+                        : 'rgba(239,68,68,0.08)',
+                    border: `1px solid ${yesterday.correct ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                }}>
+                    {yesterday.correct
+                        ? <CheckCircle2 size={20} color="#10b981" />
+                        : <XCircle size={20} color="#ef4444" />}
+                    <div>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: yesterday.correct ? '#10b981' : '#ef4444' }}>
+                            Yesterday: {yesterday.correct ? `+${yesterday.xp_awarded} XP!` : 'Not this time'}
+                        </span>
+                        <span style={{ fontSize: 12, color: '#64748b', marginLeft: 8 }}>
+                            {yesterday.challenge?.title}
+                        </span>
+                    </div>
+                </div>
+            )}
+
+            {/* Title / Description */}
             <div style={{ marginBottom: 24 }}>
-                <h2 style={{ margin: '0 0 4px', fontSize: 22, color: '#fff' }}>Investor Learning Path</h2>
+                <h2 style={{ margin: '0 0 4px', fontSize: 24, color: '#fff', fontWeight: 800 }}>Investor Academy</h2>
                 <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>
-                    {curriculum?.total_modules} modules · structured curriculum following real-world investment analysis
+                    Grow your analytic intuition with daily quests and structured lessons.
                 </p>
             </div>
 
-            {curriculum?.levels?.map(level => (
-                <LevelSection key={level.level} level={level} onOpenModule={openModule} />
-            ))}
+            {/* Daily Quest Panel */}
+            {challenge && (
+                <div className="glass-panel" style={{
+                    borderRadius: 16,
+                    padding: '24px',
+                    marginBottom: 32,
+                    border: '1px solid rgba(124,58,237,0.2)',
+                    background: 'rgba(10, 11, 16, 0.55)',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 0 12px rgba(124, 58, 237, 0.05)',
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid rgba(255, 255, 255, 0.05)', paddingBottom: 16, marginBottom: 16 }}>
+                        <div>
+                            <div style={{ fontSize: 11, color: '#a78bfa', fontWeight: 700, letterSpacing: 1.5, marginBottom: 4 }}>
+                                DAILY CHALLENGE
+                            </div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#fff', marginBottom: 4 }}>
+                                {TYPE_LABELS[challenge.type] || "Today's Challenge"}
+                            </div>
+                            <div style={{ fontSize: 12, color: '#64748b' }}>
+                                {TYPE_DESC[challenge.type]}
+                            </div>
+                        </div>
+                        <div style={{ textAlign: 'right', marginLeft: 'auto' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#f59e0b', marginBottom: 6, justifyContent: 'flex-end' }}>
+                                <Zap size={14} />
+                                <span style={{ fontSize: 13, fontWeight: 700 }}>+{challenge.xp_reward || 30} XP</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#64748b', fontSize: 11 }}>
+                                <Clock size={12} />
+                                <span>Resets in {timeUntilMidnight()}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: 10, padding: '16px 20px', marginBottom: 20 }}>
+                        <p style={{ fontSize: 14, color: '#cbd5e1', lineHeight: 1.5, margin: 0 }}>
+                            {challenge.prompt}
+                        </p>
+                    </div>
+
+                    {/* Options rendering */}
+                    {!challenge.answered ? (
+                        <>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+                                {challenge.options?.map((opt, i) => {
+                                    const isSelected = selectedChallengeOpt === (challenge.kind === 'quiz' ? String(i) : opt);
+                                    return (
+                                        <button
+                                            key={i}
+                                            onClick={() => setSelectedChallengeOpt(challenge.kind === 'quiz' ? String(i) : opt)}
+                                            style={{
+                                                padding: '14px 20px',
+                                                borderRadius: 12,
+                                                border: `1px solid ${isSelected ? 'rgba(124,58,237,0.6)' : 'rgba(255,255,255,0.08)'}`,
+                                                background: isSelected ? 'rgba(124,58,237,0.2)' : 'rgba(255,255,255,0.03)',
+                                                color: isSelected ? '#a78bfa' : '#cbd5e1',
+                                                fontSize: 13,
+                                                fontWeight: isSelected ? 700 : 400,
+                                                cursor: 'pointer',
+                                                textAlign: 'left',
+                                                transition: 'all 0.2s',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 10,
+                                            }}
+                                        >
+                                            <span style={{
+                                                width: 24, height: 24, borderRadius: '50%',
+                                                border: `1px solid ${isSelected ? '#a78bfa' : 'rgba(255,255,255,0.2)'}`,
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                fontSize: 11, fontWeight: 700, flexShrink: 0,
+                                                background: isSelected ? 'rgba(124,58,237,0.4)' : 'transparent',
+                                                color: isSelected ? '#a78bfa' : '#64748b',
+                                            }}>
+                                                {String.fromCharCode(65 + i)}
+                                            </span>
+                                            {opt}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <button
+                                onClick={handleChallengeSubmit}
+                                disabled={selectedChallengeOpt === null || submittingChallenge}
+                                style={{
+                                    width: '100%',
+                                    padding: '14px',
+                                    borderRadius: 12,
+                                    border: 'none',
+                                    background: selectedChallengeOpt !== null
+                                        ? 'linear-gradient(135deg, #7c3aed, #a78bfa)'
+                                        : 'rgba(255,255,255,0.05)',
+                                    color: selectedChallengeOpt !== null ? '#fff' : '#64748b',
+                                    fontSize: 15,
+                                    fontWeight: 700,
+                                    cursor: selectedChallengeOpt !== null ? 'pointer' : 'not-allowed',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                {submittingChallenge ? 'Submitting...' : 'Submit Answer'}
+                            </button>
+                        </>
+                    ) : (
+                        /* Answered states */
+                        <>
+                            {challengeResult && challengeResult.resolved ? (
+                                <div style={{
+                                    padding: '20px 24px',
+                                    borderRadius: 12,
+                                    background: challengeResult.correct ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                                    border: `1px solid ${challengeResult.correct ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                                        {challengeResult.correct ? <CheckCircle2 size={24} color="#10b981" /> : <XCircle size={24} color="#ef4444" />}
+                                        <span style={{ fontSize: 16, fontWeight: 800, color: challengeResult.correct ? '#10b981' : '#ef4444' }}>
+                                            {challengeResult.correct ? `+${challengeResult.xp_awarded} XP Earned!` : 'Incorrect'}
+                                        </span>
+                                    </div>
+                                    {challengeResult.explanation && (
+                                        <p style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.6, margin: 0 }}>
+                                            {challengeResult.explanation}
+                                        </p>
+                                    )}
+                                </div>
+                            ) : challengeResult && challengeResult.pending ? (
+                                <div style={{
+                                    padding: '16px 20px',
+                                    borderRadius: 12,
+                                    background: 'rgba(59,130,246,0.08)',
+                                    border: '1px solid rgba(59,130,246,0.2)',
+                                    display: 'flex', gap: 12, alignItems: 'center',
+                                }}>
+                                    <Clock size={20} color="#3b82f6" />
+                                    <div>
+                                        <div style={{ fontSize: 14, fontWeight: 600, color: '#3b82f6', marginBottom: 2 }}>
+                                            Answer recorded!
+                                        </div>
+                                        <div style={{ fontSize: 12, color: '#64748b' }}>
+                                            {challengeResult.message}
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div style={{
+                                    padding: '16px 20px',
+                                    borderRadius: 12,
+                                    background: 'rgba(100,116,139,0.08)',
+                                    border: '1px solid rgba(100,116,139,0.2)',
+                                    textAlign: 'center',
+                                }}>
+                                    <Trophy size={20} color="#f59e0b" style={{ margin: '0 auto 8px', display: 'block' }} />
+                                    <div style={{ fontSize: 13, color: '#94a3b8' }}>
+                                        You've completed today's challenge!
+                                        {challenge.resolved ? (
+                                            <span style={{ color: challenge.correct ? '#10b981' : '#ef4444', marginLeft: 6, fontWeight: 600 }}>
+                                                {challenge.correct ? `+${challenge.xp_awarded} XP earned` : 'Incorrect'}
+                                            </span>
+                                        ) : (
+                                            <span style={{ color: '#64748b', marginLeft: 6 }}>Results will be graded tomorrow.</span>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
+
+            {/* Curriculum Segment */}
+            <div style={{ marginBottom: 16 }}>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: '#64748b', letterSpacing: 1.5, marginBottom: 16, textTransform: 'uppercase' }}>
+                    Academy Curriculum ({curriculum?.total_modules || 0} Modules)
+                </h3>
+
+                {curriculum?.levels?.map(level => (
+                    <LevelSection key={level.level} level={level} onOpenModule={openModule} />
+                ))}
+            </div>
         </div>
     );
 }
+
+// ── Sub-components ─────────────────────────────────────────────────────────
 
 function LevelSection({ level, onOpenModule }) {
     const allDone = level.modules.every(m => m.completed);

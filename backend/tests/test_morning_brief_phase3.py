@@ -8,9 +8,12 @@ from backend.morning_brief import (
     build_morning_brief,
     rank_card_candidates,
     _build_candidates_from_positions,
+    _build_impact_movers,
     _card_from_candidate,
     _continue_where_you_left_off,
     _looks_like_pnl_not_session,
+    _portfolio_sentiment,
+    _sector_swings,
     _select_cards,
 )
 
@@ -154,6 +157,57 @@ class TestRankingLogic(unittest.TestCase):
         self.assertEqual(card["primary_metric"], "-12.5%")
         self.assertNotIn("341", card["primary_metric"])
 
+    def test_portfolio_sentiment_score_in_range(self):
+        enriched = [
+            {"ticker": "NVDA", "current_value": 600, "sector": "Technology"},
+            {"ticker": "MSFT", "current_value": 400, "sector": "Technology"},
+        ]
+        daily = {"NVDA": 2.0, "MSFT": -1.0}
+        sent = _portfolio_sentiment(-0.5, -2.0, enriched, daily, 1000.0)
+        self.assertGreaterEqual(sent["score"], 0.0)
+        self.assertLessEqual(sent["score"], 1.0)
+        self.assertIn(sent["label"], ("BULLISH", "NEUTRAL", "BEARISH"))
+
+    def test_sector_swings_weighted_and_capped(self):
+        enriched = [
+            {"ticker": "NVDA", "current_value": 500, "sector": "Technology"},
+            {"ticker": "JPM", "current_value": 300, "sector": "Financial Services"},
+            {"ticker": "XOM", "current_value": 200, "sector": "Energy"},
+        ]
+        daily = {"NVDA": 3.0, "JPM": -1.5, "XOM": 0.2}
+        swings = _sector_swings(enriched, daily, 1000.0)
+        self.assertLessEqual(len(swings), 3)
+        tech = next(s for s in swings if s["sector_name"] == "Technology")
+        self.assertAlmostEqual(tech["allocation_pct"], 50.0, places=0)
+        self.assertAlmostEqual(tech["daily_return_pct"], 3.0, places=1)
+
+    def test_build_impact_movers_offline_fields(self):
+        ranked = rank_card_candidates([
+            {
+                "symbol": "NVDA",
+                "type": "top_positive_contributor",
+                "daily_return_pct": 4.2,
+                "daily_verified": True,
+                "portfolio_impact_pct": 0.8,
+                "portfolio_weight": 0.3,
+            },
+        ])
+        movement = {"NVDA": {"relative_volume": 1.35}}
+        enriched = [{"ticker": "NVDA", "sector": "Technology", "current_value": 1000}]
+        with patch("backend.morning_brief._fetch_sparklines_5d", return_value={"NVDA": [1.0, 1.02, 1.03, 1.04, 1.05]}):
+            with patch("backend.morning_brief._fetch_relative_volume_batch", return_value={"NVDA": 1.1}):
+                with patch(
+                    "backend.morning_brief._fetch_company_metadata",
+                    return_value={"NVDA": {"company_name": "NVIDIA Corp.", "sector": "Technology", "industry": "Semiconductors"}},
+                ):
+                    movers = _build_impact_movers(ranked, movement, enriched)
+        self.assertEqual(len(movers), 1)
+        self.assertEqual(movers[0]["symbol"], "NVDA")
+        self.assertIn("impact_score", movers[0])
+        self.assertEqual(movers[0]["relative_volume"], 1.35)
+        self.assertEqual(len(movers[0]["sparkline_5d"]), 5)
+        self.assertIn("Tech", movers[0]["sector_tags"])
+
     def test_select_cards_on_down_day_prefers_draggers(self):
         ranked = rank_card_candidates([
             {
@@ -248,6 +302,36 @@ class TestMorningBriefAPI(MorningBriefPhase3Base):
             with patch("backend.morning_brief._daily_returns_for_symbols", return_value=daily):
                 brief = build_morning_brief("u1")
         self.assertLessEqual(len(brief["cards"]), 3)
+
+    def test_brief_includes_dashboard_panels(self):
+        profile = {
+            "sector": "Technology",
+            "market_cap": 1e12,
+            "cap_bucket": "Mega Cap",
+            "asset_type": "Equity",
+        }
+        with patch("backend.paper_portfolio._fetch_ticker_profile", return_value=profile):
+            with patch.object(self.pp, "_fetch_last_prices_batch", return_value={"NVDA": 100.0}):
+                self.pp.add_position("u1", "NVDA", "LONG", price=80, shares=10)
+
+        movement = {"NVDA": {"daily_return_pct": -2.1, "relative_volume": 1.2, "one_line_reason": "move"}}
+        with patch("backend.morning_brief._movement_rows_for_symbols", return_value=movement):
+            with patch("backend.morning_brief._daily_returns_for_symbols", return_value={"NVDA": -2.1}):
+                with patch("backend.morning_brief._fetch_sparklines_5d", return_value={"NVDA": [1, 2, 3, 4, 5]}):
+                    with patch("backend.morning_brief._fetch_relative_volume_batch", return_value={"NVDA": 1.2}):
+                        with patch(
+                            "backend.morning_brief._fetch_company_metadata",
+                            return_value={"NVDA": {"company_name": "NVIDIA", "sector": "Technology", "industry": "Semi"}},
+                        ):
+                            brief = build_morning_brief("u1")
+
+        self.assertIn("impact_movers", brief)
+        self.assertIn("portfolio_sentiment", brief)
+        self.assertIn("sector_swings", brief)
+        if brief["has_portfolio"]:
+            self.assertLessEqual(len(brief["impact_movers"]), 5)
+            self.assertGreaterEqual(brief["portfolio_sentiment"]["score"], 0.0)
+            self.assertLessEqual(brief["portfolio_sentiment"]["score"], 1.0)
 
     def test_watch_next_omitted_when_macro_card_present(self):
         profile = {

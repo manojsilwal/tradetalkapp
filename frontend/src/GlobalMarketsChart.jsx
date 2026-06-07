@@ -206,7 +206,7 @@ export default function GlobalMarketsChart() {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 4 }}>
         <div>
           <h3 style={{ margin: '0 0 4px', fontSize: '1.18rem', fontWeight: 700, color: '#f1f5f9', letterSpacing: '-0.01em' }}>
-            Global Markets — Normalized Performance
+            Global Capital Flows
           </h3>
           <p style={{ margin: 0, fontSize: '0.78rem', color: '#64748b' }}>
             Equities, US bonds &amp; treasuries, gold and total crypto, indexed to the start of the period.

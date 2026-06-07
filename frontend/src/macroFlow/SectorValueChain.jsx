@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight, HelpCircle } from 'lucide-react';
+import Sparkline from '../components/Sparkline';
 
 function formatScore(v) {
   if (v == null || Number.isNaN(Number(v))) return '—';
@@ -16,26 +17,6 @@ function formatUsd(v) {
   if (abs >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
   if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   return `$${n.toFixed(0)}`;
-}
-
-function Sparkline({ data, width = 70, height = 20, stroke = '#10b981' }) {
-  if (!data || data.length < 2) return null;
-  const values = data.map(d => d.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const points = data.map((d, i) => {
-    const x = (i / (data.length - 1)) * width;
-    const y = height - ((d.value - min) / range) * (height - 4) - 2;
-    return `${x},${y}`;
-  }).join(' ');
-  
-  return (
-    <svg width={width} height={height} style={{ overflow: 'visible' }}>
-      <polyline fill="none" stroke={stroke} strokeWidth="1.8" points={points} />
-      <circle cx={width} cy={height - ((values[values.length - 1] - min) / range) * (height - 4) - 2} r="2.5" fill={stroke} />
-    </svg>
-  );
 }
 
 function TooltipHelp({ text }) {

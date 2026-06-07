@@ -17,6 +17,22 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_INTEREST = 0.5
 _MAX_CARDS = 3
+_MAX_IMPACT_MOVERS = 5
+_MOVER_EXTRAS_POOL = 8
+
+_SECTOR_SHORT: Dict[str, str] = {
+    "Technology": "Tech",
+    "Financial Services": "Financials",
+    "Healthcare": "Health",
+    "Consumer Cyclical": "Consumer",
+    "Consumer Defensive": "Consumer",
+    "Communication Services": "Comms",
+    "Basic Materials": "Materials",
+    "Real Estate": "Real Est.",
+    "Energy": "Energy",
+    "Industrials": "Industrial",
+    "Utilities": "Utilities",
+}
 
 
 def _greeting() -> str:
@@ -540,6 +556,293 @@ def _headline_from_summary(daily_return_pct: Optional[float]) -> str:
     return f"Your portfolio is {direction} {abs(daily_return_pct):.1f}% today."
 
 
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _sector_tag_short(sector: str) -> str:
+    s = (sector or "").strip()
+    if not s or s == "Unknown":
+        return ""
+    return _SECTOR_SHORT.get(s, s.split()[0] if s else "")
+
+
+def _industry_tag_short(industry: str) -> str:
+    ind = (industry or "").strip()
+    if not ind:
+        return ""
+    if len(ind) <= 12:
+        return ind
+    words = ind.replace(",", " ").split()
+    if len(words) >= 2:
+        return " ".join(w[:4] for w in words[:2])
+    return ind[:12]
+
+
+def _fetch_sparklines_5d(symbols: List[str]) -> Dict[str, List[float]]:
+    """Last 5 session closes per symbol for mini charts."""
+    out: Dict[str, List[float]] = {s.upper(): [] for s in symbols}
+    if not symbols:
+        return out
+    try:
+        import yfinance as yf
+
+        tickers = list(dict.fromkeys(s.upper() for s in symbols))
+        if len(tickers) == 1:
+            hist = yf.Ticker(tickers[0]).history(period="5d", auto_adjust=True)
+            if hist is not None and not hist.empty and "Close" in hist:
+                closes = [round(float(v), 4) for v in hist["Close"].dropna().tolist()]
+                out[tickers[0]] = closes[-5:]
+            return out
+        raw = yf.download(
+            tickers,
+            period="5d",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+        if raw is None or raw.empty:
+            return out
+        for sym in tickers:
+            try:
+                if len(tickers) > 1:
+                    closes = raw["Close"][sym].dropna()
+                else:
+                    closes = raw["Close"].dropna()
+                out[sym] = [round(float(v), 4) for v in closes.tolist()[-5:]]
+            except Exception:
+                continue
+    except Exception as exc:
+        logger.debug("[morning_brief] sparkline fetch failed: %s", exc)
+    return out
+
+
+def _fetch_relative_volume_batch(symbols: List[str]) -> Dict[str, float]:
+    """last_vol / mean_vol_60d per symbol (same idea as market_intel movers)."""
+    out: Dict[str, float] = {s.upper(): 1.0 for s in symbols}
+    if not symbols:
+        return out
+    try:
+        import yfinance as yf
+
+        tickers = list(dict.fromkeys(s.upper() for s in symbols))
+        raw = yf.download(
+            tickers,
+            period="60d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+        if raw is None or raw.empty:
+            return out
+        volume = raw.get("Volume")
+        if volume is None:
+            return out
+        if len(tickers) == 1:
+            sym = tickers[0]
+            vols = volume.dropna()
+            if len(vols) >= 2:
+                mean_vol = float(vols.mean())
+                last_vol = float(vols.iloc[-1])
+                if mean_vol > 0:
+                    out[sym] = round(last_vol / mean_vol, 4)
+            return out
+        for sym in tickers:
+            try:
+                vols = volume[sym].dropna()
+                if len(vols) < 2:
+                    continue
+                mean_vol = float(vols.mean())
+                last_vol = float(vols.iloc[-1])
+                if mean_vol > 0:
+                    out[sym] = round(last_vol / mean_vol, 4)
+            except Exception:
+                continue
+    except Exception as exc:
+        logger.debug("[morning_brief] relative volume fetch failed: %s", exc)
+    return out
+
+
+def _fetch_company_metadata(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for sym in symbols:
+        s = sym.upper()
+        try:
+            import yfinance as yf
+
+            info = yf.Ticker(s).info or {}
+            out[s] = {
+                "company_name": info.get("longName") or info.get("shortName") or s,
+                "sector": info.get("sector") or "Unknown",
+                "industry": info.get("industry") or "",
+            }
+        except Exception:
+            out[s] = {"company_name": s, "sector": "Unknown", "industry": ""}
+    return out
+
+
+def _relative_volume_for_symbol(
+    sym: str,
+    movement: Dict[str, Dict[str, Any]],
+    batch: Dict[str, float],
+) -> float:
+    mov = movement.get(sym.upper()) or {}
+    raw = mov.get("relative_volume")
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    return float(batch.get(sym.upper(), 1.0))
+
+
+def _build_impact_movers(
+    ranked: List[Dict[str, Any]],
+    movement: Dict[str, Dict[str, Any]],
+    enriched: List[Dict[str, Any]],
+    *,
+    max_movers: int = _MAX_IMPACT_MOVERS,
+) -> List[Dict[str, Any]]:
+    holdings = [
+        c for c in ranked
+        if c.get("type") != "macro_sector_watch"
+        and c.get("symbol")
+        and c.get("daily_verified")
+    ]
+    pool = sorted(
+        holdings,
+        key=lambda x: abs(float(x.get("portfolio_impact_pct") or 0)),
+        reverse=True,
+    )[:_MOVER_EXTRAS_POOL]
+    symbols = [(c.get("symbol") or "").upper() for c in pool]
+    sparklines = _fetch_sparklines_5d(symbols)
+    rel_vols = _fetch_relative_volume_batch(symbols)
+    meta = _fetch_company_metadata(symbols)
+    sector_by_sym = {
+        (p.get("ticker") or "").upper(): p.get("sector") or "Unknown"
+        for p in enriched
+    }
+
+    movers: List[Dict[str, Any]] = []
+    for c in pool[:max_movers]:
+        sym = (c.get("symbol") or "").upper()
+        m = meta.get(sym, {})
+        sector = m.get("sector") or sector_by_sym.get(sym) or "Unknown"
+        industry = m.get("industry") or ""
+        tags: List[str] = []
+        st = _sector_tag_short(sector)
+        if st:
+            tags.append(st)
+        it = _industry_tag_short(industry)
+        if it and it not in tags:
+            tags.append(it)
+        rank_score = float(c.get("rank_score") or 0)
+        movers.append({
+            "symbol": sym,
+            "company_name": m.get("company_name") or sym,
+            "sector": sector,
+            "industry": industry,
+            "sector_tags": tags,
+            "daily_return_pct": c.get("daily_return_pct"),
+            "portfolio_impact_pct": c.get("portfolio_impact_pct"),
+            "rank_score": rank_score,
+            "impact_score": round(rank_score * 100),
+            "relative_volume": _relative_volume_for_symbol(sym, movement, rel_vols),
+            "sparkline_5d": sparklines.get(sym, []),
+        })
+    return movers
+
+
+def _portfolio_sentiment(
+    port_daily: Optional[float],
+    spy_daily: Optional[float],
+    enriched: List[Dict[str, Any]],
+    daily_returns: Dict[str, Optional[float]],
+    total_value: float,
+) -> Dict[str, Any]:
+    if total_value <= 0:
+        return {"score": 0.5, "label": "NEUTRAL", "gauge_position_pct": 50}
+
+    up_w = 0.0
+    down_w = 0.0
+    for p in enriched:
+        sym = (p.get("ticker") or "").upper()
+        w = float(p.get("current_value") or 0) / total_value
+        dr = daily_returns.get(sym)
+        if dr is None:
+            continue
+        if float(dr) > 0.05:
+            up_w += w
+        elif float(dr) < -0.05:
+            down_w += w
+
+    if up_w + down_w > 0:
+        breadth = up_w / (up_w + down_w)
+    else:
+        breadth = 0.5
+
+    alpha = 0.0
+    if port_daily is not None and spy_daily is not None:
+        alpha = float(port_daily) - float(spy_daily)
+
+    score = _clamp01(0.6 * breadth + 0.4 * (0.5 + alpha / 10.0))
+    if score >= 0.55:
+        label = "BULLISH"
+    elif score <= 0.45:
+        label = "BEARISH"
+    else:
+        label = "NEUTRAL"
+    return {
+        "score": round(score, 2),
+        "label": label,
+        "gauge_position_pct": round(score * 100),
+    }
+
+
+def _sector_swings(
+    enriched: List[Dict[str, Any]],
+    daily_returns: Dict[str, Optional[float]],
+    total_value: float,
+    *,
+    max_sectors: int = 3,
+) -> List[Dict[str, Any]]:
+    if total_value <= 0:
+        return []
+
+    groups: Dict[str, Dict[str, float]] = {}
+    for p in enriched:
+        sector = p.get("sector") or "Unknown"
+        sym = (p.get("ticker") or "").upper()
+        val = float(p.get("current_value") or 0)
+        dr = daily_returns.get(sym)
+        if sector not in groups:
+            groups[sector] = {"value": 0.0, "weighted_ret": 0.0}
+        groups[sector]["value"] += val
+        if dr is not None:
+            groups[sector]["weighted_ret"] += val * float(dr)
+
+    swings: List[Dict[str, Any]] = []
+    for sector, g in groups.items():
+        alloc = g["value"] / total_value * 100.0
+        daily = (g["weighted_ret"] / g["value"]) if g["value"] > 0 else 0.0
+        swings.append({
+            "sector_name": sector,
+            "daily_return_pct": round(daily, 2),
+            "allocation_pct": round(alloc, 1),
+            "_sort": abs(daily) * (alloc / 100.0),
+        })
+    swings.sort(key=lambda x: float(x["_sort"]), reverse=True)
+    return [
+        {
+            "sector_name": s["sector_name"],
+            "daily_return_pct": s["daily_return_pct"],
+            "allocation_pct": s["allocation_pct"],
+        }
+        for s in swings[:max_sectors]
+    ]
+
+
 def build_morning_brief(user_id: str) -> Dict[str, Any]:
     """Build personalized morning brief for one user."""
     now = datetime.now(timezone.utc).isoformat()
@@ -550,6 +853,9 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
         "headline": "Your Morning starts once you add your portfolio.",
         "summary": None,
         "cards": [],
+        "impact_movers": [],
+        "portfolio_sentiment": None,
+        "sector_swings": [],
         "watch_next": [],
         "continue_where_you_left_off": None,
         "continuity_moments": [],
@@ -625,16 +931,20 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
             k: round(v / total_value, 4) for k, v in by_sector.items()
         }
 
+    sector_swings_list = _sector_swings(enriched, daily_returns, total_value)
+
     candidates = _build_candidates_from_positions(
         user_id, enriched, total_value, movement, daily_returns
     )
     macro_c = _macro_watch_card(sector_exposures, movement)
-    if macro_c:
+    if macro_c and not sector_swings_list:
         candidates.append(macro_c)
 
     port_daily = float(daily_return_pct) if daily_return_pct is not None else None
     ranked = rank_card_candidates(candidates)
     selected = _select_cards(ranked, portfolio_daily_pct=port_daily)
+    if sector_swings_list:
+        selected = [c for c in selected if c.get("type") != "macro_sector_watch"]
     cards = [_card_from_candidate(c, i) for i, c in enumerate(selected)]
 
     has_mover = any(
@@ -671,9 +981,10 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
         None,
     )
 
+    has_sector_panel = bool(sector_swings_list)
     has_macro_card = any(c.get("type") == "macro_sector_watch" for c in cards)
     watch_next: List[Dict[str, Any]] = []
-    if not has_macro_card and sector_exposures:
+    if not has_macro_card and not has_sector_panel and sector_exposures:
         top_s = max(sector_exposures.items(), key=lambda x: x[1])
         watch_next.append({
             "type": "sector_exposure",
@@ -695,12 +1006,20 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
             "qqq_daily_return_pct": qqq_daily,
         },
     }
+    impact_movers = _build_impact_movers(ranked, movement, enriched)
+    base["impact_movers"] = impact_movers
+    base["portfolio_sentiment"] = _portfolio_sentiment(
+        port_daily, spy_daily, enriched, daily_returns, total_value
+    )
+    base["sector_swings"] = sector_swings_list
     base["cards"] = cards[:_MAX_CARDS]
     base["watch_next"] = watch_next
-    featured = [
-        c.get("symbol") for c in cards
-        if c.get("symbol") and c.get("type") != "macro_sector_watch"
-    ]
+    featured = [m.get("symbol") for m in impact_movers if m.get("symbol")]
+    if not featured:
+        featured = [
+            c.get("symbol") for c in cards
+            if c.get("symbol") and c.get("type") != "macro_sector_watch"
+        ]
     base["continue_where_you_left_off"] = _continue_where_you_left_off(
         user_id, symbols, featured_symbols=featured
     )

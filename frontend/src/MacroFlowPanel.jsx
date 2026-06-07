@@ -206,7 +206,7 @@ export default function MacroFlowPanel() {
           <Layers color="var(--accent-orange)" />
           <div>
             <h3 style={{ margin: 0, display: 'inline-flex', alignItems: 'center' }}>
-              Educational Capital Flow Dashboard
+              Thematic capital flow
               <TooltipHelp text="Tracks S&P 500 sector rotation, downstream spending trends, and stock-level co-movement co-flow." />
             </h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '4px 0 0 0' }}>

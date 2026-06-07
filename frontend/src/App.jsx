@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2 } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2 } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -22,9 +22,9 @@ const SwarmScoreUI = React.lazy(() => import('./SwarmScoreUI'))
 const UbdsBenchmarkUI = React.lazy(() => import('./UbdsBenchmarkUI'))
 const SystemMapUI = React.lazy(() => import('./SystemMapUI'))
 const SystemDiagramsUI = React.lazy(() => import('./SystemDiagramsUI'))
-const DailyChallengeUI = React.lazy(() => import('./DailyChallengeUI'))
+const ApiCatalogUI = React.lazy(() => import('./ApiCatalogUI'))
+const AcademyUI = React.lazy(() => import('./AcademyUI'))
 const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
-const LearningPathUI = React.lazy(() => import('./LearningPathUI'))
 const ChatUI = React.lazy(() => import('./ChatUI'))
 
 const DailyBriefUI = React.lazy(() => import('./DailyBriefUI'))
@@ -51,9 +51,10 @@ const ROUTE_TO_KEY = {
     '/swarm-score': 'swarm_score',
     '/ubds': 'ubds',
     '/systemmap': 'systemmap',
-    '/challenge': 'challenge',
+    '/api-catalog': 'api_catalog',
+    '/challenge': 'academy',
     '/portfolio': 'portfolio',
-    '/learning': 'learning',
+    '/learning': 'academy',
     '/chat': 'chat',
     '/llm-calls': 'llm_calls',
 }
@@ -225,15 +226,6 @@ function App() {
                     </div>
 
                     <button
-                        className={`nav-btn ${activeTab === 'challenge' ? 'active' : ''}`}
-                        onClick={() => { navigate('/challenge'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/challenge' ? 'page' : undefined}
-                    >
-                        <Zap size={20} />
-                        <span>Daily Challenge</span>
-                    </button>
-
-                    <button
                         className={`nav-btn ${activeTab === 'portfolio' ? 'active' : ''}`}
                         onClick={() => { navigate('/portfolio'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/portfolio' ? 'page' : undefined}
@@ -248,12 +240,12 @@ function App() {
                     </div>
 
                     <button
-                        className={`nav-btn ${activeTab === 'learning' ? 'active' : ''}`}
+                        className={`nav-btn ${activeTab === 'academy' ? 'active' : ''}`}
                         onClick={() => { navigate('/learning'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/learning' ? 'page' : undefined}
                     >
                         <BookOpen size={20} />
-                        <span>Learning Path</span>
+                        <span>Investor Academy</span>
                     </button>
                     {/* --- Developer --- */}
                     <div style={{ fontSize: 9, color: '#475569', fontWeight: 700, letterSpacing: 1.5, padding: '12px 12px 4px' }}>
@@ -306,6 +298,15 @@ function App() {
                     </button>
 
                     <button
+                        className={`nav-btn ${activeTab === 'api_catalog' ? 'active' : ''}`}
+                        onClick={() => { navigate('/api-catalog'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/api-catalog' ? 'page' : undefined}
+                    >
+                        <FileCode2 size={20} />
+                        <span>API Catalog</span>
+                    </button>
+
+                    <button
                         className={`nav-btn ${activeTab === 'systemdiagrams' ? 'active' : ''}`}
                         onClick={() => { navigate('/system-diagrams'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/system-diagrams' ? 'page' : undefined}
@@ -334,10 +335,11 @@ function App() {
                             <Route path="/swarm-score" element={<SwarmScoreUI />} />
                             <Route path="/ubds" element={<UbdsBenchmarkUI />} />
                             <Route path="/systemmap" element={<SystemMapUI />} />
+                            <Route path="/api-catalog" element={<ApiCatalogUI />} />
                             <Route path="/system-diagrams" element={<SystemDiagramsUI />} />
                             <Route path="/challenge" element={
-                                <GamificationTab user={user} featureName="Daily Challenges" featureIcon="⚡">
-                                    <DailyChallengeUI onXpGained={handleXpGained} />
+                                <GamificationTab user={user} featureName="Investor Academy" featureIcon="📚">
+                                    <AcademyUI onXpGained={handleXpGained} />
                                 </GamificationTab>
                             } />
                             <Route path="/portfolio" element={
@@ -348,8 +350,8 @@ function App() {
                             <Route path="/llm-calls" element={<LlmCallsUI />} />
                             <Route path="/login" element={<AuthGate featureName="Your Account" featureIcon="👤" />} />
                             <Route path="/learning" element={
-                                <GamificationTab user={user} featureName="Learning Path" featureIcon="📚">
-                                    <LearningPathUI onXpGained={handleXpGained} />
+                                <GamificationTab user={user} featureName="Investor Academy" featureIcon="📚">
+                                    <AcademyUI onXpGained={handleXpGained} />
                                 </GamificationTab>
                             } />
                         </Routes>

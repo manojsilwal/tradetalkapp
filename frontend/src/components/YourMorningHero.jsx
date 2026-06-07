@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2, ArrowRight, X, MessageCircle, Search } from 'lucide-react';
 import { API_BASE_URL, apiFetchTimed, apiPost } from '../api';
 import PortfolioTimeline from './PortfolioTimeline';
-import MorningBriefTile from './MorningBriefTile';
+import ImpactMoversPanel from './ImpactMoversPanel';
+import PortfolioSentimentCard from './PortfolioSentimentCard';
+import SectorSwingsCard from './SectorSwingsCard';
 import './YourMorningHero.css';
 
 function logUserAction(payload) {
@@ -76,6 +78,7 @@ export default function YourMorningHero() {
   const [error, setError] = useState(null);
   const [selectedCard, setSelectedCard] = useState(null);
   const [showMore, setShowMore] = useState(false);
+  const [moverSortMode, setMoverSortMode] = useState('PRICE');
 
   useEffect(() => {
     logUserAction({ action_type: 'page_open', page: 'your_morning' });
@@ -102,6 +105,36 @@ export default function YourMorningHero() {
     });
     setSelectedCard(card);
   }, []);
+
+  const handleMoverOpen = useCallback(
+    (mover) => {
+      const sym = mover?.symbol;
+      const card = (data?.cards || []).find((c) => c.symbol === sym);
+      if (card) {
+        handleCardOpen(card);
+        return;
+      }
+      const daily = mover.daily_return_pct;
+      const direction = daily > 0.05 ? 'up' : daily < -0.05 ? 'down' : 'flat';
+      const chip = direction === 'up' ? 'LIFT' : direction === 'down' ? 'DRAG' : 'FLAT';
+      handleCardOpen({
+        id: `mover_${sym}`,
+        type: 'holding_move',
+        symbol: sym,
+        title: sym,
+        primary_metric: daily != null ? `${daily > 0 ? '+' : ''}${Number(daily).toFixed(1)}%` : '—',
+        direction,
+        chip,
+        body: '',
+        memory_context: '',
+        actions: [
+          { label: 'View why', action: 'open_trace' },
+          { label: 'Ask AI', action: 'open_chat' },
+        ],
+      });
+    },
+    [data?.cards, handleCardOpen],
+  );
 
   const handleCardAction = useCallback(
     (card, action) => {
@@ -232,10 +265,18 @@ export default function YourMorningHero() {
         </div>
       )}
 
-      <div className="ym-tile-grid">
-        {(data.cards || []).slice(0, 3).map((card) => (
-          <MorningBriefTile key={card.id} card={card} onOpen={handleCardOpen} />
-        ))}
+      <div className="ym-dashboard-grid">
+        <ImpactMoversPanel
+          movers={data.impact_movers}
+          sortMode={moverSortMode}
+          onSortChange={setMoverSortMode}
+          onOpen={handleMoverOpen}
+          selectedSymbol={selectedCard?.symbol}
+        />
+        <div className="ym-dashboard-side">
+          <PortfolioSentimentCard sentiment={data.portfolio_sentiment} />
+          <SectorSwingsCard sectors={data.sector_swings} />
+        </div>
       </div>
 
       <CardDetailPanel

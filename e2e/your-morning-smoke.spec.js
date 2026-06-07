@@ -10,6 +10,8 @@ test.describe('Your Morning smoke', () => {
     await page.goto(FRONTEND);
     await dismissOnboarding(page);
     await expect(page.getByText('Your Morning', { exact: false }).first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('Impact Movers', { exact: false }).first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('Portfolio Sentiment', { exact: false }).first()).toBeVisible({ timeout: 20000 });
   });
 
   test('morning brief API reachable from browser context', async ({ request }) => {
@@ -19,6 +21,9 @@ test.describe('Your Morning smoke', () => {
     expect(body).toHaveProperty('headline');
     expect(body).toHaveProperty('cards');
     expect(Array.isArray(body.cards)).toBeTruthy();
+    expect(body).toHaveProperty('impact_movers');
+    expect(body).toHaveProperty('portfolio_sentiment');
+    expect(body).toHaveProperty('sector_swings');
     expect(body).toHaveProperty('market_session');
     expect(body).toHaveProperty('continuity_moments');
     expect(Array.isArray(body.continuity_moments)).toBeTruthy();
@@ -29,6 +34,16 @@ test.describe('Your Morning smoke', () => {
       if (hasMacro) {
         const sectorDup = (body.watch_next || []).filter((w) => w.type === 'sector_exposure');
         expect(sectorDup.length).toBe(0);
+      }
+    }
+    if (body.has_portfolio) {
+      expect(Array.isArray(body.impact_movers)).toBeTruthy();
+      expect(body.portfolio_sentiment).toHaveProperty('score');
+      expect(Array.isArray(body.sector_swings)).toBeTruthy();
+      if (body.impact_movers.length > 0) {
+        expect(body.impact_movers[0]).toHaveProperty('impact_score');
+        expect(body.impact_movers[0]).toHaveProperty('sparkline_5d');
+        expect(body.impact_movers[0]).toHaveProperty('relative_volume');
       }
     }
   });
