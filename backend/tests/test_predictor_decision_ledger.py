@@ -37,6 +37,12 @@ class TestPredictorLedgerEmit(unittest.TestCase):
         self.assertEqual(out.status, "ok")
         rows = dl.get_ledger().list_decisions_since(0.0, decision_type="price_forecast")
         self.assertGreaterEqual(len(rows), 1)
+        # Quantile band must thread into output_json so the outcome grader can
+        # score forecast_band_hit / forecast_pinball at T+H.
+        for ev in rows:
+            self.assertIn("q10_usd", ev.output)
+            self.assertIn("q50_usd", ev.output)
+            self.assertIn("q90_usd", ev.output)
 
 
 if __name__ == "__main__":

@@ -104,9 +104,18 @@ denormalized so correlation queries don't need a self-join.
 Multi-horizon market-truth grades written by
 [`outcome_grader.py`](../backend/outcome_grader.py). One row per
 `(decision_id, horizon, metric)` — `UNIQUE` index enforces idempotent
-re-grading. Metrics emitted today: `price_return_pct`,
-`excess_return_vs_spy_pct`, `risk_adjusted_return`, `paper_pnl`.
-`correct_bool` is derived from the verdict × `excess_return` rule.
+re-grading. Metrics emitted today: `abs_return`, `excess_return` (vs SPY),
+`risk_adjusted` (excess / trailing daily vol). `correct_bool` is derived from
+the verdict × `excess_return` rule on the `excess_return` row.
+
+Quantile-forecast decisions (`decision_type = 'price_forecast'`, emitted by
+[`predictor/ledger_emit.py`](../backend/predictor/ledger_emit.py) with
+`q10_usd` / `q50_usd` / `q90_usd` in `output_json`) additionally receive:
+`forecast_band_hit` (1.0 iff realized close ∈ [q10, q90]; `correct_bool`
+mirrors the hit so rolling 80 % coverage is a plain hit-rate query),
+`forecast_pinball` (mean q10/q50/q90 pinball loss ÷ entry price), and
+`forecast_point_err` (|q50 or point − realized| ÷ entry price). These rows are
+the market-truth signal for recalibrating TimesFM/ensemble bands.
 
 ### 3.5 `contract_violations`
 
