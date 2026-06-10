@@ -1,11 +1,14 @@
 """Small / micro cap growth-stage assessment endpoint."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 
 from ..deps import llm_client, small_cap_metrics_connector
+
+logger = logging.getLogger(__name__)
 from ..schemas import (
     SmallCapAssessment,
     SmallCapMajorDeal,
@@ -435,7 +438,7 @@ async def get_small_cap_assessment(ticker: str) -> SmallCapAssessment:
         data,
     )
 
-    return SmallCapAssessment(
+    assessment = SmallCapAssessment(
         ticker=sym,
         cap_bucket=cap_bucket,
         signals=signals,
@@ -444,3 +447,71 @@ async def get_small_cap_assessment(ticker: str) -> SmallCapAssessment:
         revenue_streams=revenue_streams,
         major_deals=major_deals,
     )
+    _emit_small_cap_decision(sym, cap_bucket, data, assessment)
+    return assessment
+
+
+def _emit_small_cap_decision(
+    sym: str,
+    cap_bucket: str,
+    data: Dict[str, Any],
+    assessment: SmallCapAssessment,
+) -> None:
+    """Decision-Outcome Ledger emit (Phase F capture contract). Never raises."""
+    try:
+        from .. import decision_ledger as _dl
+        from ..decision_ledger_registry import registry_attribution
+
+        score_counts = {"green": 0, "yellow": 0, "red": 0}
+        for s in assessment.signals:
+            score_counts[s.score] = score_counts.get(s.score, 0) + 1
+        features = [
+            _dl.FeatureValue(name="cap_bucket", value_str=cap_bucket),
+            _dl.FeatureValue(
+                name="market_cap", value_num=_num(data.get("market_cap")),
+            ),
+            _dl.FeatureValue(
+                name="revenue_growth_yoy_pct",
+                value_num=_num(data.get("revenue_growth_yoy_pct")),
+            ),
+            _dl.FeatureValue(
+                name="institutional_ownership_pct",
+                value_num=_num(data.get("institutional_ownership_pct")),
+            ),
+            _dl.FeatureValue(name="green_signal_count", value_num=float(score_counts["green"])),
+            _dl.FeatureValue(name="red_signal_count", value_num=float(score_counts["red"])),
+        ]
+        # RAG evidence: thread the same data-lake chunks an analyst would see.
+        evidence = []
+        try:
+            from ..deps import knowledge_store
+
+            _docs, refs = knowledge_store.query_with_refs(
+                "stock_profiles",
+                f"{sym} growth-stage small cap profile",
+                n_results=2,
+                where={"ticker": sym},
+            )
+            evidence = _dl.evidence_from_chunk_refs(refs, default_collection="stock_profiles")
+        except Exception:
+            evidence = []
+        pv, snap, model = registry_attribution(roles=["small_cap_analyst"])
+        _dl.emit_decision(
+            decision_type="small_cap_assessment",
+            symbol=sym,
+            horizon_hint="21d",
+            verdict=assessment.overall_verdict,
+            output={
+                "overall_verdict": assessment.overall_verdict,
+                "overall_rationale": assessment.overall_rationale[:1000],
+                "signal_scores": {s.label: s.score for s in assessment.signals},
+            },
+            source_route="backend/routers/small_cap.py::get_small_cap_assessment",
+            features=features,
+            evidence=evidence,
+            prompt_versions=pv,
+            registry_snapshot_id=snap,
+            model=model,
+        )
+    except Exception as e:
+        logger.debug("[SmallCap] ledger emit skipped: %s", e)

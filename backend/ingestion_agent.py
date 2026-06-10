@@ -542,6 +542,16 @@ Candidate Narrative Text:
     _log_ingestion_decision(candidate, decision, decision_reason, keep_as="both" if (final_records and final_chunks) else ("structured_fact" if final_records else "narrative_chunk"))
 
 
+def _resolved_model_version() -> str:
+    """Provider-cascade-aware model label — never hardcode a model ID here."""
+    try:
+        from .harness.backend_protocol import resolved_model_label
+
+        return resolved_model_label()
+    except Exception:
+        return "unknown"
+
+
 def _log_ingestion_decision(
     candidate: IngestionCandidate,
     decision: str,
@@ -561,7 +571,7 @@ def _log_ingestion_decision(
         "keep_as": keep_as,
         "raw_payload_ref": candidate.raw_payload_ref,
         "agent_version": "1.0",
-        "model_version": "kimi-k2.6",
+        "model_version": _resolved_model_version(),
         "created_at": now_ts,
     }
     try:

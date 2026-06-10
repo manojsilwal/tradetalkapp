@@ -201,20 +201,58 @@ async def run_gold_advisor(macro_connector, llm_client) -> Dict[str, Any]:
         from . import decision_ledger as _dl
         from .decision_ledger_registry import registry_attribution
 
-        _pv, _snap, _model = registry_attribution()
-        stance = str((briefing or {}).get("stance") or (briefing or {}).get("verdict") or "")
+        _pv, _snap, _model = registry_attribution(roles=["gold_advisor"])
+        stance = str(
+            (briefing or {}).get("directional_bias")
+            or (briefing or {}).get("stance")
+            or (briefing or {}).get("verdict")
+            or ""
+        )
+        _macro = (context or {}).get("macro") or {}
+        _sent = (context or {}).get("sentiment") or {}
+        _features = [
+            _dl.FeatureValue(name="vix", value_num=_to_float(_macro.get("vix"))),
+            _dl.FeatureValue(
+                name="tips_10y_real_yield_pct",
+                value_num=_to_float(_macro.get("ten_year_tips_real_yield_pct")),
+            ),
+            _dl.FeatureValue(name="dxy_spot", value_num=_to_float(_macro.get("dxy_spot"))),
+            _dl.FeatureValue(
+                name="gold_futures_last_usd",
+                value_num=_to_float(_macro.get("gold_futures_last_usd")),
+            ),
+            _dl.FeatureValue(
+                name="headline_sentiment",
+                value_num=_to_float(_sent.get("score_neg1_to_pos1")),
+            ),
+        ]
+        _evidence = []
+        try:
+            from .deps import knowledge_store as _ks
+
+            _docs, _refs = _ks.query_with_refs(
+                "macro_regime_memories", "gold real yields dollar regime", n_results=2,
+            )
+            _evidence = _dl.evidence_from_chunk_refs(
+                _refs, default_collection="macro_regime_memories"
+            )
+        except Exception:
+            _evidence = []
+        _conf = _to_float((briefing or {}).get("confidence_0_1"))
         _dl.emit_decision(
             decision_type="gold_advisor",
             symbol="GLD",
             horizon_hint="21d",
             verdict=stance,
-            confidence=None,
+            confidence=_conf,
             output={
                 "briefing": briefing,
                 "spot_usd": (context or {}).get("spot_usd"),
                 "regime_hint": (context or {}).get("regime_hint"),
             },
             source_route="backend/gold_advisor_service.py::run_gold_advisor",
+            features=_features,
+            evidence=_evidence,
             prompt_versions=_pv,
             registry_snapshot_id=_snap,
             model=_model,
@@ -222,3 +260,13 @@ async def run_gold_advisor(macro_connector, llm_client) -> Dict[str, Any]:
     except Exception as e:
         logger.debug("[gold_advisor] ledger emit skipped: %s", e)
     return result
+
+
+def _to_float(v: Any) -> Optional[float]:
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        return f if f == f else None
+    except (TypeError, ValueError):
+        return None

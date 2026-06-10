@@ -117,6 +117,8 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(get_opt
     except Exception as e:
         print(f"[KnowledgeHook] add_backtest failed: {redact_secrets_in_text(str(e))}")
 
+    _emit_backtest_decision(pid, strat, result)
+
     if _auth_user:
         try:
             up.award_xp(_auth_user.id, "backtest", note=(req.preset_id or req.strategy)[:40])
@@ -127,6 +129,53 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(get_opt
             pass
 
     return result
+
+
+def _emit_backtest_decision(preset_id: str, strategy_text: str, result: BacktestResult) -> None:
+    """Decision-Outcome Ledger emit for the backtest explainer verdict.
+
+    Phase F capture contract — the AI explanation is a user-facing verdict
+    surface; horizon ``none`` because the backtest grades against its own
+    historical window, not a forward market outcome. Never raises.
+    """
+    try:
+        from .. import decision_ledger as _dl
+        from ..decision_ledger_registry import registry_attribution
+
+        universe = list(getattr(result.strategy, "universe", []) or [])
+        features = [
+            _dl.FeatureValue(name="cagr", value_num=float(result.cagr)),
+            _dl.FeatureValue(name="sharpe_ratio", value_num=float(result.sharpe_ratio)),
+            _dl.FeatureValue(name="max_drawdown", value_num=float(result.max_drawdown)),
+            _dl.FeatureValue(name="win_rate", value_num=float(result.win_rate)),
+            _dl.FeatureValue(name="total_trades", value_num=float(result.total_trades)),
+            _dl.FeatureValue(name="benchmark_cagr", value_num=float(result.benchmark_cagr)),
+            _dl.FeatureValue(name="outperformed", value_str=str(bool(result.outperformed))),
+        ]
+        pv, snap, model = registry_attribution(
+            roles=["backtest_explainer"] + (["strategy_parser"] if strategy_text and not preset_id else [])
+        )
+        _dl.emit_decision(
+            decision_type="backtest_verdict",
+            symbol=(universe[0] if len(universe) == 1 else ""),
+            horizon_hint="none",
+            verdict="OUTPERFORMED" if result.outperformed else "UNDERPERFORMED",
+            output={
+                "preset_id": preset_id or "",
+                "strategy_text": (strategy_text or "")[:500],
+                "strategy_name": getattr(result.strategy, "name", "") or "",
+                "universe": universe[:10],
+                "ai_explanation": (result.ai_explanation or "")[:2000],
+                "total_return_pct": float(result.total_return_pct),
+            },
+            source_route="backend/routers/backtest.py::run_backtest_endpoint",
+            features=features,
+            prompt_versions=pv,
+            registry_snapshot_id=snap,
+            model=model,
+        )
+    except Exception as e:
+        logger.debug("[backtest] ledger emit skipped: %s", e)
 
 
 @router.get("/strategies/leaderboard")

@@ -931,11 +931,57 @@ async def run_decision_terminal_request(
         from . import decision_ledger as _dl
         from .decision_ledger_registry import registry_attribution
 
-        _pv, _snap, _model = registry_attribution()
+        _pv, _snap, _model = registry_attribution(
+            roles=["decision_terminal_roadmap", "swarm_synthesizer", "moderator"]
+        )
         verdict_panel = payload.verdict
         headline = (
             verdict_panel.headline_verdict if verdict_panel is not None else ""
         )
+        # Key input features (AGENTS.md §4.1 item 3) — regime + the two
+        # upstream verdicts this terminal composes.
+        swarm = getattr(analysis, "swarm", None)
+        _regime = ""
+        try:
+            ms = getattr(swarm, "macro_state", None)
+            _regime = ms.market_regime.value if ms is not None and ms.market_regime else ""
+        except Exception:
+            _regime = ""
+        _features = [
+            _dl.FeatureValue(name="market_regime", value_str=_regime, regime=_regime),
+            _dl.FeatureValue(
+                name="swarm_verdict",
+                value_str=str(getattr(verdict_panel, "swarm_verdict", "") or ""),
+                regime=_regime,
+            ),
+            _dl.FeatureValue(
+                name="debate_verdict",
+                value_str=str(getattr(verdict_panel, "debate_verdict", "") or ""),
+                regime=_regime,
+            ),
+            _dl.FeatureValue(
+                name="swarm_confidence",
+                value_num=float(getattr(swarm, "confidence", 0.0) or 0.0),
+                regime=_regime,
+            ),
+            _dl.FeatureValue(
+                name="market_data_degraded",
+                value_str=str(bool(payload.market_data_degraded)),
+                regime=_regime,
+            ),
+        ]
+        # RAG evidence (AGENTS.md §4.1 item 2) — the swarm-history chunks that
+        # back this ticker's composed verdict.
+        _evidence = []
+        try:
+            from .deps import knowledge_store as _ks
+
+            _docs, _refs = _ks.query_with_refs(
+                "swarm_history", f"{t} investment analysis verdict", n_results=3,
+            )
+            _evidence = _dl.evidence_from_chunk_refs(_refs, default_collection="swarm_history")
+        except Exception:
+            _evidence = []
         _dl.emit_decision(
             decision_type="decision_terminal",
             symbol=t,
@@ -950,6 +996,8 @@ async def run_decision_terminal_request(
                 "generated_at_utc": payload.generated_at_utc,
             },
             source_route="backend/decision_terminal.py::run_decision_terminal_request",
+            features=_features,
+            evidence=_evidence,
             prompt_versions=_pv,
             registry_snapshot_id=_snap,
             model=_model,

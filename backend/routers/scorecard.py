@@ -131,6 +131,37 @@ def list_presets() -> Dict[str, Dict[str, float]]:
     return {name: w.as_dict() for name, w in PRESETS.items()}
 
 
+# Roles actually used per scorecard decision (Phase F per-decision attribution).
+_SCORECARD_ROLES = ["sitg_scorer", "execution_risk_scorer", "scorecard_verdict"]
+
+
+def _scorecard_features(row, preset: str) -> list:
+    """Key input features for the ledger (AGENTS.md §4.1 item 3). Never raises."""
+    try:
+        from .. import decision_ledger as _dl
+
+        return [
+            _dl.FeatureValue(name="preset", value_str=str(preset or "")),
+            _dl.FeatureValue(name="ratio", value_num=float(row.ratio)),
+            _dl.FeatureValue(
+                name="return_score_weighted", value_num=float(row.return_score.weighted),
+            ),
+            _dl.FeatureValue(
+                name="risk_score_weighted", value_num=float(row.risk_score.weighted),
+            ),
+            _dl.FeatureValue(
+                name="sitg_score", value_num=float(row.return_score.sitg_score),
+            ),
+            _dl.FeatureValue(
+                name="exec_risk_score", value_num=float(row.risk_score.exec_score),
+            ),
+            _dl.FeatureValue(name="sitg_boost", value_num=float(row.sitg_boost)),
+            _dl.FeatureValue(name="quadrant", value_str=str(row.quadrant or "")),
+        ]
+    except Exception:
+        return []
+
+
 @router.post("/compare", response_model=ScorecardResponse, dependencies=[Depends(_rl_expensive)])
 async def compare_scorecard(
     req: ScorecardCompareRequest,
@@ -183,7 +214,7 @@ async def compare_scorecard(
         from .. import decision_ledger as _dl_mod
         from ..decision_ledger_registry import registry_attribution
 
-        _pv, _snap, _model = registry_attribution()
+        _pv, _snap, _model = registry_attribution(roles=_SCORECARD_ROLES)
     except Exception:
         pass
     for row, data in zip(basket.rows, data_rows):
@@ -206,6 +237,7 @@ async def compare_scorecard(
                     "compare": True,
                 },
                 source_route="backend/routers/scorecard.py::compare_scorecard",
+                features=_scorecard_features(row, req.preset),
                 prompt_versions=_pv,
                 registry_snapshot_id=_snap,
                 model=_model,
@@ -280,7 +312,7 @@ async def single_ticker_scorecard(
         from .. import decision_ledger as _dl
         from ..decision_ledger_registry import registry_attribution
 
-        _pv, _snap, _model = registry_attribution()
+        _pv, _snap, _model = registry_attribution(roles=_SCORECARD_ROLES)
         _dl.emit_decision(
             decision_type="scorecard",
             symbol=sym,
@@ -296,6 +328,7 @@ async def single_ticker_scorecard(
                 "one_line_reason": v.get("one_line_reason", ""),
             },
             source_route="backend/routers/scorecard.py::single_ticker_scorecard",
+            features=_scorecard_features(row, preset_key),
             prompt_versions=_pv,
             registry_snapshot_id=_snap,
             model=_model,

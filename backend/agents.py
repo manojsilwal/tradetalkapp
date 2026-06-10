@@ -32,9 +32,15 @@ class AgentPair:
         self._ks = knowledge_store
         self._llm = llm_client
 
-    def _fetch_prior_lessons(self, ticker: str, market_state: MarketState) -> str:
-        """Retrieve swarm reflections plus data-lake stock profile & earnings memories (Phase 6)."""
+    def _fetch_prior_lessons(self, ticker: str, market_state: MarketState) -> tuple[str, list[dict]]:
+        """Retrieve swarm reflections plus data-lake stock profile & earnings memories (Phase 6).
+
+        Returns ``(context_block, chunk_refs)`` — the chunk refs thread into the
+        decision ledger as ``EvidenceRef`` rows so per-factor decisions carry
+        RAG lineage (Phase F capture contract).
+        """
         blocks: list[str] = []
+        chunk_refs: list[dict] = []
         if self._ks and hasattr(self._ks, "query_swarm_reflections"):
             try:
                 regime = market_state.market_regime.value if market_state.market_regime else "BULL_NORMAL"
@@ -52,15 +58,41 @@ class AgentPair:
             except Exception as e:
                 logger.warning("[AgentPair:%s] reflection retrieval failed: %s", self.factor_name, e)
 
-        if self._ks and hasattr(self._ks, "query_stock_profile"):
+        if self._ks and hasattr(self._ks, "query_with_refs"):
+            try:
+                profile_docs, profile_refs = self._ks.query_with_refs(
+                    "stock_profiles",
+                    f"{ticker} 15-year profile",
+                    n_results=1,
+                    where={"ticker": ticker},
+                )
+                if profile_docs:
+                    blocks.append(f"\n[Stock profile (data lake / RAG)]:\n{profile_docs[0]}\n")
+                    chunk_refs.extend(profile_refs or [])
+            except Exception as e:
+                logger.warning("[AgentPair:%s] stock_profile retrieval failed: %s", self.factor_name, e)
+
+            try:
+                em, em_refs = self._ks.query_with_refs(
+                    "earnings_memory",
+                    f"{ticker} {self.factor_name} earnings surprise",
+                    n_results=4,
+                    where={"ticker": ticker},
+                )
+                if em:
+                    lines = "\n".join(f"  - {x}" for x in em)
+                    blocks.append(f"\n[Earnings event memories (data lake)]:\n{lines}\n")
+                    chunk_refs.extend(em_refs or [])
+            except Exception as e:
+                logger.warning("[AgentPair:%s] earnings_memory retrieval failed: %s", self.factor_name, e)
+        elif self._ks and hasattr(self._ks, "query_stock_profile"):
+            # Legacy stores without query_with_refs — keep context, no refs.
             try:
                 profile = self._ks.query_stock_profile(ticker)
                 if profile:
                     blocks.append(f"\n[Stock profile (data lake / RAG)]:\n{profile}\n")
             except Exception as e:
                 logger.warning("[AgentPair:%s] stock_profile retrieval failed: %s", self.factor_name, e)
-
-        if self._ks and hasattr(self._ks, "query_earnings_memory"):
             try:
                 em = self._ks.query_earnings_memory(
                     ticker,
@@ -83,14 +115,14 @@ class AgentPair:
         except Exception as e:
             logger.warning("[AgentPair:%s] coral hub priors failed: %s", self.factor_name, e)
 
-        return "".join(blocks)
+        return "".join(blocks), chunk_refs
 
     async def run(self, market_state: MarketState, ticker: str = "GME") -> FactorResult:
         iteration = 0
         history: List[Dict[str, str]] = []
         status = VerificationStatus.PENDING
 
-        prior_lessons = self._fetch_prior_lessons(ticker, market_state)
+        prior_lessons, evidence_refs = self._fetch_prior_lessons(ticker, market_state)
         if prior_lessons:
             history.append({"role": "Memory", "content": prior_lessons})
 
@@ -113,7 +145,7 @@ class AgentPair:
                     trading_signal=analyst_report.get("trading_signal", 0),
                     history=history
                 )
-                self._emit_factor_decision(result, ticker, market_state)
+                self._emit_factor_decision(result, ticker, market_state, evidence_refs)
                 return result
 
         result = FactorResult(
@@ -124,7 +156,7 @@ class AgentPair:
             trading_signal=0,
             history=history
         )
-        self._emit_factor_decision(result, ticker, market_state)
+        self._emit_factor_decision(result, ticker, market_state, evidence_refs)
         return result
 
     # ── Decision-ledger emission (Harness Engineering Phase 2) ───────────
@@ -143,6 +175,7 @@ class AgentPair:
         result: FactorResult,
         ticker: str,
         market_state: MarketState,
+        evidence_refs: Optional[List[dict]] = None,
     ) -> None:
         """
         Append one row to ``decision_events`` per factor evaluation.
@@ -178,7 +211,7 @@ class AgentPair:
             ]
             from .decision_ledger_registry import registry_attribution
 
-            _pv, _snap, _model = registry_attribution()
+            _pv, _snap, _model = registry_attribution(roles=["swarm_analyst"])
             _dl.emit_decision(
                 decision_type="swarm_factor",
                 symbol=ticker,
@@ -194,6 +227,7 @@ class AgentPair:
                 },
                 source_route=f"backend/agents.py::{type(self).__name__}.run",
                 features=features,
+                evidence=_dl.evidence_from_chunk_refs(evidence_refs),
                 prompt_versions=_pv,
                 registry_snapshot_id=_snap,
                 model=_model,

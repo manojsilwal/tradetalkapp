@@ -14,25 +14,29 @@ flowchart TB
         SPA["Single Page App\nUI Dashboards"]
     end
 
-    subgraph Backend["FastAPI Backend (Render)"]
+    subgraph Backend["FastAPI Backend (GCP Cloud Run)"]
         API["API Routers"]
         Agents["Agent Swarms & Debates"]
         RAG["Knowledge Store (RAG)"]
-        LLM_Client["LLM Client Engine"]
-        Background["Background Tasks\n(News loop, Cron)"]
+        LLM_Client["LLM Client Engine\n(model gateway)"]
+        Ledger["Decision-Outcome Ledger"]
+        Background["Background Tasks\n(News loop, Cron, Grader)"]
 
         API --> Agents
         API --> Background
         Agents --> RAG
         Agents --> LLM_Client
+        Agents --> Ledger
+        Background --> Ledger
     end
 
     subgraph DataStores["Data Stores"]
-        SQLite[("SQLite (Disk)\nAlerts, Users")]
-        Supabase[("Supabase (pgvector)\nVector Embeddings")]
+        SQLite[("SQLite (ephemeral disk)\nAlerts, Users, CORAL, Ledger dev")]
+        Supabase[("Supabase (pgvector)\nVector Embeddings + Ledger prod")]
     end
 
     subgraph External["External APIs & Sources"]
+        NVIDIA("NVIDIA Build (LLMs)")
         OpenRouter("OpenRouter (LLMs)")
         Gemini("Google Gemini")
         YFinance("yFinance / APIs")
@@ -43,8 +47,10 @@ flowchart TB
     SPA <-->|HTTPS| API
 
     RAG <--> Supabase
+    Ledger <--> Supabase
     API <--> SQLite
 
+    LLM_Client --> NVIDIA
     LLM_Client --> OpenRouter
     LLM_Client --> Gemini
 
@@ -56,37 +62,46 @@ flowchart TB
 
 ## 2. LLM Processing and Fallback System
 
-TradeTalk uses a highly resilient LLM system. By default, it connects to OpenRouter, but it will gracefully degrade to Gemini or hardcoded rule-based responses if APIs fail or rate limits are hit.
+TradeTalk uses a highly resilient LLM system (the Phase F model gateway in `backend/llm_client.py`). The default cascade is NVIDIA Build → (OpenRouter) → Gemini → rule-based fallback; `GEMINI_PRIMARY=1` routes everything through Gemini directly. Default model IDs are centralized in `backend/model_defaults.py`; verdict roles raise `insufficient_data` instead of using templates (truthful-data contract).
 
 ```mermaid
 flowchart TD
     Request["Agent or User Request"]
 
-    subgraph LLM_Engine ["LLM Client"]
+    subgraph LLM_Engine ["LLM Client (model gateway)"]
         CheckPrimary{"Is GEMINI_PRIMARY\nenabled?"}
 
-        OpenRouterPath["Try OpenRouter API\n(Qwen / Llama etc)"]
-        GeminiPath["Try Gemini API\n(Gemini 3.1 Pro/Flash)"]
+        NvidiaPath["Try NVIDIA Build API\n(PRO model, then FLASH model)"]
+        OpenRouterPath["Try OpenRouter API\n(when LLM_HTTP_PROVIDER=openrouter)"]
+        GeminiPath["Try Gemini API\n(flash-class default)"]
 
         CheckRateLimit{"Rate Limited\n(429)?"}
-        RetryKeys["Round Robin to\nnext API Key"]
+        RetryKeys["Round robin to\nnext API key"]
 
-        Fallback["Rule-based JSON Templates\n(Offline mode)"]
+        Verdict{"Verdict role?"}
+        Refuse["Raise InsufficientDataError\n(503 insufficient_data)"]
+        Fallback["Rule-based JSON Templates\n(non-verdict roles only)"]
     end
 
     Response["Structured JSON / Text Response"]
 
     Request --> CheckPrimary
-    CheckPrimary -- "No" --> OpenRouterPath
+    CheckPrimary -- "No" --> NvidiaPath
     CheckPrimary -- "Yes" --> GeminiPath
 
+    NvidiaPath --> CheckRateLimit
     OpenRouterPath --> CheckRateLimit
     CheckRateLimit -- "Yes" --> RetryKeys
-    RetryKeys --> OpenRouterPath
+    RetryKeys --> NvidiaPath
 
+    NvidiaPath -- "No NVIDIA keys" --> OpenRouterPath
+    NvidiaPath -- "Failure / Timeout" --> GeminiPath
     OpenRouterPath -- "Failure / Timeout" --> GeminiPath
-    GeminiPath -- "Failure" --> Fallback
+    GeminiPath -- "Failure" --> Verdict
+    Verdict -- "Yes" --> Refuse
+    Verdict -- "No" --> Fallback
 
+    NvidiaPath -- "Success" --> Response
     OpenRouterPath -- "Success" --> Response
     GeminiPath -- "Success" --> Response
     Fallback --> Response
@@ -152,7 +167,7 @@ flowchart TD
         Spaces["HF Spaces\n(Optional Hosting)"]
     end
 
-    Backend -->|"1. Remote Embeddings\n(If Chroma on Render)"| Inference
+    Backend -->|"1. Remote Embeddings\n(If Chroma on Render, legacy)"| Inference
     Backend -->|"2. Read-only RAG\n(VECTOR_BACKEND=hf)"| Datasets
     Backend -->|"3. Data Lake Sync\n(Historical Prices)"| Datasets
     Backend -.->|4. Keep-alive ping| Spaces

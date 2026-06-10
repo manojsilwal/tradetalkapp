@@ -26,13 +26,14 @@ import time
 from typing import Any, Dict, List, Optional
 
 from .agent_policy_guardrails import redact_secrets_in_text
+from .model_defaults import DEFAULT_VEO_MODEL
 
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static", "videos")
 
-# Default: Veo 3.1 Lite (Gemini API). Override for full/fast tiers, e.g. veo-3.1-fast-generate-preview
-VIDEO_VEO_MODEL = os.environ.get("VIDEO_VEO_MODEL", "veo-3.1-lite-generate-preview").strip()
+# Default: Veo Lite (Gemini API). Override for full/fast tiers, e.g. veo-3.1-fast-generate-preview
+VIDEO_VEO_MODEL = os.environ.get("VIDEO_VEO_MODEL", DEFAULT_VEO_MODEL).strip()
 # When Veo cannot produce an MP4 for a scene, generate a text slide via the
 # ``video_veo_text_fallback`` prompt. The LLM used is whatever LLMClient is
 # configured for (Gemini 3.1 Flash when GEMINI_PRIMARY=1, OpenRouter otherwise).

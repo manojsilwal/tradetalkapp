@@ -133,6 +133,7 @@ async def learning_health_endpoint():
     stats: dict = {}
     graded_decisions = 0
     decisions_with_prompt_versions = 0
+    capture_24h: dict = {}
     try:
         backend = dl.get_ledger()
         stats = backend.stats() if hasattr(backend, "stats") else {}
@@ -154,6 +155,37 @@ async def learning_health_endpoint():
                 """
             ).fetchone()
             decisions_with_prompt_versions = int(row2["n"] if row2 else 0)
+            # Phase F capture coverage: which surfaces emitted in the last 24h,
+            # and how complete their evidence/feature lineage is.
+            import time as _time
+
+            since = _time.time() - 86400.0
+            rows = conn.execute(
+                """
+                SELECT d.decision_type AS decision_type,
+                       COUNT(*) AS decisions,
+                       SUM(CASE WHEN ev.n > 0 THEN 1 ELSE 0 END) AS with_evidence,
+                       SUM(CASE WHEN fs.n > 0 THEN 1 ELSE 0 END) AS with_features
+                FROM decision_events d
+                LEFT JOIN (
+                    SELECT decision_id, COUNT(*) AS n FROM decision_evidence GROUP BY decision_id
+                ) ev ON ev.decision_id = d.decision_id
+                LEFT JOIN (
+                    SELECT decision_id, COUNT(*) AS n FROM feature_snapshots GROUP BY decision_id
+                ) fs ON fs.decision_id = d.decision_id
+                WHERE d.created_at >= ?
+                GROUP BY d.decision_type
+                ORDER BY decisions DESC
+                """,
+                (since,),
+            ).fetchall()
+            for r in rows or []:
+                n = int(r["decisions"] or 0)
+                capture_24h[str(r["decision_type"])] = {
+                    "decisions": n,
+                    "with_evidence_pct": round(100.0 * int(r["with_evidence"] or 0) / n, 1) if n else 0.0,
+                    "with_features_pct": round(100.0 * int(r["with_features"] or 0) / n, 1) if n else 0.0,
+                }
     except Exception:
         pass
 
@@ -179,6 +211,7 @@ async def learning_health_endpoint():
             "graded_decisions": graded_decisions,
             "graded_pct": graded_pct,
             "decisions_with_prompt_versions": decisions_with_prompt_versions,
+            "capture_coverage_24h": capture_24h,
         },
         "sepl": {
             "enabled": sepl_enabled(),

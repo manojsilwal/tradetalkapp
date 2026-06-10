@@ -1168,6 +1168,42 @@ def attach_evidence(
         return 0
 
 
+def evidence_from_chunk_refs(
+    chunk_refs: Optional[Iterable[Dict[str, Any]]],
+    default_collection: str = "",
+) -> List[EvidenceRef]:
+    """
+    Convert ``knowledge_store.query_with_refs`` chunk-ref dicts into
+    :class:`EvidenceRef` rows (``relevance = 1 - distance``, clamped to [0, 1]).
+
+    Shared by ledger producers so every surface threads RAG lineage the same
+    way (AGENTS.md §4.1 checklist item 2). Never raises; malformed refs are
+    skipped.
+    """
+    out: List[EvidenceRef] = []
+    for i, r in enumerate(chunk_refs or []):
+        try:
+            cid = str(r.get("chunk_id") or r.get("id") or "")
+            if not cid:
+                continue
+            dist = r.get("distance")
+            try:
+                rel = max(0.0, min(1.0, 1.0 - float(dist))) if dist is not None else None
+            except Exception:
+                rel = None
+            out.append(
+                EvidenceRef(
+                    chunk_id=cid,
+                    collection=str(r.get("collection") or default_collection),
+                    relevance=rel,
+                    rank=int(r.get("rank", i)),
+                )
+            )
+        except Exception:
+            continue
+    return out
+
+
 def record_features(
     decision_id: str, features: Iterable[FeatureValue]
 ) -> int:

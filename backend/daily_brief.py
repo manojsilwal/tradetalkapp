@@ -966,6 +966,16 @@ async def run_sp500_screener_pipeline(trade_date: date, llm_client) -> Dict[str,
         else:
             final_rows.append(r)
 
+    # 7b. Decision-Outcome Ledger (Phase F capture contract): each LLM-refined
+    # screener verdict is a user-facing, market-gradeable call. Capped so a full
+    # S&P 500 sweep cannot flood the grader queue.
+    try:
+        _emit_daily_brief_decisions(
+            [r for r in final_rows if r.get("verdict_tier") == "deep"]
+        )
+    except Exception as e:
+        logger.debug("[DailyBrief] ledger emits skipped: %s", e)
+
     # 8. Persist snapshot
     _set_deep_job(progress=90, message="Persisting S&P 500 snapshot...")
     payload = {
@@ -993,6 +1003,74 @@ async def run_sp500_screener_pipeline(trade_date: date, llm_client) -> Dict[str,
     except Exception as e:
         logger.warning("[IngestionHook] Daily brief candidate failed: %s", e)
     return payload
+
+
+def _emit_daily_brief_decisions(rows: List[Dict[str, Any]]) -> None:
+    """Emit LLM-refined daily-brief verdicts to the Decision-Outcome Ledger.
+
+    Never raises. Rows are ranked by absolute daily move and capped via
+    ``DAILY_BRIEF_LEDGER_EMIT_MAX`` (default 50) so the outcome grader queue
+    stays bounded on full-universe sweeps.
+    """
+    if not rows:
+        return
+    from backend import decision_ledger as _dl
+    from backend.decision_ledger_registry import registry_attribution
+
+    cap = max(1, int(os.environ.get("DAILY_BRIEF_LEDGER_EMIT_MAX", "50") or "50"))
+    ranked = sorted(
+        rows, key=lambda r: abs(float(r.get("daily_return_pct") or 0.0)), reverse=True
+    )[:cap]
+    pv, snap, model = registry_attribution(roles=["daily_brief_batch"])
+    for r in ranked:
+        try:
+            regime = str(r.get("market_regime") or "")
+            features = [
+                _dl.FeatureValue(name="market_regime", value_str=regime, regime=regime),
+                _dl.FeatureValue(
+                    name="daily_return_pct",
+                    value_num=float(r.get("daily_return_pct") or 0.0),
+                    regime=regime,
+                ),
+                _dl.FeatureValue(
+                    name="relative_volume",
+                    value_num=float(r.get("relative_volume") or 1.0),
+                    regime=regime,
+                ),
+                _dl.FeatureValue(
+                    name="scorecard_ratio",
+                    value_num=float(r.get("scorecard_ratio") or 0.0),
+                    regime=regime,
+                ),
+                _dl.FeatureValue(
+                    name="preset", value_str=str(r.get("preset") or ""), regime=regime,
+                ),
+                _dl.FeatureValue(
+                    name="catalyst_status",
+                    value_str=str(r.get("catalyst_status") or ""),
+                    regime=regime,
+                ),
+            ]
+            _dl.emit_decision(
+                decision_type="daily_brief",
+                symbol=str(r.get("symbol") or ""),
+                horizon_hint="1d",
+                verdict=str(r.get("verdict") or ""),
+                output={
+                    "verdict": r.get("verdict"),
+                    "one_line_reason": r.get("one_line_reason"),
+                    "bucket": r.get("bucket"),
+                    "trade_date": r.get("trade_date"),
+                    "primary_cause_headline": (r.get("primary_cause_headline") or "")[:300],
+                },
+                source_route="backend/daily_brief.py::run_sp500_screener_pipeline",
+                features=features,
+                prompt_versions=pv,
+                registry_snapshot_id=snap,
+                model=model,
+            )
+        except Exception as e:
+            logger.debug("[DailyBrief] ledger emit skipped %s: %s", r.get("symbol"), e)
 
 
 # In-process deep-refresh job state (single worker)

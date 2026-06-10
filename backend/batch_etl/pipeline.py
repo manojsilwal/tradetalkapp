@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # OpenRouter embedding model id — used only when VECTOR_EMBEDDING_PROVIDER=openrouter (or no Google API key).
-_DEFAULT_OPENROUTER_EMBEDDING_MODEL = "openai/text-embedding-3-small"
+from ..model_defaults import DEFAULT_OPENROUTER_EMBEDDING_MODEL as _DEFAULT_OPENROUTER_EMBEDDING_MODEL
 
 # ── Chunking ───────────────────────────────────────────────────────────────────
 

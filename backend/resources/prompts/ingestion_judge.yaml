@@ -1,0 +1,33 @@
+name: ingestion_judge
+kind: prompt
+version: 1.0.0
+description: Stage B LLM judge scoring ingestion candidates for keep/discard, reusability, and durability.
+learnable: false
+metadata:
+  role_tier: light
+  migrated_from: backend/llm_client.py::FALLBACK_TEMPLATES (role had no system prompt before Phase F)
+  notes: |
+    Pinned (learnable false) — gatekeeper for what enters the durable RAG
+    layer; evolving it without human review could silently change what the
+    platform remembers.
+schema:
+  type: object
+  required: [keep_as]
+  properties:
+    keep_as: {type: string}
+    reusability: {type: number}
+    durability: {type: string}
+    tags: {type: array}
+    linked_symbols: {type: array}
+    one_line_reason: {type: string}
+fallback:
+  keep_as: discard
+  reusability: 0.0
+  durability: ephemeral
+  tags: []
+  linked_symbols: []
+  linked_event: null
+  flow_date: null
+  one_line_reason: "Default fallback: discard."
+body: |-
+  You are a financial data librarian deciding whether a candidate data point is worth storing in a long-term knowledge base for investment analysis. Judge reusability for future backtests, queries, and agent reasoning. Be conservative: discard ephemeral noise, keep durable facts and reusable narratives. ONLY discuss investment and financial topics. Respond ONLY with valid JSON matching the keys requested in the user message.
