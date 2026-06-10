@@ -24,13 +24,16 @@ if [ -n "$TUNNEL_URL" ]; then
   echo "Tunnel started successfully!"
   echo "New URL: $TUNNEL_URL"
   
-  # Auto-update backend/.env.local with the new URL
+  # Auto-update environment files with the new URL
   if [ -f "backend/.env.local" ]; then
-    # Replace the existing NVIDIA_LLM_BASE_URL line with the new one
     sed -i '' -E 's|NVIDIA_LLM_BASE_URL=https://.*\.trycloudflare\.com/v1|NVIDIA_LLM_BASE_URL='"$TUNNEL_URL"'/v1|g' backend/.env.local
     echo "Updated backend/.env.local with the new tunnel URL."
+  fi
+  if [ -f ".env.gcp" ]; then
+    sed -i '' -E 's|NVIDIA_LLM_BASE_URL=https://.*\.trycloudflare\.com/v1|NVIDIA_LLM_BASE_URL='"$TUNNEL_URL"'/v1|g' .env.gcp
+    echo "Updated .env.gcp with the new tunnel URL."
   else
-    echo "Warning: backend/.env.local not found. Please update it manually."
+    echo "Warning: .env.gcp not found. Please update it manually."
   fi
 else
   echo "Error: Could not retrieve Cloudflare Tunnel URL. Check ~/.cloudflared/quick_tunnel.log"
