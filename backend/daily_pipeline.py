@@ -287,6 +287,23 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
                 max_instances=1,
             )
             grader_msg = " + outcome grader 02:10 UTC"
+
+            # Predictor self-learning (Phase 3) — 02:40 UTC, after the grader
+            # so conformal scales / learned weights / market fixtures always
+            # see tonight's freshly-graded outcomes. No-op without the ledger.
+            if os.environ.get("PREDICTOR_SELF_LEARNING_ENABLE", "1").strip().lower() in (
+                "1", "true", "yes", "on",
+            ):
+                scheduler.add_job(
+                    _predictor_self_learning_job,
+                    trigger="cron",
+                    hour=2,
+                    minute=40,
+                    id="predictor_self_learning_daily",
+                    replace_existing=True,
+                    max_instances=1,
+                )
+                grader_msg += " + predictor self-learning 02:40 UTC"
         else:
             grader_msg = " + outcome grader DISABLED"
 
@@ -362,6 +379,44 @@ async def _outcome_grader_job() -> None:
         logger.info("[DailyPipeline] outcome_grader_pass result=%s", result)
     except Exception as e:
         logger.warning("[DailyPipeline] outcome grader failed: %s", e)
+
+
+async def _predictor_self_learning_job() -> None:
+    """Nightly self-learning pass (Phase 3) — runs AFTER the 02:10 grader.
+
+    1. Conformal rollback guard, then recalibrate q10–q90 band scales from
+       fresh ``forecast_band_hit`` coverage (versioned in the registry).
+    2. Refresh learned ensemble weights from walk-forward data-lake replay.
+    3. Regenerate market-truth SEPL fixtures from graded decisions.
+
+    Every step is kill-switched independently and never raises.
+    """
+    import asyncio as _asyncio
+
+    try:
+        from .predictor.conformal import maybe_rollback, nightly_conformal_update
+
+        rb = await _asyncio.to_thread(maybe_rollback)
+        cf = await _asyncio.to_thread(nightly_conformal_update)
+        logger.info("[DailyPipeline] conformal rollback=%s update=%s", rb, cf)
+    except Exception as e:
+        logger.warning("[DailyPipeline] conformal step failed: %s", e)
+
+    try:
+        from .predictor.learned_weights import nightly_weights_update
+
+        lw = await _asyncio.to_thread(nightly_weights_update)
+        logger.info("[DailyPipeline] learned_weights update=%s", lw)
+    except Exception as e:
+        logger.warning("[DailyPipeline] learned weights step failed: %s", e)
+
+    try:
+        from .sepl_market_fixtures import regenerate_fixtures
+
+        fx = await _asyncio.to_thread(regenerate_fixtures)
+        logger.info("[DailyPipeline] sepl_market_fixtures=%s", fx)
+    except Exception as e:
+        logger.warning("[DailyPipeline] market fixtures step failed: %s", e)
 
 
 async def _portfolio_snapshots_job() -> None:
