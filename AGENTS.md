@@ -124,3 +124,47 @@ FaultHunter labels cases by **feature** and HTTP path. Use this to find TradeTal
 **Tests must be offline.** New producers need a unit or integration test that seeds a temporary `DECISIONS_DB_PATH`, calls the producer, and asserts that a row appeared in `decision_events` (+ evidence + features). See [`backend/tests/test_decision_ledger_producers.py`](backend/tests/test_decision_ledger_producers.py) and [`backend/tests/test_model_swap_replay.py`](backend/tests/test_model_swap_replay.py) for the reference shape.
 
 **Off switch.** If the ledger misbehaves in production, flip `DECISION_LEDGER_ENABLE=0` (or `DECISION_BACKEND=none`) and redeploy. All producers and the `outcome_grader` scheduler hook become no-ops; nothing else in the platform depends on ledger return values for user-facing behavior.
+
+---
+
+## Cursor Cloud specific instructions
+
+TradeTalk is a **FastAPI backend + Vite/React frontend** monorepo. For local/cloud-agent dev you need both processes; see [README.md](README.md) for the canonical commands.
+
+### One-time VM prerequisites
+
+If `pip install -r backend/requirements.txt` fails building `chroma-hnswlib`, install system headers first: `sudo apt-get install -y python3.12-dev build-essential`. Add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile so `uvicorn` and other user-level scripts are on `PATH`.
+
+### Local env file
+
+Copy `backend/.env.example` → `backend/.env`. For offline-friendly vector memory without Supabase credentials, set `VECTOR_BACKEND=chroma`. Live LLM chat requires `OPENROUTER_API_KEY` (or NVIDIA/Gemini keys per `.env.example`); without them the API uses rule-based fallback and chat shows a configure notice.
+
+### Starting dev servers
+
+Run in separate terminals (or tmux sessions `tradetalk-api` / `tradetalk-frontend`):
+
+```bash
+# Backend — port 8000
+cd /workspace && PYTHONPATH=. python3.12 -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+
+# Frontend — port 5173 (proxies API routes to :8000)
+cd /workspace/frontend && npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Health check: `curl http://127.0.0.1:8000/llm/status` (expect `vector_backend: chroma` when using local Chroma).
+
+### Tests and smoke
+
+| Command | What it needs |
+|---------|----------------|
+| `./scripts/run_backend_tests.sh` | Python 3.10+ only; no servers. Some tests hit live Yahoo/Supabase and may fail in sandboxes without market-data network access — prefer narrowed unittest targets for offline work (e.g. `backend.tests.test_decision_ledger_producers`). |
+| `npm run e2e:smoke` | Backend **:8000** + Vite **:5173** (landing, Strategy Lab, paper portfolio). |
+| `npm run e2e:local:api:smoke` | Backend **:8000** only; decision-terminal cases need live yfinance history and may 503 offline. |
+
+First Playwright run on a fresh VM: `npx playwright install chromium --with-deps`.
+
+### Optional services (not required for routine dev)
+
+- **FinCrawler** (port 10000) — article scrape / quote fallback; separate repo.
+- **tradetalk-timesfm** (port 8090) — optional forecast microservice.
+- **tradetalk_mcp** — stdio MCP server; see [docs/MCP.md](docs/MCP.md).
