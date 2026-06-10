@@ -1,8 +1,11 @@
 """
 TimesFM HTTP service — thin FastAPI wrapper.
 
-Production installs ``timesfm[torch,xreg]`` and loads pinned weights; this stub
-keeps the route contract testable without GPU in CI.
+When the image is built with ``INSTALL_TIMESFM=1`` (and weights download
+succeeds) every ``/forecast`` call is served by real
+``google/timesfm-2.5-200m-pytorch`` quantiles via ``model_loader``. Otherwise
+the deterministic drift stub keeps the route contract testable without GPU
+in CI.
 """
 
 from __future__ import annotations
@@ -14,7 +17,9 @@ from typing import Any, Dict, List
 
 from fastapi import FastAPI, Header, HTTPException
 
-app = FastAPI(title="TradeTalk TimesFM", version="0.1.0")
+from model_loader import model_label, real_forecast
+
+app = FastAPI(title="TradeTalk TimesFM", version="0.2.0")
 
 TOKEN = os.environ.get("TIMESFM_SERVICE_TOKEN", "").strip()
 MODEL_LABEL = os.environ.get("TIMESFM_MODEL_LABEL", "timesfm-2.5-stub")
@@ -27,14 +32,15 @@ def healthz() -> Dict[str, str]:
 
 @app.get("/readyz")
 def readyz() -> Dict[str, str]:
-    return {"status": "ready", "model": MODEL_LABEL}
+    return {"status": "ready", "model": model_label()}
 
 
 @app.get("/version")
 def version() -> Dict[str, str]:
+    label = model_label()
     return {
-        "model": MODEL_LABEL,
-        "weights_sha256": hashlib.sha256(MODEL_LABEL.encode()).hexdigest()[:16],
+        "model": label,
+        "weights_sha256": hashlib.sha256(label.encode()).hexdigest()[:16],
         "code_git_sha": os.environ.get("GIT_SHA", "unknown"),
     }
 
@@ -55,6 +61,15 @@ def forecast(
     horizon = int(body.get("horizon") or 20)
     if not inputs:
         raise HTTPException(status_code=400, detail="inputs required")
+
+    real = real_forecast(inputs, horizon)
+    if real is not None:
+        return {
+            "point": real["point"],
+            "quantiles": real["quantiles"],
+            "model_version": model_label(),
+            "served_at": time.time(),
+        }
 
     last = float(inputs[-1])
     # Stub trajectory: slight upward drift with fake quantile channels (10).

@@ -17,8 +17,11 @@ from backend.swarm_reliability.schemas import parse_iso_datetime
 
 from .baselines import drift_forecast, ewma_forecast, naive_forecast, seasonal_naive_forecast
 from .config_loader import load_yaml_cached
+from .conformal import apply_scale as conformal_apply_scale
+from .conformal import load_scales as load_conformal_scales
 from .features import default_as_of_date, snapshot_pit_factors
 from .ensemble import weighted_inverse_mase
+from .learned_weights import blend_weights, load_weights as load_learned_weights
 from .kill_switch import predictor_baselines_only, predictor_enabled
 from .ledger_emit import emit_predictor_decisions
 from .manifest import build_manifest
@@ -222,6 +225,14 @@ async def run_predictor_forecast(
     input_hash = stable_json_hash(input_payload)
 
     shadow_logged = False
+    model_label = DEFAULT_MODEL_LABEL
+    forecast_source = "mock"
+    remote_primary = os.environ.get("TIMESFM_REMOTE_PRIMARY", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     if (os.environ.get("TIMESFM_SERVICE_URL") or "").strip() and not predictor_baselines_only():
         try:
             remote = await fetch_timesfm_forecast_http(
@@ -231,12 +242,22 @@ async def run_predictor_forecast(
                 model_version=DEFAULT_MODEL_LABEL,
             )
             if remote:
+                from .timesfm_client import http_quantiles_to_numpy_path
+
+                remote_arr = http_quantiles_to_numpy_path(remote)
+                # Remote-primary (Phase 2): when the deployed TimesFM service
+                # answers with a usable quantile path, it IS the forecast.
+                # The deterministic mock stays as fallback + shadow reference.
+                if remote_primary and remote_arr is not None and remote_arr.shape[0] >= 1:
+                    needed = min(64, max_h)
+                    if remote_arr.shape[0] >= min(needed, max(HORIZON_TO_TD.values())):
+                        path = remote_arr
+                        model_label = str(remote.get("model_version") or DEFAULT_MODEL_LABEL)
+                        forecast_source = "timesfm_service"
                 try:
                     from backend.coral_hub import log_handoff_event
                     from backend.coral_dreaming import EVENT_PREDICTOR_SHADOW
-                    from .timesfm_client import http_quantiles_to_numpy_path
 
-                    remote_arr = http_quantiles_to_numpy_path(remote)
                     mock_row = mock_client.forecast_price_path(
                         log_p, min(64, max_h), ticker=t, cycle_id=cycle_id
                     )
@@ -252,16 +273,23 @@ async def run_predictor_forecast(
                             "cycle_id": cycle_id,
                             "remote_keys": list(remote.keys()),
                             "compare": diff_note,
+                            "remote_primary": forecast_source == "timesfm_service",
                         },
                     )
                     shadow_logged = True
                 except Exception:
                     pass
         except Exception as e:
-            logger.debug("[Predictor] shadow fetch skipped: %s", e)
+            logger.debug("[Predictor] remote fetch skipped: %s", e)
 
     bands: List[HorizonBandUsd] = []
     ensemble_weights_last: Dict[str, float] = {}
+
+    # Self-learning artifacts (Phase 3) — both no-ops until their nightly
+    # jobs have committed a first version to the resource registry.
+    conformal_scales = load_conformal_scales()
+    learned_wts_by_h = load_learned_weights()
+    conformal_applied: Dict[str, float] = {}
 
     for h_label in hs:
         td = HORIZON_TO_TD.get(h_label, 21)
@@ -289,14 +317,25 @@ async def run_predictor_forecast(
             "timesfm_mean": point_usd,
         }
         blended, wts = weighted_inverse_mase(series, td, members)
+        learned = learned_wts_by_h.get(h_label) or {}
+        if learned:
+            wts = blend_weights(wts, learned)
+            blended = sum(wts[k] * members[k] for k in wts)
         ensemble_weights_last = dict(wts)
+
+        lo_usd = min(q10_usd, q50_usd, q90_usd)
+        hi_usd = max(q10_usd, q50_usd, q90_usd)
+        scale = conformal_scales.get(h_label)
+        if scale is not None:
+            lo_usd, _, hi_usd = conformal_apply_scale(lo_usd, q50_usd, hi_usd, scale)
+            conformal_applied[h_label] = scale
 
         bands.append(
             HorizonBandUsd(
                 horizon=h_label,
-                q10_usd=min(q10_usd, q50_usd, q90_usd),
+                q10_usd=lo_usd,
                 q50_usd=q50_usd,
-                q90_usd=max(q10_usd, q50_usd, q90_usd),
+                q90_usd=hi_usd,
                 point_usd=blended,
             )
         )
@@ -322,9 +361,10 @@ async def run_predictor_forecast(
         "spot_usd": spot,
         "horizons": [b.model_dump() for b in bands],
         "directional_bias": directional,
-        "model_version": DEFAULT_MODEL_LABEL,
+        "model_version": model_label,
         "pit_factors": pit_factors,
         "price_source": price_source,
+        "forecast_source": forecast_source,
     }
     syn_task = synthesize_narrative(tool_json=tool_json, cycle_id=cycle_id)
     syn_text = await syn_task
@@ -345,7 +385,7 @@ async def run_predictor_forecast(
         ticker=t,
         cycle_id=cycle_id,
         disclaimer=disclaimer,
-        model_version=DEFAULT_MODEL_LABEL,
+        model_version=model_label,
         model_confidence="medium",
         directional_bias=directional,  # type: ignore[arg-type]
         horizon_bands_usd=bands,
@@ -368,6 +408,8 @@ async def run_predictor_forecast(
             "manifest": manifest.model_dump(mode="json"),
             "pit_factors": pit_factors,
             "price_source": price_source,
+            "forecast_source": forecast_source,
+            "conformal_scales": conformal_applied,
             "price_evidence_chunks": [
                 {
                     "chunk_id": f"{cycle_id}-prices",
