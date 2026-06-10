@@ -24,7 +24,7 @@ trap cleanup SIGINT SIGTERM
 
 echo "Starting Cloudflare Quick Tunnel..."
 mkdir -p ~/.cloudflared
-cloudflared tunnel --url http://localhost:11434 > ~/.cloudflared/quick_tunnel.log 2>&1 &
+cloudflared tunnel --url http://localhost:11434 --http-host-header localhost > ~/.cloudflared/quick_tunnel.log 2>&1 &
 TUNNEL_PID=$!
 sleep 5
 
