@@ -22,7 +22,7 @@ jobs:
           VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
         run: |
           if [ -z "${VERCEL_DEPLOY_HOOK_URL}" ]; then
-            echo "Missing VERCEL_DEPLOY_HOOK_URL secret."
-            exit 1
+            echo "VERCEL_DEPLOY_HOOK_URL secret is not set. Skipping deploy hook."
+            exit 0
           fi
           curl -fsS -X POST "${VERCEL_DEPLOY_HOOK_URL}"

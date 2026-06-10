@@ -1,0 +1,26 @@
+# Vercel ignore configuration
+# Ignore backend code and local virtual environments to speed up CLI deploys and avoid file limits.
+
+.venv
+.venv-mcp
+.venv-py312
+.venv-daily
+venv
+env
+backend
+chroma_db
+.chroma_db
+node_modules
+frontend/node_modules
+playwright-report
+test-results
+data_lake_output
+test_results
+.git
+.github
+.vscode
+.hypothesis
+.pytest_cache
+.tradetalk
+*.db
+*.log
