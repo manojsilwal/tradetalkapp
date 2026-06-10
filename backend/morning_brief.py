@@ -498,10 +498,11 @@ def _emit_morning_brief_decision(user_id: str, brief: Dict[str, Any]) -> None:
         from . import decision_ledger as dl
         from .decision_ledger_registry import registry_attribution
 
-        pv, snap_id = registry_attribution()
+        pv, snap_id, model = registry_attribution()
         dl.emit_decision(
             decision_type="morning_brief",
             user_id=user_id,
+            model=model,
             output={
                 "headline": brief.get("headline"),
                 "summary": brief.get("summary"),

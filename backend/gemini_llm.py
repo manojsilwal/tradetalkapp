@@ -11,6 +11,8 @@ import logging
 import os
 from typing import Any, AsyncIterator, Dict, List, Optional
 
+from .model_defaults import DEFAULT_GEMINI_MODEL
+
 logger = logging.getLogger(__name__)
 
 # ── Model tier selection ────────────────────────────────────────────────────
@@ -31,10 +33,10 @@ logger = logging.getLogger(__name__)
 # burning credits on the Gemini account and skipping OpenRouter entirely.
 GEMINI_MODEL = os.environ.get(
     "GEMINI_MODEL",
-    os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash"),
+    os.environ.get("GEMINI_FALLBACK_MODEL", DEFAULT_GEMINI_MODEL),
 ).strip()
 GEMINI_MODEL_LIGHT = os.environ.get(
-    "GEMINI_MODEL_LIGHT", "gemini-3.5-flash"
+    "GEMINI_MODEL_LIGHT", DEFAULT_GEMINI_MODEL
 ).strip()
 # Kept for callers that still import the old name.
 GEMINI_FALLBACK_MODEL = GEMINI_MODEL
@@ -419,7 +421,7 @@ def gemini_extract_holdings_from_image(
     if mt not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
         mt = "image/jpeg"
 
-    vision_model = os.environ.get("GEMINI_VISION_MODEL", "").strip() or "gemini-3.5-flash"
+    vision_model = os.environ.get("GEMINI_VISION_MODEL", "").strip() or DEFAULT_GEMINI_MODEL
 
     def _call() -> str:
         import time

@@ -1,7 +1,13 @@
 # Phase F — Model-Agnostic Financial Intelligence Fabric (architecture plan)
 
-**Status:** PLAN (no code changes in this phase doc)
+**Status:** F1 + F2 + F6 implemented (first pass); F3/F4 pending; F5 is an operator runbook
 **Audience:** agent architects / operators
+
+Implemented in this phase so far:
+
+- **F1 (capture):** new producers — `swarm` (consolidated `/trace` verdict), `small_cap_assessment`, `backtest_verdict`, `daily_brief` (LLM-refined screener rows, capped via `DAILY_BRIEF_LEDGER_EMIT_MAX`); enriched `decision_terminal`, `gold_advisor`, `swarm_factor`, `scorecard` with `query_with_refs` evidence and/or `FeatureValue`s; fixed broken `morning_brief` emit (2-tuple unpack of 3-tuple) and empty `gold_advisor` verdict field.
+- **F2 (gateway):** `backend/model_defaults.py` is the single place for default model IDs; predictor `synthesizer`/`reviewer` migrated off raw `httpx` onto `LLMClient.generate_plain_with_meta`; `registry_attribution(roles=[...])` stamps only the prompt roles a decision actually used; `ingestion_judge`, `predictor_synthesizer`, `predictor_reviewer` registered in the prompt registry.
+- **F6 (observability):** `GET /learning-health` now reports `capture_coverage_24h` per `decision_type` (decision counts + evidence/feature completeness).
 **Goal:** every user action and background task contributes to the swarm's finance/stock intelligence, and the LLM underneath can be swapped without degrading that intelligence.
 
 Related docs: [`DECISION_LEDGER.md`](DECISION_LEDGER.md), [`SEPL.md`](SEPL.md), [`RESOURCE_REGISTRY.md`](RESOURCE_REGISTRY.md), [`PHASE_HARNESS_SUPERINVESTOR.md`](PHASE_HARNESS_SUPERINVESTOR.md), [`CONTINUAL_LEARNING_ASSESSMENT.md`](CONTINUAL_LEARNING_ASSESSMENT.md), [`PHASE_B_DREAMING.md`](PHASE_B_DREAMING.md), [`RAG_POLICY.md`](RAG_POLICY.md).

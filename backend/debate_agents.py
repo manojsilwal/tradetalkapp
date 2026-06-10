@@ -585,7 +585,9 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
 
         from .decision_ledger_registry import registry_attribution
 
-        _pv, _snap, _model = registry_attribution()
+        _pv, _snap, _model = registry_attribution(
+            roles=["bull", "bear", "macro", "value", "momentum", "moderator"]
+        )
         _dl.emit_decision(
             decision_type="debate",
             symbol=ticker,

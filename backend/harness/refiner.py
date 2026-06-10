@@ -89,10 +89,12 @@ class RefinerAgent:
         try:
             from ..gemini_llm import gemini_simple_completion_sync
 
+            from ..model_defaults import DEFAULT_GEMINI_MODEL
+
             fallback_model = (
                 os.environ.get("HARNESS_GEMINI_LOW_MODEL", "").strip()
                 or os.environ.get("GEMINI_MODEL_LIGHT", "").strip()
-                or "gemini-3.5-flash"
+                or DEFAULT_GEMINI_MODEL
             )
             resp = await asyncio.to_thread(
                 gemini_simple_completion_sync,

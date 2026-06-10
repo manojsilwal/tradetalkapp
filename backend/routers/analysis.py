@@ -1,5 +1,6 @@
 """Analysis endpoints — swarm trace, AI debate, deep analyze."""
 import asyncio
+import logging
 import os
 import time as _time
 from datetime import datetime as _dt2, timezone as _tz2
@@ -32,6 +33,8 @@ from ..deps import (
 from ..coral_agents import hub_record_attempt
 from ..swarm_reliability.schemas import EvidenceArtifact, EvidenceManifest, parse_iso_datetime
 from .. import user_preferences as uprefs
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["analysis"])
 
@@ -266,6 +269,61 @@ async def _execute_swarm_trace(
             )
         except Exception as e:
             print(f"[KnowledgeHook] add_swarm_analysis or ingestion trigger failed: {e}")
+
+        # Consolidated swarm verdict → Decision-Outcome Ledger (Phase F capture
+        # contract). Per-factor rows are emitted inside each AgentPair; this row
+        # is the user-facing consensus the grader / SEPL / replay key on.
+        try:
+            from .. import decision_ledger as _dl
+            from ..decision_ledger_registry import registry_attribution
+
+            _regime = market_state.market_regime.value if market_state.market_regime else ""
+            _features = [
+                _dl.FeatureValue(name="market_regime", value_str=_regime, regime=_regime),
+                _dl.FeatureValue(
+                    name="credit_stress_index",
+                    value_num=float(actual_stress),
+                    regime=_regime,
+                ),
+                _dl.FeatureValue(
+                    name="weighted_signal", value_num=float(weighted_signal), regime=_regime,
+                ),
+                _dl.FeatureValue(
+                    name="verified_factor_count", value_num=float(len(verified)), regime=_regime,
+                ),
+                _dl.FeatureValue(
+                    name="rejected_factor_count", value_num=float(len(rejected)), regime=_regime,
+                ),
+                _dl.FeatureValue(
+                    name="macro_stale", value_str=str(bool(macro_stale)), regime=_regime,
+                ),
+            ]
+            _pv, _snap, _model = registry_attribution(
+                roles=["swarm_synthesizer", "swarm_analyst"]
+            )
+            _dl.emit_decision(
+                decision_type="swarm",
+                symbol=ticker.upper(),
+                horizon_hint="5d",
+                verdict=global_verdict,
+                confidence=float(avg_confidence),
+                output={
+                    "global_signal": int(global_signal),
+                    "global_verdict": global_verdict,
+                    "weighted_signal": float(weighted_signal),
+                    "consensus_rationale": (consensus.consensus_rationale or "")[:2000],
+                    "factor_signals": {
+                        name: int(fr.trading_signal) for name, fr in consensus.factors.items()
+                    },
+                },
+                source_route="backend/routers/analysis.py::_execute_swarm_trace",
+                features=_features,
+                prompt_versions=_pv,
+                registry_snapshot_id=_snap,
+                model=_model,
+            )
+        except Exception as e:
+            logger.debug("[SwarmTrace] consolidated ledger emit skipped: %s", e)
 
         try:
             hub_record_attempt(
