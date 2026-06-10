@@ -14,7 +14,7 @@ const {
 
 test.describe('Investor Use Cases', () => {
   test('valuation dashboard analyzes a ticker', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/dashboard');
     await dismissOnboarding(page);
     await expect(page.getByRole('heading', { name: 'TradeTalk', exact: true })).toBeVisible({ timeout: 15000 });
     await runUnifiedLandingAnalyze(page, 'AAPL');

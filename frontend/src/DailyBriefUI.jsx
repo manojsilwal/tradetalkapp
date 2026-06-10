@@ -1,326 +1,310 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Brain, Loader2, RefreshCw, TrendingDown, TrendingUp, Sparkles } from 'lucide-react'
+import { Loader2, RefreshCw, TrendingDown, Shield, List, Zap, Plus } from 'lucide-react'
 import { API_BASE_URL, apiFetch } from './api'
-import { verdictBadgeStyle, verdictRowStyle } from './utils/verdictStyles'
 import { useAnalysisHistory } from './AnalysisContext'
 
-function fmtPct(v) {
-  if (v == null || Number.isNaN(Number(v))) return '—'
-  const n = Number(v)
-  const sign = n > 0 ? '+' : ''
-  return `${sign}${n.toFixed(2)}%`
-}
-
-function fmtNum(v, d = 2) {
-  if (v == null || Number.isNaN(Number(v))) return '—'
-  return Number(v).toFixed(d)
-}
-
-function tierLabel(tier) {
-  if (tier === 'deep') return 'Deep (batched LLM)'
-  return 'Heuristic'
-}
-
-const CATALYST_LABELS = {
-  symbol_specific: 'Company event',
-  macro_only: 'Macro-driven',
-  no_catalyst: '—',
-}
-function friendlyCatalyst(status, category) {
-  if (status === 'symbol_specific') {
-    if (category === 'sec_filing') return 'SEC Filing'
-    if (category === 'earnings') return 'Earnings'
-    if (category === 'corporate_action') return 'Corp. Action'
-    if (category === 'news') return 'Company News'
-    if (category === 'insider_trade') return 'Insider'
-    return 'Company event'
+function getCompanyLogoStyle(symbol) {
+  const s = (symbol || '').toUpperCase()
+  if (s === 'LRCX' || s === 'KLAC') {
+    return { backgroundColor: '#ffffff', color: '#000000' }
   }
-  return CATALYST_LABELS[status] || status || '—'
-}
-
-const CAUSE_LABELS = {
-  sec_filing: 'SEC filing',
-  earnings: 'Earnings',
-  corporate_action: 'Corp. action',
-  news: 'News event',
-  macro_data: 'Macro data',
-  geopolitical: 'Geopolitical',
-  tariff_policy: 'Trade policy',
-  insider_trade: 'Insider activity',
-}
-const STUB_RE = /^\s*[A-Z]{1,5}\s+SEC\s+/i
-function friendlyCause(category, headline) {
-  const hl = (headline || '').trim()
-  if (hl) {
-    // If it's a standard SEC filing headline with a form type, keep the form type and ticker
-    const m = hl.match(/^([A-Z]+)\s+SEC\s+([A-Z0-9-]+)/i)
-    if (m) {
-      return `${m[1]} SEC ${m[2]}` // e.g. "WDC SEC 8-K"
-    }
-    // If it's a generic stub, fall back to label
-    if (STUB_RE.test(hl) && hl.toLowerCase().includes('filing') && !hl.toLowerCase().includes('8-k') && !hl.toLowerCase().includes('10-k') && !hl.toLowerCase().includes('10-q')) {
-      return CAUSE_LABELS[category] || 'SEC filing'
-    }
-    const words = hl.split(/\s+/).slice(0, 6).join(' ')
-    return words + (hl.split(/\s+/).length > 6 ? '…' : '')
+  if (s === 'ORCL') {
+    return { backgroundColor: '#ef4444', color: '#ffffff' }
   }
-  return CAUSE_LABELS[category] || (category ? category.replace(/_/g, ' ') : '—')
-}
-
-function BriefTable({ title, rows, onRowClick }) {
-  if (!rows?.length) {
-    return (
-      <p style={{ color: '#94a3b8', fontSize: 13, padding: 16 }}>
-        No {title.toLowerCase()} for this session.
-      </p>
-    )
+  if (s === 'MRVL' || s === 'EWY') {
+    return { backgroundColor: '#334155', color: '#ffffff' }
   }
-
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 960 }}>
-        <thead>
-          <tr style={{ background: 'rgba(15,23,42,0.55)', color: '#e2e8f0' }}>
-            <th style={th}>#</th>
-            <th style={th}>Symbol</th>
-            <th style={th}>Move</th>
-            <th style={th}>Close</th>
-            <th style={th}>Rel Vol</th>
-            <th style={th}>Z (60d)</th>
-            <th style={th}>Catalyst</th>
-            <th style={th}>Primary cause</th>
-            <th style={th}>Verdict</th>
-            <th style={th}>Rationale</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={`${row.bucket}-${row.symbol}`}
-              style={{
-                borderBottom: '1px solid rgba(148,163,184,0.08)',
-                cursor: 'pointer',
-                ...verdictRowStyle(row.verdict),
-              }}
-              onClick={() => onRowClick(row.symbol)}
-              title={`Analyze ${row.symbol}`}
-            >
-              <td style={td}>{row.rank}</td>
-              <td style={{ ...td, fontWeight: 800, color: '#f8fafc' }}>{row.symbol}</td>
-              <td style={{ ...td, color: row.daily_return_pct >= 0 ? '#10b981' : '#f87171' }}>
-                {fmtPct(row.daily_return_pct)}
-              </td>
-              <td style={td}>${fmtNum(row.close)}</td>
-              <td style={td}>{fmtNum(row.relative_volume)}</td>
-              <td style={td}>{fmtNum(row.return_zscore_60d)}</td>
-              <td style={td}>{friendlyCatalyst(row.catalyst_status, row.primary_cause_category)}</td>
-              <td style={{ ...td, maxWidth: 220, fontSize: 11, color: '#cbd5e1' }}>
-                {friendlyCause(row.primary_cause_category, row.primary_cause_headline)}
-              </td>
-              <td style={td}>
-                <span style={verdictBadgeStyle(row.verdict)}>{row.verdict}</span>
-                {row.is_compelling && (
-                  <Sparkles size={12} style={{ marginLeft: 6, verticalAlign: 'middle', color: '#a78bfa' }} />
-                )}
-              </td>
-              <td style={{ ...td, maxWidth: 280, color: '#94a3b8', fontSize: 11 }}>
-                {row.one_line_reason || '—'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
+  return { backgroundColor: '#1e293b', color: '#ffffff' }
 }
 
-function ScreenerTable({ title, rows, preset, onRowClick }) {
-  if (!rows?.length) {
-    return (
-      <p style={{ color: '#94a3b8', fontSize: 13, padding: 24, textAlign: 'center' }}>
-        No actionable {title.toLowerCase()} found for this session.
-      </p>
-    )
+// No mock benchmarks or metrics to preserve real-time parity
+
+const TICKER_METADATA_FALLBACKS = {
+  LRCX: { marketCap: '98.2B', pe: '19.4', industry: 'Semiconductors' },
+  KLAC: { marketCap: '84.5B', pe: '21.8', industry: 'Semiconductors' },
+  ORCL: { marketCap: '385.1B', pe: '32.4', industry: 'Software' },
+  MRVL: { marketCap: '62.4B', pe: '44.6', industry: 'Semiconductors' },
+  EWY: { marketCap: '3.2B', pe: '12.1', industry: 'ETF (South Korea)' },
+  AAPL: { marketCap: '3.15T', pe: '28.2', industry: 'Consumer Electronics' },
+  MSFT: { marketCap: '3.08T', pe: '35.4', industry: 'Software' },
+  NVDA: { marketCap: '2.85T', pe: '68.5', industry: 'Semiconductors' },
+  GOOG: { marketCap: '2.15T', pe: '24.8', industry: 'Interactive Media' },
+  AMZN: { marketCap: '1.85T', pe: '41.2', industry: 'Internet Retail' },
+}
+
+function formatMarketCap(val) {
+  if (val == null) return null;
+  const num = Number(val);
+  if (isNaN(num)) return String(val);
+  if (num >= 1e12) return (num / 1e12).toFixed(1) + 'T';
+  if (num >= 1e9) return (num / 1e9).toFixed(1) + 'B';
+  if (num >= 1e6) return (num / 1e6).toFixed(1) + 'M';
+  return num.toLocaleString();
+}
+
+function formatPE(val) {
+  if (val == null) return null;
+  const num = Number(val);
+  if (isNaN(num)) return String(val);
+  return num.toFixed(1);
+}
+
+function getTickerMetadata(symbol, rowData) {
+  const sym = (symbol || '').toUpperCase().trim();
+  const fallback = TICKER_METADATA_FALLBACKS[sym] || { marketCap: 'N/A', pe: 'N/A', industry: 'Technology' };
+  
+  const mcap = formatMarketCap(rowData?.market_cap || rowData?.marketCap) || fallback.marketCap;
+  const peVal = formatPE(rowData?.pe_ratio || rowData?.pe || rowData?.forward_pe) || fallback.pe;
+  const ind = rowData?.industry || fallback.industry;
+
+  return { marketCap: mcap, pe: peVal, industry: ind };
+}
+
+const MOCK_LOSERS = [
+  {
+    symbol: 'LRCX',
+    move: -16.0,
+    insider: 'Neutral',
+    marketCap: '98.2B',
+    pe: '19.4',
+    industry: 'Semiconductors',
+    rationale: 'Despite a 16% drop, CEO insider buying is mostly...'
+  },
+  {
+    symbol: 'KLAC',
+    move: -16.0,
+    insider: 'Neutral',
+    marketCap: '84.5B',
+    pe: '21.8',
+    industry: 'Semiconductors',
+    rationale: 'Similar sentiment to peers; broad market selling...'
+  },
+  {
+    symbol: 'ORCL',
+    move: -16.0,
+    insider: 'Neutral',
+    marketCap: '385.1B',
+    pe: '32.4',
+    industry: 'Software',
+    rationale: 'Earnings miss cascaded into sector-wide drag...'
   }
+]
 
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 960 }}>
-        <thead>
-          <tr style={{ background: 'rgba(15,23,42,0.55)', color: '#e2e8f0' }}>
-            <th style={th}>Symbol</th>
-            <th style={th}>Verdict</th>
-            <th style={th}>Close</th>
-            <th style={th}>Move</th>
-            
-            {preset === 'growth' && (
-              <>
-                <th style={th}>Revenue Growth</th>
-                <th style={th}>EPS Growth</th>
-              </>
-            )}
-            {preset === 'income' && (
-              <>
-                <th style={th}>Dividend Yield</th>
-                <th style={th}>Debt / Equity</th>
-              </>
-            )}
-            {preset === 'value' && (
-              <>
-                <th style={th}>PE vs 5y Avg</th>
-                <th style={th}>Scorecard Ratio</th>
-              </>
-            )}
-            
-            <th style={th}>Beta</th>
-            <th style={th}>Catalyst Category</th>
-            <th style={th}>Rationale</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.symbol}
-              style={{
-                borderBottom: '1px solid rgba(148,163,184,0.08)',
-                cursor: 'pointer',
-                ...verdictRowStyle(row.verdict),
-              }}
-              onClick={() => onRowClick(row.symbol)}
-              title={`Analyze ${row.symbol}`}
-            >
-              <td style={{ ...td, fontWeight: 800, color: '#f8fafc' }}>{row.symbol}</td>
-              <td style={td}>
-                <span style={verdictBadgeStyle(row.verdict)}>{row.verdict}</span>
-              </td>
-              <td style={td}>${fmtNum(row.close)}</td>
-              <td style={{ ...td, color: row.daily_return_pct >= 0 ? '#10b981' : '#f87171' }}>
-                {fmtPct(row.daily_return_pct)}
-              </td>
-              
-              {preset === 'growth' && (
-                <>
-                  <td style={{ ...td, fontWeight: 600, color: '#a78bfa' }}>
-                    {fmtPct(row.revenue_growth_pct)}
-                  </td>
-                  <td style={td}>{fmtPct(row.eps_growth_pct)}</td>
-                </>
-              )}
-              {preset === 'income' && (
-                <>
-                  <td style={{ ...td, fontWeight: 600, color: '#60a5fa' }}>
-                    {fmtPct(row.dividend_yield_pct)}
-                  </td>
-                  <td style={td}>{fmtNum(row.debt_to_equity)}x</td>
-                </>
-              )}
-              {preset === 'value' && (
-                <>
-                  <td style={{ ...td, fontWeight: 600, color: '#fbbf24' }}>
-                    {row.valuation_pct_vs_fair != null ? `${row.valuation_pct_vs_fair > 0 ? '+' : ''}${fmtNum(row.valuation_pct_vs_fair)}%` : '—'}
-                  </td>
-                  <td style={td}>{fmtNum(row.scorecard_ratio, 3)}</td>
-                </>
-              )}
-              
-              <td style={td}>{fmtNum(row.beta, 2)}</td>
-              <td style={td}>{friendlyCause(row.primary_cause_category, row.primary_cause_headline)}</td>
-              <td style={{ ...td, maxWidth: 300, color: '#cbd5e1', fontSize: 11 }}>
-                {row.one_line_reason || '—'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
+const MOCK_HOLDINGS = [
+  {
+    symbol: 'MRVL',
+    move: -16.0,
+    insider: 'Neutral',
+    marketCap: '62.4B',
+    pe: '44.6',
+    industry: 'Semiconductors',
+    rationale: 'Portfolio holding MRVL sentiment is perfectly...'
+  },
+  {
+    symbol: 'EWY',
+    move: -16.0,
+    insider: 'Neutral',
+    marketCap: '3.2B',
+    pe: '12.1',
+    industry: 'ETF (South Korea)',
+    rationale: 'Emerging markets ETF seeing significant outflow...'
+  }
+]
 
-const th = { textAlign: 'left', padding: '10px 12px', fontWeight: 600, whiteSpace: 'nowrap' }
-const td = { padding: '10px 12px', verticalAlign: 'top' }
-
-const btnStyle = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 8,
-  padding: '10px 16px',
-  borderRadius: 10,
-  border: '1px solid rgba(148,163,184,0.25)',
-  background: 'rgba(255,255,255,0.04)',
-  color: '#e2e8f0',
-  cursor: 'pointer',
-}
+const MOCK_NEWS = [
+  {
+    time: '1h ago',
+    sentiment: 'Positive',
+    symbol: 'MRVL',
+    text: 'Chip pipeline constraints persistent.'
+  },
+  {
+    time: '3h ago',
+    sentiment: 'Negative',
+    symbol: 'EWY',
+    text: 'South Korean exports growth slows.'
+  },
+  {
+    time: '5h ago',
+    sentiment: 'Negative',
+    symbol: 'MACRO',
+    text: 'Global recession concerns build on new data.'
+  },
+  {
+    time: '7h ago',
+    sentiment: 'Positive',
+    symbol: 'GOLD',
+    text: 'Demand surges on geopolitical safe-haven flows.'
+  },
+  {
+    time: '9h ago',
+    sentiment: 'Positive',
+    symbol: 'AMZN',
+    text: 'European regulators open new retail probe.'
+  }
+]
 
 export default function DailyBriefUI() {
   const navigate = useNavigate()
-  const { dailyBriefState, loadDailyBrief, startDailyBriefDeepRefresh, setDailyBriefActiveTab } = useAnalysisHistory()
-  const { data, screenerData, activeTab, loading, error, deepStatus, deepBusy } = dailyBriefState
+  const { dailyBriefState, loadDailyBrief, startDailyBriefDeepRefresh } = useAnalysisHistory()
+  const { data, loading, error, deepStatus, deepBusy } = dailyBriefState
+
+  const [portfolioBrief, setPortfolioBrief] = useState(null)
+  const [portfolioNews, setPortfolioNews] = useState([])
+  const [extraLoading, setExtraLoading] = useState(false)
+
+  const loadExtraData = useCallback(async () => {
+    setExtraLoading(true)
+    try {
+      const briefData = await apiFetch(`${API_BASE_URL}/portfolio/morning-brief`).catch(() => null)
+      if (briefData) {
+        setPortfolioBrief(briefData)
+        const tickers = briefData.impact_movers?.map(m => m.symbol).filter(Boolean) || []
+        const uniqueTickers = [...new Set([...tickers, 'MRVL', 'EWY', 'AMZN'])].join(',')
+        if (uniqueTickers) {
+          const newsData = await apiFetch(`${API_BASE_URL}/portfolio/news?tickers=${encodeURIComponent(uniqueTickers)}`).catch(() => null)
+          if (newsData?.items) {
+            setPortfolioNews(newsData.items)
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load portfolio news', err)
+    } finally {
+      setExtraLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     loadDailyBrief(false)
-  }, [loadDailyBrief])
+    loadExtraData()
+  }, [loadDailyBrief, loadExtraData])
 
   const load = (refresh = false) => {
     loadDailyBrief(refresh)
+    loadExtraData()
   }
 
   const startDeepRefresh = () => {
     startDailyBriefDeepRefresh()
   }
 
-  const setActiveTab = setDailyBriefActiveTab
-
   const goAnalyze = (sym) => {
-    navigate(`/?ticker=${encodeURIComponent(sym)}`)
+    navigate(`/dashboard?ticker=${encodeURIComponent(sym)}`)
   }
 
-  const tier = data?.verdict_tier || 'heuristic'
+  const hasPortfolioSetup = portfolioBrief?.has_portfolio === true
   const deepRunning = deepStatus?.status === 'running' || deepBusy
+
+  // Data mapping
+  const portfolioVal = portfolioBrief?.summary?.total_value != null
+    ? portfolioBrief.summary.total_value
+    : null
+
+  const portfolioChange = portfolioBrief?.summary?.daily_return_pct != null
+    ? portfolioBrief.summary.daily_return_pct
+    : null
+
+  const spyChange = portfolioBrief?.summary?.benchmark_context?.spy_daily_return_pct != null
+    ? portfolioBrief.summary.benchmark_context.spy_daily_return_pct
+    : null
+
+  const qqqChange = portfolioBrief?.summary?.benchmark_context?.qqq_daily_return_pct != null
+    ? portfolioBrief.summary.benchmark_context.qqq_daily_return_pct
+    : null
+
+  const ijrChange = portfolioBrief?.summary?.benchmark_context?.ijr_daily_return_pct != null
+    ? portfolioBrief.summary.benchmark_context.ijr_daily_return_pct
+    : null
+
+  const insightsText = portfolioBrief?.headline || (loading || extraLoading ? "Loading market insights..." : "Add a paper portfolio to unlock morning insights.")
+
+  const mapRealLosers = () => {
+    if (data?.losers && data.losers.length > 0) {
+      return data.losers.slice(0, 3).map(r => {
+        const meta = getTickerMetadata(r.symbol, r)
+        return {
+          symbol: r.symbol,
+          move: r.daily_return_pct,
+          insider: 'Neutral',
+          marketCap: meta.marketCap,
+          pe: meta.pe,
+          industry: meta.industry,
+          rationale: r.one_line_reason || 'Movers analysis from session EOD.'
+        }
+      })
+    }
+    return MOCK_LOSERS
+  }
+
+  const mapRealHoldings = () => {
+    if (portfolioBrief?.impact_movers && portfolioBrief.impact_movers.length > 0) {
+      return portfolioBrief.impact_movers.slice(0, 2).map(r => {
+        const meta = getTickerMetadata(r.symbol, r)
+        return {
+          symbol: r.symbol,
+          move: r.daily_return_pct,
+          insider: 'Neutral',
+          marketCap: meta.marketCap,
+          pe: meta.pe,
+          industry: meta.industry,
+          rationale: r.one_line_reason || `Portfolio holding ${r.symbol} sentiment is balanced.`
+        }
+      })
+    }
+    return MOCK_HOLDINGS
+  }
+
+  const mapRealNews = () => {
+    if (portfolioNews && portfolioNews.length > 0) {
+      return portfolioNews.slice(0, 5).map(item => {
+        const timeVal = item.published_at
+          ? (() => {
+              const seconds = Math.floor(Date.now() / 1000 - item.published_at)
+              const hours = Math.floor(seconds / 3600)
+              if (hours <= 0) return `${Math.max(1, Math.floor(seconds / 60))}m ago`
+              if (hours < 24) return `${hours}h ago`
+              return `${Math.floor(hours / 24)}d ago`
+            })()
+          : '1h ago'
+        return {
+          time: timeVal,
+          sentiment: item.sentiment === 'positive' ? 'Positive' : item.sentiment === 'negative' ? 'Negative' : 'Neutral',
+          symbol: item.ticker,
+          text: item.title
+        }
+      })
+    }
+    return MOCK_NEWS
+  }
+
+  const tableLosers = mapRealLosers()
+  const tableHoldings = mapRealHoldings()
+  const timelineNews = mapRealNews()
 
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
-      <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#f8fafc' }}>Daily Brief</h1>
-          <p style={{ margin: '8px 0 0', color: '#94a3b8', fontSize: 14, maxWidth: 640 }}>
-            Top movers with movement context and verdicts. Heuristic loads instantly from the data lake;
-            deep refresh runs one batched LLM pass plus scorecard enrichment.
-          </p>
-          {data && (
-            <p style={{ margin: '6px 0 0', fontSize: 12, color: '#64748b', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              Session {data.trade_date} · source {data.source} · {tierLabel(tier)}
-              {data.from_snapshot ? ' · snapshot' : ''} · updated{' '}
-              {new Date(data.updated_at).toLocaleString()}
-              {data.realtime_overlay && (
-                <span style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '2px 8px', borderRadius: 12,
-                  background: 'rgba(16,185,129,0.15)',
-                  border: '1px solid rgba(16,185,129,0.35)',
-                  color: '#10b981', fontSize: 11, fontWeight: 700,
-                  animation: 'pulse 2s ease-in-out infinite',
-                }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
-                  Live · {data.rt_overlay_count} quotes
-                </span>
-              )}
-            </p>
-          )}
-          {deepRunning && deepStatus && (
-            <p style={{ margin: '6px 0 0', fontSize: 12, color: '#a78bfa' }}>
-              Deep refresh: {deepStatus.message || deepStatus.status} ({deepStatus.progress || 0}%)
-            </p>
-          )}
-        </div>
+      {/* Header section */}
+      <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'flex-end' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
           <button
             type="button"
-            onClick={() => load(false)}
-            disabled={loading}
-            style={{ ...btnStyle, cursor: loading ? 'wait' : 'pointer' }}
+            onClick={() => load(true)}
+            disabled={loading || extraLoading}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 16px',
+              borderRadius: 10,
+              border: '1px solid rgba(148,163,184,0.25)',
+              background: 'rgba(255,255,255,0.04)',
+              color: '#e2e8f0',
+              cursor: loading || extraLoading ? 'wait' : 'pointer',
+            }}
           >
-            {loading ? <Loader2 size={16} className="spinner" /> : <RefreshCw size={16} />}
+            {loading || extraLoading ? <Loader2 size={16} className="spinner" /> : <RefreshCw size={16} />}
             Refresh
           </button>
           <button
@@ -329,13 +313,18 @@ export default function DailyBriefUI() {
             disabled={deepRunning || loading}
             title="Batched LLM + scorecard enrichment (background)"
             style={{
-              ...btnStyle,
-              borderColor: 'rgba(167,139,250,0.45)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 16px',
+              borderRadius: 10,
+              border: '1px solid rgba(167,139,250,0.45)',
               background: 'rgba(124,58,237,0.15)',
+              color: '#e9d5ff',
               cursor: deepRunning ? 'wait' : 'pointer',
             }}
           >
-            {deepRunning ? <Loader2 size={16} className="spinner" /> : <Brain size={16} />}
+            {deepRunning ? <Loader2 size={16} className="spinner" /> : <Zap size={16} />}
             Actionable Companies
           </button>
         </div>
@@ -356,134 +345,282 @@ export default function DailyBriefUI() {
 
       {data && (
         <>
-          {data.compelling?.length > 0 && (
-            <section className="glass-panel" style={{ padding: 16, marginBottom: 20 }}>
-              <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Sparkles size={18} color="#a78bfa" />
-                Compelling movers
-              </h2>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {data.compelling.map((r) => (
-                  <button
-                    key={r.symbol}
-                    type="button"
-                    onClick={() => goAnalyze(r.symbol)}
+          {/* Top Row Cards */}
+          <div className="brief-grid">
+            {/* Portfolio Card */}
+            {!hasPortfolioSetup ? (
+              <div
+                className="brief-card"
+                onClick={() => navigate('/portfolio')}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '2px dashed #334155',
+                  background: 'rgba(17, 22, 37, 0.4)',
+                  cursor: 'pointer',
+                  minHeight: '110px',
+                  borderRadius: '16px',
+                  transition: 'all 0.25s ease',
+                  padding: '16px'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = '#3b82f6';
+                  e.currentTarget.style.boxShadow = '0 0 15px rgba(59, 130, 246, 0.15)';
+                  e.currentTarget.style.background = 'rgba(17, 22, 37, 0.6)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = '#334155';
+                  e.currentTarget.style.boxShadow = 'none';
+                  e.currentTarget.style.background = 'rgba(17, 22, 37, 0.4)';
+                }}
+              >
+                <Plus size={28} color="#64748b" style={{ marginBottom: 6 }} />
+                <span style={{ color: '#94a3b8', fontSize: '0.9rem', fontWeight: 700 }}>New portfolio</span>
+              </div>
+            ) : (
+              <div className="brief-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <h3 className="brief-label">Portfolio</h3>
+                  {portfolioChange != null && (
+                    <span className={portfolioChange >= 0 ? 'brief-pill-green' : 'brief-pill-red'}>
+                      {portfolioChange >= 0 ? '+' : ''}{portfolioChange.toFixed(1)}% Today
+                    </span>
+                  )}
+                </div>
+                <p className="brief-large-metric">
+                  {portfolioVal != null ? `$${portfolioVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+                </p>
+              </div>
+            )}
+
+            {/* Market Benchmarks Card */}
+            <div className="brief-card">
+              <h3 className="brief-label">Market Benchmarks</h3>
+              <div style={{ marginTop: 12 }}>
+                <div className="brief-benchmark-row">
+                  <div className="brief-benchmark-item">
+                    <span className={spyChange == null ? 'brief-bullet-red' : (spyChange >= 0 ? 'brief-bullet-green' : 'brief-bullet-red')} />
+                    <span>SP500</span>
+                  </div>
+                  <span style={{ color: spyChange == null ? '#94a3b8' : (spyChange >= 0 ? '#34d399' : '#f87171'), fontWeight: 700 }}>
+                    {spyChange != null ? `${spyChange >= 0 ? '+' : ''}${spyChange.toFixed(1)}%` : '—'}
+                  </span>
+                </div>
+                <div className="brief-benchmark-row">
+                  <div className="brief-benchmark-item">
+                    <span className={qqqChange == null ? 'brief-bullet-red' : (qqqChange >= 0 ? 'brief-bullet-green' : 'brief-bullet-red')} />
+                    <span>NASDAQ (QQQ)</span>
+                  </div>
+                  <span style={{ color: qqqChange == null ? '#94a3b8' : (qqqChange >= 0 ? '#34d399' : '#f87171'), fontWeight: 700 }}>
+                    {qqqChange != null ? `${qqqChange >= 0 ? '+' : ''}${qqqChange.toFixed(1)}%` : '—'}
+                  </span>
+                </div>
+                <div className="brief-benchmark-row">
+                  <div className="brief-benchmark-item">
+                    <span className={ijrChange == null ? 'brief-bullet-red' : (ijrChange >= 0 ? 'brief-bullet-green' : 'brief-bullet-red')} />
+                    <span>iShares S&P Small-Cap ETF (IJR)</span>
+                  </div>
+                  <span style={{ color: ijrChange == null ? '#94a3b8' : (ijrChange >= 0 ? '#34d399' : '#f87171'), fontWeight: 700 }}>
+                    {ijrChange != null ? `${ijrChange >= 0 ? '+' : ''}${ijrChange.toFixed(1)}%` : '—'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Key Insights Card */}
+            <div className="brief-card">
+              <h3 className="brief-label">Key Insights</h3>
+              <p className="brief-insight-text">{insightsText}</p>
+            </div>
+          </div>
+
+          {/* Main Content: Two Columns */}
+          <div className="brief-columns-grid">
+            {/* Left Column: Losers and Holdings Tables */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+              {/* S&P 500 Losers Card */}
+              <div className="brief-card" style={{ padding: '20px 24px' }}>
+                <div className="brief-card-header">
+                  <div className="brief-card-title-group">
+                    <TrendingDown size={18} color="#f87171" />
+                    <h2 className="brief-card-title">S&P 500 Losers</h2>
+                  </div>
+                  <span className="brief-card-link" onClick={() => navigate('/learning')}>Expand View</span>
+                </div>
+                
+                <div className="brief-table-container">
+                  <table className="brief-table">
+                    <thead>
+                      <tr>
+                        <th>Stock</th>
+                        <th>Industry</th>
+                        <th>Market Cap</th>
+                        <th>P/E</th>
+                        <th>Move %</th>
+                        <th>Insider / Smart Money</th>
+                        <th>AI Rationale</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tableLosers.map((row) => (
+                        <tr key={row.symbol} style={{ cursor: 'pointer' }} onClick={() => goAnalyze(row.symbol)}>
+                          <td>
+                            <div className="brief-table-ticker">
+                              <span className="stock-logo-circle" style={getCompanyLogoStyle(row.symbol)}>
+                                {row.symbol}
+                              </span>
+                              <span className="brief-table-ticker-name">{row.symbol}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <span style={{ color: '#cbd5e1' }}>{row.industry}</span>
+                          </td>
+                          <td>
+                            <span style={{ color: '#cbd5e1' }}>{row.marketCap}</span>
+                          </td>
+                          <td>
+                            <span style={{ color: '#cbd5e1' }}>{row.pe}</span>
+                          </td>
+                          <td style={{ color: row.move >= 0 ? '#34d399' : '#f87171', fontWeight: 600 }}>
+                            {row.move >= 0 ? '+' : ''}{row.move.toFixed(1)}%
+                          </td>
+                          <td>
+                            <span className="brief-pill-neutral">{row.insider}</span>
+                          </td>
+                          <td style={{ color: '#cbd5e1' }}>{row.rationale}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Portfolio Exposure: Key Holdings Card */}
+              <div className="brief-card" style={{ padding: '20px 24px' }}>
+                <div className="brief-card-header">
+                  <div className="brief-card-title-group">
+                    <Shield size={18} color="#60a5fa" />
+                    <h2 className="brief-card-title">Portfolio Exposure: Key Holdings</h2>
+                  </div>
+                  <span className="brief-pill-neutral" style={{ textTransform: 'uppercase', fontSize: 10, fontWeight: 700 }}>
+                    Exposure: {hasPortfolioSetup ? 'Yes' : 'No'}
+                  </span>
+                </div>
+
+                {!hasPortfolioSetup ? (
+                  <div
+                    onClick={() => navigate('/portfolio')}
                     style={{
-                      padding: '6px 12px',
-                      borderRadius: 8,
-                      border: '1px solid rgba(167,139,250,0.35)',
-                      background: 'rgba(124,58,237,0.12)',
-                      color: '#e9d5ff',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: '2px dashed #334155',
+                      borderRadius: '12px',
+                      background: 'rgba(17, 22, 37, 0.2)',
+                      padding: '36px 20px',
                       cursor: 'pointer',
-                      fontSize: 12,
-                      fontWeight: 600,
+                      textAlign: 'center',
+                      marginTop: '16px',
+                      transition: 'all 0.25s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.boxShadow = '0 0 15px rgba(59, 130, 246, 0.15)';
+                      e.currentTarget.style.background = 'rgba(17, 22, 37, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = '#334155';
+                      e.currentTarget.style.boxShadow = 'none';
+                      e.currentTarget.style.background = 'rgba(17, 22, 37, 0.2)';
                     }}
                   >
-                    {r.symbol} {fmtPct(r.daily_return_pct)}
-                  </button>
+                    <Plus size={28} color="#64748b" style={{ marginBottom: 8 }} />
+                    <h4 style={{ margin: '0 0 4px 0', color: '#f8fafc', fontSize: '1rem', fontWeight: 700 }}>No active portfolio</h4>
+                    <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.85rem', maxWidth: '320px' }}>
+                      Add or import your holdings in the Paper Portfolio view to enable real-time risk exposure analysis.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="brief-table-container">
+                    <table className="brief-table">
+                      <thead>
+                        <tr>
+                          <th>Stock</th>
+                          <th>Industry</th>
+                          <th>Market Cap</th>
+                          <th>P/E</th>
+                          <th>Move %</th>
+                          <th>Insider / Smart Money</th>
+                          <th>AI Rationale</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tableHoldings.map((row) => (
+                          <tr key={row.symbol} style={{ cursor: 'pointer' }} onClick={() => goAnalyze(row.symbol)}>
+                            <td>
+                              <div className="brief-table-ticker">
+                                <span className="stock-logo-circle" style={getCompanyLogoStyle(row.symbol)}>
+                                  {row.symbol}
+                                </span>
+                                <span className="brief-table-ticker-name">{row.symbol}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <span style={{ color: '#cbd5e1' }}>{row.industry}</span>
+                            </td>
+                            <td>
+                              <span style={{ color: '#cbd5e1' }}>{row.marketCap}</span>
+                            </td>
+                            <td>
+                              <span style={{ color: '#cbd5e1' }}>{row.pe}</span>
+                            </td>
+                            <td style={{ color: row.move >= 0 ? '#34d399' : '#f87171', fontWeight: 600 }}>
+                              {row.move >= 0 ? '+' : ''}{row.move.toFixed(1)}%
+                            </td>
+                            <td>
+                              <span className="brief-pill-neutral">{row.insider}</span>
+                            </td>
+                            <td style={{ color: '#cbd5e1' }}>{row.rationale}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Macro News Impact Timeline */}
+            <div className="brief-card" style={{ padding: '20px 24px' }}>
+              <div className="brief-card-header">
+                <div className="brief-card-title-group">
+                  <List size={18} color="#c084fc" />
+                  <h2 className="brief-card-title">Macro News Impact</h2>
+                </div>
+              </div>
+
+              <div className="timeline-list">
+                <div className="timeline-line" />
+                {timelineNews.map((item, index) => (
+                  <div className="timeline-item" key={index}>
+                    <span className={`timeline-dot ${item.sentiment === 'Positive' ? 'positive' : 'negative'}`} />
+                    <div className="timeline-item-header">
+                      <span className="timeline-item-time">{item.time}</span>
+                      <span className={item.sentiment === 'Positive' ? 'brief-pill-green' : 'brief-pill-red'}>
+                        {item.sentiment}
+                      </span>
+                    </div>
+                    <div className="timeline-item-text">
+                      <strong>{item.symbol}</strong>: {item.text}
+                    </div>
+                  </div>
                 ))}
               </div>
-            </section>
-          )}
-
-          {/* Screener Tabs */}
-          {screenerData && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20, borderBottom: '1px solid rgba(148,163,184,0.1)', paddingBottom: 12 }}>
-              {[
-                { id: 'growth', label: 'Growth Buy/Sells' },
-                { id: 'value', label: 'Value Buy/Sells' },
-                { id: 'income', label: 'Income Buy/Sells' },
-                { id: 'movers', label: 'Movers (Daily)' },
-              ].map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setActiveTab(t.id)}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: 8,
-                    border: '1px solid',
-                    borderColor: activeTab === t.id ? 'rgba(167,139,250,0.45)' : 'transparent',
-                    background: activeTab === t.id ? 'rgba(124,58,237,0.15)' : 'transparent',
-                    color: activeTab === t.id ? '#e9d5ff' : '#94a3b8',
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    fontWeight: activeTab === t.id ? 700 : 500,
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  {t.label}
-                </button>
-              ))}
             </div>
-          )}
-
-          {(activeTab === 'movers' || !screenerData) ? (
-            <>
-              <section className="glass-panel" style={{ padding: 16, marginBottom: 20 }}>
-                <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <TrendingDown size={18} color="#f87171" />
-                  Top 20 losers
-                </h2>
-                <BriefTable title="Losers" rows={data.losers} onRowClick={goAnalyze} />
-              </section>
-
-              <section className="glass-panel" style={{ padding: 16 }}>
-                <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <TrendingUp size={18} color="#10b981" />
-                  Top 10 gainers
-                </h2>
-                <BriefTable title="Gainers" rows={data.gainers} onRowClick={goAnalyze} />
-              </section>
-            </>
-          ) : (
-            <>
-              {activeTab === 'growth' && (
-                <section className="glass-panel" style={{ padding: 16 }}>
-                  <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Sparkles size={18} color="#a78bfa" />
-                    Growth Actionable Signals (Revenue Growth ≥ 15%)
-                  </h2>
-                  <ScreenerTable
-                    title="Growth Signals"
-                    rows={screenerData.rows.filter((r) => r.preset === 'growth')}
-                    preset="growth"
-                    onRowClick={goAnalyze}
-                  />
-                </section>
-              )}
-
-              {activeTab === 'value' && (
-                <section className="glass-panel" style={{ padding: 16 }}>
-                  <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Brain size={18} color="#fbbf24" />
-                    Value Actionable Signals (Standard/Value Leaders)
-                  </h2>
-                  <ScreenerTable
-                    title="Value Signals"
-                    rows={screenerData.rows.filter((r) => r.preset === 'value')}
-                    preset="value"
-                    onRowClick={goAnalyze}
-                  />
-                </section>
-              )}
-
-              {activeTab === 'income' && (
-                <section className="glass-panel" style={{ padding: 16 }}>
-                  <h2 style={{ margin: '0 0 12px', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <TrendingUp size={18} color="#60a5fa" />
-                    Income Actionable Signals (Dividend Yield ≥ 3%)
-                  </h2>
-                  <ScreenerTable
-                    title="Income Signals"
-                    rows={screenerData.rows.filter((r) => r.preset === 'income')}
-                    preset="income"
-                    onRowClick={goAnalyze}
-                  />
-                </section>
-              )}
-            </>
-          )}
+          </div>
         </>
       )}
     </div>

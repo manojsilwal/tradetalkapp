@@ -6,7 +6,7 @@ const FRONTEND = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 test.describe('ConsumerUI (Valuation Dashboard)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto(FRONTEND);
+    await page.goto(`${FRONTEND}/dashboard`);
     await dismissOnboarding(page);
   });
 
@@ -31,7 +31,7 @@ test.describe('ConsumerUI (Valuation Dashboard)', () => {
     await expect(tickerInput).toBeVisible({ timeout: 30000 });
     await tickerInput.fill('INVALIDTICKER123');
     await page.getByRole('button', { name: 'Analyze' }).click();
-    await expect(page.getByText(/invalid|could not find|market quote/i)).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText(/looks invalid|could not find|market quote/i)).toBeVisible({ timeout: 30000 });
   });
 
   test('negative: handles empty ticker submission', async ({ page }) => {

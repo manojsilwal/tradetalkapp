@@ -237,55 +237,59 @@ export default function MacroFlowPanel() {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-        {VIEWS.map((v) => {
-          const Icon = v.icon;
-          return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '16px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '16px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {VIEWS.map((v) => {
+            const Icon = v.icon;
+            return (
+              <button
+                type="button"
+                key={v.id}
+                data-testid={`macro-flow-view-${v.id}`}
+                onClick={() => setView(v.id)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  border: view === v.id ? '1px solid var(--accent-blue)' : '1px solid rgba(255,255,255,0.1)',
+                  background: view === v.id ? 'rgba(59,130,246,0.15)' : 'transparent',
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                }}
+              >
+                <Icon size={16} />
+                {v.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Time range</span>
+          {INTERVALS.map((iv) => (
             <button
               type="button"
-              key={v.id}
-              data-testid={`macro-flow-view-${v.id}`}
-              onClick={() => setView(v.id)}
+              key={iv.id}
+              data-testid={`macro-flow-interval-${iv.id}`}
+              onClick={() => setInterval(iv.id)}
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '8px 12px',
+                padding: '6px 12px',
                 borderRadius: 8,
-                border: view === v.id ? '1px solid var(--accent-blue)' : '1px solid rgba(255,255,255,0.1)',
-                background: view === v.id ? 'rgba(59,130,246,0.15)' : 'transparent',
+                border: interval === iv.id ? '1px solid var(--accent-purple)' : '1px solid rgba(255,255,255,0.1)',
+                background: interval === iv.id ? 'rgba(124,58,237,0.2)' : 'transparent',
                 color: 'var(--text-primary)',
                 cursor: 'pointer',
-                fontSize: '0.9rem',
+                fontSize: '0.85rem',
+                fontWeight: 600,
               }}
             >
-              <Icon size={16} />
-              {v.label}
+              {iv.label}
             </button>
-          );
-        })}
-      </div>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
-        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Time range</span>
-        {INTERVALS.map((iv) => (
-          <button
-            type="button"
-            key={iv.id}
-            data-testid={`macro-flow-interval-${iv.id}`}
-            onClick={() => setInterval(iv.id)}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 8,
-              border: interval === iv.id ? '1px solid var(--accent-purple)' : '1px solid rgba(255,255,255,0.1)',
-              background: interval === iv.id ? 'rgba(124,58,237,0.2)' : 'transparent',
-              color: 'var(--text-primary)',
-              cursor: 'pointer',
-            }}
-          >
-            {iv.label}
-          </button>
-        ))}
+          ))}
+        </div>
       </div>
 
       {view === 'stock' && (

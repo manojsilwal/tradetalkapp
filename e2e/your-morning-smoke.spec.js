@@ -6,12 +6,12 @@ const { dismissOnboarding } = require('./support');
 const FRONTEND = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 test.describe('Your Morning smoke', () => {
-  test('dashboard shows Your Morning section', async ({ page }) => {
-    await page.goto(FRONTEND);
+  test('dashboard shows Unified Dashboard and stock analysis elements', async ({ page }) => {
+    await page.goto(`${FRONTEND.replace(/\/$/, '')}/dashboard`);
     await dismissOnboarding(page);
-    await expect(page.getByText('Your Morning', { exact: false }).first()).toBeVisible({ timeout: 20000 });
-    await expect(page.getByText('Impact Movers', { exact: false }).first()).toBeVisible({ timeout: 20000 });
-    await expect(page.getByText('Portfolio Sentiment', { exact: false }).first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('Stock Analysis', { exact: false }).first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('Business Quality Scorecard', { exact: false }).first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('Enter a ticker and click Analyze', { exact: false }).first()).toBeVisible({ timeout: 20000 });
   });
 
   test('morning brief API reachable from browser context', async ({ request }) => {

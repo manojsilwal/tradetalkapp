@@ -23,17 +23,23 @@ class MacroHealthConnector(DataConnector):
     async def fetch_data(self, **kwargs) -> Dict[str, Any]:
         # Fetch the VIX index
         def get_vix():
+            from .quote_fallbacks import _yahoo_chart_spot
+
+            yahoo_vix = _yahoo_chart_spot("^VIX")
+            if yahoo_vix is not None:
+                return yahoo_vix
             vix = yf.Ticker("^VIX")
-            # Get the last closing price
             hist = vix.history(period="1d")
             if not hist.empty:
                 return hist["Close"].iloc[-1]
-            return 15.0 # fallback normal level
+            return 15.0  # last-resort placeholder when all probes fail
 
         try:
             vix_level = await asyncio.to_thread(get_vix)
-        except Exception as e:
-            vix_level = 15.0
+        except Exception:
+            from .quote_fallbacks import _yahoo_chart_spot
+
+            vix_level = _yahoo_chart_spot("^VIX") or 15.0
             
         # Tier-1 learnable mapping: VIX → credit_stress_index.
         # Divisor and stress threshold are pulled via dual-read; when the
@@ -76,10 +82,23 @@ class MacroHealthConnector(DataConnector):
                             pct = ((current - prev) / prev) * 100
                         else:
                             pct = 0.0
-                            
-                    sectors.append({"symbol": t, "name": name, "daily_change_pct": round(pct, 2)})
+                    if not pct:
+                        from .quote_fallbacks import yahoo_chart_change_pct
+
+                        yahoo_pct = yahoo_chart_change_pct(t)
+                        if yahoo_pct is not None:
+                            pct = yahoo_pct
+
+                    sectors.append({"symbol": t, "name": name, "daily_change_pct": round(float(pct or 0), 2)})
                 except Exception:
-                    sectors.append({"symbol": t, "name": sector_names.get(t, t), "daily_change_pct": 0.0})
+                    from .quote_fallbacks import yahoo_chart_change_pct
+
+                    yahoo_pct = yahoo_chart_change_pct(t)
+                    sectors.append({
+                        "symbol": t,
+                        "name": sector_names.get(t, t),
+                        "daily_change_pct": round(float(yahoo_pct or 0), 2),
+                    })
             return sectors
             
         try:

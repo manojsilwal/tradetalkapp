@@ -16,7 +16,7 @@ const {
 
 test.describe('Analysis Surfaces', () => {
   test('valuation dashboard renders verdict and metrics for AAPL', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/dashboard');
     await dismissOnboarding(page);
     await expect(page.getByRole('heading', { name: 'TradeTalk', exact: true })).toBeVisible({ timeout: 15000 });
     await runUnifiedLandingAnalyze(page, 'AAPL');

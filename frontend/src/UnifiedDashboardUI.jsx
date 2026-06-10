@@ -7,7 +7,6 @@ import { API_BASE_URL, apiFetch } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
 import DashboardScorecardPanel from './components/DashboardScorecardPanel';
-import YourMorningHero from './components/YourMorningHero';
 import DebateThreadPanel from './components/debate/DebateThreadPanel';
 import DebateVerdictSummary from './components/debate/DebateVerdictSummary';
 import './DecisionTerminalUI.css';
@@ -371,7 +370,7 @@ export default function UnifiedDashboardUI() {
   const [ticker, setTicker] = useState(() => {
     const param = searchParams.get('ticker')?.trim().toUpperCase();
     if (param) return param;
-    return recentAnalyses[0]?.ticker || 'AAPL';
+    return '';
   });
 
   const [isPredictionMarketsExpanded, setIsPredictionMarketsExpanded] = useState(false);
@@ -506,14 +505,7 @@ export default function UnifiedDashboardUI() {
     contextAnalyzeTicker(sym, forceRefresh);
   }, [ticker, setSearchParams, contextAnalyzeTicker]);
 
-  // Default to last analyzed ticker in URL on mount if missing
-  useEffect(() => {
-    const fromUrl = searchParams.get('ticker')?.trim().toUpperCase();
-    if (!fromUrl) {
-      const lastTicker = recentAnalyses[0]?.ticker || 'AAPL';
-      setSearchParams({ ticker: lastTicker }, { replace: true });
-    }
-  }, [searchParams, setSearchParams, recentAnalyses]);
+  // Do not set default ticker parameter if missing to allow empty landing at /dashboard
 
   // Deep-link: /?ticker=NVDA from Daily Brief or bookmarks
   useEffect(() => {
@@ -637,12 +629,11 @@ export default function UnifiedDashboardUI() {
 
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <YourMorningHero />
 
       {/* Search Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
          <div className="title-group">
-            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, margin: '0 0 5px 0' }}>Unified Dashboard</h2>
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, margin: '0 0 5px 0' }}>Stock Analysis</h2>
             <p style={{ color: 'var(--text-muted)', margin: 0 }}>Real-time Swarm Analysis & Valuation Hub</p>
          </div>
 

@@ -33,29 +33,6 @@ function formatLargeUSD(value) {
 }
 
 
-const REGIME_IMPACT_MATRIX = {
-    BULL_NORMAL: {
-        favor: 'Technology, Discretionary, Industrials',
-        avoid: 'Utilities, Staples (relative underperformance vs cyclicals)',
-    },
-    BULL_EXCESS: {
-        favor: 'Quality growth, Large-cap, Mega-cap tech',
-        avoid: 'Speculative small-caps, unprofitable growth',
-    },
-    BEAR_NORMAL: {
-        favor: 'Staples, Healthcare, Quality dividends',
-        avoid: 'High-beta cyclicals, Discretionary',
-    },
-    BEAR_STRESS: {
-        favor: 'Utilities, Staples, Gold / defensive',
-        avoid: 'Financials, Cyclicals, High leverage',
-    },
-    K_SHAPE_DIVERGENCE: {
-        favor: 'Luxury, Premium brands, Large-cap tech',
-        avoid: 'Lower-tier Consumer, Regional banks',
-    },
-};
-
 export default function MacroUI() {
     const { macroState, loadMacro, setMacroFlowPeriod } = useAnalysisHistory();
     const { data, loading, error, flowPeriod } = macroState;
@@ -183,53 +160,6 @@ export default function MacroUI() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px', marginBottom: '24px' }}>
 
                 <MacroFlowPanel />
-
-                {/* Regime impact matrix — maps current regime to favored / avoided sector themes */}
-                <div className="dash-card glass-panel fade-in" data-testid="macro-regime-impact-matrix" style={{ padding: '24px', borderRadius: '16px', display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                        <TrendingUp color="var(--accent-green)" />
-                        <div>
-                            <h3 style={{ margin: 0 }}>Regime impact matrix</h3>
-                            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '4px 0 0 0' }}>
-                                How the current macro label historically maps to sector winners and laggards (heuristic).
-                            </p>
-                        </div>
-                    </div>
-                    <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-                            <thead>
-                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
-                                    <th style={{ padding: '10px 8px', color: 'var(--text-muted)' }}>Regime</th>
-                                    <th style={{ padding: '10px 8px', color: 'var(--accent-green)' }}>Favor</th>
-                                    <th style={{ padding: '10px 8px', color: 'var(--accent-red)' }}>Avoid / lag</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {Object.entries(REGIME_IMPACT_MATRIX).map(([regime, row]) => {
-                                    const active = regime === data.market_regime;
-                                    return (
-                                        <tr
-                                            key={regime}
-                                            style={{
-                                                borderBottom: '1px solid rgba(255,255,255,0.06)',
-                                                background: active ? 'rgba(124, 58, 237, 0.12)' : 'transparent',
-                                            }}
-                                        >
-                                            <td style={{ padding: '12px 8px', fontWeight: active ? 700 : 500, whiteSpace: 'nowrap' }}>
-                                                {regime.replace(/_/g, ' ')}
-                                                {active && (
-                                                    <span style={{ marginLeft: 8, fontSize: '0.7rem', color: 'var(--accent-purple)' }}>(current)</span>
-                                                )}
-                                            </td>
-                                            <td style={{ padding: '12px 8px', color: 'var(--text-muted)', maxWidth: 280 }}>{row.favor}</td>
-                                            <td style={{ padding: '12px 8px', color: 'var(--text-muted)', maxWidth: 280 }}>{row.avoid}</td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
 
             </div>
 

@@ -109,56 +109,78 @@ async def get_investor_metrics(ticker: str):
 @router.get("/metrics/validate/{ticker}")
 async def validate_ticker_fast(ticker: str):
     """
-    Fast ticker existence probe backed by yfinance.
+    Fast ticker existence probe (Yahoo chart, then Stooq/FinCrawler fallback).
     Returns ``exists=false`` when no usable quote can be resolved.
     """
     import asyncio
+
+    from ..connectors.quote_fallbacks import fetch_us_equity_spot
 
     sym = (ticker or "").strip().upper()
     if not sym or len(sym) > 12:
         return {"ticker": sym, "exists": False, "reason": "invalid_format"}
 
-    def _probe() -> tuple[bool, float | None]:
-        # Use Yahoo chart endpoint directly with hard network timeout for a
-        # fast existence check on newly-entered symbols.
+    def _yahoo_probe() -> tuple[bool, float | None, str | None]:
         import requests
 
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
         params = {"range": "1d", "interval": "1d"}
-        r = requests.get(url, params=params, timeout=2.5)
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; TradeTalk/1.0)"}
+        r = requests.get(url, params=params, headers=headers, timeout=2.5)
+        if r.status_code == 429:
+            return False, None, "rate_limited"
         r.raise_for_status()
         data = r.json() or {}
         chart = (data.get("chart") or {}).get("result") or []
         if not chart:
-            return False, None
+            return False, None, None
         meta = chart[0].get("meta") or {}
         px = meta.get("regularMarketPrice")
         if px is None:
-            return False, None
+            return False, None, None
         try:
             v = float(px)
-            return (v > 0), v
+            return (v > 0), v, None
         except (TypeError, ValueError):
-            return False, None
+            return False, None, None
+
+    reason: str | None = None
+    price: float | None = None
+    ok = False
+    source = "yahoo_chart"
 
     try:
-        ok, price = await asyncio.wait_for(asyncio.to_thread(_probe), timeout=3.0)
+        ok, price, yahoo_reason = await asyncio.wait_for(asyncio.to_thread(_yahoo_probe), timeout=3.0)
+        if yahoo_reason == "rate_limited":
+            reason = "rate_limited"
     except (asyncio.TimeoutError, TimeoutError):
-        return {
-            "ticker": sym,
-            "exists": False,
-            "reason": "probe_timeout",
-        }
+        reason = "probe_timeout"
     except Exception:
+        reason = "probe_failed"
+
+    if not ok:
+        try:
+            fb = await asyncio.wait_for(asyncio.to_thread(fetch_us_equity_spot, sym), timeout=8.0)
+        except (asyncio.TimeoutError, TimeoutError):
+            fb = None
+        except Exception:
+            fb = None
+        if fb:
+            price, source = fb[0], fb[1]
+            ok = price > 0
+            reason = None
+
+    if not ok:
         return {
             "ticker": sym,
             "exists": False,
-            "reason": "probe_failed",
+            "reason": reason or "no_quote",
         }
     return {
         "ticker": sym,
-        "exists": bool(ok),
+        "exists": True,
         "last_price": price,
+        "source": source,
     }
 
 

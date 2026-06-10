@@ -10,7 +10,6 @@ from backend.morning_brief import (
     _build_candidates_from_positions,
     _build_impact_movers,
     _card_from_candidate,
-    _continue_where_you_left_off,
     _looks_like_pnl_not_session,
     _portfolio_sentiment,
     _sector_swings,
@@ -121,26 +120,6 @@ class TestRankingLogic(unittest.TestCase):
                 ["MRVL"], movement, trade_date, pnl_by_symbol={"MRVL": 341.8}
             )
         self.assertEqual(out["MRVL"], -8.2)
-
-    def test_continue_prefers_featured_symbols_over_stale_clicks(self):
-        with patch(
-            "backend.morning_brief.pm.list_user_actions",
-            return_value=[{"symbol": "MSFT"}],
-        ):
-            cont = _continue_where_you_left_off(
-                "u1",
-                ["MSFT", "MRVL", "SIVR"],
-                featured_symbols=["SIVR", "MRVL"],
-            )
-        self.assertEqual(cont["symbol"], "SIVR")
-
-    def test_continue_absent_when_no_featured_match(self):
-        with patch(
-            "backend.morning_brief.pm.list_user_actions",
-            return_value=[{"symbol": "MSFT"}],
-        ):
-            cont = _continue_where_you_left_off("u1", ["AAPL"], featured_symbols=["MRVL"])
-        self.assertIsNone(cont)
 
     def test_pnl_pct_never_used_as_daily_metric(self):
         positions = [{

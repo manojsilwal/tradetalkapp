@@ -7,6 +7,7 @@
     "e2e:ui-tour:headed": "playwright test e2e/ui-manual-tour.spec.js --config=playwright.config.js --headed",
     "e2e:fincrawler": "playwright test e2e/fincrawler-integration.spec.js --config=playwright.config.js",
     "e2e:dt-audit": "playwright test e2e/decision-terminal-data-audit.spec.js --config=playwright.config.js",
+    "e2e:api-accuracy": "playwright test e2e/api-yahoo-accuracy.spec.js --config=playwright.config.js",
     "e2e:prod-parity": "playwright test tests/e2e/parity.spec.ts --config=playwright.config.ts --project=chromium --reporter=line",
     "e2e:ts-chromium": "playwright test --config=playwright.config.ts --project=chromium --reporter=line",
     "e2e:prod-qa": "playwright test tests/e2e/llm-production-qa.spec.ts --config=playwright.config.ts --project=chromium --reporter=line",

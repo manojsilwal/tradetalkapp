@@ -93,14 +93,23 @@ def _sync_fetch(ticker: str) -> ScorecardData:
         logger.warning("[ScorecardData] yfinance unavailable for %s: %s", sym, e)
         return _empty_scorecard_fields(sym, missing=["yfinance"])
 
+    info: dict = {}
     try:
         t = yf.Ticker(sym)
         info = t.info or {}
     except Exception as e:
         logger.warning("[ScorecardData] info fetch failed for %s: %s", sym, e)
-        return _empty_scorecard_fields(sym, missing=["info"])
+        missing.append("info")
 
     current_price = _as_float(info.get("currentPrice") or info.get("regularMarketPrice"), default=0.0)
+    if current_price <= 0:
+        from .quote_fallbacks import fetch_us_equity_spot
+
+        fb = fetch_us_equity_spot(sym)
+        if fb:
+            current_price = fb[0]
+        elif "info" in missing:
+            return _empty_scorecard_fields(sym, missing=missing)
     forward_pe = _as_float_or_none(info.get("forwardPE"))
     if forward_pe is None:
         missing.append("forward_pe")

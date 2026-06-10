@@ -1,6 +1,7 @@
-"""Unit tests for US spot fallbacks (no live FinCrawler)."""
+"""Unit tests for US spot fallbacks (no live FinCrawler / Stooq)."""
+import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from backend.connectors import quote_fallbacks
 
@@ -25,24 +26,22 @@ class TestStooq(unittest.TestCase):
         spot = quote_fallbacks._stooq_us_spot("AAPL")
         self.assertEqual(spot, 123.45)
 
+    @patch.object(quote_fallbacks.urllib.request, "urlopen")
+    def test_stooq_bot_wall_returns_none(self, mock_open):
+        html = b"<!DOCTYPE html><html><script>__verify</script></html>"
 
-class TestFetchChain(unittest.TestCase):
-    @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=None)
-    @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=None)
-    def test_prefers_stooq(self, mock_stooq, mock_fc):
-        mock_stooq.return_value = 200.0
-        r = quote_fallbacks.fetch_us_equity_spot("MSFT")
-        self.assertEqual(r, (200.0, "stooq"))
-        mock_fc.assert_not_called()
+        class _CM:
+            def __enter__(self_inner):
+                return self_inner
 
-    @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=199.5)
-    @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=None)
-    def test_falls_through_to_fincrawler(self, mock_stooq, mock_fc):
-        r = quote_fallbacks.fetch_us_equity_spot("MSFT")
-        self.assertEqual(r, (199.5, "fincrawler"))
+            def __exit__(self_inner, *args):
+                return False
 
-    def test_invalid_ticker_returns_none(self):
-        self.assertIsNone(quote_fallbacks.fetch_us_equity_spot("FOO1"))
+            def read(self_inner):
+                return html
+
+        mock_open.return_value = _CM()
+        self.assertIsNone(quote_fallbacks._stooq_us_spot("AAPL"))
 
     @patch.object(quote_fallbacks.urllib.request, "urlopen")
     def test_stooq_class_b_share(self, mock_open):
@@ -61,6 +60,45 @@ class TestFetchChain(unittest.TestCase):
         mock_open.return_value = _CM()
         spot = quote_fallbacks._stooq_us_spot("BRK.B")
         self.assertEqual(spot, 420.5)
+
+
+class TestFetchChain(unittest.TestCase):
+    @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=None)
+    @patch.object(quote_fallbacks, "_yahoo_chart_spot", return_value=None)
+    @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=199.5)
+    def test_prefers_fincrawler(self, _mock_fc, _mock_yahoo, _mock_stooq):
+        r = quote_fallbacks.fetch_us_equity_spot("MSFT")
+        self.assertEqual(r, (199.5, "fincrawler"))
+
+    @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=200.0)
+    @patch.object(quote_fallbacks, "_yahoo_chart_spot", return_value=201.0)
+    @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=None)
+    def test_prefers_stooq_before_yahoo_chart_by_default(self, _mock_fc, _mock_yahoo, _mock_stooq):
+        r = quote_fallbacks.fetch_us_equity_spot("MSFT")
+        self.assertEqual(r, (200.0, "stooq"))
+        _mock_yahoo.assert_not_called()
+
+    @patch.dict(os.environ, {"QUOTE_FALLBACK_ALLOW_YAHOO_CHART": "1"}, clear=False)
+    @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=None)
+    @patch.object(quote_fallbacks, "_yahoo_chart_spot", return_value=201.0)
+    @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=None)
+    def test_yahoo_chart_when_explicitly_enabled(self, _mock_fc, _mock_yahoo, _mock_stooq):
+        r = quote_fallbacks.fetch_us_equity_spot("MSFT")
+        self.assertEqual(r, (201.0, "yahoo_chart"))
+
+    @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=200.0)
+    @patch.object(quote_fallbacks, "_yahoo_chart_spot", return_value=None)
+    @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=None)
+    def test_falls_through_to_stooq(self, _mock_fc, _mock_yahoo, _mock_stooq):
+        r = quote_fallbacks.fetch_us_equity_spot("MSFT")
+        self.assertEqual(r, (200.0, "stooq"))
+
+    def test_invalid_ticker_returns_none(self):
+        self.assertIsNone(quote_fallbacks.fetch_us_equity_spot("FOO1"))
+
+    def test_is_html_bot_wall(self):
+        self.assertTrue(quote_fallbacks._is_html_bot_wall("<!DOCTYPE html><script>"))
+        self.assertFalse(quote_fallbacks._is_html_bot_wall("Symbol,Date,Close\naapl.us,2024,100"))
 
 
 if __name__ == "__main__":

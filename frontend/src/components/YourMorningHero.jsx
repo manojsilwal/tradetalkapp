@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, ArrowRight, X, MessageCircle, Search } from 'lucide-react';
 import { API_BASE_URL, apiFetchTimed, apiPost } from '../api';
@@ -6,6 +6,7 @@ import PortfolioTimeline from './PortfolioTimeline';
 import ImpactMoversPanel from './ImpactMoversPanel';
 import PortfolioSentimentCard from './PortfolioSentimentCard';
 import SectorSwingsCard from './SectorSwingsCard';
+import { footerMoverLabel, pickFooterMover } from '../utils/impactMovers';
 import './YourMorningHero.css';
 
 function logUserAction(payload) {
@@ -156,6 +157,15 @@ export default function YourMorningHero() {
     [navigate],
   );
 
+  const footerMover = useMemo(
+    () => pickFooterMover(data?.impact_movers, {
+      sortMode: moverSortMode,
+      selectedSymbol: selectedCard?.symbol,
+    }),
+    [data?.impact_movers, moverSortMode, selectedCard?.symbol],
+  );
+  const footerLinkLabel = footerMover ? footerMoverLabel(footerMover) : null;
+
   if (loading) {
     return (
       <section style={{ marginBottom: 28, padding: '20px 0' }}>
@@ -225,7 +235,7 @@ export default function YourMorningHero() {
   const sessionMsg = data.market_session?.message;
   const portDaily = data.summary?.daily_return_pct;
   const hasMoreContext =
-    (data.continuity_moments?.length > 0) || trackRecord || data.continue_where_you_left_off;
+    (data.continuity_moments?.length > 0) || trackRecord;
 
   return (
     <section style={{ marginBottom: 32 }}>
@@ -338,24 +348,22 @@ export default function YourMorningHero() {
       )}
 
       <div className="ym-footer-links">
-        {data.continue_where_you_left_off && (
+        {footerLinkLabel && footerMover?.symbol && (
           <button
             type="button"
             className="ym-footer-link"
             onClick={() => {
-              const sym = data.continue_where_you_left_off.symbol;
-              if (sym) {
-                logUserAction({
-                  action_type: 'ticker_click',
-                  symbol: sym,
-                  page: 'your_morning',
-                  metadata: { source: 'continue_where_you_left_off' },
-                });
-                navigate(`/?ticker=${encodeURIComponent(sym)}`);
-              }
+              const sym = footerMover.symbol;
+              logUserAction({
+                action_type: 'ticker_click',
+                symbol: sym,
+                page: 'your_morning',
+                metadata: { source: 'morning_footer_mover', sort_mode: moverSortMode },
+              });
+              navigate(`/?ticker=${encodeURIComponent(sym)}`);
             }}
           >
-            {data.continue_where_you_left_off.label} →
+            {footerLinkLabel} →
           </button>
         )}
       </div>

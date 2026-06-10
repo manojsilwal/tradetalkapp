@@ -30,15 +30,12 @@ test.describe('Daily Brief & Screener', () => {
     }
   })
 
-  test('daily brief page loads and displays Movers or Screener tabs', async ({ page }) => {
-    await page.goto('/daily-brief')
-    await expect(page.getByRole('heading', { name: 'Daily Brief' })).toBeVisible({ timeout: 60_000 })
+  test('daily brief page loads and displays S&P 500 Losers card', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.getByText('Market Benchmarks')).toBeVisible({ timeout: 60_000 })
     
-    // Check if either tabs are visible (if screener data exists) or losers list is visible (heuristic fallback)
-    const losersText = page.getByText(/Top 20 losers/i)
-    const growthTab = page.getByRole('button', { name: 'Growth Buy/Sells' })
-    
-    await expect(losersText.or(growthTab).first()).toBeVisible({ timeout: 90_000 })
+    // Check if the S&P 500 Losers card title is visible
+    const losersCard = page.getByText(/S&P 500 Losers/i)
+    await expect(losersCard).toBeVisible({ timeout: 90_000 })
   })
 })
-

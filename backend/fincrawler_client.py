@@ -32,21 +32,22 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # ── In-process L1 cache (TTL = 24 h, mirrors FinCrawler's server-side cache) ─
-_cache: Dict[str, tuple[float, Any]] = {}
+_cache: Dict[str, tuple[float, Any, float]] = {}
 _CACHE_TTL = 86_400  # 24 hours
+_QUOTE_CACHE_TTL = 60  # spot quotes — short TTL for parity / live UI
+
+
+def _cache_set(key: str, val: Any, *, ttl: Optional[float] = None) -> None:
+    _cache[key] = (time.time(), val, ttl if ttl is not None else _CACHE_TTL)
 
 
 def _cache_get(key: str) -> Optional[Any]:
     if key in _cache:
-        ts, val = _cache[key]
-        if time.time() - ts < _CACHE_TTL:
+        ts, val, ttl = _cache[key]
+        if time.time() - ts < ttl:
             return val
         del _cache[key]
     return None
-
-
-def _cache_set(key: str, val: Any) -> None:
-    _cache[key] = (time.time(), val)
 
 
 class FinCrawlerClient:
@@ -286,6 +287,59 @@ class FinCrawlerClient:
         except Exception:
             return False
 
+    def _quote_timeout_s(self) -> float:
+        try:
+            return max(2.0, min(float(os.environ.get("FINCRAWLER_QUOTE_TIMEOUT_S", "8")), 30.0))
+        except (TypeError, ValueError):
+            return 8.0
+
+    def _parse_quote_payload(self, data: Any) -> Optional[float]:
+        if not isinstance(data, dict):
+            return None
+        if not data.get("ok"):
+            return None
+        raw = data.get("price")
+        if raw is None:
+            return None
+        try:
+            p = float(raw)
+            return p if p > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    def get_quote_price_sync(self, ticker: str) -> Optional[float]:
+        """
+        Sync spot price via FinCrawler GET /quote (for quote_fallbacks / asyncio.to_thread).
+        """
+        if not self.enabled:
+            return None
+        ticker = ticker.upper().strip()
+        if not ticker:
+            return None
+        cache_key = f"quote_sync:{ticker}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        url = f"{self.base_url}/quote"
+        timeout = self._quote_timeout_s()
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                r = client.get(
+                    url,
+                    headers=self._headers(),
+                    params={"ticker": ticker},
+                )
+                r.raise_for_status()
+                price = self._parse_quote_payload(r.json())
+        except Exception as e:
+            logger.warning("[FinCrawler] get_quote_price_sync failed for %s: %s", ticker, e)
+            return None
+
+        if price is not None:
+            _cache_set(cache_key, price, ttl=_QUOTE_CACHE_TTL)
+        return price
+
     async def get_quote_price(self, ticker: str) -> Optional[float]:
         """
         Spot price via FinCrawler GET /quote (Yahoo quote page scrape on the crawler host).
@@ -296,14 +350,19 @@ class FinCrawlerClient:
         ticker = ticker.upper().strip()
         if not ticker:
             return None
+        cache_key = f"quote:{ticker}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
         try:
             data = await self._get("/quote", params={"ticker": ticker})
-            if data.get("ok") and data.get("price") is not None:
-                p = float(data["price"])
-                return p if p > 0 else None
+            price = self._parse_quote_payload(data)
         except Exception as e:
             logger.warning("[FinCrawler] get_quote_price failed for %s: %s", ticker, e)
-        return None
+            return None
+        if price is not None:
+            _cache_set(cache_key, price, ttl=_QUOTE_CACHE_TTL)
+        return price
 
 
 # Module-level singleton — import and use everywhere

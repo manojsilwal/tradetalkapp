@@ -471,36 +471,6 @@ def _select_cards(
     return deduped[:max_cards]
 
 
-def _continue_where_you_left_off(
-    user_id: str,
-    holdings: List[str],
-    *,
-    featured_symbols: Optional[List[str]] = None,
-) -> Optional[Dict[str, Any]]:
-    """Prefer tickers from today's brief cards, not stale MSFT clicks."""
-    hold_set = {h.upper() for h in holdings}
-    for sym in featured_symbols or []:
-        s = (sym or "").upper()
-        if s and s in hold_set:
-            return {
-                "type": "ticker",
-                "symbol": s,
-                "label": f"Continue reviewing {s}",
-            }
-
-    actions = pm.list_user_actions(user_id, limit=30)
-    featured_set = {(s or "").upper() for s in (featured_symbols or [])}
-    for a in actions:
-        sym = (a.get("symbol") or "").upper()
-        if sym and sym in hold_set and sym in featured_set:
-            return {
-                "type": "ticker",
-                "symbol": sym,
-                "label": f"Continue reviewing {sym}",
-            }
-    return None
-
-
 def _market_session_context() -> Dict[str, Any]:
     """US cash session hint for copy (weekend / after-hours vs open)."""
     try:
@@ -845,13 +815,37 @@ def _sector_swings(
 
 def build_morning_brief(user_id: str) -> Dict[str, Any]:
     """Build personalized morning brief for one user."""
+    # Fetch real-time benchmark info
+    from .market_intel import fetch_realtime_quotes
+    spy_daily_rt = None
+    qqq_daily_rt = None
+    ijr_daily_rt = None
+    try:
+        bench_quotes = fetch_realtime_quotes(["SPY", "QQQ", "IJR"], force=True)
+        spy_daily_rt = bench_quotes.get("SPY", {}).get("pct")
+        qqq_daily_rt = bench_quotes.get("QQQ", {}).get("pct")
+        ijr_daily_rt = bench_quotes.get("IJR", {}).get("pct")
+    except Exception as e:
+        logger.warning("[MorningBrief] failed to fetch realtime quotes for benchmarks: %s", e)
+
     now = datetime.now(timezone.utc).isoformat()
     base: Dict[str, Any] = {
         "as_of": now,
         "user_id": user_id,
         "greeting": _greeting(),
         "headline": "Your Morning starts once you add your portfolio.",
-        "summary": None,
+        "summary": {
+            "total_value": None,
+            "daily_return_pct": None,
+            "daily_return_value": None,
+            "top_positive_contributor": None,
+            "top_negative_contributor": None,
+            "benchmark_context": {
+                "spy_daily_return_pct": spy_daily_rt,
+                "qqq_daily_return_pct": qqq_daily_rt,
+                "ijr_daily_return_pct": ijr_daily_rt,
+            },
+        },
         "cards": [],
         "impact_movers": [],
         "portfolio_sentiment": None,
@@ -1002,27 +996,21 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
         "top_positive_contributor": (top_pos or {}).get("symbol"),
         "top_negative_contributor": (top_neg or {}).get("symbol"),
         "benchmark_context": {
-            "spy_daily_return_pct": spy_daily,
-            "qqq_daily_return_pct": qqq_daily,
+            "spy_daily_return_pct": spy_daily_rt if spy_daily_rt is not None else spy_daily,
+            "qqq_daily_return_pct": qqq_daily_rt if qqq_daily_rt is not None else qqq_daily,
+            "ijr_daily_return_pct": ijr_daily_rt if ijr_daily_rt is not None else None,
         },
     }
     impact_movers = _build_impact_movers(ranked, movement, enriched)
     base["impact_movers"] = impact_movers
     base["portfolio_sentiment"] = _portfolio_sentiment(
-        port_daily, spy_daily, enriched, daily_returns, total_value
+        port_daily, spy_daily_rt if spy_daily_rt is not None else spy_daily, enriched, daily_returns, total_value
     )
     base["sector_swings"] = sector_swings_list
     base["cards"] = cards[:_MAX_CARDS]
     base["watch_next"] = watch_next
-    featured = [m.get("symbol") for m in impact_movers if m.get("symbol")]
-    if not featured:
-        featured = [
-            c.get("symbol") for c in cards
-            if c.get("symbol") and c.get("type") != "macro_sector_watch"
-        ]
-    base["continue_where_you_left_off"] = _continue_where_you_left_off(
-        user_id, symbols, featured_symbols=featured
-    )
+    # Footer follow-up link is client-driven (selected / visible impact mover).
+    base["continue_where_you_left_off"] = None
     base["continuity_moments"] = find_continuity_moments(
         user_id,
         symbols=symbols,

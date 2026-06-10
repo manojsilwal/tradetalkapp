@@ -1,34 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { Layers } from 'lucide-react';
 import Sparkline from './Sparkline';
+import { fmtMoverPct, sortImpactMovers } from '../utils/impactMovers';
 import './YourMorningHero.css';
-
-function fmtPct(v) {
-  if (v == null || Number.isNaN(Number(v))) return '—';
-  const n = Number(v);
-  const sign = n > 0 ? '+' : '';
-  return `${sign}${n.toFixed(1)}%`;
-}
-
-function sortMovers(movers, mode) {
-  const list = [...(movers || [])];
-  if (mode === 'VOL') {
-    list.sort((a, b) => {
-      const av = Number(a.relative_volume) || Math.abs(Number(a.portfolio_impact_pct) || 0);
-      const bv = Number(b.relative_volume) || Math.abs(Number(b.portfolio_impact_pct) || 0);
-      return bv - av;
-    });
-  } else {
-    list.sort(
-      (a, b) => Math.abs(Number(b.daily_return_pct) || 0) - Math.abs(Number(a.daily_return_pct) || 0),
-    );
-  }
-  return list;
-}
 
 export default function ImpactMoversPanel({ movers, sortMode, onSortChange, onOpen, selectedSymbol }) {
   const [activeSym, setActiveSym] = useState(selectedSymbol || movers?.[0]?.symbol || null);
-  const sorted = useMemo(() => sortMovers(movers, sortMode), [movers, sortMode]);
+  const sorted = useMemo(() => sortImpactMovers(movers, sortMode), [movers, sortMode]);
 
   if (!sorted.length) {
     return (
@@ -98,7 +76,7 @@ export default function ImpactMoversPanel({ movers, sortMode, onSortChange, onOp
                 </div>
               </div>
               <div className="ym-mover-stats">
-                <div className={`ym-mover-pct ${pctClass}`}>{fmtPct(daily)}</div>
+                <div className={`ym-mover-pct ${pctClass}`}>{fmtMoverPct(daily)}</div>
                 <div className="ym-mover-score">Score: {mover.impact_score ?? '—'}/100</div>
               </div>
             </button>
