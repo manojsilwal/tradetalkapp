@@ -6,11 +6,11 @@ TradeTalk captures decision signals, grades market outcomes, and can evolve prom
 
 | Dimension | Rating | Summary |
 |-----------|--------|---------|
-| Signal capture | Strong | Ledger producers for swarm, debate, chat, macro flow, predictor, scorecard, decision terminal, gold |
-| Memory / context | Strong | Chroma RAG + CORAL hub on hot path |
+| Signal capture | Strong | Phase F: every verdict surface emits — swarm (consolidated + per-factor), debate, chat (+ tools), decision terminal, scorecard, gold, small cap, backtest, daily brief, predictor, house view, morning brief, macro flow. Coverage observable at `GET /learning-health` → `capture_coverage_24h` |
+| Memory / context | Strong | Vector RAG (Supabase pgvector default, Chroma local) + CORAL hub on hot path |
 | Outcome-grounded evolution | Improving | `DecisionLedgerReflectionSource` wired into SEPL via **composite** default |
 | Closed-loop improvement | Gated | `SEPL_ENABLE=0` by default; `SEPL_AUTOCOMMIT=0` |
-| Attribution / replay | Partial | Model-swap replay + feature correlations are library-only |
+| Attribution / replay | Operational | Per-decision prompt-role attribution (`registry_attribution(roles=…)`) + resolved model labels; model-swap replay, hit rates, and calibration exposed via `/harness/*` (`backend/routers/harness.py`) |
 
 ## Architecture (after wiring)
 
@@ -91,6 +91,10 @@ All user-facing verdict surfaces should call `decision_ledger.emit_decision` wit
 
 | Priority | Item |
 |----------|------|
-| P2 | Gate `_track_swarm_outcomes` when ledger+SEPL composite is live in staging |
-| P2 | Ops endpoints for feature correlations + model-swap replay |
+| ~~P2~~ done | ~~Ops endpoints for feature correlations + model-swap replay~~ — shipped as `/harness/hit-rates` + `/harness/replay` (`backend/routers/harness.py`) |
+| P1 | Durable ledger/registry in production (`DECISION_BACKEND=supabase`; Supabase path for `DecisionLedgerReflectionSource`) — Phase F workstream F3 |
+| P2 | Retire or revive the dead `swarm_reflections` write path (readers still query it) — Phase F workstream F4 |
 | P3 | LLM-enhanced CORAL dreaming |
+
+See [PHASE_F_INTELLIGENCE_FABRIC.md](./PHASE_F_INTELLIGENCE_FABRIC.md) for the
+full gap analysis and sequencing.

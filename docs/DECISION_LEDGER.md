@@ -59,7 +59,9 @@ DDL in `backend/supabase_decisions_bootstrap.sql` applied once.
 
 ## 3. Schema reference
 
-Five tables. See
+Six tables (the five below plus `llm_api_calls`, which receives per-call
+cost/latency rows from `decision_ledger.log_llm_api_call()` on every
+successful LLM HTTP/Gemini call). See
 [`001_initial.sql`](../backend/migrations/decisions/001_initial.sql) for the
 authoritative DDL (indexes, comments, uniqueness constraints). The Supabase
 mirror swaps `REAL` → `DOUBLE PRECISION`, `INTEGER PK AUTOINCREMENT` →
@@ -73,11 +75,11 @@ One row per user-facing agent decision. Append-only — graders write to
 | Column | Notes |
 |--------|-------|
 | `decision_id` | UUID hex (external id). Caller-supplied via `new_decision_id()`. |
-| `decision_type` | `swarm_factor` \| `debate` \| `chat_turn` \| `decision_terminal` \| `scorecard` \| `gold_advisor` \| … |
+| `decision_type` | See the producer matrix in §4 — `swarm`, `swarm_factor`, `debate`, `chat_turn`, `decision_terminal`, `scorecard`, `gold_advisor`, `small_cap_assessment`, `backtest_verdict`, `daily_brief`, `price_forecast`, `house_view`, `morning_brief`, `macro_flow_signal`, … |
 | `symbol` | Ticker; empty for macro/summary decisions. |
 | `horizon_hint` | `1d` \| `5d` \| `21d` \| `63d` \| `none`. Guides the grader. |
-| `model` | OpenRouter / Gemini model id at call time. |
-| `prompt_versions_json` | `{"role": "1.2.3", …}` stamped from the RSPL registry. |
+| `model` | Provider-cascade-aware label from `harness/backend_protocol.resolved_model_label()` (e.g. `nvidia:…`, `openrouter:…`, `gemini:…`, `rule_based_fallback`). |
+| `prompt_versions_json` | `{"role": "1.2.3", …}` — the roles the decision **actually used**, stamped via `registry_attribution(roles=[...])` (Phase F per-decision attribution; legacy producers without `roles` stamp all active versions). |
 | `registry_snapshot_id` | `resource_registry.snapshot_id()` at emit time. |
 | `inputs_hash` | `sha256(prompt + inputs)` — dedupe key. |
 | `output_json` | The structured agent output (post-contract-validation). |
@@ -136,9 +138,25 @@ dreaming / meta-harness surfaces keep working unchanged.
 
 | Producer | Source | `decision_type` | Evidence | Features |
 |----------|--------|-----------------|----------|----------|
-| Swarm factor agents | [`backend/agents.py`](../backend/agents.py) (`AgentPair.run` → `_emit_factor_decision`) | `swarm_factor` | — | `market_regime`, macro state |
+| Swarm consensus (`/trace`) | [`backend/routers/analysis.py`](../backend/routers/analysis.py) (`_execute_swarm_trace`) | `swarm` | — (per-factor refs live on `swarm_factor` rows) | `market_regime`, `credit_stress_index`, `weighted_signal`, verified/rejected counts, `macro_stale` |
+| Swarm factor agents | [`backend/agents.py`](../backend/agents.py) (`AgentPair.run` → `_emit_factor_decision`) | `swarm_factor` | Stock-profile + earnings-memory chunk refs from `_fetch_prior_lessons` | `market_regime`, macro state, `factor_status` |
 | IC debate | [`backend/debate_agents.py`](../backend/debate_agents.py) (`_run_full_debate_impl`) | `debate` | All agent + moderator RAG chunk refs, tagged with `agent_role` | Macro regime features |
 | Chat turns | [`backend/routers/chat.py`](../backend/routers/chat.py) (`chat_send_message`) | `chat_turn` | Tool-level + RAG chunk refs from the evidence contract | Confidence band, tools invoked |
+| Chat tools | [`backend/routers/chat.py`](../backend/routers/chat.py) | `risk_assessment`, `what_if_backtest` | Tool trace | Tool inputs |
+| Decision terminal | [`backend/decision_terminal.py`](../backend/decision_terminal.py) | `decision_terminal` | `swarm_history` chunk refs | Regime, swarm/debate verdicts, swarm confidence, degraded flag |
+| Risk-Return scorecard | [`backend/routers/scorecard.py`](../backend/routers/scorecard.py) | `scorecard` | — | Ratio, return/risk weighted scores, SITG, exec risk, quadrant, preset |
+| Gold advisor | [`backend/gold_advisor_service.py`](../backend/gold_advisor_service.py) | `gold_advisor` | `macro_regime_memories` chunk refs | VIX, TIPS real yield, DXY, gold spot, headline sentiment |
+| Small cap | [`backend/routers/small_cap.py`](../backend/routers/small_cap.py) | `small_cap_assessment` | `stock_profiles` chunk refs | Cap bucket, market cap, growth, institutional %, signal counts |
+| Backtest explainer | [`backend/routers/backtest.py`](../backend/routers/backtest.py) | `backtest_verdict` | — | CAGR, Sharpe, drawdown, win rate, benchmark CAGR, outperformed |
+| Daily brief (deep refresh) | [`backend/daily_brief.py`](../backend/daily_brief.py) | `daily_brief` | — | Regime, daily return, rel. volume, scorecard ratio, preset, catalyst (capped by `DAILY_BRIEF_LEDGER_EMIT_MAX`) |
+| Predictor | [`backend/predictor/ledger_emit.py`](../backend/predictor/ledger_emit.py) | `price_forecast` | Price-evidence chunks | Forecast bands, model meta |
+| House view | [`backend/house_view.py`](../backend/house_view.py) | `house_view` | `swarm_history` chunk refs | Aggregate features |
+| Morning brief | [`backend/morning_brief.py`](../backend/morning_brief.py) | `morning_brief` | — | Portfolio aggregate |
+| Macro flow | [`backend/macro_flow/orchestrator.py`](../backend/macro_flow/orchestrator.py) | `macro_flow_signal` | `macro_regime_memories` chunk refs | Category signals |
+
+Capture completeness is observable at `GET /learning-health` →
+`ledger.capture_coverage_24h` (per-`decision_type` decision counts plus
+evidence/feature completeness percentages over the last 24 h).
 
 ### 4.1 Adding a new producer
 
@@ -149,8 +167,12 @@ dreaming / meta-harness surfaces keep working unchanged.
 4. Call `decision_ledger.emit_decision(...)` inside `try/except` and **do not
    raise** from the wrapper.
 5. Pick a sensible `horizon_hint` so the grader knows what to mark against.
-6. Stamp `prompt_versions_json` from `resource_registry.list_active()` so SEPL
-   can trace the decision back to the exact prompt version.
+6. Stamp attribution via
+   `decision_ledger_registry.registry_attribution(roles=[...])`, passing the
+   prompt roles your producer actually invoked — it returns
+   `(prompt_versions, registry_snapshot_id, resolved_model_label)` in one call.
+   Use `decision_ledger.evidence_from_chunk_refs(refs)` to convert
+   `query_with_refs` chunk refs into `EvidenceRef` rows.
 
 > **Rule:** every new user-facing agent surface that produces a verdict MUST
 > emit to the ledger before returning to the caller. See the rule appended

@@ -1,12 +1,16 @@
 # TradeTalk architecture
 
-This document describes how the TradeTalk platform is structured end to end: the browser app, the Python API, vector memory (RAG), external data sources, deployment on Render and Vercel, and every Hugging Face touchpoint. Use it as the single place to reason about changes before you refactor or extend the system.
+This document describes how the TradeTalk platform is structured end to end: the browser app, the Python API, vector memory (RAG), external data sources, deployment on GCP Cloud Run + Vercel (Render is legacy), and every Hugging Face touchpoint. Use it as the single place to reason about changes before you refactor or extend the system.
 
 **Related docs**
 
 - [RAG_POLICY.md](./RAG_POLICY.md) — operational policy for ingestion, TTL, and PII around the knowledge store.
-- [CRON.md](./CRON.md) — wake pings, secured pipeline triggers, GitHub Actions, and Render free-tier behavior.
+- [CRON.md](./CRON.md) — wake pings, secured pipeline triggers, GitHub Actions, and free-tier scale-to-zero behavior.
 - [DECISION_LEDGER.md](./DECISION_LEDGER.md) — SQL-queryable substrate of agent decisions + multi-horizon outcomes (Harness Engineering Phase 2).
+- [PHASE_F_INTELLIGENCE_FABRIC.md](./PHASE_F_INTELLIGENCE_FABRIC.md) — model-agnostic intelligence fabric: total ledger capture, single model gateway, capture observability.
+- [PHASE_G_LIVE_DATA_PLAN.md](./PHASE_G_LIVE_DATA_PLAN.md) — research plan for the live market data / news / prediction data layer.
+- [PHASE_HARNESS_SUPERINVESTOR.md](./PHASE_HARNESS_SUPERINVESTOR.md) — model-agnostic harness, predictor self-learning, `/harness/*` operator APIs.
+- [GCP_API_DEPLOY.md](./GCP_API_DEPLOY.md) — Cloud Run backend deployment.
 - [AGENTS.md](../AGENTS.md) — dev commands, env files, and single-process scaling constraints.
 
 ---
@@ -37,14 +41,16 @@ flowchart TB
     Routers --> Deps
   end
   subgraph intel [Intelligence]
-    LLM[LLMClient Gemini or OpenRouter]
+    LLM[LLMClient: NVIDIA Build / OpenRouter / Gemini]
     KS[KnowledgeStore RAG]
+    DL[Decision-Outcome Ledger]
     GR[Guardrails]
   end
   Browser --> SPA
   SPA -->|HTTPS VITE_API_BASE_URL| API
   Routers --> LLM
   Routers --> KS
+  Routers --> DL
   Routers --> GR
 ```
 
@@ -57,7 +63,7 @@ At runtime, the **React** app (built with Vite) calls the **FastAPI** backend us
 | Item | Detail |
 |------|--------|
 | **Stack** | React 19, Vite 7, React Router (`frontend/`). |
-| **API base** | `API_BASE_URL` / `VITE_API_BASE_URL` points at the FastAPI host (local `http://localhost:8000` or your Render URL). |
+| **API base** | `API_BASE_URL` / `VITE_API_BASE_URL` points at the FastAPI host (local `http://localhost:8000` or your deployed Cloud Run URL). |
 | **Auth** | Google OAuth when configured; dev mode can bypass with a dev user (`frontend/src/AuthContext.jsx`, backend `backend/auth`). |
 
 **Primary routes** (see `frontend/src/App.jsx`):
@@ -98,6 +104,13 @@ At runtime, the **React** app (built with Vite) calls the **FastAPI** backend us
 | Knowledge / pipelines | `backend/routers/knowledge.py` | `GET /knowledge/stats`, `POST /knowledge/pipeline-run`, `POST /knowledge/sp500-ingest` |
 | Chat | `backend/routers/chat.py` | `/chat/*` |
 | Risk-Return Scorecard | `backend/routers/scorecard.py` | `GET /scorecard/presets`, `POST /scorecard/compare`, `GET /scorecard/{ticker}` |
+| Small cap | `backend/routers/small_cap.py` | `GET /small-cap-assessment/{ticker}` |
+| Daily brief | `backend/routers/daily_brief.py` | `GET /daily-brief`, deep-refresh endpoints |
+| House view / portfolio | `backend/routers/house_view.py`, `portfolio.py` | `GET /house-view`, `/portfolio/morning-brief` |
+| Predictor | `backend/routers/analysis.py` | `POST /predictor/forecast` |
+| Harness (operator) | `backend/routers/harness.py` | `/harness/replay`, `/harness/hit-rates`, `/harness/calibration`, `/harness/self-learning/run` |
+| SEPL / registry (operator) | `backend/routers/sepl.py`, `resources.py` | `/sepl/*`, read-only `/resources/*` |
+| Learning health (operator) | `backend/routers/debug.py` | `GET /learning-health` (ledger stats + capture coverage) |
 
 **Naming note:** `GET /trace` (analysis router) runs the **swarm** and returns a `SwarmConsensus`. `GET /notifications/trace` returns the **last background news-scan trace** from memory — different purpose, different path.
 
@@ -105,16 +118,22 @@ At runtime, the **React** app (built with Vite) calls the **FastAPI** backend us
 
 ## 5. Intelligence layer
 
-### 5.1 LLM
+### 5.1 LLM — the model gateway
 
-`backend/llm_client.py` is the single entry point for every LLM call in the platform (streaming chat, agent JSON, RAG polish, video text fallback). It supports two routing modes controlled by **`GEMINI_PRIMARY`**:
+`backend/llm_client.py` is the single entry point ("model gateway", Phase F) for every LLM call in the platform — streaming chat, agent JSON (`generate` / `generate_with_meta`), plain-text roles (`generate_plain_with_meta`, used by the predictor synthesizer/reviewer and RAG polish), and the SEPL candidate path (`generate_with_body_override`). The provider cascade is:
 
-- **Gemini-primary mode** (`GEMINI_PRIMARY=1`, `GEMINI_API_KEY` set) — every call is routed through Google Gemini via `backend/gemini_llm.py`. OpenRouter is **not** consulted on the hot path. On any Gemini failure (empty response, 5xx, rate limit), **verdict roles raise `InsufficientDataError`** (see §5.6) while non-verdict roles fall back to the deterministic `FALLBACK_TEMPLATES` (agent JSON) or the original user text (prose paths) — OpenRouter is never re-entered. Use this mode to burn Gemini credits.
-- **OpenRouter-primary mode** (`GEMINI_PRIMARY=0`, default) — OpenRouter is primary (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, optional `OPENROUTER_MODEL_LIGHT`). Gemini is consulted only as a best-effort fallback when OpenRouter fails (toggleable with `GEMINI_LLM_FALLBACK`). Without any key, verdict roles raise `InsufficientDataError`; only non-verdict roles use rule-based templates.
+1. **NVIDIA Build** (OpenAI-compatible, preferred when `NVIDIA_API_KEY` is set or `LLM_HTTP_PROVIDER=nvidia`) — chat/JSON order `NVIDIA_LLM_MODEL_PRO` → `NVIDIA_LLM_MODEL_FLASH`, up to two tries per model.
+2. **OpenRouter** — when `LLM_HTTP_PROVIDER=openrouter` or no NVIDIA keys (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, optional `OPENROUTER_MODEL_LIGHT`).
+3. **Gemini** (`backend/gemini_llm.py`) — last step of the cascade when `GEMINI_LLM_FALLBACK=1`, or primary for *every* call when `GEMINI_PRIMARY=1` (OpenRouter is then never consulted).
+4. **Rule-based fallback** — when no provider succeeds (see verdict-role policy below).
 
-**Verdict-role fallback policy (truthful-data contract, §5.9):** `VERDICT_ROLES` in `llm_client.py` (bull, bear, macro, value, momentum, moderator, swarm_synthesizer, swarm_analyst, small_cap_analyst, scorecard_verdict, gold_advisor, sitg_scorer, execution_risk_scorer) must never be answered with a canned template — when no real model output is available the client raises `InsufficientDataError` so the user sees "insufficient data" instead of a fabricated verdict. Non-verdict roles (video text, daily-brief batch rows, ingestion judging, decision-terminal roadmap JSON, news classifier) may still degrade gracefully to templates.
+**Default model IDs are centralized in `backend/model_defaults.py`** (Phase F gateway contract): no module outside the gateway may hardcode a provider model ID, so a model swap is an env/config change followed by the `/harness/replay` champion/challenger gate — never a code edit. The provider-cascade-aware label actually serving calls is computed by `backend/harness/backend_protocol.py::resolved_model_label()` and stamped on every ledger decision.
 
-Both modes honor the same **role-to-tier mapping** (`MODEL_TIER` in `llm_client.py`). Heavy-reasoning roles — bull, bear, moderator, strategy_parser, gold_advisor, backtest_explainer — resolve to `GEMINI_MODEL` (default `gemini-3.1-pro-preview`) or `OPENROUTER_MODEL`. Light roles — swarm_analyst, swarm_synthesizer, swarm_reflection_writer, rag_narrative_polish, video_scene_director, video_veo_text_fallback, decision_terminal_roadmap — resolve to `GEMINI_MODEL_LIGHT` (default `gemini-3.1-flash`) or `OPENROUTER_MODEL_LIGHT`. Video clip generation is always Google Veo (`backend/video_generation_agent.py`), independent of the Gemini-primary flag.
+**Verdict-role fallback policy (truthful-data contract, §5.9):** `VERDICT_ROLES` in `llm_client.py` (bull, bear, macro, value, momentum, moderator, swarm_synthesizer, swarm_analyst, small_cap_analyst, scorecard_verdict, gold_advisor, sitg_scorer, execution_risk_scorer) must never be answered with a canned template — when no real model output is available the client raises `InsufficientDataError` so the user sees "insufficient data" instead of a fabricated verdict. Non-verdict roles (video text, daily-brief batch rows, ingestion judging, predictor narrative/review, decision-terminal roadmap JSON, news classifier) may still degrade gracefully to templates or static text.
+
+All modes honor the same **role-to-tier mapping** (`MODEL_TIER` in `llm_client.py`, ~28 roles). Heavy roles (bull, bear, moderator, strategy_parser, gold_advisor, backtest_explainer, sitg_scorer, …) resolve to the pro/heavy model per provider; light roles (swarm_analyst, swarm_synthesizer, predictor_synthesizer, predictor_reviewer, ingestion_judge, rag_narrative_polish, video roles, scorecard_verdict, daily_brief_batch, …) resolve to the light tier (`OPENROUTER_MODEL_LIGHT` / `GEMINI_MODEL_LIGHT`). Both Gemini tiers default to the same flash-class model from `model_defaults.py`. Video clip generation is always Google Veo (`backend/video_generation_agent.py`, `VIDEO_VEO_MODEL`), independent of the chat cascade.
+
+System prompts are resolved through the RSPL registry (§5.4) via `_resolve_system_prompt(role)`; every successful HTTP/Gemini call is cost-logged to the ledger's `llm_api_calls` table via `decision_ledger.log_llm_api_call()`.
 
 ### 5.2 Knowledge store (RAG)
 
@@ -187,7 +206,9 @@ Phase C extends the registry to a second resource kind — `TOOL` — and evolve
 
 ### 5.8 Decision-Outcome Ledger (Harness Engineering Phase 2)
 
-`backend/decision_ledger.py` is the SQL-queryable substrate under every user-facing agent decision. Five tables (`decision_events`, `decision_evidence`, `feature_snapshots`, `outcome_observations`, `contract_violations`) capture what the agent decided, which RAG chunks it cited (`knowledge_store.query_with_refs` threads `chunk_id` + `relevance` through every retrieval), which prompt versions + model produced it (`prompt_versions_json` + `registry_snapshot_id` stamped from §5.4), and the multi-horizon market-truth grades a later scheduler tick attaches to it. Producers are wired into `AgentPair.run` (`swarm_factor`), `_run_full_debate_impl` (`debate`), and `chat_send_message` (`chat_turn`) — each one calls `emit_decision` in a `try/except` so ledger failure never breaks user-facing flows, and every emit dual-writes a `decision_emitted` CORAL handoff so the existing dreaming / meta-harness surfaces keep working unchanged. `backend/outcome_grader.py` runs at **02:10 UTC** via APScheduler (only when `DECISION_LEDGER_ENABLE=1`), writes `price_return_pct` / `excess_return_vs_spy_pct` / `risk_adjusted_return` over `1d/5d/21d/63d`, and derives `correct_bool` from the verdict × excess-return rule. `backend/contract_validator.py` feeds `contract_violations` via `install_contract_validator_sink()` so model-drift per prompt version is answerable with a single `GROUP BY`. Three consumers close the loop: `DecisionLedgerReflectionSource` in §5.5 feeds SEPL with real graded outcomes (not LLM self-grades); `backend/feature_correlations.py` + the `v_feature_hit_rate` SQLite view / Supabase MV rank `(feature, regime, horizon)` by hit-rate and mean excess return; and `backend/model_swap_replay.py` re-runs historical decisions through a candidate model and returns a structured `ReplayReport` so operators can gate a model swap on a measurable delta. Feature flags: `DECISION_LEDGER_ENABLE` (master switch, default on), `DECISION_BACKEND` (`sqlite` | `supabase` | `none`), `CONTRACT_VALIDATOR_ENABLE`, `OUTCOME_GRADER_BATCH`. See **docs/DECISION_LEDGER.md** for the full schema, producer-authoring rules, example queries, and Supabase bootstrap.
+`backend/decision_ledger.py` is the SQL-queryable substrate under every user-facing agent decision. Six tables (`decision_events`, `decision_evidence`, `feature_snapshots`, `outcome_observations`, `contract_violations`, `llm_api_calls`) capture what the agent decided, which RAG chunks it cited (`knowledge_store.query_with_refs` threads `chunk_id` + `relevance` through every retrieval; `decision_ledger.evidence_from_chunk_refs()` is the shared converter), which prompt versions + model produced it (`registry_attribution(roles=[...])` stamps the roles a decision actually used + `registry_snapshot_id`, Phase F), and the multi-horizon market-truth grades a later scheduler tick attaches to it.
+
+**Producers (Phase F: every verdict surface emits):** `swarm` (consolidated `/trace` consensus) + `swarm_factor` per agent pair (`backend/agents.py`), `debate` (`backend/debate_agents.py`), `chat_turn` + chat tools `risk_assessment` / `what_if_backtest` (`backend/routers/chat.py`), `decision_terminal` (`backend/decision_terminal.py`), `scorecard` (`backend/routers/scorecard.py`), `gold_advisor` (`backend/gold_advisor_service.py`), `small_cap_assessment` (`backend/routers/small_cap.py`), `backtest_verdict` (`backend/routers/backtest.py`), `daily_brief` (LLM-refined screener rows, capped by `DAILY_BRIEF_LEDGER_EMIT_MAX`, `backend/daily_brief.py`), `price_forecast` (`backend/predictor/ledger_emit.py`), `house_view` (`backend/house_view.py`), `morning_brief` (`backend/morning_brief.py`), and `macro_flow_signal` (`backend/macro_flow/orchestrator.py`). Each producer calls `emit_decision` in a `try/except` so ledger failure never breaks user-facing flows, and every emit dual-writes a `decision_emitted` CORAL handoff so the existing dreaming / meta-harness surfaces keep working unchanged. Capture completeness is observable at `GET /learning-health` → `ledger.capture_coverage_24h` (per-`decision_type` counts + evidence/feature percentages). `backend/outcome_grader.py` runs at **02:10 UTC** via APScheduler (only when `DECISION_LEDGER_ENABLE=1`), writes `price_return_pct` / `excess_return_vs_spy_pct` / `risk_adjusted_return` over `1d/5d/21d/63d`, and derives `correct_bool` from the verdict × excess-return rule. `backend/contract_validator.py` feeds `contract_violations` via `install_contract_validator_sink()` so model-drift per prompt version is answerable with a single `GROUP BY`. Three consumers close the loop: `DecisionLedgerReflectionSource` in §5.5 feeds SEPL with real graded outcomes (not LLM self-grades); `backend/feature_correlations.py` + the `v_feature_hit_rate` SQLite view / Supabase MV rank `(feature, regime, horizon)` by hit-rate and mean excess return; and `backend/model_swap_replay.py` re-runs historical decisions through a candidate model and returns a structured `ReplayReport` so operators can gate a model swap on a measurable delta — exposed over HTTP via the **`/harness/*` operator APIs** (`backend/routers/harness.py`: `/harness/replay`, `/harness/hit-rates`, `/harness/calibration`, `/harness/model-backtest`, `/harness/self-learning/run`; see [PHASE_HARNESS_SUPERINVESTOR.md](./PHASE_HARNESS_SUPERINVESTOR.md)). Feature flags: `DECISION_LEDGER_ENABLE` (master switch, default on), `DECISION_BACKEND` (`sqlite` | `supabase` | `none`), `CONTRACT_VALIDATOR_ENABLE`, `OUTCOME_GRADER_BATCH`. See **docs/DECISION_LEDGER.md** for the full schema, producer-authoring rules, example queries, and Supabase bootstrap.
 
 ### 5.9 Truthful-data contract (insufficient_data)
 
@@ -302,31 +323,33 @@ Free market-data APIs enforce **per-IP / per-key quotas**, not “more parallel 
 
 | Store | Location / mechanism | Contents |
 |-------|----------------------|----------|
-| **SQLite** | Files under backend (see `alert_store`, `user_progress`, etc.) | Macro alerts, user progress, XP, badges, portfolio, challenges, learning, academy, preferences, **`chat_sessions`** (sticky state + RAG prewarm + last evidence; survives process restart), agent memory — initialized from `backend/main.py` |
-| **Supabase** | `vector_memory` | Embeddings + documents per collection when `VECTOR_BACKEND=supabase` |
+| **SQLite (app)** | Files under backend (see `alert_store`, `user_progress`, etc.) | Macro alerts, user progress, XP, badges, portfolio, challenges, learning, academy, preferences, **`chat_sessions`** (sticky state + RAG prewarm + last evidence; survives process restart), agent memory, **CORAL hub** (notes / skills / handoff events share `progress.db` via `PROGRESS_DB_PATH`) — initialized from `backend/main.py` |
+| **SQLite (intelligence)** | `DECISIONS_DB_PATH` (default `backend/decisions.db`), `RESOURCES_DB_PATH` (`backend/resources.db`), `HARNESS_DB_PATH` (`harness.db`) | Decision-Outcome Ledger (§5.8; `DECISION_BACKEND=supabase` for durable production), RSPL prompt/tool versions (§5.4, reseeded from YAML on boot), harness replay reports |
+| **Supabase** | `vector_memory` (+ optional `decision_events` family via `supabase_decisions_bootstrap.sql`) | Embeddings + documents per collection when `VECTOR_BACKEND=supabase`; durable ledger when `DECISION_BACKEND=supabase` |
 | **Chroma** | `CHROMA_PATH` on disk | Local / non-Supabase vector persistence |
 
 **Chat memory (three tiers):** (1) **Working session** — rows in `chat_sessions` plus an in-process cache in `chat_service`; the client can send `resume_session_id` on `POST /chat/session` to continue after refresh. (2) **Structured user profile** — `user_preferences` (JSON per user) plus chat tools `recall_financial_profile` / `save_financial_preference`. (3) **Semantic recall** — `agent_memory` SQLite history + `chat_memories` vectors. **CORAL** hub rows are market/agent priors, not end-user identity.
 
-Render’s filesystem is **ephemeral** unless you attach a disk; durable vectors on Render should use **Supabase**, not local Chroma, for production.
+The deployed filesystem (Cloud Run, or Render without a disk) is **ephemeral**; durable vectors should use **Supabase**, not local Chroma, and the decision ledger should run with `DECISION_BACKEND=supabase` in production.
 
 ---
 
 ## 10. Deployment
 
-### 10.1 Backend (Render)
+### 10.1 Backend (GCP Cloud Run — primary; Render legacy)
 
-[`render.yaml`](../render.yaml) defines a **Python** web service:
+The backend deploys to **GCP Cloud Run** via [`cloudbuild.api.yaml`](../cloudbuild.api.yaml) (see [GCP_API_DEPLOY.md](./GCP_API_DEPLOY.md) for the full procedure; `docker-compose.gcp.yml` mirrors it locally). [`render.yaml`](../render.yaml) is retained as the **legacy** Render definition and still documents the canonical env matrix:
 
-- **Build:** `pip install -r backend/requirements.txt`
 - **Start:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 - **Env (examples):** `VECTOR_BACKEND=supabase`, `SUPABASE_URL`, secrets for `SUPABASE_SERVICE_ROLE_KEY`, `CORS_ORIGINS` (your Vercel origin), `SP500_INGEST_ON_STARTUP=0` to avoid heavy Yahoo ingest on small instances / datacenter IP limits
 
-**How the deployed app is “fed”:** There is no continuous bulk sync from Git into the vector DB. **Deploys** push new code; **configuration** comes from Render env vars; **optional** scheduled HTTP calls (GitHub Actions or external cron) hit secured endpoints such as `POST /knowledge/pipeline-run` and wake `GET /docs` — see [CRON.md](./CRON.md).
+**Scale-to-zero caveat (applies to Cloud Run min-instances=0 and Render free tier alike):** while no instance is warm, **no in-process schedulers run** (APScheduler, news loop, market intel). External wake pings and cron-triggered pipeline posts are documented in [CRON.md](./CRON.md). The filesystem is **ephemeral** — durable state belongs in Supabase (vectors, optionally the decision ledger via `DECISION_BACKEND=supabase`) or Cloud SQL (paper portfolio, [GCP_POSTGRES.md](./GCP_POSTGRES.md)).
+
+**How the deployed app is “fed”:** There is no continuous bulk sync from Git into the vector DB. **Deploys** push new code; **configuration** comes from service env vars; **optional** scheduled HTTP calls (GitHub Actions or external cron) hit secured endpoints such as `POST /knowledge/pipeline-run` and wake `GET /docs` — see [CRON.md](./CRON.md).
 
 ### 10.2 Frontend (Vercel)
 
-Static build of the Vite app (`frontend/vercel.json` for SPA routing). Set `VITE_API_BASE_URL` to the Render service URL.
+Static build of the Vite app (`frontend/vercel.json` for SPA routing). Set `VITE_API_BASE_URL` to the backend (Cloud Run) service URL.
 
 ### 10.3 CORS
 
@@ -342,9 +365,9 @@ Inside the **running** process:
 - **Daily pipeline** — APScheduler (`backend/daily_pipeline.py`) — ingests movers, FRED, YouTube, etc., into KnowledgeStore.
 - **Market intel** — additional scheduled refresh jobs from `main.py`.
 
-**Render free tier:** The web service sleeps without incoming traffic; while asleep, **no** in-process schedulers run. External **wake** requests and **cron-triggered** pipeline posts are documented in [CRON.md](./CRON.md).
+**Scale-to-zero (Cloud Run min-instances=0 / Render free tier):** the service sleeps without incoming traffic; while asleep, **no** in-process schedulers run. External **wake** requests and **cron-triggered** pipeline posts are documented in [CRON.md](./CRON.md). Key scheduled jobs when warm: daily pipeline 00:00 UTC, CORAL dreaming 01:40, outcome grader 02:10, predictor self-learning 02:40, portfolio snapshots 22:30, market-L1 refresh every 15 min, market-intel fast/slow every 10/30 min, CORAL heartbeat every 30 min (`backend/daily_pipeline.py`, `backend/main.py`).
 
-`keep_alive.py` is for keeping a **Hugging Face Space** awake; on Render it exits early — do not rely on it for Render uptime.
+`keep_alive.py` is for keeping a **Hugging Face Space** awake; on Render it exits early — do not rely on it for service uptime.
 
 ---
 
@@ -354,14 +377,18 @@ See [`backend/.env.example`](../backend/.env.example) for the full local matrix.
 
 | Group | Variables |
 |-------|-----------|
-| **LLM** | `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL`, `OPENROUTER_MODEL_LIGHT`, `OPENROUTER_EMBEDDING_MODEL` |
+| **LLM provider selection** | `LLM_HTTP_PROVIDER` (`nvidia` \| `openrouter`), `GEMINI_PRIMARY`, `GEMINI_LLM_FALLBACK`, `GEMINI_INSTANT_OPENROUTER_FAILOVER` |
+| **LLM (NVIDIA Build)** | `NVIDIA_API_KEY`, `NVIDIA_API_KEY_2`, `NVIDIA_LLM_BASE_URL`, `NVIDIA_LLM_MODEL_PRO`, `NVIDIA_LLM_MODEL_FLASH` |
+| **LLM (OpenRouter)** | `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL`, `OPENROUTER_MODEL_LIGHT`, `OPENROUTER_EMBEDDING_MODEL` |
+| **LLM (Gemini / Veo)** | `GEMINI_API_KEY` / `GOOGLE_API_KEY`, `GEMINI_MODEL`, `GEMINI_MODEL_LIGHT`, `GEMINI_VISION_MODEL`, `VIDEO_VEO_MODEL` — defaults live in `backend/model_defaults.py` |
 | **Vectors / RAG** | `VECTOR_BACKEND`, `CHROMA_PATH`, `RAG_TOP_K`, `RAG_TOP_K_MAX` |
 | **Supabase** | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` |
 | **Hugging Face** | `HF_TOKEN`, `HF_DATASET_ID`, `HF_DATASET_REPO`, `HF_EMBEDDING_MODEL`, `HUGGING_FACE_HUB_TOKEN` (aliases in some connectors) |
+| **Intelligence fabric** | `DECISION_LEDGER_ENABLE`, `DECISION_BACKEND`, `DECISIONS_DB_PATH`, `RESOURCES_USE_REGISTRY`, `RESOURCES_DB_PATH`, `SEPL_ENABLE`, `SEPL_AUTOCOMMIT`, `SEPL_TOOL_ENABLE`, `HARNESS_API_ENABLE`, `DAILY_BRIEF_LEDGER_EMIT_MAX` |
 | **Guardrails** | `GUARDRAILS_ENABLE`, `GUARDRAILS_STRICT_STARTUP`, `GUARDRAILS_ALLOWED_HOSTS` |
 | **Cron security** | `PIPELINE_CRON_SECRET` — protects `POST /knowledge/pipeline-run` and `POST /knowledge/sp500-ingest` when set |
 | **Data lake / ingest** | `SP500_INGEST_ON_STARTUP`, `DATA_LAKE_DAILY_INCREMENTAL`, `DATA_LAKE_SOURCE`, `HF_DATASET_ID` |
-| **Platform** | `RENDER` (set by Render), `HF_SPACE_URL` (keep-alive target for HF Spaces only) |
+| **Platform** | `RENDER` (set by Render, legacy), `HF_SPACE_URL` (keep-alive target for HF Spaces only) |
 
 ---
 
@@ -376,11 +403,11 @@ flowchart LR
     V[Vercel SPA]
   end
   subgraph api [API]
-    R[Render FastAPI]
+    R[Cloud Run FastAPI]
   end
   subgraph stores [Durable services]
-    SB[(Supabase pgvector)]
-    SQL[(SQLite on Render disk)]
+    SB[(Supabase pgvector + ledger)]
+    SQL[(SQLite ephemeral instance disk)]
     DL[(Data lake Parquet / HF Hub)]
   end
   subgraph ingest [Scheduled ingestion]
@@ -391,7 +418,7 @@ flowchart LR
     FU[fetch_utils backoff + pagination]
   end
   subgraph vendors [Third parties]
-    OR[OpenRouter LLM]
+    OR[LLM providers: NVIDIA Build / OpenRouter / Gemini]
     YF[Yahoo yfinance]
     YT[YouTube playlistItems]
     PM[Polymarket Gamma keyset]
