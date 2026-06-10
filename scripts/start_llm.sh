@@ -14,9 +14,18 @@ until curl -s http://localhost:11434 > /dev/null; do
 done
 echo "Ollama is ready!"
 
+# Setup shutdown handler to run on launchd exit / logoff / restart / shutdown
+cleanup() {
+  echo "Termination signal received. Running stop_llm.sh..."
+  bash "/Users/manojsilwal/tradetalk-bin/stop_llm.sh"
+  exit 0
+}
+trap cleanup SIGINT SIGTERM
+
 echo "Starting Cloudflare Quick Tunnel..."
 mkdir -p ~/.cloudflared
 cloudflared tunnel --url http://localhost:11434 > ~/.cloudflared/quick_tunnel.log 2>&1 &
+TUNNEL_PID=$!
 sleep 5
 
 # Extract the new trycloudflare URL
@@ -40,3 +49,10 @@ if [ -n "$TUNNEL_URL" ]; then
 else
   echo "Error: Could not retrieve Cloudflare Tunnel URL. Check ~/.cloudflared/quick_tunnel.log"
 fi
+
+# Keep script running and wait on the cloudflared background process to handle SIGTERM on logout
+if [ -n "$TUNNEL_PID" ]; then
+  echo "Waiting on Cloudflare Tunnel (PID: $TUNNEL_PID) for termination..."
+  wait $TUNNEL_PID
+fi
+
