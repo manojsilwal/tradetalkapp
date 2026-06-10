@@ -141,6 +141,8 @@ from .routers import (
     portfolio_news as portfolio_news_router,
     small_cap as small_cap_router,
     daily_brief as daily_brief_router,
+    harness as harness_router,
+    house_view as house_view_router,
 )
 
 app.include_router(auth_router.router)
@@ -166,6 +168,8 @@ app.include_router(ubds_eval_router.router)
 app.include_router(portfolio_news_router.router)
 app.include_router(small_cap_router.router)
 app.include_router(daily_brief_router.router)
+app.include_router(harness_router.router)
+app.include_router(house_view_router.router)
 
 # ── MCP S&P 500 Market Data Server ────────────────────────────────────────────
 from .mcp_server.router import router as mcp_sp500_router
