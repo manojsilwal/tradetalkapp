@@ -59,6 +59,12 @@ export async function apiFetch(url, options = {}) {
   };
   const res = await fetch(url, { ...options, headers });
   if (!res.ok) {
+    if (res.status === 401) {
+      clearToken();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('auth-expired'));
+      }
+    }
     let errMsg = `HTTP ${res.status}`;
     let insufficientData = false;
     try {
@@ -167,6 +173,12 @@ export async function fetchJsonWithMeta(url, options = {}, timeoutMs = 180000) {
     const text = await res.text();
 
     if (!res.ok) {
+      if (res.status === 401) {
+        clearToken();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('auth-expired'));
+        }
+      }
       let detail = `HTTP ${res.status}`;
       if (text) {
         try {

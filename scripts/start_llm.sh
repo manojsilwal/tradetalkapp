@@ -35,16 +35,29 @@ if [ -n "$TUNNEL_URL" ]; then
   echo "Tunnel started successfully!"
   echo "New URL: $TUNNEL_URL"
   
-  # Auto-update environment files with the new URL
-  if [ -f "backend/.env.local" ]; then
-    sed -i '' -E 's|NVIDIA_LLM_BASE_URL=https://.*\.trycloudflare\.com/v1|NVIDIA_LLM_BASE_URL='"$TUNNEL_URL"'/v1|g' backend/.env.local
-    echo "Updated backend/.env.local with the new tunnel URL."
+  # Auto-update environment files with the new URL (in ~/.cloudflared to bypass TCC permissions)
+  TUNNEL_HOST=$(echo "$TUNNEL_URL" | sed -E 's|https://||')
+  
+  update_guardrails_allowed_hosts() {
+    local file=$1
+    if grep -q "GUARDRAILS_ALLOWED_HOSTS=" "$file"; then
+      sed -i '' -E 's|GUARDRAILS_ALLOWED_HOSTS=.*|GUARDRAILS_ALLOWED_HOSTS='"$TUNNEL_HOST"'|g' "$file"
+    else
+      echo "GUARDRAILS_ALLOWED_HOSTS=$TUNNEL_HOST" >> "$file"
+    fi
+  }
+
+  if [ -f "/Users/manojsilwal/.cloudflared/env.local" ]; then
+    sed -i '' -E 's|NVIDIA_LLM_BASE_URL=https://.*\.trycloudflare\.com/v1|NVIDIA_LLM_BASE_URL='"$TUNNEL_URL"'/v1|g' /Users/manojsilwal/.cloudflared/env.local
+    update_guardrails_allowed_hosts "/Users/manojsilwal/.cloudflared/env.local"
+    echo "Updated env.local in ~/.cloudflared with the new tunnel URL and allowed hosts."
   fi
-  if [ -f ".env.gcp" ]; then
-    sed -i '' -E 's|NVIDIA_LLM_BASE_URL=https://.*\.trycloudflare\.com/v1|NVIDIA_LLM_BASE_URL='"$TUNNEL_URL"'/v1|g' .env.gcp
-    echo "Updated .env.gcp with the new tunnel URL."
+  if [ -f "/Users/manojsilwal/.cloudflared/env.gcp" ]; then
+    sed -i '' -E 's|NVIDIA_LLM_BASE_URL=https://.*\.trycloudflare\.com/v1|NVIDIA_LLM_BASE_URL='"$TUNNEL_URL"'/v1|g' /Users/manojsilwal/.cloudflared/env.gcp
+    update_guardrails_allowed_hosts "/Users/manojsilwal/.cloudflared/env.gcp"
+    echo "Updated env.gcp in ~/.cloudflared with the new tunnel URL and allowed hosts."
   else
-    echo "Warning: .env.gcp not found. Please update it manually."
+    echo "Warning: env.gcp in ~/.cloudflared not found. Please update it manually."
   fi
 else
   echo "Error: Could not retrieve Cloudflare Tunnel URL. Check ~/.cloudflared/quick_tunnel.log"

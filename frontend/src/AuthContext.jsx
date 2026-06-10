@@ -121,6 +121,17 @@ export function AuthProvider({ children }) {
         setUser(null);
     }, []);
 
+    useEffect(() => {
+        const handleAuthExpired = () => {
+            console.warn('[Auth] Session expired or invalid, logging out...');
+            logout();
+        };
+        window.addEventListener('auth-expired', handleAuthExpired);
+        return () => {
+            window.removeEventListener('auth-expired', handleAuthExpired);
+        };
+    }, [logout]);
+
     return (
         <AuthContext.Provider value={{ user, loading, login, loginManual, signup, logout }}>
             {children}

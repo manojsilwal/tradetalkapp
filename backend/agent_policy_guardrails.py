@@ -53,6 +53,8 @@ DEFAULT_ALLOWED_HOSTS = frozenset(
         "fred.stlouisfed.org",
         "www.googleapis.com",
         "youtube.googleapis.com",
+        "localhost",
+        "127.0.0.1",
     }
 )
 
@@ -64,6 +66,7 @@ def _hosts_from_env() -> frozenset[str]:
 
 def _profile_map() -> Dict[str, SandboxProfile]:
     hosts = _hosts_from_env()
+    extra = _csv_set(os.environ.get("GUARDRAILS_ALLOWED_HOSTS", ""))
     llm_hosts = frozenset(
         h
         for h in hosts
@@ -74,7 +77,12 @@ def _profile_map() -> Dict[str, SandboxProfile]:
             "api.nvidia.com",
             "integrate.api.nvidia.com",
             "generativelanguage.googleapis.com",
+            "localhost",
+            "127.0.0.1",
         }
+        or h.endswith(".trycloudflare.com")
+        or h == "trycloudflare.com"
+        or h in extra
     )
     market_hosts = frozenset(
         h
