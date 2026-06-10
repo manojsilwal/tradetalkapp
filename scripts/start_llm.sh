@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # start_llm.sh — Start Ollama, start Cloudflare quick tunnel, and auto-update environment configuration.
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 cd "$(dirname "$0")/.."
 
 echo "Starting Ollama..."

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # stop_llm.sh — Stop Ollama and Cloudflare tunnel before putting laptop to sleep.
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 echo "Stopping Cloudflare Tunnel..."
 pkill cloudflared || echo "No running cloudflared daemon found."
 
