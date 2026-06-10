@@ -7,10 +7,12 @@ import asyncio
 import json
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .data_errors import InsufficientDataError
 from .telemetry import RequestIDMiddleware
 from .agent_policy_guardrails import (
     ensure_capability, validate_startup_secrets,
@@ -43,6 +45,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(RequestIDMiddleware)
+
+
+# ── Truthful-data contract ────────────────────────────────────────────────────
+# Any endpoint whose required live data could not be fetched answers with an
+# explicit 503 "insufficient_data" body instead of a fabricated result.
+@app.exception_handler(InsufficientDataError)
+async def _insufficient_data_handler(request: Request, exc: InsufficientDataError):
+    return JSONResponse(status_code=503, content=exc.to_payload())
 
 # ── Initialize persistent SQLite stores ──────────────────────────────────────
 db.init_db()
@@ -141,6 +151,8 @@ from .routers import (
     portfolio_news as portfolio_news_router,
     small_cap as small_cap_router,
     daily_brief as daily_brief_router,
+    harness as harness_router,
+    house_view as house_view_router,
 )
 
 app.include_router(auth_router.router)
@@ -166,6 +178,8 @@ app.include_router(ubds_eval_router.router)
 app.include_router(portfolio_news_router.router)
 app.include_router(small_cap_router.router)
 app.include_router(daily_brief_router.router)
+app.include_router(harness_router.router)
+app.include_router(house_view_router.router)
 
 # ── MCP S&P 500 Market Data Server ────────────────────────────────────────────
 from .mcp_server.router import router as mcp_sp500_router

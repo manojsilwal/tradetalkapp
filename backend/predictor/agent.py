@@ -1,4 +1,4 @@
-"""Predictor orchestration — baselines, TimesFM mock/service, ensemble, synthesis."""
+"""Predictor orchestration — baselines, TimesFM service, ensemble, synthesis."""
 
 from __future__ import annotations
 
@@ -17,8 +17,11 @@ from backend.swarm_reliability.schemas import parse_iso_datetime
 
 from .baselines import drift_forecast, ewma_forecast, naive_forecast, seasonal_naive_forecast
 from .config_loader import load_yaml_cached
+from .conformal import apply_scale as conformal_apply_scale
+from .conformal import load_scales as load_conformal_scales
 from .features import default_as_of_date, snapshot_pit_factors
 from .ensemble import weighted_inverse_mase
+from .learned_weights import blend_weights, load_weights as load_learned_weights
 from .kill_switch import predictor_baselines_only, predictor_enabled
 from .ledger_emit import emit_predictor_decisions
 from .manifest import build_manifest
@@ -27,7 +30,6 @@ from .scenarios import bull_base_bear_3y_from_63d
 from .synthesizer import synthesize_narrative
 from .reviewer import review_narrative
 from .timesfm_client import (
-    MockTimesFMClient,
     fetch_timesfm_forecast_http,
     max_horizon_from_config,
 )
@@ -52,13 +54,6 @@ def new_cycle_id(ticker: str, horizons: Sequence[str]) -> str:
 def _seed(ticker: str, cycle_id: str) -> int:
     h = hashlib.sha256(f"{ticker}:{cycle_id}".encode()).hexdigest()
     return int(h[:16], 16)
-
-
-def _synthetic_level_prices(ticker: str, cycle_id: str, n: int = 512) -> np.ndarray:
-    rng = np.random.default_rng(_seed(ticker, cycle_id))
-    r = rng.normal(0.0004, 0.014, size=n)
-    p = 100.0 * np.exp(np.cumsum(r))
-    return p.astype(np.float64)
 
 
 def _spot_from_series(series: np.ndarray) -> float:
@@ -197,8 +192,19 @@ async def run_predictor_forecast(
         series = lake_series
         price_source = "data_lake_daily_close"
     else:
-        series = _synthetic_level_prices(t, cycle_id)
-        price_source = "synthetic"
+        # Truthful-data contract: never forecast on synthetic price history.
+        return PredictorForecastResponse(
+            status="insufficient_data",
+            ticker=t,
+            cycle_id=cycle_id,
+            disclaimer=disclaimer,
+            executed=False,
+            assumptions=[
+                "Real daily price history is unavailable for this ticker "
+                "(data lake missing or too short); forecast aborted instead of "
+                "using synthetic prices.",
+            ],
+        )
     spot = _spot_from_series(series)
     log_p = np.log(np.maximum(series, 1e-8))
 
@@ -206,12 +212,6 @@ async def run_predictor_forecast(
     pit_factors = snapshot_pit_factors(t, as_of_d)
 
     max_h = max_horizon_from_config()
-    mock_client = MockTimesFMClient(
-        model_version=DEFAULT_MODEL_LABEL if predictor_baselines_only() else DEFAULT_MODEL_LABEL,
-    )
-    path = mock_client.forecast_price_path(
-        log_p, max_h, ticker=t, cycle_id=cycle_id
-    )
 
     cfg_payload = {
         "timesfm": load_yaml_cached("timesfm_forecast_config.yaml"),
@@ -221,8 +221,18 @@ async def run_predictor_forecast(
     input_payload = {"ticker": t, "cycle_id": cycle_id, "horizons": hs, "spot": round(spot, 6)}
     input_hash = stable_json_hash(input_payload)
 
+    # Truthful-data contract: the probabilistic quantile head must come from the
+    # real TimesFM service. The deterministic mock client is test-only and never
+    # serves user-facing forecasts. Without the service, the predictor either
+    # runs honest statistical baselines (explicit PREDICTOR_BACKEND=baselines_only)
+    # or reports insufficient data.
     shadow_logged = False
-    if (os.environ.get("TIMESFM_SERVICE_URL") or "").strip() and not predictor_baselines_only():
+    model_label = DEFAULT_MODEL_LABEL
+    forecast_source = "none"
+    path: Optional[np.ndarray] = None
+    baselines_only = predictor_baselines_only()
+
+    if (os.environ.get("TIMESFM_SERVICE_URL") or "").strip() and not baselines_only:
         try:
             remote = await fetch_timesfm_forecast_http(
                 inputs=log_p[-1024:].tolist(),
@@ -231,51 +241,49 @@ async def run_predictor_forecast(
                 model_version=DEFAULT_MODEL_LABEL,
             )
             if remote:
-                try:
-                    from backend.coral_hub import log_handoff_event
-                    from backend.coral_dreaming import EVENT_PREDICTOR_SHADOW
-                    from .timesfm_client import http_quantiles_to_numpy_path
+                from .timesfm_client import http_quantiles_to_numpy_path
 
-                    remote_arr = http_quantiles_to_numpy_path(remote)
-                    mock_row = mock_client.forecast_price_path(
-                        log_p, min(64, max_h), ticker=t, cycle_id=cycle_id
-                    )
-                    diff_note = "shape_mismatch"
-                    if remote_arr is not None and remote_arr.shape == mock_row.shape:
-                        diff = float(np.max(np.abs(remote_arr - mock_row)))
-                        diff_note = f"max_abs_diff={diff:.6f}"
-
-                    log_handoff_event(
-                        EVENT_PREDICTOR_SHADOW,
-                        {
-                            "ticker": t,
-                            "cycle_id": cycle_id,
-                            "remote_keys": list(remote.keys()),
-                            "compare": diff_note,
-                        },
-                    )
-                    shadow_logged = True
-                except Exception:
-                    pass
+                remote_arr = http_quantiles_to_numpy_path(remote)
+                if remote_arr is not None and remote_arr.shape[0] >= min(
+                    min(64, max_h), max(HORIZON_TO_TD.values())
+                ):
+                    path = remote_arr
+                    model_label = str(remote.get("model_version") or DEFAULT_MODEL_LABEL)
+                    forecast_source = "timesfm_service"
         except Exception as e:
-            logger.debug("[Predictor] shadow fetch skipped: %s", e)
+            logger.warning("[Predictor] TimesFM service fetch failed: %s", e)
+
+    if path is None and not baselines_only:
+        return PredictorForecastResponse(
+            status="insufficient_data",
+            ticker=t,
+            cycle_id=cycle_id,
+            disclaimer=disclaimer,
+            executed=False,
+            assumptions=[
+                "TimesFM forecast service is unavailable or returned no usable "
+                "quantile path; refusing to serve mock-model forecasts. "
+                "Set PREDICTOR_BACKEND=baselines_only for transparent "
+                "statistical baselines without probabilistic bands.",
+            ],
+        )
+
+    if path is None:
+        model_label = "statistical-baselines"
+        forecast_source = "baselines"
 
     bands: List[HorizonBandUsd] = []
     ensemble_weights_last: Dict[str, float] = {}
 
+    # Self-learning artifacts (Phase 3) — both no-ops until their nightly
+    # jobs have committed a first version to the resource registry.
+    conformal_scales = load_conformal_scales()
+    learned_wts_by_h = load_learned_weights()
+    conformal_applied: Dict[str, float] = {}
+
+    blended_by_h: Dict[str, float] = {}
     for h_label in hs:
         td = HORIZON_TO_TD.get(h_label, 21)
-        td = min(td, path.shape[0])
-        row = path[td - 1]
-        q10_l = float(row[IDX_Q10])
-        q50_l = float(row[IDX_Q50])
-        q90_l = float(row[IDX_Q90])
-        mean_l = float(row[IDX_MEAN])
-
-        q10_usd = math.exp(q10_l)
-        q50_usd = math.exp(q50_l)
-        q90_usd = math.exp(q90_l)
-        point_usd = math.exp(mean_l)
 
         naive_p = naive_forecast(series, td)
         sn_p = seasonal_naive_forecast(series, td)
@@ -286,45 +294,73 @@ async def run_predictor_forecast(
             "seasonal_naive": sn_p,
             "ewma": ew_p,
             "drift": dr_p,
-            "timesfm_mean": point_usd,
         }
+
+        q10_usd = q50_usd = q90_usd = None
+        if path is not None:
+            td_p = min(td, path.shape[0])
+            row = path[td_p - 1]
+            q10_usd = math.exp(float(row[IDX_Q10]))
+            q50_usd = math.exp(float(row[IDX_Q50]))
+            q90_usd = math.exp(float(row[IDX_Q90]))
+            members["timesfm_mean"] = math.exp(float(row[IDX_MEAN]))
+
         blended, wts = weighted_inverse_mase(series, td, members)
+        learned = learned_wts_by_h.get(h_label) or {}
+        if learned:
+            wts = blend_weights(wts, learned)
+            blended = sum(wts[k] * members[k] for k in wts if k in members)
         ensemble_weights_last = dict(wts)
+        blended_by_h[h_label] = blended
+
+        lo_usd = hi_usd = None
+        if q10_usd is not None:
+            lo_usd = min(q10_usd, q50_usd, q90_usd)
+            hi_usd = max(q10_usd, q50_usd, q90_usd)
+            scale = conformal_scales.get(h_label)
+            if scale is not None:
+                lo_usd, _, hi_usd = conformal_apply_scale(lo_usd, q50_usd, hi_usd, scale)
+                conformal_applied[h_label] = scale
 
         bands.append(
             HorizonBandUsd(
                 horizon=h_label,
-                q10_usd=min(q10_usd, q50_usd, q90_usd),
+                q10_usd=lo_usd,
                 q50_usd=q50_usd,
-                q90_usd=max(q10_usd, q50_usd, q90_usd),
+                q90_usd=hi_usd,
                 point_usd=blended,
             )
         )
 
-    # Direction from longest horizon q50
+    # Direction from longest horizon q50 (service) or blended baseline point
     long_h = max(hs, key=lambda x: HORIZON_TO_TD.get(x, 0))
     long_td = HORIZON_TO_TD.get(long_h, 63)
-    long_td = min(long_td, path.shape[0])
-    row63 = path[long_td - 1]
-    q50_star = math.exp(float(row63[IDX_Q50]))
-    directional = _direction_from_prices(spot, q50_star)
 
-    bull_3y, base_3y, bear_3y = bull_base_bear_3y_from_63d(
-        spot,
-        math.exp(float(row63[IDX_Q10])),
-        q50_star,
-        math.exp(float(row63[IDX_Q90])),
-        horizon_days=long_td,
-    )
+    bull_3y = base_3y = bear_3y = None
+    if path is not None:
+        long_td_p = min(long_td, path.shape[0])
+        row63 = path[long_td_p - 1]
+        q50_star = math.exp(float(row63[IDX_Q50]))
+        directional = _direction_from_prices(spot, q50_star)
+        bull_3y, base_3y, bear_3y = bull_base_bear_3y_from_63d(
+            spot,
+            math.exp(float(row63[IDX_Q10])),
+            q50_star,
+            math.exp(float(row63[IDX_Q90])),
+            horizon_days=long_td_p,
+        )
+    else:
+        directional = _direction_from_prices(spot, blended_by_h.get(long_h, spot))
 
     tool_json: Dict[str, Any] = {
         "ticker": t,
         "spot_usd": spot,
         "horizons": [b.model_dump() for b in bands],
         "directional_bias": directional,
-        "model_version": DEFAULT_MODEL_LABEL,
+        "model_version": model_label,
         "pit_factors": pit_factors,
         "price_source": price_source,
+        "forecast_source": forecast_source,
     }
     syn_task = synthesize_narrative(tool_json=tool_json, cycle_id=cycle_id)
     syn_text = await syn_task
@@ -345,18 +381,28 @@ async def run_predictor_forecast(
         ticker=t,
         cycle_id=cycle_id,
         disclaimer=disclaimer,
-        model_version=DEFAULT_MODEL_LABEL,
-        model_confidence="medium",
+        model_version=model_label,
+        model_confidence="medium" if forecast_source == "timesfm_service" else "low",
         directional_bias=directional,  # type: ignore[arg-type]
         horizon_bands_usd=bands,
         bull_price_usd_3y_scenario=bull_3y,
         base_price_usd_3y_scenario=base_3y,
         bear_price_usd_3y_scenario=bear_3y,
-        assumptions=[
-            "80 % interval uses q10–q90 from the probabilistic head (mock or service).",
-            "3Y scenario prices extrapolate geometrically from the longest configured horizon.",
-            f"Price history source: {price_source}.",
-        ],
+        assumptions=(
+            [
+                "80 % interval uses q10–q90 from the deployed TimesFM service.",
+                "3Y scenario prices extrapolate geometrically from the longest configured horizon.",
+                f"Price history source: {price_source}.",
+            ]
+            if forecast_source == "timesfm_service"
+            else [
+                "Baselines-only mode: point forecasts blend transparent statistical "
+                "baselines (naive, seasonal-naive, EWMA, drift) over real price history.",
+                "No probabilistic quantile bands or 3Y scenarios — the TimesFM "
+                "service was not used.",
+                f"Price history source: {price_source}.",
+            ]
+        ),
         synthesis_summary=syn_text[:1200],
         reviewer_summary=rev_text[:800],
         executed=True,
@@ -368,6 +414,8 @@ async def run_predictor_forecast(
             "manifest": manifest.model_dump(mode="json"),
             "pit_factors": pit_factors,
             "price_source": price_source,
+            "forecast_source": forecast_source,
+            "conformal_scales": conformal_applied,
             "price_evidence_chunks": [
                 {
                     "chunk_id": f"{cycle_id}-prices",

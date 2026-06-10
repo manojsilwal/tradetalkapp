@@ -1,6 +1,7 @@
 import asyncio
 import yfinance as yf
 from typing import Dict, Any, List, Tuple, Optional
+from ..data_errors import InsufficientDataError
 from .base import DataConnector, clean_dividend_yield
 from .debate_data import fetch_debate_data
 from ..paper_portfolio import _classify_market_cap
@@ -50,7 +51,11 @@ class InvestorMetricsConnector(DataConnector):
         def _hydrate_key_activity(
             metrics_dict: Dict[str, Any], fallback: Dict[str, Any]
         ) -> None:
-            """Fill RSI / ownership / short interest from debate_data when Yahoo is thin."""
+            """Fill ownership / short interest from debate_data when Yahoo is thin.
+
+            Only real values are hydrated — no proxies. A metric that cannot be
+            sourced stays "N/A" (truthful-data contract).
+            """
             for key in ("momentum_rsi", "institutional_ownership", "short_interest"):
                 if key not in metrics_dict or not isinstance(metrics_dict[key], dict):
                     metrics_dict[key] = {
@@ -59,13 +64,6 @@ class InvestorMetricsConnector(DataConnector):
                         "trend": "N/A",
                         "history": [],
                     }
-            rsi = metrics_dict["momentum_rsi"]
-            if rsi.get("current") in ("N/A", "", None):
-                one_m = fallback.get("price_return_1m")
-                if one_m is not None:
-                    proxy = max(5.0, min(95.0, 50.0 + float(one_m) * 1.2))
-                    rsi["current"] = f"{proxy:.1f}"
-                    rsi["trend"] = "Proxy"
             inst = metrics_dict["institutional_ownership"]
             if inst.get("current") in ("N/A", "", None):
                 inst_pct = fallback.get("held_percent_institutions")
@@ -170,88 +168,34 @@ class InvestorMetricsConnector(DataConnector):
                     return f"${val:.2f}"
                 return f"{val:.1f}{suffix}"
 
-            # Generate sparkline history data (8 quarters of simulated trajectory)
-            import random
-            random.seed(hash(ticker_sym))  # Deterministic per ticker
-            
-            def make_sparkline(current_val, volatility=0.15, points=8):
-                """Generate a realistic-looking sparkline from a current value."""
-                if current_val == 0 or current_val is None:
-                    return [0] * points
-                data = []
-                val = current_val * (1 - volatility * 2)  # Start lower historically
-                step = (current_val - val) / points
-                for i in range(points):
-                    noise = random.uniform(-volatility * abs(current_val) * 0.3, volatility * abs(current_val) * 0.3)
-                    data.append(round(val + noise, 2))
-                    val += step
-                return data
-
+            # Truthful-data contract: no simulated sparklines and no fabricated
+            # "historical" values. History is empty until a real time-series
+            # source is wired; historical/trend stay "N/A".
             rsi_14 = _compute_rsi_14(closes)
             inst_ownership_pct = _num(info.get("heldPercentInstitutions")) * 100
             short_percent_float = _num(info.get("shortPercentOfFloat")) * 100
 
+            def metric_entry(current_formatted: str) -> Dict[str, Any]:
+                return {
+                    "current": current_formatted,
+                    "historical": "N/A",
+                    "trend": "N/A",
+                    "history": [],
+                }
+
             return {
-                "roic_roe": {
-                    "current": format_val(roe, "%"),
-                    "historical": format_val(roe * 0.9, "%"),
-                    "trend": "Up" if roe > (roe*0.9) else "Down",
-                    "history": make_sparkline(roe, 0.12)
-                },
-                "fcf_yield": {
-                    "current": format_val(fcf_yield, "%"),
-                    "historical": format_val(fcf_yield - 1.2, "%"),
-                    "trend": "Up" if fcf_yield > (fcf_yield-1.2) else "Down",
-                    "history": make_sparkline(fcf_yield, 0.2)
-                },
-                "ev_ebit": {
-                    "current": format_val(ev_ebit, "x"),
-                    "historical": format_val(ev_ebit + 2.5, "x"),
-                    "trend": "Down" if ev_ebit < (ev_ebit+2.5) else "Up",
-                    "history": make_sparkline(ev_ebit, 0.1)
-                },
-                "owner_earnings": {
-                    "current": format_val(owner_earnings, "", True),
-                    "historical": format_val(owner_earnings * 0.85, "", True),
-                    "trend": "Up" if owner_earnings > 0 else "Down",
-                    "history": make_sparkline(owner_earnings / 1_000_000_000, 0.15) # in billions
-                },
-                "reinvest_capacity": {
-                    "current": format_val(rev_growth, "% YoY"),
-                    "historical": format_val(rev_growth - 4, "% YoY"),
-                    "trend": "Up" if rev_growth > 0 else "Down",
-                    "history": make_sparkline(rev_growth, 0.3)
-                },
-                "interest_coverage": {
-                    "current": format_val(int_coverage, "x"),
-                    "historical": format_val(int_coverage - 1.5, "x"),
-                    "trend": "Stable" if int_coverage > 5 else "Warning",
-                    "history": make_sparkline(int_coverage, 0.1)
-                },
-                "price_tangible_book": {
-                    "current": format_val(ptb, "x"),
-                    "historical": format_val(ptb + 0.8, "x"),
-                    "trend": "Down" if ptb < (ptb+0.8) else "Up",
-                    "history": make_sparkline(ptb, 0.08)
-                },
-                "gross_margins": {
-                    "current": format_val(gross_margin, "%"),
-                    "historical": format_val(gross_margin - 2.1, "%"),
-                    "trend": "Neutral",
-                    "history": make_sparkline(gross_margin, 0.05)
-                },
-                "shareholder_yield": {
-                    "current": format_val(shareholder_yield, "%"),
-                    "historical": format_val(shareholder_yield * 0.75, "%"),
-                    "trend": "Up" if shareholder_yield > 2 else "Down",
-                    "history": make_sparkline(shareholder_yield, 0.2)
-                },
-                "margin_of_safety": {
-                    "current": format_val(margin_of_safety, "% Discount") if margin_of_safety > 0 else "0% (Premium)",
-                    "historical": format_val(margin_of_safety - 10, "% Discount") if margin_of_safety > 10 else "N/A",
-                    "trend": "Better Value" if margin_of_safety > 0 else "Overvalued",
-                    "history": make_sparkline(margin_of_safety, 0.2)
-                },
+                "roic_roe": metric_entry(format_val(roe, "%")),
+                "fcf_yield": metric_entry(format_val(fcf_yield, "%")),
+                "ev_ebit": metric_entry(format_val(ev_ebit, "x")),
+                "owner_earnings": metric_entry(format_val(owner_earnings, "", True)),
+                "reinvest_capacity": metric_entry(format_val(rev_growth, "% YoY")),
+                "interest_coverage": metric_entry(format_val(int_coverage, "x")),
+                "price_tangible_book": metric_entry(format_val(ptb, "x")),
+                "gross_margins": metric_entry(format_val(gross_margin, "%")),
+                "shareholder_yield": metric_entry(format_val(shareholder_yield, "%")),
+                "margin_of_safety": metric_entry(
+                    format_val(margin_of_safety, "% Discount") if margin_of_safety > 0 else "0% (Premium)"
+                ),
                 # Explicit keys used by UnifiedDashboardUI "Key Metrics Activity"
                 "momentum_rsi": {
                     "current": format_val(rsi_14) if rsi_14 is not None else "N/A",
@@ -291,6 +235,15 @@ class InvestorMetricsConnector(DataConnector):
             if not isinstance(fallback, dict):
                 fallback = {}
 
+            if not metrics_dict and not fallback:
+                raise InsufficientDataError(
+                    "yfinance",
+                    f"Live fundamental metrics unavailable for {ticker_sym}: "
+                    "both primary and fallback fetches failed.",
+                    ticker=ticker_sym,
+                    missing=["metrics"],
+                )
+
             if not metrics_dict and fallback:
                 metrics_dict = _blank_key_activity()
                 market_cap = fallback.get("market_cap") or market_cap
@@ -303,6 +256,8 @@ class InvestorMetricsConnector(DataConnector):
                 "market_cap": market_cap,
                 "cap_bucket": _classify_market_cap(market_cap),
             }
+        except InsufficientDataError:
+            raise
         except Exception as e:
             try:
                 fallback = await fetch_debate_data(ticker_sym)
@@ -318,11 +273,10 @@ class InvestorMetricsConnector(DataConnector):
                     "market_cap": mc,
                     "cap_bucket": _classify_market_cap(mc),
                 }
-            return {
-                "ticker": ticker_sym,
-                "error": str(e),
-                "metrics": _blank_key_activity(),
-                "market_cap": None,
-                "cap_bucket": None,
-            }
+            raise InsufficientDataError(
+                "yfinance",
+                f"Live fundamental metrics unavailable for {ticker_sym}: {e}",
+                ticker=ticker_sym,
+                missing=["metrics"],
+            ) from e
 

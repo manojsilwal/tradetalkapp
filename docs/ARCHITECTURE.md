@@ -109,8 +109,10 @@ At runtime, the **React** app (built with Vite) calls the **FastAPI** backend us
 
 `backend/llm_client.py` is the single entry point for every LLM call in the platform (streaming chat, agent JSON, RAG polish, video text fallback). It supports two routing modes controlled by **`GEMINI_PRIMARY`**:
 
-- **Gemini-primary mode** (`GEMINI_PRIMARY=1`, `GEMINI_API_KEY` set) — every call is routed through Google Gemini via `backend/gemini_llm.py`. OpenRouter is **not** consulted on the hot path. On any Gemini failure (empty response, 5xx, rate limit) the client returns the deterministic `FALLBACK_TEMPLATES` for agent JSON, or the original user text for prose paths — OpenRouter is never re-entered. Use this mode to burn Gemini credits.
-- **OpenRouter-primary mode** (`GEMINI_PRIMARY=0`, default) — OpenRouter is primary (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, optional `OPENROUTER_MODEL_LIGHT`). Gemini is consulted only as a best-effort fallback when OpenRouter fails (toggleable with `GEMINI_LLM_FALLBACK`). Without any key, rule-based templates keep features responsive.
+- **Gemini-primary mode** (`GEMINI_PRIMARY=1`, `GEMINI_API_KEY` set) — every call is routed through Google Gemini via `backend/gemini_llm.py`. OpenRouter is **not** consulted on the hot path. On any Gemini failure (empty response, 5xx, rate limit), **verdict roles raise `InsufficientDataError`** (see §5.6) while non-verdict roles fall back to the deterministic `FALLBACK_TEMPLATES` (agent JSON) or the original user text (prose paths) — OpenRouter is never re-entered. Use this mode to burn Gemini credits.
+- **OpenRouter-primary mode** (`GEMINI_PRIMARY=0`, default) — OpenRouter is primary (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, optional `OPENROUTER_MODEL_LIGHT`). Gemini is consulted only as a best-effort fallback when OpenRouter fails (toggleable with `GEMINI_LLM_FALLBACK`). Without any key, verdict roles raise `InsufficientDataError`; only non-verdict roles use rule-based templates.
+
+**Verdict-role fallback policy (truthful-data contract, §5.9):** `VERDICT_ROLES` in `llm_client.py` (bull, bear, macro, value, momentum, moderator, swarm_synthesizer, swarm_analyst, small_cap_analyst, scorecard_verdict, gold_advisor, sitg_scorer, execution_risk_scorer) must never be answered with a canned template — when no real model output is available the client raises `InsufficientDataError` so the user sees "insufficient data" instead of a fabricated verdict. Non-verdict roles (video text, daily-brief batch rows, ingestion judging, decision-terminal roadmap JSON, news classifier) may still degrade gracefully to templates.
 
 Both modes honor the same **role-to-tier mapping** (`MODEL_TIER` in `llm_client.py`). Heavy-reasoning roles — bull, bear, moderator, strategy_parser, gold_advisor, backtest_explainer — resolve to `GEMINI_MODEL` (default `gemini-3.1-pro-preview`) or `OPENROUTER_MODEL`. Light roles — swarm_analyst, swarm_synthesizer, swarm_reflection_writer, rag_narrative_polish, video_scene_director, video_veo_text_fallback, decision_terminal_roadmap — resolve to `GEMINI_MODEL_LIGHT` (default `gemini-3.1-flash`) or `OPENROUTER_MODEL_LIGHT`. Video clip generation is always Google Veo (`backend/video_generation_agent.py`), independent of the Gemini-primary flag.
 
@@ -150,8 +152,9 @@ risk-to-return ratio using a **hybrid deterministic-plus-LLM** model.
   forward-PE, a 5-year historical average PE proxy, beta, EPS / revenue
   growth, analyst price-target upside, dividend yield, debt-to-equity,
   and 12-month Form 4 insider activity from yFinance (with the data lake
-  as a price-history fallback). Missing fields are surfaced back to the
-  UI as data-quality notes.
+  as a price-history fallback). Partial missing fields are surfaced back
+  to the UI as data-quality notes; a **total** fetch failure raises
+  `InsufficientDataError` (§5.9) instead of scoring a zero-filled row.
 - **LLM personas** (all registered in §5.4 and tested by
   `backend/tests/test_sitg_prompt.py`) cover only the judgment-heavy
   factors that are not cleanly derivable from numbers:
@@ -185,6 +188,48 @@ Phase C extends the registry to a second resource kind — `TOOL` — and evolve
 ### 5.8 Decision-Outcome Ledger (Harness Engineering Phase 2)
 
 `backend/decision_ledger.py` is the SQL-queryable substrate under every user-facing agent decision. Five tables (`decision_events`, `decision_evidence`, `feature_snapshots`, `outcome_observations`, `contract_violations`) capture what the agent decided, which RAG chunks it cited (`knowledge_store.query_with_refs` threads `chunk_id` + `relevance` through every retrieval), which prompt versions + model produced it (`prompt_versions_json` + `registry_snapshot_id` stamped from §5.4), and the multi-horizon market-truth grades a later scheduler tick attaches to it. Producers are wired into `AgentPair.run` (`swarm_factor`), `_run_full_debate_impl` (`debate`), and `chat_send_message` (`chat_turn`) — each one calls `emit_decision` in a `try/except` so ledger failure never breaks user-facing flows, and every emit dual-writes a `decision_emitted` CORAL handoff so the existing dreaming / meta-harness surfaces keep working unchanged. `backend/outcome_grader.py` runs at **02:10 UTC** via APScheduler (only when `DECISION_LEDGER_ENABLE=1`), writes `price_return_pct` / `excess_return_vs_spy_pct` / `risk_adjusted_return` over `1d/5d/21d/63d`, and derives `correct_bool` from the verdict × excess-return rule. `backend/contract_validator.py` feeds `contract_violations` via `install_contract_validator_sink()` so model-drift per prompt version is answerable with a single `GROUP BY`. Three consumers close the loop: `DecisionLedgerReflectionSource` in §5.5 feeds SEPL with real graded outcomes (not LLM self-grades); `backend/feature_correlations.py` + the `v_feature_hit_rate` SQLite view / Supabase MV rank `(feature, regime, horizon)` by hit-rate and mean excess return; and `backend/model_swap_replay.py` re-runs historical decisions through a candidate model and returns a structured `ReplayReport` so operators can gate a model swap on a measurable delta. Feature flags: `DECISION_LEDGER_ENABLE` (master switch, default on), `DECISION_BACKEND` (`sqlite` | `supabase` | `none`), `CONTRACT_VALIDATOR_ENABLE`, `OUTCOME_GRADER_BATCH`. See **docs/DECISION_LEDGER.md** for the full schema, producer-authoring rules, example queries, and Supabase bootstrap.
+
+### 5.9 Truthful-data contract (insufficient_data)
+
+**Policy: no user-facing surface may deliver a final verdict, analysis, or chart built on fabricated, placeholder, or silently-degraded data.** When a required live source (yfinance, FinCrawler, FRED, Google News RSS, Polymarket, Kalshi, LLM provider, …) cannot deliver, the producer raises `backend.data_errors.InsufficientDataError` instead of substituting defaults. A global FastAPI handler in `backend/main.py` converts it into **HTTP 503** with a stable body:
+
+```json
+{
+  "error": "insufficient_data",
+  "source": "yfinance",
+  "message": "No usable 6-month price history for AAPL; ...",
+  "ticker": "AAPL",
+  "missing": ["price_history_6mo"]
+}
+```
+
+**The truthfulness line:** a *failed fetch* must never be reported as a real result — but an *empty result from a successful fetch* (e.g. "no recent news coverage", "no open prediction markets") is real data and flows through normally.
+
+What raises (instead of the previous silent fallbacks):
+
+| Producer | Previously fabricated | Now |
+|----------|----------------------|-----|
+| `connectors/debate_data.py` | Spot-only records with zeroed 1m/3m/6m returns and synthetic ±12 % 52-week bands; all-zero "empty shell" | Raises when 6-month history is unavailable |
+| `connectors/macro.py` | VIX `15.0` placeholder; zeroed sector %; empty capital flows; **simulated** consumer-spending and cash-reserve chart series; mock `k_shape` indicator | Raises on VIX/sector/flow failure; the two unsourced chart series are returned **empty** (no live source is wired); mock indicator removed |
+| `connectors/fundamentals.py` / `shorts.py` | `0` cash/debt and `0 %` short interest on failure | Raises (missing short data is reported as missing, not 0 %) |
+| `connectors/social.py` | Silent empty titles on RSS failure | Raises on transport/parse failure; genuine zero-coverage still returns `[]` |
+| `connectors/polymarket.py` / `kalshi.py` | Failed API calls reported as "no relevant markets" | Raises when tag fetches fail / all Kalshi requests fail |
+| `connectors/investor_metrics.py` | Random 8-point "sparklines", fabricated `historical` deltas (`roe*0.9` etc.), RSI **proxy** from 1-month return | `history: []`, `historical/trend: "N/A"`, no proxies; raises when both primary and fallback fetches fail |
+| `connectors/scorecard_data.py` | Zero-filled `_empty_scorecard_fields` row | Raises (partial-field gaps are still flagged in `fields_missing`) |
+| `predictor/agent.py` | **Synthetic** random-walk price series (`price_source: "synthetic"`); `MockTimesFMClient` quantile bands served as live forecasts | Returns `status: "insufficient_data"`, `executed: false`. The mock client is test/eval-only; quantile bands come **only** from the deployed TimesFM service. `PREDICTOR_BACKEND=baselines_only` opts into transparent statistical baselines (point forecasts only, no q10/q90 bands, `model_confidence: "low"`) |
+| `decision_terminal.py` roadmap | No-data heuristic of arbitrary spot multiples (×1.36 / ×1.12 / ×0.82); misscaled LLM scenarios silently replaced with the same multiples | Heuristic requires a **real** historical 3Y CAGR; otherwise the roadmap panel returns `null` prices with an honest assumption note. Misscaled model output is dropped, never substituted |
+| `frontend/DailyBriefUI.jsx` | Hardcoded `MOCK_LOSERS` / `MOCK_HOLDINGS` / `MOCK_NEWS` rows, stale hardcoded market-cap/P-E table, injected `MRVL/EWY/AMZN` news tickers, fabricated "Neutral" insider labels | Explicit empty states ("Live … data is unavailable"); metadata renders `N/A` when missing; only real portfolio tickers queried |
+| `llm_client.py` | `FALLBACK_TEMPLATES` verdicts (NEUTRAL moderator, all-yellow small-cap, default SITG/exec scores, …) | `VERDICT_ROLES` raise; non-verdict roles keep templates (§5.1) |
+| `gold_advisor_service.py` | Placeholder briefing on invalid LLM output; ran without gold OHLC | Raises on missing gold data or invalid briefing |
+| `routers/macro.py` `/metrics`, `/macro/global-markets` | `metrics: {}` / empty series on failure | Raise |
+| `routers/analysis.py` `/prediction-markets` | Per-source error masked as `has_relevant_data: false` | Raises |
+| `routers/scorecard.py` personas | Default SITG=3 / exec=5 on LLM failure | Raise (explicit `skip_llm_scores=true` opt-out is unchanged) |
+
+**Heuristics vs fabrication:** deterministic computations over *real* fetched data (e.g. the decision-terminal heuristic roadmap from live price + historical CAGR, provenance-stamped `source: "heuristic"`) are allowed — the contract bans *invented inputs*, not transparent models.
+
+**Frontend:** `apiFetch` (`frontend/src/api.js`) detects the `insufficient_data` body, marks the thrown error with `isInsufficientData`, and `AnalysisContext.jsx` treats any insufficient-data refusal as a full analysis error (no more "partial success" dashboards) with the backend's message shown to the user.
+
+**Tests:** `backend/tests/test_insufficient_data.py` (offline, mocked I/O) plus the rewritten `test_debate_data_fallback.py` and `test_gemini_primary_routing.py` encode this contract.
 
 ---
 
@@ -221,11 +266,35 @@ Phase C extends the registry to a second resource kind — `TOOL` — and evolve
 
 Implemented under `backend/connectors/` and used by agents and pipelines:
 
-- **yFinance** — equities, shorts, sectors, historical prices, etc.
+- **yFinance** — equities, shorts, sectors, historical prices, etc. Batched via `yfinance_batch.py` (§5.10).
 - **Google News RSS** — macro keyword scans (`news_scanner`).
-- **Polymarket** — prediction markets (`polymarket.py`).
+- **Polymarket** — prediction markets (`polymarket.py`); keyset/offset pagination.
+- **Kalshi** — prediction markets (`kalshi.py`); cursor pagination.
 - **FRED** — macro series (`fred.py`).
-- **YouTube** — finance channels (`youtube.py`).
+- **YouTube** — finance channels (`youtube.py`); uploads-playlist ingestion (1 unit/page).
+- **Shared HTTP** — backoff + pagination helpers (`fetch_utils.py`).
+
+All connectors follow the **truthful-data contract** (§5.9): a fetch failure raises `InsufficientDataError` (HTTP 503 `insufficient_data`) instead of returning placeholder/zero/synthetic values; an empty result from a *successful* fetch is real data and is returned normally.
+
+See **§5.10 Resilient free-API fetching** for batching, pagination, and quota-aware ingestion patterns shared across connectors.
+
+---
+
+### 5.10 Resilient free-API fetching (batching & pagination)
+
+Free market-data APIs enforce **per-IP / per-key quotas**, not “more parallel calls = more quota.” TradeTalk therefore:
+
+| Source | Pattern | Module | Effect |
+|--------|---------|--------|--------|
+| **yfinance (Yahoo)** | **Chunked batch download** — `yf.download` over ≤50 tickers per call, exponential backoff + inter-chunk delay between chunks; per-symbol fallback via `quote_fallbacks` | [`backend/connectors/yfinance_batch.py`](../backend/connectors/yfinance_batch.py) | Fewer HTTP round-trips for macro sectors, capital-flow proxies, and `/macro/global-markets`; avoids N separate `.info` calls |
+| **YouTube Data API** | **Uploads playlist** — `playlistItems.list` on each channel’s `UU…` playlist (1 unit/page) instead of `search.list` (100 units/call) | [`backend/connectors/youtube.py`](../backend/connectors/youtube.py) | ~12 quota units per daily ingestion vs ~600 previously; scans up to 150 recent uploads/channel |
+| **Polymarket (Gamma)** | **Keyset pagination** on `/events/keyset` with offset fallback on `/events`; concurrent per-tag walks | [`backend/connectors/polymarket.py`](../backend/connectors/polymarket.py) | Up to `POLYMARKET_MAX_PAGES` × `POLYMARKET_PAGE_SIZE` events/tag (default 5×100) |
+| **Kalshi Trade API v2** | **Cursor pagination** on `/events` and `/markets` open scans; series-scoped calls stay single-page | [`backend/connectors/kalshi.py`](../backend/connectors/kalshi.py) | Up to `KALSHI_MAX_PAGES` × `KALSHI_PAGE_SIZE` items (default 3×200) per scan |
+| **All HTTP connectors above** | Shared **429/5xx backoff** + optional `Retry-After` honour | [`backend/connectors/fetch_utils.py`](../backend/connectors/fetch_utils.py) | Transient failures retry; persistent failures still raise `InsufficientDataError` |
+
+**Env tuning (optional):** `YFINANCE_BATCH_CHUNK_SIZE`, `YFINANCE_BATCH_INTER_CHUNK_DELAY_S`, `POLYMARKET_PAGE_SIZE`, `POLYMARKET_MAX_PAGES`, `KALSHI_PAGE_SIZE`, `KALSHI_MAX_PAGES`.
+
+**What divide-and-conquer does *not* do:** firing 50 parallel yfinance calls does not increase Yahoo’s rate limit — it usually triggers 429 sooner. Chunked **batching** (one download, many tickers) plus **cache TTLs** (`connector_cache`) and the **data lake** for historical bars are the durable levers.
 
 ---
 
@@ -312,19 +381,67 @@ flowchart LR
   subgraph stores [Durable services]
     SB[(Supabase pgvector)]
     SQL[(SQLite on Render disk)]
+    DL[(Data lake Parquet / HF Hub)]
+  end
+  subgraph ingest [Scheduled ingestion]
+    DP[Daily pipeline]
+  end
+  subgraph fetch [Resilient fetch layer §5.10]
+    YB[yfinance_batch chunked download]
+    FU[fetch_utils backoff + pagination]
   end
   subgraph vendors [Third parties]
-    OR[OpenRouter]
-    M[Market data APIs]
+    OR[OpenRouter LLM]
+    YF[Yahoo yfinance]
+    YT[YouTube playlistItems]
+    PM[Polymarket Gamma keyset]
+    KA[Kalshi cursor API]
     HF[Hugging Face Hub optional]
   end
   U --> V
   V -->|API calls| R
   R --> OR
-  R --> M
+  R --> YB
+  YB --> YF
+  R --> FU
+  FU --> PM
+  FU --> KA
+  R --> YT
+  DP --> YB
+  DP --> YT
+  DP --> SB
   R --> SB
   R --> SQL
-  R -.->|optional Chroma HF embeddings or HF datasets| HF
+  R --> DL
+  DL -.->|optional snapshot| HF
+  YF -.->|historical ETL| DL
+```
+
+### 13.1 Connector fetch paths (live user query)
+
+```mermaid
+flowchart TB
+  subgraph user [User-facing analysis]
+    DT[Decision terminal / debate]
+    MACRO["macro sectors and flows"]
+    PMEP["prediction-markets"]
+  end
+  subgraph batch [yfinance_batch]
+    CHUNK[Chunk tickers ≤50]
+    DL[yf.download one call per chunk]
+    BACK[Backoff between chunks]
+  end
+  subgraph truth [Truthful-data contract §5.9]
+    ERR[503 insufficient_data]
+  end
+  MACRO --> CHUNK --> DL --> BACK
+  DL -->|missing symbol| FB[quote_fallbacks chart]
+  FB -->|still missing| ERR
+  PMEP --> POLY[Polymarket keyset pages]
+  PMEP --> KAL[Kalshi cursor pages]
+  POLY -->|tag fetch failed| ERR
+  KAL -->|all probes failed| ERR
+  DT --> batch
 ```
 
 This architecture document is the intended **stable narrative** for onboarding and refactors; update it when behavior changes.

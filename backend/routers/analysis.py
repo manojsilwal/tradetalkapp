@@ -512,7 +512,8 @@ async def predictor_forecast_get(
     ),
     _auth_user=Depends(get_optional_user),
 ):
-    """Probabilistic price forecast (offline-safe mock path unless TimesFM URL configured)."""
+    """Probabilistic price forecast — requires the TimesFM service (or explicit
+    baselines-only mode); otherwise answers with status "insufficient_data"."""
     from ..predictor.agent import run_predictor_forecast
 
     hs = [h.strip() for h in horizon.split(",") if h.strip()]
@@ -550,20 +551,30 @@ async def prediction_markets(ticker: str = Query("AAPL")):
       - "sector"  — index/sector-level bets the stock belongs to
                     (S&P 500, Nasdaq, tech-sector ETFs, etc.)
 
-    Both sources are fetched concurrently; partial results returned on failure.
+    Truthful-data contract: a failed source fetch raises 503 insufficient_data
+    instead of being silently reported as "no relevant markets".
     """
+    from ..data_errors import InsufficientDataError
+
     t = validate_ticker_query(ticker)
 
-    async def _safe(coro):
-        try:
-            return await coro
-        except Exception:
-            return {"events": [], "has_relevant_data": False, "source": "error", "context": {}}
-
-    poly_result, kalshi_result = await asyncio.gather(
-        _safe(poly_connector.fetch_data(ticker=t)),
-        _safe(kalshi_connector.fetch_data(ticker=t)),
+    results = await asyncio.gather(
+        poly_connector.fetch_data(ticker=t),
+        kalshi_connector.fetch_data(ticker=t),
+        return_exceptions=True,
     )
+    failures = [r for r in results if isinstance(r, BaseException)]
+    if failures:
+        first = failures[0]
+        if isinstance(first, InsufficientDataError):
+            raise first
+        raise InsufficientDataError(
+            "prediction_markets",
+            f"Prediction-market fetch failed for {t}: {first}",
+            ticker=t,
+            missing=["prediction_market_events"],
+        ) from first
+    poly_result, kalshi_result = results
 
     poly_events = [
         {**e, "source": "Polymarket"} for e in (poly_result.get("events") or [])

@@ -174,8 +174,8 @@ class TestProviderGenerateGeminiPrimary(_EnvSandbox):
         self.assertEqual(captured["model"], GEMINI_MODEL_LIGHT)
         self.assertEqual(result.get("signal"), 1)
 
-    def test_primary_gemini_failure_returns_template_not_openrouter(self):
-        """When Gemini errors, fall back to FALLBACK_TEMPLATES — never OpenRouter."""
+    def test_primary_gemini_failure_raises_insufficient_data_not_openrouter(self):
+        """When Gemini errors on a verdict role, raise InsufficientDataError — never OpenRouter, never a template."""
         os.environ["GEMINI_PRIMARY"] = "1"
         os.environ["GEMINI_API_KEY"] = "test-key"
 
@@ -184,19 +184,19 @@ class TestProviderGenerateGeminiPrimary(_EnvSandbox):
         def fake_gemini_sync(**kwargs):
             raise RuntimeError("simulated Gemini 503")
 
-        from backend.llm_client import FALLBACK_TEMPLATES
+        from backend.data_errors import InsufficientDataError
 
         with mock.patch(
             "backend.llm_client.gemini_simple_completion_sync",
             side_effect=fake_gemini_sync,
         ):
-            result, _ = client._provider_generate("bull", "prompt")
+            with self.assertRaises(InsufficientDataError):
+                client._provider_generate("bull", "prompt")
 
-        self.assertEqual(result, FALLBACK_TEMPLATES["bull"])
         mock_pool.sync_clients_for_request.assert_not_called()
 
-    def test_primary_gemini_empty_returns_template_not_openrouter(self):
-        """Empty Gemini output is treated as a failure; template wins, not OR."""
+    def test_primary_gemini_failure_nonverdict_role_returns_template(self):
+        """Non-verdict roles may still degrade to templates on Gemini failure."""
         os.environ["GEMINI_PRIMARY"] = "1"
         os.environ["GEMINI_API_KEY"] = "test-key"
 
@@ -206,11 +206,29 @@ class TestProviderGenerateGeminiPrimary(_EnvSandbox):
 
         with mock.patch(
             "backend.llm_client.gemini_simple_completion_sync",
+            side_effect=RuntimeError("simulated Gemini 503"),
+        ):
+            result, _ = client._provider_generate("video_scene_director", "prompt")
+
+        self.assertEqual(result, FALLBACK_TEMPLATES["video_scene_director"])
+        mock_pool.sync_clients_for_request.assert_not_called()
+
+    def test_primary_gemini_empty_raises_insufficient_data_not_openrouter(self):
+        """Empty Gemini output on a verdict role raises; OpenRouter still untouched."""
+        os.environ["GEMINI_PRIMARY"] = "1"
+        os.environ["GEMINI_API_KEY"] = "test-key"
+
+        client, mock_pool = self._mk_client_with_mock_openrouter()
+
+        from backend.data_errors import InsufficientDataError
+
+        with mock.patch(
+            "backend.llm_client.gemini_simple_completion_sync",
             return_value="",  # empty string = failure
         ):
-            result, _ = client._provider_generate("bear", "prompt")
+            with self.assertRaises(InsufficientDataError):
+                client._provider_generate("bear", "prompt")
 
-        self.assertEqual(result, FALLBACK_TEMPLATES["bear"])
         mock_pool.sync_clients_for_request.assert_not_called()
 
     def test_primary_off_keeps_openrouter_primary(self):
@@ -222,19 +240,19 @@ class TestProviderGenerateGeminiPrimary(_EnvSandbox):
 
         client, mock_pool = self._mk_client_with_mock_openrouter()
 
-        # No Gemini and no OR clients → falls through to FALLBACK_TEMPLATES, and
-        # critically the OR pool.sync_clients_for_request IS invoked (proving
+        # No Gemini and no OR clients → verdict role raises InsufficientDataError,
+        # and critically the OR pool.sync_clients_for_request IS invoked (proving
         # we took the OpenRouter branch).
+        from backend.data_errors import InsufficientDataError
+
         with mock.patch(
             "backend.llm_client.gemini_simple_completion_sync",
             side_effect=AssertionError("Gemini must not be called when primary=off and no key"),
         ):
-            result, _ = client._provider_generate("bull", "prompt")
+            with self.assertRaises(InsufficientDataError):
+                client._provider_generate("bull", "prompt")
 
         mock_pool.sync_clients_for_request.assert_called()
-        from backend.llm_client import FALLBACK_TEMPLATES
-
-        self.assertEqual(result, FALLBACK_TEMPLATES["bull"])
 
 
 class TestPlainTextGenerateGeminiPrimary(_EnvSandbox):

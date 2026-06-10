@@ -13,6 +13,17 @@ observations:
 * ``excess_return``   — ``abs_return`` minus the SPY benchmark over the same window
 * ``risk_adjusted``   — ``excess_return`` divided by realised daily-return volatility
 
+Quantile-forecast decisions (``price_forecast`` rows emitted by
+``backend.predictor.ledger_emit`` with ``q10_usd`` / ``q50_usd`` / ``q90_usd``
+in ``output_json``) additionally get forecast-accuracy observations so the
+ledger grades *probabilistic* model output, not just directional verdicts:
+
+* ``forecast_band_hit``  — 1.0 iff realized close ∈ [q10, q90]; ``correct``
+  mirrors the hit so rolling coverage is queryable like a hit-rate
+* ``forecast_pinball``   — mean pinball loss across q10/q50/q90, normalised by
+  the entry price (return-space, cross-ticker comparable)
+* ``forecast_point_err`` — |q50 (or point) − realized| / entry price
+
 ``correct`` is only populated on ``excess_return`` rows and is derived from the
 decision's ``verdict``: BUY / STRONG BUY → correct iff excess > 0,
 SELL / STRONG SELL → correct iff excess < 0, everything else → None so the row
@@ -398,11 +409,100 @@ class OutcomeGrader:
                 )
             )
 
+        rows.extend(
+            _forecast_rows(
+                ev,
+                horizon=horizon,
+                entry_price=stock_entry,
+                exit_price=stock_exit,
+                as_of_ts=now_ts,
+                label_source=label_source,
+            )
+        )
+
         wrote = 0
         for r in rows:
             if ledger.record_outcome(r):
                 wrote += 1
         return wrote > 0
+
+
+def _pinball_loss(realized: float, quantile: float, tau: float) -> float:
+    """Pinball / quantile loss for one observation.
+
+    Kept local (instead of importing ``backend.predictor.calibration``, which
+    matches this definition) so the grader module stays importable without
+    pulling the full predictor agent chain.
+    """
+    err = float(realized) - float(quantile)
+    return err * tau if err >= 0 else err * (tau - 1.0)
+
+
+def _as_pos_float(value: Any) -> Optional[float]:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if f > 0 and math.isfinite(f) else None
+
+
+def _forecast_rows(
+    ev: _dl.DecisionEvent,
+    *,
+    horizon: str,
+    entry_price: float,
+    exit_price: float,
+    as_of_ts: float,
+    label_source: str,
+) -> List[_dl.OutcomeObservation]:
+    """Forecast-accuracy observations for quantile-band decisions.
+
+    Reads ``q10_usd`` / ``q50_usd`` / ``q90_usd`` (and ``point_forecast_usd``)
+    from the decision's ``output_json``. Non-forecast decisions (no band
+    fields) return ``[]`` so the classic verdict path is untouched. All values
+    are normalised by the entry price so pinball / point error aggregate
+    across tickers with different price levels.
+    """
+    out = ev.output if isinstance(ev.output, dict) else {}
+    q10 = _as_pos_float(out.get("q10_usd"))
+    q50 = _as_pos_float(out.get("q50_usd"))
+    q90 = _as_pos_float(out.get("q90_usd"))
+    point = _as_pos_float(out.get("point_forecast_usd")) or q50
+    if q10 is None and q50 is None and q90 is None and point is None:
+        return []
+
+    def _obs(metric: str, value: float, correct: Optional[bool] = None) -> _dl.OutcomeObservation:
+        return _dl.OutcomeObservation(
+            decision_id=ev.decision_id,
+            horizon=horizon,
+            metric=metric,
+            value=value,
+            as_of_ts=as_of_ts,
+            benchmark="",
+            excess_return=None,
+            correct=correct,
+            label_source=label_source,
+        )
+
+    rows: List[_dl.OutcomeObservation] = []
+
+    if q10 is not None and q90 is not None:
+        lo, hi = (q10, q90) if q10 <= q90 else (q90, q10)
+        hit = lo <= exit_price <= hi
+        rows.append(_obs("forecast_band_hit", 1.0 if hit else 0.0, correct=hit))
+
+    if q10 is not None and q50 is not None and q90 is not None:
+        pinball = (
+            _pinball_loss(exit_price, q10, 0.10)
+            + _pinball_loss(exit_price, q50, 0.50)
+            + _pinball_loss(exit_price, q90, 0.90)
+        ) / 3.0
+        rows.append(_obs("forecast_pinball", pinball / entry_price))
+
+    if point is not None:
+        rows.append(_obs("forecast_point_err", abs(point - exit_price) / entry_price))
+
+    return rows
 
 
 def _grade_correctness(verdict: str, excess_return: Optional[float]) -> Optional[bool]:

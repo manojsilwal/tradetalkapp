@@ -18,20 +18,8 @@ function getCompanyLogoStyle(symbol) {
   return { backgroundColor: '#1e293b', color: '#ffffff' }
 }
 
-// No mock benchmarks or metrics to preserve real-time parity
-
-const TICKER_METADATA_FALLBACKS = {
-  LRCX: { marketCap: '98.2B', pe: '19.4', industry: 'Semiconductors' },
-  KLAC: { marketCap: '84.5B', pe: '21.8', industry: 'Semiconductors' },
-  ORCL: { marketCap: '385.1B', pe: '32.4', industry: 'Software' },
-  MRVL: { marketCap: '62.4B', pe: '44.6', industry: 'Semiconductors' },
-  EWY: { marketCap: '3.2B', pe: '12.1', industry: 'ETF (South Korea)' },
-  AAPL: { marketCap: '3.15T', pe: '28.2', industry: 'Consumer Electronics' },
-  MSFT: { marketCap: '3.08T', pe: '35.4', industry: 'Software' },
-  NVDA: { marketCap: '2.85T', pe: '68.5', industry: 'Semiconductors' },
-  GOOG: { marketCap: '2.15T', pe: '24.8', industry: 'Interactive Media' },
-  AMZN: { marketCap: '1.85T', pe: '41.2', industry: 'Internet Retail' },
-}
+// Truthful-data contract: no mock benchmarks, metadata, or rows anywhere on
+// this page — missing live data renders as "N/A" / explicit empty states.
 
 function formatMarketCap(val) {
   if (val == null) return null;
@@ -51,99 +39,12 @@ function formatPE(val) {
 }
 
 function getTickerMetadata(symbol, rowData) {
-  const sym = (symbol || '').toUpperCase().trim();
-  const fallback = TICKER_METADATA_FALLBACKS[sym] || { marketCap: 'N/A', pe: 'N/A', industry: 'Technology' };
-  
-  const mcap = formatMarketCap(rowData?.market_cap || rowData?.marketCap) || fallback.marketCap;
-  const peVal = formatPE(rowData?.pe_ratio || rowData?.pe || rowData?.forward_pe) || fallback.pe;
-  const ind = rowData?.industry || fallback.industry;
-
-  return { marketCap: mcap, pe: peVal, industry: ind };
+  return {
+    marketCap: formatMarketCap(rowData?.market_cap || rowData?.marketCap) || 'N/A',
+    pe: formatPE(rowData?.pe_ratio || rowData?.pe || rowData?.forward_pe) || 'N/A',
+    industry: rowData?.industry || 'N/A',
+  };
 }
-
-const MOCK_LOSERS = [
-  {
-    symbol: 'LRCX',
-    move: -16.0,
-    insider: 'Neutral',
-    marketCap: '98.2B',
-    pe: '19.4',
-    industry: 'Semiconductors',
-    rationale: 'Despite a 16% drop, CEO insider buying is mostly...'
-  },
-  {
-    symbol: 'KLAC',
-    move: -16.0,
-    insider: 'Neutral',
-    marketCap: '84.5B',
-    pe: '21.8',
-    industry: 'Semiconductors',
-    rationale: 'Similar sentiment to peers; broad market selling...'
-  },
-  {
-    symbol: 'ORCL',
-    move: -16.0,
-    insider: 'Neutral',
-    marketCap: '385.1B',
-    pe: '32.4',
-    industry: 'Software',
-    rationale: 'Earnings miss cascaded into sector-wide drag...'
-  }
-]
-
-const MOCK_HOLDINGS = [
-  {
-    symbol: 'MRVL',
-    move: -16.0,
-    insider: 'Neutral',
-    marketCap: '62.4B',
-    pe: '44.6',
-    industry: 'Semiconductors',
-    rationale: 'Portfolio holding MRVL sentiment is perfectly...'
-  },
-  {
-    symbol: 'EWY',
-    move: -16.0,
-    insider: 'Neutral',
-    marketCap: '3.2B',
-    pe: '12.1',
-    industry: 'ETF (South Korea)',
-    rationale: 'Emerging markets ETF seeing significant outflow...'
-  }
-]
-
-const MOCK_NEWS = [
-  {
-    time: '1h ago',
-    sentiment: 'Positive',
-    symbol: 'MRVL',
-    text: 'Chip pipeline constraints persistent.'
-  },
-  {
-    time: '3h ago',
-    sentiment: 'Negative',
-    symbol: 'EWY',
-    text: 'South Korean exports growth slows.'
-  },
-  {
-    time: '5h ago',
-    sentiment: 'Negative',
-    symbol: 'MACRO',
-    text: 'Global recession concerns build on new data.'
-  },
-  {
-    time: '7h ago',
-    sentiment: 'Positive',
-    symbol: 'GOLD',
-    text: 'Demand surges on geopolitical safe-haven flows.'
-  },
-  {
-    time: '9h ago',
-    sentiment: 'Positive',
-    symbol: 'AMZN',
-    text: 'European regulators open new retail probe.'
-  }
-]
 
 export default function DailyBriefUI() {
   const navigate = useNavigate()
@@ -161,7 +62,7 @@ export default function DailyBriefUI() {
       if (briefData) {
         setPortfolioBrief(briefData)
         const tickers = briefData.impact_movers?.map(m => m.symbol).filter(Boolean) || []
-        const uniqueTickers = [...new Set([...tickers, 'MRVL', 'EWY', 'AMZN'])].join(',')
+        const uniqueTickers = [...new Set(tickers)].join(',')
         if (uniqueTickers) {
           const newsData = await apiFetch(`${API_BASE_URL}/portfolio/news?tickers=${encodeURIComponent(uniqueTickers)}`).catch(() => null)
           if (newsData?.items) {
@@ -227,7 +128,7 @@ export default function DailyBriefUI() {
         return {
           symbol: r.symbol,
           move: r.daily_return_pct,
-          insider: 'Neutral',
+          insider: r.insider_sentiment || 'N/A',
           marketCap: meta.marketCap,
           pe: meta.pe,
           industry: meta.industry,
@@ -235,7 +136,7 @@ export default function DailyBriefUI() {
         }
       })
     }
-    return MOCK_LOSERS
+    return []
   }
 
   const mapRealHoldings = () => {
@@ -245,15 +146,15 @@ export default function DailyBriefUI() {
         return {
           symbol: r.symbol,
           move: r.daily_return_pct,
-          insider: 'Neutral',
+          insider: r.insider_sentiment || 'N/A',
           marketCap: meta.marketCap,
           pe: meta.pe,
           industry: meta.industry,
-          rationale: r.one_line_reason || `Portfolio holding ${r.symbol} sentiment is balanced.`
+          rationale: r.one_line_reason || `No rationale available for ${r.symbol}.`
         }
       })
     }
-    return MOCK_HOLDINGS
+    return []
   }
 
   const mapRealNews = () => {
@@ -267,7 +168,7 @@ export default function DailyBriefUI() {
               if (hours < 24) return `${hours}h ago`
               return `${Math.floor(hours / 24)}d ago`
             })()
-          : '1h ago'
+          : '—'
         return {
           time: timeVal,
           sentiment: item.sentiment === 'positive' ? 'Positive' : item.sentiment === 'negative' ? 'Negative' : 'Neutral',
@@ -276,7 +177,7 @@ export default function DailyBriefUI() {
         }
       })
     }
-    return MOCK_NEWS
+    return []
   }
 
   const tableLosers = mapRealLosers()
@@ -450,6 +351,11 @@ export default function DailyBriefUI() {
                   <span className="brief-card-link" onClick={() => navigate('/learning')}>Expand View</span>
                 </div>
                 
+                {tableLosers.length === 0 ? (
+                  <p style={{ color: '#94a3b8', fontSize: '0.9rem', padding: '16px 4px', margin: 0 }}>
+                    Live losers data is unavailable right now — nothing to show. Try Refresh later.
+                  </p>
+                ) : (
                 <div className="brief-table-container">
                   <table className="brief-table">
                     <thead>
@@ -495,6 +401,7 @@ export default function DailyBriefUI() {
                     </tbody>
                   </table>
                 </div>
+                )}
               </div>
 
               {/* Portfolio Exposure: Key Holdings Card */}
@@ -543,6 +450,10 @@ export default function DailyBriefUI() {
                       Add or import your holdings in the Paper Portfolio view to enable real-time risk exposure analysis.
                     </p>
                   </div>
+                ) : tableHoldings.length === 0 ? (
+                  <p style={{ color: '#94a3b8', fontSize: '0.9rem', padding: '16px 4px', margin: 0 }}>
+                    No live holdings impact data available yet — nothing to show. Try Refresh later.
+                  </p>
                 ) : (
                   <div className="brief-table-container">
                     <table className="brief-table">
@@ -602,6 +513,11 @@ export default function DailyBriefUI() {
                 </div>
               </div>
 
+              {timelineNews.length === 0 ? (
+                <p style={{ color: '#94a3b8', fontSize: '0.9rem', padding: '16px 4px', margin: 0 }}>
+                  No live news could be fetched for your portfolio tickers — nothing to show. Try Refresh later.
+                </p>
+              ) : (
               <div className="timeline-list">
                 <div className="timeline-line" />
                 {timelineNews.map((item, index) => (
@@ -619,6 +535,7 @@ export default function DailyBriefUI() {
                   </div>
                 ))}
               </div>
+              )}
             </div>
           </div>
         </>

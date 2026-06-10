@@ -1,6 +1,7 @@
 import asyncio
 import yfinance as yf
 from typing import Dict, Any
+from ..data_errors import InsufficientDataError
 from .base import DataConnector
 from ..connector_cache import get_cached, set_cached
 
@@ -19,24 +20,37 @@ class FundamentalsConnector(DataConnector):
             return cached
 
         def get_fundamentals() -> Dict[str, Any]:
-            ticker = yf.Ticker(ticker_sym)
-            info = ticker.info
-            
+            t = yf.Ticker(ticker_sym)
+            info = t.info or {}
+
             # yfinance provides totalCash and totalDebt in the info dictionary
-            total_cash = info.get("totalCash", 0)
-            total_debt = info.get("totalDebt", 0)
-            
+            total_cash = info.get("totalCash")
+            total_debt = info.get("totalDebt")
+            if total_cash is None and total_debt is None:
+                raise InsufficientDataError(
+                    "yfinance",
+                    f"Live balance-sheet data (cash/debt) unavailable for {ticker}.",
+                    ticker=ticker,
+                    missing=["total_cash", "total_debt"],
+                )
+
             return {
-                "total_cash": total_cash,
-                "total_debt": total_debt
+                "total_cash": total_cash or 0,
+                "total_debt": total_debt or 0,
             }
-            
+
         try:
             # Run blocking yfinance call in a thread
             data = await asyncio.to_thread(get_fundamentals)
+        except InsufficientDataError:
+            raise
         except Exception as e:
-            # Fallback values if API fails
-            data = {"total_cash": 0, "total_debt": 0}
+            raise InsufficientDataError(
+                "yfinance",
+                f"Live fundamentals fetch failed for {ticker}: {e}",
+                ticker=ticker,
+                missing=["total_cash", "total_debt"],
+            ) from e
             
         # Calculate ratio right away for convenience
         cash = float(data["total_cash"])

@@ -141,14 +141,15 @@ def _verdict_is_directional(v: str) -> bool:
 
 def _candidate_correctness(verdict: str, excess_return: Optional[float]) -> Optional[bool]:
     """Same rules as :mod:`backend.outcome_grader._grade_correctness` — kept
-    local to avoid the import cycle.
+    local to avoid the import cycle. ``UP`` / ``DOWN`` align with buy/sell so
+    forecast-backend candidates (price_forecast replays) are scorable too.
     """
     if excess_return is None:
         return None
     u = (verdict or "").upper().strip()
-    if u in _BUY_VERDICTS:
+    if u in _BUY_VERDICTS or u == "UP":
         return excess_return > 0
-    if u in _SELL_VERDICTS:
+    if u in _SELL_VERDICTS or u == "DOWN":
         return excess_return < 0
     return None
 

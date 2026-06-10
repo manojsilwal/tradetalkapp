@@ -494,6 +494,28 @@ class SEPL:
             logger.warning("[SEPL] improve: target %s not in registry", report.target_name)
             return None
 
+        # Market-truth feature correlations (Phase 3): show the improver which
+        # input features / regimes actually correlate with graded wins and
+        # losses, so prompt evolution is steered by outcome deltas rather than
+        # failure prose alone. Best-effort — an empty ledger yields no section.
+        market_truth_lines: List[str] = []
+        try:
+            from .feature_correlations import top_features
+
+            for s in top_features(horizon="5d", min_n=5, by="t_stat", limit=8):
+                hr = f"{s.hit_rate:.2f}" if s.hit_rate is not None else "n/a"
+                mer = (
+                    f"{s.mean_excess_return:+.4f}"
+                    if s.mean_excess_return is not None
+                    else "n/a"
+                )
+                market_truth_lines.append(
+                    f"{s.feature_name}={s.feature_value} (regime={s.regime or 'any'}): "
+                    f"hit_rate={hr}, mean_excess={mer}, n={s.n}"
+                )
+        except Exception:
+            market_truth_lines = []
+
         context = {
             "current_body": target_rec.body,
             "output_schema": target_rec.schema or {},
@@ -501,6 +523,7 @@ class SEPL:
             "effectiveness_mean": round(report.effectiveness_mean, 3),
             "sample_size": report.sample_size,
             "regime_breakdown": report.regime_breakdown,
+            "market_feature_correlations": market_truth_lines,
         }
         prompt = (
             "Target prompt: " + report.target_name + "\n"
@@ -509,6 +532,8 @@ class SEPL:
             + json.dumps(target_rec.schema or {}, indent=2)
             + "\n\nFAILURE_LESSONS (most recent):\n"
             + ("\n- " + "\n- ".join(report.failure_lessons) if report.failure_lessons else "(none)")
+            + "\n\nMARKET_FEATURE_CORRELATIONS (graded outcomes vs input features):\n"
+            + ("\n- " + "\n- ".join(market_truth_lines) if market_truth_lines else "(none yet)")
             + "\n\nPropose a NEW_BODY. Respond as instructed."
         )
 

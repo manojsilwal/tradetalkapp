@@ -245,6 +245,162 @@ class TestOutcomeGraderEndToEnd(_LedgerHarness):
         self.assertEqual(report.graded, 1)
 
 
+# ── Quantile-forecast grading ───────────────────────────────────────────────
+
+
+class TestForecastGrading(_LedgerHarness):
+    """price_forecast decisions with q10/q50/q90 bands get accuracy rows."""
+
+    def _emit_forecast(
+        self,
+        *,
+        symbol: str = "AAPL",
+        horizon_hint: str = "5d",
+        age_days: int = 10,
+        output: Optional[dict] = None,
+    ) -> str:
+        decision_id = dl.new_decision_id()
+        event = dl.DecisionEvent(
+            decision_id=decision_id,
+            created_at=time.time() - age_days * 86400,
+            decision_type="price_forecast",
+            symbol=symbol,
+            horizon_hint=horizon_hint,
+            verdict="UP",
+            confidence=None,
+            output=output or {},
+        )
+        dl.get_ledger().emit_decision(event)
+        return decision_id
+
+    def _prices_for(self, decision_id: str, *, entry: float, exit_px: float) -> dict:
+        entry_dt = datetime.fromtimestamp(
+            dl.get_ledger().get_decision(decision_id).created_at, tz=timezone.utc,
+        )
+        exit_dt = entry_dt + timedelta(days=int(round(5 * 1.45)))
+        return {
+            ("AAPL", entry_dt.date().isoformat()): entry,
+            ("AAPL", exit_dt.date().isoformat()): exit_px,
+            ("SPY", entry_dt.date().isoformat()): 400.0,
+            ("SPY", exit_dt.date().isoformat()): 404.0,
+        }
+
+    def _graded_metrics(self, decision_id: str) -> dict:
+        conn = dl.get_ledger()._conn()  # type: ignore[attr-defined]
+        rows = conn.execute(
+            "SELECT metric, value, correct_bool FROM outcome_observations "
+            "WHERE decision_id = ?",
+            (decision_id,),
+        ).fetchall()
+        return {r["metric"]: r for r in rows}
+
+    def test_band_hit_pinball_and_point_error(self) -> None:
+        # Realized exit 104 inside [q10=98, q90=110]; q50/point = 105.
+        decision_id = self._emit_forecast(
+            output={"q10_usd": 98.0, "q50_usd": 105.0, "q90_usd": 110.0,
+                    "point_forecast_usd": 105.0},
+        )
+        prices = self._prices_for(decision_id, entry=100.0, exit_px=104.0)
+        grader = OutcomeGrader(price_provider=_FixedPriceProvider(prices))
+        report = grader.grade_due("5d")
+        self.assertEqual(report.graded, 1)
+
+        metrics = self._graded_metrics(decision_id)
+        # Classic verdict rows still present for forecast decisions.
+        self.assertIn("abs_return", metrics)
+        self.assertIn("excess_return", metrics)
+
+        self.assertEqual(metrics["forecast_band_hit"]["value"], 1.0)
+        self.assertEqual(metrics["forecast_band_hit"]["correct_bool"], 1)
+        # pinball = (PL(104,98,.1) + PL(104,105,.5) + PL(104,110,.9)) / 3
+        #         = (0.6 + 0.5 + 0.6) / 3 = 0.566667 → ÷ entry 100 = 0.0056667
+        self.assertAlmostEqual(
+            metrics["forecast_pinball"]["value"], 0.0056667, places=6,
+        )
+        # |105 − 104| / 100 = 0.01
+        self.assertAlmostEqual(
+            metrics["forecast_point_err"]["value"], 0.01, places=6,
+        )
+
+    def test_band_miss_is_labelled_incorrect(self) -> None:
+        # Realized exit 120 above q90=110 → coverage miss.
+        decision_id = self._emit_forecast(
+            output={"q10_usd": 98.0, "q50_usd": 105.0, "q90_usd": 110.0},
+        )
+        prices = self._prices_for(decision_id, entry=100.0, exit_px=120.0)
+        grader = OutcomeGrader(price_provider=_FixedPriceProvider(prices))
+        grader.grade_due("5d")
+
+        metrics = self._graded_metrics(decision_id)
+        self.assertEqual(metrics["forecast_band_hit"]["value"], 0.0)
+        self.assertEqual(metrics["forecast_band_hit"]["correct_bool"], 0)
+
+    def test_point_only_forecast_gets_point_error_only(self) -> None:
+        decision_id = self._emit_forecast(output={"point_forecast_usd": 102.0})
+        prices = self._prices_for(decision_id, entry=100.0, exit_px=104.0)
+        grader = OutcomeGrader(price_provider=_FixedPriceProvider(prices))
+        grader.grade_due("5d")
+
+        metrics = self._graded_metrics(decision_id)
+        self.assertNotIn("forecast_band_hit", metrics)
+        self.assertNotIn("forecast_pinball", metrics)
+        self.assertAlmostEqual(
+            metrics["forecast_point_err"]["value"], 0.02, places=6,
+        )
+
+    def test_non_forecast_decision_gets_no_forecast_rows(self) -> None:
+        decision_id = dl.new_decision_id()
+        dl.get_ledger().emit_decision(dl.DecisionEvent(
+            decision_id=decision_id,
+            created_at=time.time() - 10 * 86400,
+            decision_type="debate",
+            symbol="AAPL",
+            horizon_hint="5d",
+            verdict="BUY",
+            confidence=0.7,
+        ))
+        prices = self._prices_for(decision_id, entry=100.0, exit_px=104.0)
+        grader = OutcomeGrader(price_provider=_FixedPriceProvider(prices))
+        grader.grade_due("5d")
+
+        metrics = self._graded_metrics(decision_id)
+        self.assertNotIn("forecast_band_hit", metrics)
+        self.assertNotIn("forecast_pinball", metrics)
+        self.assertNotIn("forecast_point_err", metrics)
+        self.assertEqual(len(metrics), 3)  # abs / excess / risk_adjusted only
+
+    def test_malformed_band_values_are_ignored(self) -> None:
+        decision_id = self._emit_forecast(
+            output={"q10_usd": "not-a-number", "q50_usd": None, "q90_usd": -5.0},
+        )
+        prices = self._prices_for(decision_id, entry=100.0, exit_px=104.0)
+        grader = OutcomeGrader(price_provider=_FixedPriceProvider(prices))
+        report = grader.grade_due("5d")
+        self.assertEqual(report.graded, 1)  # classic rows still written
+
+        metrics = self._graded_metrics(decision_id)
+        self.assertNotIn("forecast_band_hit", metrics)
+        self.assertNotIn("forecast_pinball", metrics)
+        self.assertNotIn("forecast_point_err", metrics)
+
+    def test_forecast_regrading_stays_idempotent(self) -> None:
+        decision_id = self._emit_forecast(
+            output={"q10_usd": 98.0, "q50_usd": 105.0, "q90_usd": 110.0},
+        )
+        prices = self._prices_for(decision_id, entry=100.0, exit_px=104.0)
+        grader = OutcomeGrader(price_provider=_FixedPriceProvider(prices))
+        grader.grade_due("5d")
+        grader.grade_due("5d")
+
+        conn = dl.get_ledger()._conn()  # type: ignore[attr-defined]
+        n = conn.execute(
+            "SELECT COUNT(*) FROM outcome_observations WHERE decision_id = ?",
+            (decision_id,),
+        ).fetchone()[0]
+        # abs/excess/risk_adjusted + band_hit/pinball/point_err = 6, once each.
+        self.assertEqual(n, 6)
+
+
 # ── Scheduler entry point smoke test ────────────────────────────────────────
 
 

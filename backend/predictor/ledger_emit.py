@@ -70,7 +70,12 @@ def emit_predictor_decisions(
             name="ensemble_weights_json",
             value_str=json.dumps(resp.ensemble_weights, sort_keys=True),
         ),
+        dl.FeatureValue(
+            name="forecast_source",
+            value_str=str(resp.meta.get("forecast_source") or "mock"),
+        ),
     ]
+    conformal_scales = resp.meta.get("conformal_scales") or {}
 
     snap = _registry_snapshot()
     pv_dict = _prompt_versions_dict()
@@ -86,6 +91,11 @@ def emit_predictor_decisions(
             "cycle_id": resp.cycle_id,
             "predictor_status": resp.status,
             "point_forecast_usd": point,
+            # Quantile band in USD so the outcome grader can score pinball
+            # loss and q10–q90 coverage against the realized close at T+H.
+            "q10_usd": band.q10_usd if band else None,
+            "q50_usd": band.q50_usd if band else None,
+            "q90_usd": band.q90_usd if band else None,
             "directional_bias": resp.directional_bias,
             "horizon": h,
             "ticker": ticker.upper(),
@@ -94,6 +104,16 @@ def emit_predictor_decisions(
         }
         verdict_graded = _verdict_for_grader(resp.directional_bias)
         did = f"{base_id}:{h}"
+        features_h = list(features_common)
+        if conformal_scales.get(h) is not None:
+            try:
+                features_h.append(
+                    dl.FeatureValue(
+                        name="conformal_scale", value_num=float(conformal_scales[h]),
+                    )
+                )
+            except (TypeError, ValueError):
+                pass
         dl.emit_decision(
             decision_type="price_forecast",
             symbol=ticker,
@@ -104,7 +124,7 @@ def emit_predictor_decisions(
             output=out,
             source_route=source_route,
             evidence=evidence,
-            features=features_common,
+            features=features_h,
             decision_id=did,
             model=resp.model_version,
             prompt_versions=pv_dict,
