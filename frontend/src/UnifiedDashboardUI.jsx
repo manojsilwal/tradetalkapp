@@ -7,6 +7,7 @@ import { API_BASE_URL, apiFetch } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
 import DashboardScorecardPanel from './components/DashboardScorecardPanel';
+import ActionableCompaniesPanel, { ActionableCompaniesButton, useActionableCompanies } from './components/ActionableCompaniesPanel';
 import DebateThreadPanel from './components/debate/DebateThreadPanel';
 import DebateVerdictSummary from './components/debate/DebateVerdictSummary';
 import './DecisionTerminalUI.css';
@@ -505,6 +506,9 @@ export default function UnifiedDashboardUI() {
     contextAnalyzeTicker(sym, forceRefresh);
   }, [ticker, setSearchParams, contextAnalyzeTicker]);
 
+  // Async S&P 500 batch screener (202 + background worker + polling)
+  const actionableState = useActionableCompanies();
+
   // Do not set default ticker parameter if missing to allow empty landing at /dashboard
 
   // Deep-link: /?ticker=NVDA from Daily Brief or bookmarks
@@ -682,6 +686,7 @@ export default function UnifiedDashboardUI() {
                 Refresh
               </button>
             )}
+            <ActionableCompaniesButton busy={actionableState.busy} onClick={actionableState.startScan} />
           </div>
           {!isInSp500 && searchUpper && suggestions.length > 0 && (
             <div className="dt-suggestions" style={{ position: 'absolute', top: '100%', left: 0, width: '160px', background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', marginTop: '4px', zIndex: 10 }}>
@@ -709,6 +714,9 @@ export default function UnifiedDashboardUI() {
           Enter a ticker and click Analyze. First load can take up to a minute (swarm, debate, and decision terminal).
         </div>
       )}
+
+      {/* Actionable Companies — async S&P 500 batch screener results */}
+      <ActionableCompaniesPanel state={actionableState} onSelectTicker={(sym) => analyzeTicker(sym)} />
 
       {/* Main Content Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '20px' }}>
