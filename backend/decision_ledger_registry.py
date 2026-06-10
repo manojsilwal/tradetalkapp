@@ -23,5 +23,13 @@ def registry_attribution() -> Tuple[Dict[str, str], str, str]:
             prompt_versions = {r.name: r.version for r in reg.list()}
     except Exception:
         pass
-    model = (os.getenv("OPENROUTER_MODEL") or os.getenv("GEMINI_MODEL") or "").strip()
+    # Resolve the model that would actually serve the call (provider cascade
+    # aware) instead of blindly stamping OPENROUTER_MODEL — Phase 1 of the
+    # model-agnostic harness needs trustworthy per-decision attribution.
+    try:
+        from .harness.backend_protocol import resolved_model_label
+
+        model = resolved_model_label()
+    except Exception:
+        model = (os.getenv("OPENROUTER_MODEL") or os.getenv("GEMINI_MODEL") or "").strip()
     return prompt_versions, snap_id, model
