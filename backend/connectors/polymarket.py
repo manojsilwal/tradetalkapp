@@ -1,9 +1,11 @@
 import asyncio
-import requests
 import json
+import os
 import yfinance as yf
-from typing import Dict, Any, List
+from typing import Any, Dict, List, Optional, Tuple
+from ..data_errors import InsufficientDataError
 from .base import DataConnector
+from .fetch_utils import paginate_cursor, paginate_offset, request_with_backoff
 from .market_context import get_ticker_context_with_yfinance
 from ..connector_cache import get_cached, set_cached
 
@@ -28,8 +30,58 @@ TICKER_KEYWORDS = {
 # Tags that reliably contain stock/equity prediction markets on Polymarket.
 _STOCK_TAGS = ("stocks", "equities", "finance", "financials")
 
-# Maximum number of events fetched per tag.
-_TAG_LIMIT = 100
+_GAMMA_BASE = "https://gamma-api.polymarket.com"
+_TAG_PAGE_SIZE = int(os.environ.get("POLYMARKET_PAGE_SIZE", "100") or "100")
+_TAG_MAX_PAGES = int(os.environ.get("POLYMARKET_MAX_PAGES", "5") or "5")
+
+
+def _fetch_tag_events_paginated(tag: str) -> List[dict]:
+    """
+    Walk all open events for a tag using keyset pagination when available,
+    falling back to offset pagination on the legacy ``/events`` endpoint.
+    """
+    keyset_url = f"{_GAMMA_BASE}/events/keyset"
+
+    def _fetch_keyset_page(after_cursor: Optional[str]) -> Tuple[List[dict], Optional[str]]:
+        params: Dict[str, Any] = {
+            "tag_slug": tag,
+            "limit": min(_TAG_PAGE_SIZE, 500),
+            "closed": "false",
+        }
+        if after_cursor:
+            params["after_cursor"] = after_cursor
+        resp = request_with_backoff("GET", keyset_url, params=params, timeout=10)
+        body = resp.json()
+        if isinstance(body, dict):
+            batch = body.get("events") or []
+            next_cursor = body.get("next_cursor") or None
+            return batch, next_cursor if next_cursor else None
+        if isinstance(body, list):
+            return body, None
+        return [], None
+
+    try:
+        return paginate_cursor(_fetch_keyset_page, max_pages=_TAG_MAX_PAGES)
+    except Exception as keyset_err:
+        logger = __import__("logging").getLogger(__name__)
+        logger.debug("[Polymarket] keyset pagination failed for tag=%s: %s", tag, keyset_err)
+
+    def _fetch_offset_page(offset: int) -> List[dict]:
+        resp = request_with_backoff(
+            "GET",
+            f"{_GAMMA_BASE}/events",
+            params={
+                "tag_slug": tag,
+                "limit": _TAG_PAGE_SIZE,
+                "offset": offset,
+                "closed": "false",
+            },
+            timeout=10,
+        )
+        batch = resp.json()
+        return batch if isinstance(batch, list) else []
+
+    return paginate_offset(_fetch_offset_page, page_size=_TAG_PAGE_SIZE, max_pages=_TAG_MAX_PAGES)
 
 
 class PolymarketConnector(DataConnector):
@@ -66,20 +118,24 @@ class PolymarketConnector(DataConnector):
         ctx = await get_ticker_context_with_yfinance(ticker_upper)
         index_terms = ctx.get("index_search_terms") or []
 
-        # 3. Fetch events from all relevant tags concurrently
-        def _fetch_tag(tag: str) -> List[dict]:
-            try:
-                res = requests.get(
-                    f"https://gamma-api.polymarket.com/events?tag_slug={tag}&limit={_TAG_LIMIT}&closed=false",
-                    timeout=8,
-                )
-                res.raise_for_status()
-                return res.json() or []
-            except Exception:
-                return []
-
-        tasks = [asyncio.to_thread(_fetch_tag, tag) for tag in _STOCK_TAGS]
+        # 3. Fetch events from all relevant tags concurrently. A failed tag
+        # fetch raises — an empty events list must mean "no markets exist",
+        # never "the API call failed".
+        tasks = [
+            asyncio.to_thread(_fetch_tag_events_paginated, tag) for tag in _STOCK_TAGS
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        failed_tags = [
+            tag for tag, batch in zip(_STOCK_TAGS, results) if isinstance(batch, Exception)
+        ]
+        if failed_tags:
+            raise InsufficientDataError(
+                "polymarket",
+                "Polymarket event fetch failed for tags: " + ", ".join(failed_tags),
+                ticker=ticker_upper,
+                missing=[f"polymarket_tag:{t}" for t in failed_tags],
+            )
 
         # Merge and deduplicate by event id
         seen_ids: set = set()

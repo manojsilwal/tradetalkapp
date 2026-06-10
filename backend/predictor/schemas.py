@@ -27,7 +27,7 @@ class PredictorForecastResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["ok", "disabled", "degraded", "stale_data"] = "ok"
+    status: Literal["ok", "disabled", "degraded", "stale_data", "insufficient_data"] = "ok"
     ticker: str
     cycle_id: str
     disclaimer: str

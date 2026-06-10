@@ -47,6 +47,7 @@ from .openrouter_pool import (
     sync_failover_execute,
 )
 from .chat_evidence_contract import classify_tool_result
+from .data_errors import InsufficientDataError
 from .gemini_llm import (
     GEMINI_FALLBACK_MODEL,
     GEMINI_MODEL,
@@ -402,6 +403,27 @@ AGENT_SYSTEM_PROMPTS = {
     ),
 }
 
+# ── Truthful-data contract ────────────────────────────────────────────────────
+# Roles whose output is (or directly feeds) a user-facing verdict/analysis.
+# When no real LLM output can be produced for these roles we raise
+# InsufficientDataError instead of returning a canned template — the app must
+# say "insufficient data" rather than fabricate a final result.
+VERDICT_ROLES = frozenset({
+    "bull",
+    "bear",
+    "macro",
+    "value",
+    "momentum",
+    "moderator",
+    "swarm_synthesizer",
+    "swarm_analyst",
+    "small_cap_analyst",
+    "scorecard_verdict",
+    "gold_advisor",
+    "sitg_scorer",
+    "execution_risk_scorer",
+})
+
 # ── Rule-based fallback templates ─────────────────────────────────────────────
 FALLBACK_TEMPLATES = {
     "bull":     {"headline": "Bullish signals detected in available market data.", "key_points": ["Short interest and squeeze potential identified.", "Positive revenue growth trend supports upside thesis.", "Sentiment indicators lean constructive."], "confidence": 0.55},
@@ -525,6 +547,22 @@ FALLBACK_TEMPLATES = {
         "one_line_reason": "Default fallback: discard.",
     },
 }
+
+
+def _fallback_template_or_raise(role: str) -> dict:
+    """
+    Truthful-data contract: verdict-producing roles must never be answered
+    with a canned template. Non-verdict roles (video text, empty batch rows,
+    ingestion judging, ...) may still degrade gracefully.
+    """
+    if role in VERDICT_ROLES:
+        raise InsufficientDataError(
+            "llm",
+            f"LLM analysis unavailable for role '{role}' — refusing to return "
+            "a fabricated verdict. Try again when the model provider is reachable.",
+            missing=[f"llm_output:{role}"],
+        )
+    return FALLBACK_TEMPLATES.get(role, {})
 
 
 class LLMClient:
@@ -808,7 +846,8 @@ class LLMClient:
             prompt_version = version_override or "candidate"
         else:
             system, prompt_version = self._resolve_system_prompt(role)
-        fallback = lambda: (FALLBACK_TEMPLATES.get(role, {}), prompt_version)
+        def fallback():
+            return (_fallback_template_or_raise(role), prompt_version)
         http_models = (
             nvidia_llm_model_cascade()
             if self._provider == "nvidia"
@@ -939,6 +978,8 @@ class LLMClient:
                 )
                 return g, prompt_version
             return fallback()
+        except InsufficientDataError:
+            raise
         except Exception as e:
             logger.warning(
                 "[LLMClient] call failed role=%s err=%s",
@@ -1037,7 +1078,7 @@ class LLMClient:
             if parsed is not None:
                 return parsed
         logger.warning(f"[LLMClient] JSON parse failed for role={role}. Raw: {content[:200]}")
-        return FALLBACK_TEMPLATES.get(role, {})
+        return _fallback_template_or_raise(role)
 
     async def generate(self, role: str, prompt: str) -> dict:
         """Async entry point — dispatches to OpenRouter in a thread.
@@ -1067,9 +1108,10 @@ class LLMClient:
                     self._provider_generate, role, prompt
                 )
         else:
-            # No provider wired — return configured fallback; still stamp version.
+            # No provider wired — verdict roles raise (truthful-data contract);
+            # non-verdict roles still degrade to templates. Version still stamped.
             _, version = self._resolve_system_prompt(role)
-            result = FALLBACK_TEMPLATES.get(role, {})
+            result = _fallback_template_or_raise(role)
         meta = {"prompt_name": role, "prompt_version": version}
         return result, meta
 
@@ -1104,7 +1146,7 @@ class LLMClient:
                     version_override=version_label,
                 )
         else:
-            result = FALLBACK_TEMPLATES.get(role, {})
+            result = _fallback_template_or_raise(role)
             version = version_label
         return result, {"prompt_name": role, "prompt_version": version, "override": True}
 

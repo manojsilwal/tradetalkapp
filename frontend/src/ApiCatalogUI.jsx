@@ -191,7 +191,7 @@ const API_CATALOG = [
             {
                 method: 'GET',
                 path: '/predictor/forecast',
-                summary: 'Multi-horizon probabilistic price forecast (TimesFM or offline mock)',
+                summary: 'Multi-horizon probabilistic price forecast (TimesFM service; insufficient_data without it)',
                 uiSurfaces: ['Decision Terminal'],
                 uiComponent: 'DecisionTerminalUI.jsx',
                 backendFile: 'backend/routers/analysis.py',

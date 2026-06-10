@@ -219,12 +219,17 @@ export function AnalysisProvider({ children }) {
 
         let successCount = 0;
         let lastErr = null;
+        let insufficientErr = null;
 
         const onSuccess = () => {
             successCount += 1;
         };
         const onFail = (err) => {
             if (err) lastErr = err;
+            // Truthful-data contract: the backend explicitly refused to return
+            // a fabricated result. Surface this to the user instead of showing
+            // a partial "success".
+            if (err?.isInsufficientData && !insufficientErr) insufficientErr = err;
         };
 
         const updateTickerState = (updates) => {
@@ -326,7 +331,9 @@ export function AnalysisProvider({ children }) {
                 .catch((err) => {
                     onFail(err);
                     updateTickerState({
-                        debateError: 'Debate temporarily unavailable.',
+                        debateError: err?.isInsufficientData
+                            ? (err.message || 'Insufficient live data for the debate.')
+                            : 'Debate temporarily unavailable.',
                         debateData: null,
                         debateLoading: false
                     });
@@ -366,10 +373,15 @@ export function AnalysisProvider({ children }) {
                 const current = prev[sym];
                 if (!current) return prev;
 
-                const isSuccess = successCount > 0;
+                // Truthful-data contract: any insufficient-data refusal from the
+                // backend marks the whole analysis as errored — never present a
+                // partial dashboard as if it were a complete result.
+                const isSuccess = successCount > 0 && !insufficientErr;
                 let finalError = null;
 
-                if (!isSuccess) {
+                if (insufficientErr) {
+                    finalError = `Insufficient data: ${insufficientErr.message || 'required live market data could not be fetched.'}`;
+                } else if (!isSuccess) {
                     const msg = lastErr?.message || String(lastErr || '');
                     if (/failed to fetch|network|load failed/i.test(msg)) {
                         finalError = `Cannot reach the API at ${API_BASE_URL}. Check VITE_API_BASE_URL (Vercel) and that the backend allows your origin (CORS).`;

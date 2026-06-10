@@ -4,16 +4,24 @@ Kalshi prediction market connector.
 Uses the public Kalshi Trade API v2 (no auth required for market data).
 Fetches events by keyword search, tagging results as "direct" (company-specific)
 or "sector" (index/ETF-level bets relevant to the ticker's sector membership).
+
+Pagination: cursor-based walks (see ``fetch_utils.paginate_cursor``) so open
+market scans can cover more than a single 200-item page without raising quotas.
 """
 import asyncio
-import requests
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, List, Optional, Tuple
+
+from ..data_errors import InsufficientDataError
 from .base import DataConnector
+from .fetch_utils import paginate_cursor, request_with_backoff
 from .market_context import get_ticker_context_with_yfinance
 from ..connector_cache import get_cached, set_cached
 
 _BASE = "https://api.elections.kalshi.com/trade-api/v2"
-_TIMEOUT = 8
+_TIMEOUT = 10
+_PAGE_SIZE = int(os.environ.get("KALSHI_PAGE_SIZE", "200") or "200")
+_MAX_PAGES = int(os.environ.get("KALSHI_MAX_PAGES", "3") or "3")
 
 # Map tickers to Kalshi-searchable keywords and known series tickers.
 _TICKER_MAP: Dict[str, Dict[str, Any]] = {
@@ -37,15 +45,65 @@ _INDEX_SERIES: Dict[str, List[str]] = {
     "Dow Jones": ["KXDOW"],
 }
 
+_SECTOR_BLACKLIST = (
+    "spacex", "anthropic", "bitcoin", "ethereum", "crypto", "cryptocurrency",
+    "nasdaq private", "private market", "npm price", "solana", "dogecoin",
+)
+
+
+def _kalshi_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    resp = request_with_backoff(
+        "GET",
+        f"{_BASE}{path}",
+        params=params or {},
+        timeout=_TIMEOUT,
+    )
+    body = resp.json()
+    return body if isinstance(body, dict) else {}
+
+
+def _paginate_kalshi_collection(
+    path: str,
+    *,
+    base_params: Dict[str, Any],
+    collection_key: str,
+) -> Tuple[List[dict], int, int]:
+    """Returns (items, attempted_requests, failed_requests)."""
+    attempted = 0
+    failed = 0
+    collected: List[dict] = []
+
+    def _fetch_page(cursor: Optional[str]) -> Tuple[List[dict], Optional[str]]:
+        nonlocal attempted, failed
+        attempted += 1
+        params = dict(base_params)
+        params["limit"] = min(_PAGE_SIZE, 1000)
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            body = _kalshi_get(path, params)
+            batch = body.get(collection_key) or []
+            next_cursor = body.get("cursor") or None
+            return batch, next_cursor if next_cursor else None
+        except Exception:
+            failed += 1
+            return [], None
+
+    collected = paginate_cursor(_fetch_page, max_pages=_MAX_PAGES)
+    return collected, attempted, failed
+
 
 def _fetch_kalshi_events(
     company_keywords: List[str],
     index_terms: List[str],
     series_tickers: List[str],
     index_series: List[str],
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """Returns (events, attempted_requests, failed_requests)."""
     results: List[Dict[str, Any]] = []
     seen: set = set()
+    attempted = 0
+    failed = 0
 
     def _add(item: Dict[str, Any]):
         mid = item.get("url") or item.get("title")
@@ -53,82 +111,68 @@ def _fetch_kalshi_events(
             seen.add(mid)
             results.append(item)
 
-    # 1. Company-specific series
+    def _passes_sector_filter(blob: str, is_sector: bool) -> bool:
+        if not is_sector:
+            return True
+        return not any(bl_term in blob for bl_term in _SECTOR_BLACKLIST)
+
+    # 1. Company-specific series (single page — series-scoped lists are small)
     for series_ticker in series_tickers:
+        attempted += 1
         try:
-            r = requests.get(
-                f"{_BASE}/markets",
-                params={"series_ticker": series_ticker, "status": "open", "limit": 20},
-                timeout=_TIMEOUT,
+            body = _kalshi_get(
+                "/markets",
+                {"series_ticker": series_ticker, "status": "open", "limit": 20},
             )
-            if r.ok:
-                for m in r.json().get("markets") or []:
-                    mapped = _map_market(m, relevance_type="direct")
-                    _add(mapped)
+            for m in body.get("markets") or []:
+                _add(_map_market(m, relevance_type="direct"))
         except Exception:
-            pass
+            failed += 1
 
     # 2. Index/sector series
     for series_ticker in index_series:
+        attempted += 1
         try:
-            r = requests.get(
-                f"{_BASE}/markets",
-                params={"series_ticker": series_ticker, "status": "open", "limit": 10},
-                timeout=_TIMEOUT,
+            body = _kalshi_get(
+                "/markets",
+                {"series_ticker": series_ticker, "status": "open", "limit": 10},
             )
-            if r.ok:
-                for m in r.json().get("markets") or []:
-                    mapped = _map_market(m, relevance_type="sector")
-                    _add(mapped)
+            for m in body.get("markets") or []:
+                _add(_map_market(m, relevance_type="sector"))
         except Exception:
-            pass
+            failed += 1
 
-    # 3. Scan open events by title keyword (company + index)
-    all_kw = list(company_keywords) + list(index_terms)
-    try:
-        r = requests.get(
-            f"{_BASE}/events",
-            params={"status": "open", "limit": 200, "with_nested_markets": False},
-            timeout=_TIMEOUT,
-        )
-        if r.ok:
-            for ev in r.json().get("events") or []:
-                title = (ev.get("title") or "").lower()
-                is_direct = any(kw.lower() in title for kw in company_keywords)
-                is_sector = not is_direct and any(t.lower() in title for t in index_terms)
-                if is_sector:
-                    sector_blacklist = ["spacex", "anthropic", "bitcoin", "ethereum", "crypto", "cryptocurrency", "nasdaq private", "private market", "npm price", "solana", "dogecoin"]
-                    if any(bl_term in title for bl_term in sector_blacklist):
-                        is_sector = False
-                if is_direct or is_sector:
-                    mapped = _map_event(ev, relevance_type="direct" if is_direct else "sector")
-                    _add(mapped)
-    except Exception:
-        pass
+    # 3. Paginated open events scan (keyword filter client-side)
+    ev_batch, ev_attempted, ev_failed = _paginate_kalshi_collection(
+        "/events",
+        base_params={"status": "open", "with_nested_markets": False},
+        collection_key="events",
+    )
+    attempted += ev_attempted
+    failed += ev_failed
+    for ev in ev_batch:
+        title = (ev.get("title") or "").lower()
+        is_direct = any(kw.lower() in title for kw in company_keywords)
+        is_sector = not is_direct and any(t.lower() in title for t in index_terms)
+        if _passes_sector_filter(title, is_sector) and (is_direct or is_sector):
+            _add(_map_event(ev, relevance_type="direct" if is_direct else "sector"))
 
-    # 4. Scan open markets (broader search)
-    try:
-        r = requests.get(
-            f"{_BASE}/markets",
-            params={"status": "open", "limit": 200},
-            timeout=_TIMEOUT,
-        )
-        if r.ok:
-            for m in r.json().get("markets") or []:
-                blob = ((m.get("title") or "") + " " + (m.get("question") or "")).lower()
-                is_direct = any(kw.lower() in blob for kw in company_keywords)
-                is_sector = not is_direct and any(t.lower() in blob for t in index_terms)
-                if is_sector:
-                    sector_blacklist = ["spacex", "anthropic", "bitcoin", "ethereum", "crypto", "cryptocurrency", "nasdaq private", "private market", "npm price", "solana", "dogecoin"]
-                    if any(bl_term in blob for bl_term in sector_blacklist):
-                        is_sector = False
-                if is_direct or is_sector:
-                    mapped = _map_market(m, relevance_type="direct" if is_direct else "sector")
-                    _add(mapped)
-    except Exception:
-        pass
+    # 4. Paginated open markets scan (broader keyword search)
+    mkt_batch, mkt_attempted, mkt_failed = _paginate_kalshi_collection(
+        "/markets",
+        base_params={"status": "open"},
+        collection_key="markets",
+    )
+    attempted += mkt_attempted
+    failed += mkt_failed
+    for m in mkt_batch:
+        blob = ((m.get("title") or "") + " " + (m.get("question") or "")).lower()
+        is_direct = any(kw.lower() in blob for kw in company_keywords)
+        is_sector = not is_direct and any(t.lower() in blob for t in index_terms)
+        if _passes_sector_filter(blob, is_sector) and (is_direct or is_sector):
+            _add(_map_market(m, relevance_type="direct" if is_direct else "sector"))
 
-    return results
+    return results, attempted, failed
 
 
 def _map_market(m: dict, relevance_type: str = "direct") -> Dict[str, Any]:
@@ -197,13 +241,23 @@ class KalshiConnector(DataConnector):
         for idx_name in (ctx.get("indices") or []):
             idx_series.extend(_INDEX_SERIES.get(idx_name, []))
 
-        events = await asyncio.to_thread(
+        events, attempted, failed = await asyncio.to_thread(
             _fetch_kalshi_events,
             company_keywords,
             index_terms,
             series,
             idx_series,
         )
+
+        # Truthful-data contract: an empty list must mean "no markets exist",
+        # never "every Kalshi request failed".
+        if attempted > 0 and failed >= attempted and not events:
+            raise InsufficientDataError(
+                "kalshi",
+                f"All {attempted} Kalshi API requests failed for {ticker_upper}.",
+                ticker=ticker_upper,
+                missing=["kalshi_events"],
+            )
 
         # Sort direct first, then by volume within each group
         direct = sorted([e for e in events if e.get("relevance_type") == "direct"],

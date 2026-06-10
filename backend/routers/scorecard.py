@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..auth import get_optional_user
 from ..connectors.scorecard_data import ScorecardData, fetch_basket, fetch_scorecard_data
+from ..data_errors import InsufficientDataError
 from ..deps import llm_client
 from ..rate_limiter import rate_limit
 from ..scorecard import (
@@ -138,6 +139,8 @@ async def compare_scorecard(
     """Score a basket of tickers under the chosen investor-type preset."""
     try:
         data_rows = await fetch_basket(req.tickers)
+    except InsufficientDataError:
+        raise
     except Exception as e:
         logger.exception("[scorecard] data fetch failed")
         raise HTTPException(status_code=502, detail=f"data fetch failed: {e}") from e
@@ -349,8 +352,11 @@ async def _fetch_subjective_scores(
     skip_llm: bool,
 ) -> tuple[Dict[str, dict], Dict[str, dict]]:
     """
-    Fan out SITG + Execution-Risk persona calls in parallel. On any per-ticker
-    failure, uses the persona's fallback template so the basket still scores.
+    Fan out SITG + Execution-Risk persona calls in parallel.
+
+    Truthful-data contract: a persona failure raises InsufficientDataError —
+    we never substitute default scores unless the caller explicitly opted out
+    of LLM scoring via ``skip_llm`` (cheap previews / tests).
     """
     if skip_llm:
         sitg_map = {
@@ -380,9 +386,17 @@ async def _fetch_subjective_scores(
                 "archetype": str(out.get("archetype") or ""),
                 "raw": out,
             }
+        except InsufficientDataError:
+            raise
         except Exception as e:
             logger.warning("[scorecard] sitg scorer failed for %s: %s", d.ticker, e)
-            return d.ticker, {"sitg_score": 3.0, "archetype": "Most S&P 500 CEOs"}
+            raise InsufficientDataError(
+                "llm",
+                f"SITG persona scoring failed for {d.ticker}; refusing to "
+                "substitute a default score.",
+                ticker=d.ticker,
+                missing=["sitg_score"],
+            ) from e
 
     async def _score_exec(d: ScorecardData) -> tuple[str, dict]:
         try:
@@ -404,9 +418,17 @@ async def _fetch_subjective_scores(
                 "profile_tier": str(out.get("profile_tier") or "mid_growth"),
                 "raw": out,
             }
+        except InsufficientDataError:
+            raise
         except Exception as e:
             logger.warning("[scorecard] exec scorer failed for %s: %s", d.ticker, e)
-            return d.ticker, {"exec_score": 5.0, "profile_tier": "mid_growth"}
+            raise InsufficientDataError(
+                "llm",
+                f"Execution-risk persona scoring failed for {d.ticker}; refusing "
+                "to substitute a default score.",
+                ticker=d.ticker,
+                missing=["exec_score"],
+            ) from e
 
     sitg_task = asyncio.gather(*[_score_sitg(d) for d in data_rows])
     exec_task = asyncio.gather(*[_score_exec(d) for d in data_rows])

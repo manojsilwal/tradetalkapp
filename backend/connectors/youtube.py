@@ -1,12 +1,17 @@
 """
 YouTube Finance Connector — fetches latest videos from top finance channels.
+
 Requires YOUTUBE_API_KEY (YouTube Data API v3, free: 10,000 units/day).
-Gracefully skips if no API key is configured.
+
+Quota strategy: use each channel's **uploads playlist** via ``playlistItems.list``
+(1 unit/call) instead of ``search.list`` (100 units/call). For six channels that
+is ~12 units per ingestion run vs ~600 previously — see §5.10 in ARCHITECTURE.md.
 """
 import os
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +28,20 @@ FINANCE_CHANNELS = [
 ]
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+_PLAYLIST_PAGE_SIZE = 50
+
+
+def channel_uploads_playlist_id(channel_id: str) -> str:
+    """
+    Derive the uploads playlist ID from a channel ID (UC… → UU…).
+
+    YouTube convention: replace the leading ``UC`` with ``UU`` for the
+    channel's "uploads" playlist. Fallback: ``channels.list`` when needed.
+    """
+    cid = (channel_id or "").strip()
+    if cid.startswith("UC") and len(cid) > 2:
+        return "UU" + cid[2:]
+    return cid
 
 
 async def fetch_finance_videos(hours_back: int = 24) -> list[dict]:
@@ -38,48 +57,115 @@ async def fetch_finance_videos(hours_back: int = 24) -> list[dict]:
 
 
 def _sync_fetch_all(hours_back: int) -> list[dict]:
-    import requests
-    since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat().replace("+00:00", "Z")
-    all_videos = []
+    from .fetch_utils import request_with_backoff
+
+    since_dt = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+    since_iso = since_dt.isoformat().replace("+00:00", "Z")
+    all_videos: List[dict] = []
+    failed_channels: List[str] = []
+
     for channel in FINANCE_CHANNELS:
         try:
-            videos = _fetch_channel_videos(requests, channel, since)
+            videos = _fetch_channel_videos_playlist(
+                request_with_backoff,
+                channel,
+                since_dt,
+            )
             all_videos.extend(videos)
         except Exception as e:
-            logger.warning(f"[YouTubeConnector] Failed for channel {channel['name']}: {e}")
+            failed_channels.append(channel["name"])
+            logger.warning("[YouTubeConnector] Failed for channel %s: %s", channel["name"], e)
+
+    if failed_channels and len(failed_channels) == len(FINANCE_CHANNELS):
+        logger.error(
+            "[YouTubeConnector] All %d finance channels failed — no videos ingested.",
+            len(FINANCE_CHANNELS),
+        )
+    elif failed_channels:
+        logger.warning(
+            "[YouTubeConnector] Partial channel failures (%s); ingested %d videos.",
+            ", ".join(failed_channels),
+            len(all_videos),
+        )
+    else:
+        logger.info(
+            "[YouTubeConnector] Ingested %d videos (playlistItems, since=%s).",
+            len(all_videos),
+            since_iso,
+        )
     return all_videos
 
 
-def _fetch_channel_videos(requests, channel: dict, published_after: str) -> list[dict]:
-    params = {
-        "part": "snippet",
-        "channelId": channel["id"],
-        "publishedAfter": published_after,
-        "order": "date",
-        "type": "video",
-        "maxResults": 10,
-        "key": YOUTUBE_API_KEY,
-    }
-    resp = requests.get(f"{YOUTUBE_API_BASE}/search", params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+def _fetch_channel_videos_playlist(
+    http_get,
+    channel: dict,
+    since_dt: datetime,
+) -> list[dict]:
+    """Walk the channel uploads playlist (1 quota unit per page)."""
+    playlist_id = channel_uploads_playlist_id(channel["id"])
+    page_token: Optional[str] = None
+    videos: List[dict] = []
+    pages = 0
+    max_pages = 3  # up to 150 recent uploads scanned per channel
 
-    videos = []
-    for item in data.get("items", []):
-        snippet = item.get("snippet", {})
-        video_id = item.get("id", {}).get("videoId", "")
-        title = snippet.get("title", "")
-        description = snippet.get("description", "")[:500]
-        published = snippet.get("publishedAt", "")[:10]
-        tags = snippet.get("tags", [])
+    while pages < max_pages:
+        params: Dict[str, Any] = {
+            "part": "snippet,contentDetails",
+            "playlistId": playlist_id,
+            "maxResults": _PLAYLIST_PAGE_SIZE,
+            "key": YOUTUBE_API_KEY,
+        }
+        if page_token:
+            params["pageToken"] = page_token
 
-        videos.append({
-            "channel": channel["name"],
-            "channel_id": channel["id"],
-            "video_id": video_id,
-            "title": title,
-            "description": description,
-            "published": published,
-            "tags": tags,
-        })
+        resp = http_get(
+            "GET",
+            f"{YOUTUBE_API_BASE}/playlistItems",
+            params=params,
+            timeout=12,
+        )
+        data = resp.json()
+        items = data.get("items") or []
+        if not items:
+            break
+
+        stop_paging = False
+        for item in items:
+            snippet = item.get("snippet") or {}
+            published_raw = snippet.get("publishedAt") or ""
+            if not published_raw:
+                continue
+            try:
+                published_dt = datetime.fromisoformat(published_raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if published_dt < since_dt:
+                stop_paging = True
+                continue
+
+            video_id = (item.get("contentDetails") or {}).get("videoId") or ""
+            if not video_id:
+                continue
+            title = snippet.get("title") or ""
+            description = (snippet.get("description") or "")[:500]
+            published = published_raw[:10]
+            tags = snippet.get("tags") or []
+
+            videos.append({
+                "channel": channel["name"],
+                "channel_id": channel["id"],
+                "video_id": video_id,
+                "title": title,
+                "description": description,
+                "published": published,
+                "tags": tags,
+            })
+
+        pages += 1
+        if stop_paging:
+            break
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
     return videos

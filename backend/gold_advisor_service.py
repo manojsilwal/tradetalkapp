@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 from pydantic import BaseModel, Field, ValidationError
 
+from .data_errors import InsufficientDataError
 from .fred_series import fetch_fred_latest_sync
 from .gold_technicals import compute_gold_technicals
 
@@ -32,19 +33,18 @@ class GoldAdvisorBriefing(BaseModel):
 
 
 def _safe_gold_briefing(raw: Any) -> Dict[str, Any]:
+    """Validate the LLM briefing; truthful-data contract — no placeholder briefing."""
     if isinstance(raw, dict):
         try:
             return GoldAdvisorBriefing.model_validate(raw).model_dump()
         except ValidationError as e:
-            logger.warning("[GoldAdvisor] invalid briefing schema, fallback used: %s", e)
-    return {
-        "directional_bias": "neutral",
-        "summary": "Gold briefing unavailable due to invalid model output shape.",
-        "key_drivers": [],
-        "levels_to_watch": "",
-        "risk_factors": ["Model output validation failed."],
-        "confidence_0_1": 0.2,
-    }
+            logger.warning("[GoldAdvisor] invalid briefing schema: %s", e)
+    raise InsufficientDataError(
+        "llm",
+        "Gold briefing unavailable: model output failed validation. "
+        "Refusing to substitute a placeholder briefing.",
+        missing=["gold_briefing"],
+    )
 
 
 def _keyword_sentiment(headlines: List[str]) -> float:
@@ -149,10 +149,14 @@ async def build_gold_advisor_payload(macro_connector) -> Dict[str, Any]:
     sentiment_score = _keyword_sentiment(headlines)
 
     ohlc_df = yf_bundle.get("ohlc")
-    if isinstance(ohlc_df, pd.DataFrame):
-        technicals = compute_gold_technicals(ohlc_df)
-    else:
-        technicals = {"error": "no_ohlc", "bars": 0}
+    if not isinstance(ohlc_df, pd.DataFrame) or yf_bundle.get("gold_last") is None:
+        raise InsufficientDataError(
+            "yfinance",
+            "Live gold futures price history could not be fetched; the gold "
+            "advisor cannot run without it.",
+            missing=["gold_ohlc_1y", "gold_last"],
+        )
+    technicals = compute_gold_technicals(ohlc_df)
 
     payload: Dict[str, Any] = {
         "as_of_utc": datetime.now(timezone.utc).isoformat(),

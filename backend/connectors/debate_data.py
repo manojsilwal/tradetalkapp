@@ -2,16 +2,21 @@
 Debate Data Connector — fetches price momentum data for the AI debate agents.
 Uses yFinance: 52-week high/low positioning, 1m/3m returns, beta, short interest.
 
-When Yahoo history is empty (common from blocked datacenter IPs), falls back to
-yfinance info/fast_info, then Stooq, then FinCrawler quote scrape.
+Truthful-data contract: the debate agents need full 6-month price history to
+compute momentum. When Yahoo cannot deliver usable history (common from
+blocked datacenter IPs), this connector raises
+:class:`backend.data_errors.InsufficientDataError` instead of fabricating
+zeroed returns or synthetic 52-week bands.
 """
 import asyncio
 import logging
 import math
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
+
+from backend.data_errors import InsufficientDataError
 
 from .base import clean_dividend_yield
 
@@ -25,55 +30,12 @@ async def fetch_debate_data(ticker: str) -> dict:
     - beta
     - short_interest_ratio
     - current_price, market_cap, pe_ratio, pb_ratio, roe, debt_to_equity
-    - spot_price_source: yfinance_history | yfinance_info | stooq | fincrawler | none
-    - market_data_degraded: True when history-based momentum may be incomplete
+    - spot_price_source: yfinance_history
+    - market_data_degraded: always False (degraded data raises instead)
+
+    Raises InsufficientDataError when live price history cannot be fetched.
     """
     return await asyncio.to_thread(_sync_fetch, ticker)
-
-
-def _spot_from_info(info: Dict[str, Any]) -> Optional[float]:
-    if not info:
-        return None
-    for key in ("currentPrice", "regularMarketPrice", "postMarketPrice", "preMarketPrice"):
-        v = info.get(key)
-        if v is None:
-            continue
-        try:
-            f = float(v)
-            if f > 0:
-                return f
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def _spot_from_fast_info(fi: Any) -> Optional[float]:
-    if fi is None:
-        return None
-    keys = ("last_price", "lastPrice", "regularMarketPrice")
-    if isinstance(fi, dict):
-        for k in keys:
-            v = fi.get(k)
-            if v is None:
-                continue
-            try:
-                f = float(v)
-                if f > 0:
-                    return f
-            except (TypeError, ValueError):
-                continue
-        return None
-    for k in keys:
-        v = getattr(fi, k, None)
-        if v is None:
-            continue
-        try:
-            f = float(v)
-            if f > 0:
-                return f
-        except (TypeError, ValueError):
-            continue
-    return None
 
 
 def _build_record_from_history(
@@ -82,7 +44,6 @@ def _build_record_from_history(
     prices,
     *,
     spot_source: str,
-    degraded: bool,
 ) -> Dict[str, Any]:
     current_price = float(prices.iloc[-1])
 
@@ -113,7 +74,7 @@ def _build_record_from_history(
             "week_52_high": round(week_52_high, 2),
             "week_52_low": round(week_52_low, 2),
             "spot_price_source": spot_source,
-            "market_data_degraded": degraded,
+            "market_data_degraded": False,
         },
     )
 
@@ -145,38 +106,7 @@ def _enrich_fundamentals(ticker: str, info: Dict[str, Any], base: Dict[str, Any]
     return base
 
 
-def _build_spot_only_record(
-    ticker: str,
-    info: Dict[str, Any],
-    spot: float,
-    *,
-    spot_source: str,
-) -> Dict[str, Any]:
-    wh = info.get("fiftyTwoWeekHigh")
-    wl = info.get("fiftyTwoWeekLow")
-    week_52_high = float(wh) if wh is not None else round(spot * 1.12, 2)
-    week_52_low = float(wl) if wl is not None else round(spot * 0.88, 2)
-    pct_of_52wk_high = (spot / week_52_high) if week_52_high else 0.5
-    pct_of_52wk_low = ((spot - week_52_low) / week_52_low) if week_52_low else 0.5
-
-    base = {
-        "current_price": round(spot, 2),
-        "price_return_1m": 0.0,
-        "price_return_3m": 0.0,
-        "price_return_6m": 0.0,
-        "pct_of_52wk_high": round(pct_of_52wk_high, 3),
-        "pct_of_52wk_low": round(pct_of_52wk_low, 3),
-        "week_52_high": round(week_52_high, 2),
-        "week_52_low": round(week_52_low, 2),
-        "spot_price_source": spot_source,
-        "market_data_degraded": True,
-    }
-    return _enrich_fundamentals(ticker.upper(), info, base)
-
-
 def _sync_fetch(ticker: str) -> dict:
-    from backend.connectors.quote_fallbacks import fetch_us_equity_spot
-
     t_up = ticker.upper().strip()
     try:
         import yfinance as yf
@@ -201,77 +131,23 @@ def _sync_fetch(ticker: str) -> dict:
                     info,
                     prices,
                     spot_source="yfinance_history",
-                    degraded=False,
                 )
-
-        spot: Optional[float] = None
-        spot_src = "none"
-
-        spot = _spot_from_info(info)
-        if spot:
-            spot_src = "yfinance_info"
-        if not spot:
-            try:
-                spot = _spot_from_fast_info(t.fast_info)
-                if spot:
-                    spot_src = "yfinance_info"
-            except Exception:
-                pass
-
-        if not spot:
-            fb: Optional[Tuple[float, str]] = fetch_us_equity_spot(t_up)
-            if fb:
-                spot, label = fb
-                spot_src = label
-
-        if spot and spot > 0:
-            return _build_spot_only_record(t_up, info, spot, spot_source=spot_src)
-
-        logger.warning("[DebateDataConnector] No valid spot for %s — returning empty shell", t_up)
-        return _empty_data(t_up)
+    except InsufficientDataError:
+        raise
     except Exception as e:
-        logger.warning("[DebateDataConnector] Failed for %s: %s", t_up, e)
-        # yfinance can throw or return unusable data from blocked IPs; still try Stooq / FinCrawler.
-        try:
-            fb: Optional[Tuple[float, str]] = fetch_us_equity_spot(t_up)
-            if fb:
-                spot, label = fb
-                return _build_spot_only_record(t_up, {}, spot, spot_source=label)
-        except Exception as e2:
-            logger.warning(
-                "[DebateDataConnector] Spot fallback after yfinance error failed for %s: %s",
-                t_up,
-                e2,
-            )
-        return _empty_data(t_up)
+        logger.warning("[DebateDataConnector] yfinance failed for %s: %s", t_up, e)
+        raise InsufficientDataError(
+            "yfinance",
+            f"Live market data fetch failed for {t_up}: {e}",
+            ticker=t_up,
+            missing=["price_history_6mo"],
+        ) from e
 
-
-def _empty_data(ticker: str) -> dict:
-    return {
-        "ticker": ticker.upper(),
-        "current_price": 0.0,
-        "price_return_1m": 0.0,
-        "price_return_3m": 0.0,
-        "price_return_6m": 0.0,
-        "pct_of_52wk_high": 0.5,
-        "pct_of_52wk_low": 0.5,
-        "week_52_high": 0.0,
-        "week_52_low": 0.0,
-        "beta": 1.0,
-        "short_interest_ratio": 0.0,
-        "short_percent_float": 0.0,
-        "market_cap": None,
-        "pe_ratio": None,
-        "pb_ratio": None,
-        "roe": 0.0,
-        "debt_to_equity": None,
-        "free_cashflow": None,
-        "revenue_growth": 0.0,
-        "gross_margins": 0.0,
-        "dividend_yield": 0.0,
-        "sector": "Unknown",
-        "industry": "Unknown",
-        "company_name": ticker.upper(),
-        "spot_price_source": None,
-        "market_data_degraded": True,
-    }
+    logger.warning("[DebateDataConnector] No usable price history for %s", t_up)
+    raise InsufficientDataError(
+        "yfinance",
+        f"No usable 6-month price history for {t_up}; momentum analysis requires "
+        "complete live history. Refusing to substitute placeholder values.",
+        ticker=t_up,
+        missing=["price_history_6mo"],
+    )

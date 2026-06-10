@@ -97,7 +97,14 @@ async def get_investor_metrics(ticker: str):
     except Exception:
         pass
     if "error" in data and not data.get("metrics"):
-        return InvestorMetricsResponse(ticker=ticker.upper(), metrics={})
+        from ..data_errors import InsufficientDataError
+
+        raise InsufficientDataError(
+            "yfinance",
+            f"Live fundamental metrics unavailable for {ticker.upper()}: {data.get('error')}",
+            ticker=ticker,
+            missing=["metrics"],
+        )
     return InvestorMetricsResponse(
         ticker=ticker.upper(),
         metrics=data["metrics"],
@@ -418,7 +425,6 @@ async def get_global_markets(
     """
     Returns normalized price series for a list of tickers over a specified period.
     """
-    import yfinance as yf
     import pandas as pd
     import asyncio
 
@@ -440,19 +446,36 @@ async def get_global_markets(
     
     yf_period, limit = period_map.get(period.upper(), ("3mo", None))
 
-    def _fetch():
-        try:
-            # We fetch daily data
-            df = yf.download(ticker_list, period=yf_period, interval="1d", auto_adjust=True)
-            if df.empty or "Close" not in df:
-                return {"dates": [], "series": {}}
-            
-            close_df = df["Close"]
-            if isinstance(close_df, pd.Series):
-                close_df = close_df.to_frame()
-                if len(ticker_list) == 1:
-                    close_df.columns = ticker_list
+    from ..data_errors import InsufficientDataError
 
+    def _fetch():
+        from ..connectors.yfinance_batch import close_series_by_ticker, download_history
+
+        try:
+            df = download_history(
+                ticker_list,
+                period=yf_period,
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+            )
+            if df.empty:
+                raise InsufficientDataError(
+                    "yfinance",
+                    "Live price history unavailable for: " + ", ".join(ticker_list),
+                    missing=[f"price_history:{t}" for t in ticker_list],
+                )
+
+            close_by_ticker = close_series_by_ticker(df, ticker_list)
+            if not close_by_ticker:
+                raise InsufficientDataError(
+                    "yfinance",
+                    "Live price history unavailable for: " + ", ".join(ticker_list),
+                    missing=[f"price_history:{t}" for t in ticker_list],
+                )
+
+            # Build aligned close frame from per-ticker series
+            close_df = pd.DataFrame(close_by_ticker).sort_index()
             if limit is not None:
                 close_df = close_df.iloc[-limit:]
 
@@ -482,11 +505,17 @@ async def get_global_markets(
                     series_data[ticker] = [None] * len(dates)
             
             return {"dates": dates, "series": series_data}
+        except InsufficientDataError:
+            raise
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"Error fetching global markets: {e}", exc_info=True)
-            return {"dates": [], "series": {}}
+            raise InsufficientDataError(
+                "yfinance",
+                f"Live price history fetch failed for {', '.join(ticker_list)}: {e}",
+                missing=[f"price_history:{t}" for t in ticker_list],
+            ) from e
 
     # Run yfinance blocking calls in a thread pool to avoid blocking the event loop
     result = await asyncio.to_thread(_fetch)

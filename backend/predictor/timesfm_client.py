@@ -28,7 +28,13 @@ def _cycle_seed(ticker: str, cycle_id: str) -> int:
 
 
 class MockTimesFMClient:
-    """Shape-correct quantiles for offline tests (no network)."""
+    """
+    Shape-correct quantiles for offline tests and eval harnesses ONLY.
+
+    Truthful-data contract: this client must never serve user-facing
+    forecasts — `run_predictor_forecast` requires the real TimesFM service
+    (or explicit baselines-only mode) and otherwise reports insufficient_data.
+    """
 
     def __init__(self, model_version: str = DEFAULT_MODEL_LABEL) -> None:
         self.model_version = model_version

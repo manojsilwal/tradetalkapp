@@ -60,11 +60,21 @@ export async function apiFetch(url, options = {}) {
   const res = await fetch(url, { ...options, headers });
   if (!res.ok) {
     let errMsg = `HTTP ${res.status}`;
+    let insufficientData = false;
     try {
       const body = await res.json();
-      errMsg = typeof body.detail === 'string' ? body.detail : (body.detail?.message || body.error || errMsg);
+      if (body.error === 'insufficient_data') {
+        // Truthful-data contract: the backend refused to fabricate a result.
+        insufficientData = true;
+        errMsg = body.message || 'Not enough live data to produce a result. Please try again later.';
+      } else {
+        errMsg = typeof body.detail === 'string' ? body.detail : (body.detail?.message || body.error || errMsg);
+      }
     } catch { /* ignore json parse errors */ }
-    throw new Error(errMsg);
+    const err = new Error(errMsg);
+    err.isInsufficientData = insufficientData;
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }

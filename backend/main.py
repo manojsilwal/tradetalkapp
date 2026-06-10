@@ -7,10 +7,12 @@ import asyncio
 import json
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .data_errors import InsufficientDataError
 from .telemetry import RequestIDMiddleware
 from .agent_policy_guardrails import (
     ensure_capability, validate_startup_secrets,
@@ -43,6 +45,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(RequestIDMiddleware)
+
+
+# ── Truthful-data contract ────────────────────────────────────────────────────
+# Any endpoint whose required live data could not be fetched answers with an
+# explicit 503 "insufficient_data" body instead of a fabricated result.
+@app.exception_handler(InsufficientDataError)
+async def _insufficient_data_handler(request: Request, exc: InsufficientDataError):
+    return JSONResponse(status_code=503, content=exc.to_payload())
 
 # ── Initialize persistent SQLite stores ──────────────────────────────────────
 db.init_db()

@@ -14,8 +14,9 @@ they need (open-market buys vs sells in the last 12 months, ownership %, CEO
 name) so the personas have auditable context.
 
 All I/O happens under :func:`fetch_scorecard_data` which runs the blocking
-yfinance calls in a thread. Per-ticker failures collapse to
-:func:`_empty_scorecard_fields` so a single bad ticker never kills a basket.
+yfinance calls in a thread. Truthful-data contract: a ticker whose live data
+cannot be fetched raises :class:`backend.data_errors.InsufficientDataError`
+instead of producing a zero-filled placeholder row.
 """
 from __future__ import annotations
 
@@ -72,7 +73,8 @@ class ScorecardData:
 # ── Public entrypoints ───────────────────────────────────────────────────────
 
 async def fetch_scorecard_data(ticker: str) -> ScorecardData:
-    """Fetch one ticker. Never raises — on total failure returns empty fields."""
+    """Fetch one ticker. Raises InsufficientDataError on total failure
+    (truthful-data contract — no zero-filled placeholder rows)."""
     return await asyncio.to_thread(_sync_fetch, ticker)
 
 
@@ -91,7 +93,14 @@ def _sync_fetch(ticker: str) -> ScorecardData:
         import yfinance as yf
     except Exception as e:
         logger.warning("[ScorecardData] yfinance unavailable for %s: %s", sym, e)
-        return _empty_scorecard_fields(sym, missing=["yfinance"])
+        from ..data_errors import InsufficientDataError
+
+        raise InsufficientDataError(
+            "yfinance",
+            f"Market data library unavailable; cannot build scorecard for {sym}.",
+            ticker=sym,
+            missing=["yfinance"],
+        ) from e
 
     info: dict = {}
     try:
@@ -109,7 +118,15 @@ def _sync_fetch(ticker: str) -> ScorecardData:
         if fb:
             current_price = fb[0]
         elif "info" in missing:
-            return _empty_scorecard_fields(sym, missing=missing)
+            from ..data_errors import InsufficientDataError
+
+            raise InsufficientDataError(
+                "yfinance",
+                f"No live quote or company info available for {sym}; "
+                "refusing to score a zero-filled placeholder.",
+                ticker=sym,
+                missing=missing + ["current_price"],
+            )
     forward_pe = _as_float_or_none(info.get("forwardPE"))
     if forward_pe is None:
         missing.append("forward_pe")
@@ -334,30 +351,6 @@ def _as_float_or_none(value: Any) -> Optional[float]:
     if f != f:
         return None
     return f
-
-
-def _empty_scorecard_fields(ticker: str, *, missing: Optional[List[str]] = None) -> ScorecardData:
-    return ScorecardData(
-        ticker=ticker,
-        company_name=ticker,
-        sector="Unknown",
-        industry="Unknown",
-        current_price=0.0,
-        forward_pe=None,
-        historical_avg_pe=None,
-        beta=1.0,
-        eps_growth_pct=0.0,
-        revenue_growth_pct=0.0,
-        pt_upside_pct=0.0,
-        dividend_yield_pct=0.0,
-        debt_to_equity=0.0,
-        ceo_name="",
-        insider_buy_count_12m=0,
-        insider_sell_count_12m=0,
-        insider_net_shares_12m=0.0,
-        held_percent_insiders=0.0,
-        fields_missing=list(missing or ["all"]),
-    )
 
 
 __all__ = [
