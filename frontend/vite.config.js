@@ -26,6 +26,7 @@ const API_PATH_PREFIXES = [
   '/sepl',
   '/resources',
   '/daily-brief',
+  '/actionable-companies',
   '/decision-terminal',
   '/prediction-markets',
   '/scorecard',
