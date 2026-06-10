@@ -608,6 +608,12 @@ class LLMClient:
             headers["HTTP-Referer"] = OPENROUTER_HTTP_REFERER
         if OPENROUTER_X_TITLE:
             headers["X-Title"] = OPENROUTER_X_TITLE
+        cf_id = os.environ.get("CF_ACCESS_CLIENT_ID", "").strip()
+        cf_secret = os.environ.get("CF_ACCESS_CLIENT_SECRET", "").strip()
+        if cf_id:
+            headers["CF-Access-Client-Id"] = cf_id
+        if cf_secret:
+            headers["CF-Access-Client-Secret"] = cf_secret
 
         provider = resolve_llm_http_provider()
         try:
