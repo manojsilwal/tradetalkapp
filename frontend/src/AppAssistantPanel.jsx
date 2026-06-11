@@ -626,8 +626,7 @@ export default function AppAssistantPanel({ prefetch = null }) {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '14px 16px 12px',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
-          background: 'rgba(15,23,42,0.6)',
-          backdropFilter: 'blur(16px)',
+          background: '#0f172a',
           flexShrink: 0,
         }}>
           {/* Logo + title */}

@@ -46,8 +46,7 @@ export default function BadgePopup({ badges = [] }) {
             pointerEvents: 'none',
         }}>
             <div style={{
-                background: 'linear-gradient(135deg, rgba(124,58,237,0.95), rgba(16,185,129,0.95))',
-                backdropFilter: 'blur(20px)',
+                background: 'linear-gradient(135deg, #7c3aed, #10b981)',
                 border: '1px solid rgba(255,255,255,0.2)',
                 borderRadius: 16,
                 padding: '14px 20px',

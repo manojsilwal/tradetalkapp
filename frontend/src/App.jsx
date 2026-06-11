@@ -124,8 +124,7 @@ function App() {
             {xpFlash && (
                 <div style={{
                     position: 'fixed', top: 20, right: 24, zIndex: 9998,
-                    background: 'linear-gradient(135deg, rgba(124,58,237,0.95), rgba(167,139,250,0.95))',
-                    backdropFilter: 'blur(16px)',
+                    background: 'linear-gradient(135deg, #7c3aed, #a78bfa)',
                     borderRadius: 12, padding: '10px 18px',
                     fontSize: 14, fontWeight: 800, color: '#fff',
                     boxShadow: '0 4px 20px rgba(124,58,237,0.4)',

@@ -133,11 +133,11 @@ export default function NotificationBell() {
                     <div style={{
                         position: 'absolute', top: '44px', left: '0',
                         width: '280px', maxHeight: '320px',
-                        background: 'rgba(18,18,35,0.97)',
+                        background: '#121223',
                         border: '1px solid rgba(255,255,255,0.08)',
                         borderRadius: '12px', overflow: 'hidden',
                         boxShadow: '0 12px 36px rgba(0,0,0,0.5)',
-                        zIndex: 1000, backdropFilter: 'blur(16px)',
+                        zIndex: 1000,
                     }}>
                         <div style={{
                             padding: '10px 14px', display: 'flex', alignItems: 'center',
@@ -197,12 +197,11 @@ export default function NotificationBell() {
                 {toasts.map(t => (
                     <div key={t._toastId} style={{
                         width: '340px', padding: '14px 16px',
-                        background: 'rgba(18,18,35,0.97)',
+                        background: '#121223',
                         border: `1px solid ${urgencyColor(t.urgency)}25`,
                         borderLeft: `3px solid ${urgencyColor(t.urgency)}`,
                         borderRadius: '12px',
                         boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
-                        backdropFilter: 'blur(16px)',
                         animation: 'toastSlideIn 0.3s ease-out',
                         pointerEvents: 'auto',
                     }}>
