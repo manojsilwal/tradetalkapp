@@ -89,8 +89,8 @@ class TestMacroGlobalMarkets(unittest.TestCase):
         # Create a mock DataFrame
         dates = pd.date_range(start="2026-05-01", periods=3, freq="D")
         columns = pd.MultiIndex.from_tuples([
-            ("Close", "SPY"),
-            ("Close", "TLT")
+            ("SPY", "Close"),
+            ("TLT", "Close")
         ])
         data = [
             [100.0, 50.0],

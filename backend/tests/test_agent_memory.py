@@ -69,6 +69,37 @@ class TestAgentMemory(unittest.TestCase):
     def test_format_memory_context_block_empty(self):
         self.assertEqual(agent_memory.format_memory_context_block([]), "")
 
+    def test_extract_tickers_from_text(self):
+        text = "I am interested in buying some $AAPL stock, or maybe some MSFT."
+        tickers = agent_memory.extract_tickers_from_text(text)
+        self.assertIn("AAPL", tickers)
+        self.assertIn("MSFT", tickers)
+        self.assertEqual(len(tickers), 2)
+
+    def test_save_memory_auto_generates_summary_and_tickers(self):
+        agent_memory.init_agent_memory_db()
+        ks = MagicMock()
+        
+        # Save a user message first
+        agent_memory.save_memory(ks, "u2", "s2", "user", "What do you think of $TSLA?")
+        
+        # Save assistant message without explicit summary or tickers
+        agent_memory.save_memory(
+            ks,
+            "u2",
+            "s2",
+            "assistant",
+            "TSLA looks bullish right now."
+        )
+        
+        ks.add_chat_memory.assert_called_once()
+        args, kwargs = ks.add_chat_memory.call_args
+        self.assertEqual(args[0], "u2")
+        self.assertEqual(args[1], "s2")
+        self.assertIn("User query: What do you think of $TSLA?", args[2])
+        self.assertIn("Assistant answer: TSLA looks bullish right now.", args[2])
+        self.assertEqual(args[3], ["TSLA"])
+
 
 if __name__ == "__main__":
     unittest.main()

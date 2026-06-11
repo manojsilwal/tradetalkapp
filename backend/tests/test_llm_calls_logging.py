@@ -70,6 +70,24 @@ class TestLlmCallsLogging(unittest.TestCase):
         self.assertAlmostEqual(logged_call["cost"], 0.0000675, places=8)
         self.assertTrue(time.time() - logged_call["timestamp"] < 5.0)
 
+    def test_log_llm_api_call_with_api_url(self):
+        """Verify calling log_llm_api_call with api_url records the endpoint correctly."""
+        prompt = "test"
+        model = "test-model"
+        latency = 0.5
+        api_url = "https://api.example.com/v1"
+        
+        log_llm_api_call(
+            prompt_text=prompt,
+            model=model,
+            latency=latency,
+            api_url=api_url
+        )
+        
+        calls = self.test_backend.list_llm_calls(limit=10)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["api_url"], api_url)
+
     def test_log_llm_api_call_token_approximation(self):
         """Verify token counts and cost are estimated correctly when token parameters are 0."""
         prompt = "Short prompt text." # 18 chars -> approx 4 tokens

@@ -1,7 +1,7 @@
 # Weekly Swarm Effectiveness Report
 
 Date: 2026-06-10
-Run ID: eval_20260610_040831
+Run ID: eval_20260610_141716
 Production Version: v1.0.0
 Benchmark Suite: agentic_swarm_eval_v1
 
@@ -17,7 +17,7 @@ Keep production swarm as baseline until a candidate clearly wins.
 
 | Variant | AES | Task Success | RAG Quality | Orchestration | Learning | Efficiency | Safety | Maintainability | p95 Latency | Cost | Decision |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Production 5-Agent Swarm | 89.2 | 91.0 | 94.0 | 90.0 | 82.0 | 81.0 | 98.0 | 84.0 | 4800.0 | 0.1 | ok |
+| Production 5-Agent Swarm | 89.7 | 91.0 | 94.0 | 90.0 | 87.0 | 81.0 | 98.0 | 84.0 | 4800.0 | 0.1 | ok |
 | Single-Agent RAG | 79.95 | 82.0 | 87.0 | 74.0 | 62.0 | 82.0 | 89.0 | 84.0 | 3300.0 | 0.06 | ok |
 | Planner-Executor | 80.9 | 84.0 | 85.0 | 79.0 | 65.0 | 79.0 | 90.0 | 80.0 | 3900.0 | 0.08 | ok |
 | Reduced Swarm + Current LLM | 83.95 | 87.0 | 89.0 | 83.0 | 73.0 | 79.0 | 92.0 | 78.0 | 4100.0 | 0.08 | ok |
@@ -29,9 +29,9 @@ Keep production swarm as baseline until a candidate clearly wins.
 
 ## 3. Swarm Advantage
 
-Production Swarm Score: 89.2
+Production Swarm Score: 89.7
 Best Simpler Baseline Score: 83.95
-Swarm Advantage Score: 5.25
+Swarm Advantage Score: 5.75
 
 Recommendation:
 Keep production swarm as baseline until a candidate clearly wins.
@@ -49,11 +49,11 @@ Overall Complexity Tax: Low
 
 | Component | With Score | Without Score | Delta | Recommendation |
 |---|---:|---:|---:|---|
-| Critic agent | 89.2 | 80.65 | 8.55 | Keep always-on |
-| Reflection loop | 89.2 | 81.6 | 7.6 | Keep always-on |
-| RRF memory retrieval | 89.2 | 80.6 | 8.6 | Keep always-on |
-| Nightly Mutation Engine | 89.2 | 81.95 | 7.25 | Keep always-on |
-| CORAL / Meta-LLM | 89.2 | 80.4 | 8.8 | Keep always-on |
+| Critic agent | 89.7 | 80.65 | 9.05 | Keep always-on |
+| Reflection loop | 89.7 | 81.6 | 8.1 | Keep always-on |
+| RRF memory retrieval | 89.7 | 80.6 | 9.1 | Keep always-on |
+| Nightly Mutation Engine | 89.7 | 81.95 | 7.75 | Keep always-on |
+| CORAL / Meta-LLM | 89.7 | 80.4 | 9.3 | Keep always-on |
 
 ## 6. Safety and Tool-Call Findings
 

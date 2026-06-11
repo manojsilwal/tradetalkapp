@@ -278,6 +278,8 @@ All connectors follow the **truthful-data contract** (§5.9): a fetch failure ra
 
 See **§5.10 Resilient free-API fetching** for batching, pagination, and quota-aware ingestion patterns shared across connectors.
 
+For a **panel-by-panel catalog** of every metric, signal, and formula on the Stock Analysis page (`/dashboard`), see [STOCK_ANALYSIS_METRICS.md](./STOCK_ANALYSIS_METRICS.md).
+
 ---
 
 ### 5.10 Resilient free-API fetching (batching & pagination)

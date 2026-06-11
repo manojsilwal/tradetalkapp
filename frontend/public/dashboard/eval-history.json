@@ -988,5 +988,29 @@
     "top_actions": [
       "Keep production swarm as baseline until a candidate clearly wins."
     ]
+  },
+  {
+    "run_id": "eval_20260611_034945",
+    "timestamp": "2026-06-11T03:49:45Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 89.7,
+    "winning_score": 89.7,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 5.75,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 4800.0,
+    "cost_per_task": 0.1,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-11/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
   }
 ]

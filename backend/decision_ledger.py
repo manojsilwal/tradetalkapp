@@ -190,6 +190,7 @@ class LedgerBackend(ABC):
         llm_used: str,
         cost: float,
         time_taken: float,
+        api_url: Optional[str] = None,
     ) -> None: ...
 
     @abstractmethod
@@ -470,20 +471,22 @@ class SQLiteLedgerBackend(LedgerBackend):
         llm_used: str,
         cost: float,
         time_taken: float,
+        api_url: Optional[str] = None,
     ) -> None:
         try:
             with self._write_lock:
                 conn = self._conn()
                 conn.execute(
                     """INSERT INTO llm_api_calls
-                       (timestamp, query_brief, llm_used, cost, time_taken)
-                       VALUES (?,?,?,?,?)""",
+                       (timestamp, query_brief, llm_used, cost, time_taken, api_url)
+                       VALUES (?,?,?,?,?,?)""",
                     (
                         float(timestamp),
                         query_brief or "",
                         llm_used or "",
                         float(cost),
                         float(time_taken),
+                        api_url,
                     ),
                 )
                 conn.commit()
@@ -508,6 +511,7 @@ class SQLiteLedgerBackend(LedgerBackend):
                     "llm_used": row["llm_used"],
                     "cost": float(row["cost"]),
                     "time_taken": float(row["time_taken"]),
+                    "api_url": row["api_url"] if "api_url" in row.keys() else None,
                 }
                 for row in rows
             ]
@@ -653,6 +657,7 @@ class NullLedgerBackend(LedgerBackend):
         llm_used: str,
         cost: float,
         time_taken: float,
+        api_url: Optional[str] = None,
     ) -> None:
         return None
 
@@ -824,6 +829,7 @@ class SupabaseLedgerBackend(LedgerBackend):
         llm_used: str,
         cost: float,
         time_taken: float,
+        api_url: Optional[str] = None,
     ) -> None:
         try:
             payload = {
@@ -832,6 +838,7 @@ class SupabaseLedgerBackend(LedgerBackend):
                 "llm_used": llm_used or "",
                 "cost": float(cost),
                 "time_taken": float(time_taken),
+                "api_url": api_url,
             }
             self._client.table("llm_api_calls").insert(payload).execute()
         except Exception as e:
@@ -1257,6 +1264,7 @@ def log_llm_api_call(
     response_text: Optional[str] = None,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
+    api_url: Optional[str] = None,
 ) -> None:
     """Log an LLM API call details to the decisions DB, calculating estimated cost."""
     # 1. Clean prompt text to query brief (120 chars)
@@ -1279,7 +1287,21 @@ def log_llm_api_call(
     out_rate = 0.00000060
 
     model_lower = (model or "").lower()
-    if "gemini-3.5-flash" in model_lower or "flash" in model_lower:
+    
+    # Local models run on self-hosted hardware for free
+    is_local = (
+        "qwen" in model_lower
+        or "llama" in model_lower
+        or "ollama" in model_lower
+        or "local" in model_lower
+        or "phi" in model_lower
+        or "mistral" in model_lower
+    )
+
+    if is_local:
+        in_rate = 0.0
+        out_rate = 0.0
+    elif "gemini-3.5-flash" in model_lower or "flash" in model_lower:
         # $0.075 / 1M in, $0.30 / 1M out
         in_rate = 0.000000075
         out_rate = 0.00000030
@@ -1301,6 +1323,7 @@ def log_llm_api_call(
             llm_used=model or "unknown",
             cost=cost,
             time_taken=latency,
+            api_url=api_url,
         )
     except Exception as e:
         logger.debug("[DecisionLedger] log_llm_api_call failed: %s", e)

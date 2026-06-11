@@ -276,6 +276,7 @@ def gemini_simple_completion_sync(
             response_text=response_text,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            api_url=_GEMINI_GUARD_URL,
         )
         return response_text
 
@@ -365,6 +366,7 @@ def gemini_chat_turn_result_sync(
             response_text=result_text,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            api_url=_GEMINI_GUARD_URL,
         )
 
         if fc:
@@ -460,6 +462,7 @@ def gemini_extract_holdings_from_image(
             response_text=response_text,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            api_url=_GEMINI_GUARD_URL,
         )
         return response_text
 

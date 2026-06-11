@@ -947,6 +947,7 @@ class LLMClient:
                             response_text=content,
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
+                            api_url=self._endpoint,
                         )
 
                         parsed = self._parse_json_response(content, role)
@@ -1401,6 +1402,7 @@ class LLMClient:
                                 response_text=out,
                                 prompt_tokens=prompt_tokens,
                                 completion_tokens=completion_tokens,
+                                api_url=self._endpoint,
                             )
                             return out
                         break
@@ -1591,6 +1593,7 @@ class LLMClient:
                                     model=phase_model,
                                     latency=latency,
                                     response_text=f"Tool call: {tool_name}" if is_tool_call else "".join(accumulated_response),
+                                    api_url=self._endpoint,
                                 )
                                 break
                             except Exception as e:

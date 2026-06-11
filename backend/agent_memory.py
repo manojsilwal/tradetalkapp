@@ -13,6 +13,7 @@ and embeddings in the existing ``chat_memories`` Chroma collection via
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -26,6 +27,25 @@ _local = threading.local()
 
 # Max messages loaded as short-term context (user+assistant pairs, up to ~8 turns)
 _DEFAULT_MESSAGE_LIMIT = 16
+
+
+def extract_tickers_from_text(text: str) -> List[str]:
+    """Extract stock ticker symbols like $AAPL or known finance terms from text."""
+    # Find words with $ prefix e.g. $AAPL, $MSFT
+    tickers = re.findall(r'\$([A-Za-z]{1,5})\b', text)
+    # Match standard stock symbols that are uppercase of length 2-5
+    common = {"AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "NFLX", "AMD", "SPY", "QQQ", "GLD"}
+    for word in re.findall(r'\b([A-Z]{2,5})\b', text):
+        if word in common:
+            tickers.append(word)
+    seen = set()
+    out = []
+    for t in tickers:
+        tu = t.upper()
+        if tu not in seen:
+            seen.add(tu)
+            out.append(tu)
+    return out
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -92,6 +112,27 @@ def save_memory(
         logger.warning("[AgentMemory] save_memory SQL failed: %s", e)
         return
 
+    # Auto-extract tickers if not provided
+    tlist = tickers
+    if not tlist:
+        tlist = extract_tickers_from_text(content)
+
+    # Auto-generate semantic summary if missing for assistant replies to promote continual learning
+    if not semantic_summary and role == "assistant" and ks is not None:
+        try:
+            recent = load_memory(user_id, session_id, limit=3)
+            user_msg = ""
+            for msg in reversed(recent):
+                if msg["role"] == "user":
+                    user_msg = msg["content"]
+                    break
+            if user_msg:
+                semantic_summary = f"User query: {user_msg[:200]}\nAssistant answer: {content[:200]}"
+            else:
+                semantic_summary = f"Assistant response: {content[:400]}"
+        except Exception as e:
+            logger.warning("[AgentMemory] auto-summary failed: %s", e)
+
     if semantic_summary and ks is not None:
         try:
             from .agent_policy_guardrails import redact_secrets_in_text
@@ -99,12 +140,11 @@ def save_memory(
             summary = redact_secrets_in_text(semantic_summary.strip())[:4000]
             if not summary:
                 return
-            tlist = tickers or []
             ks.add_chat_memory(
                 user_id,
                 session_id,
                 summary,
-                tlist,
+                tlist or [],
                 topic,
             )
         except Exception as e:

@@ -181,6 +181,7 @@ export default function LlmCallsUI() {
                 <tr style={{ background: 'rgba(15,23,42,0.4)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                   <th style={thStyle}>Timestamp</th>
                   <th style={thStyle}>LLM Model Used</th>
+                  <th style={thStyle}>API Endpoint</th>
                   <th style={thStyle}>Latency (s)</th>
                   <th style={thStyle}>Est. Cost (USD)</th>
                   <th style={thStyle}>Query Brief</th>
@@ -214,6 +215,18 @@ export default function LlmCallsUI() {
                             {call.llm_used}
                           </span>
                         </td>
+                        <td style={{ 
+                          ...tdStyle, 
+                          color: '#94a3b8', 
+                          fontFamily: 'monospace', 
+                          fontSize: '0.75rem',
+                          maxWidth: '180px',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }} title={call.api_url || 'N/A'}>
+                          {call.api_url || '—'}
+                        </td>
                         <td style={{ ...tdStyle, color: getLatencyColor(call.time_taken), fontWeight: '700' }}>
                           {call.time_taken.toFixed(2)}s
                           {/* Mini visual indicator */}
@@ -238,19 +251,36 @@ export default function LlmCallsUI() {
                       </tr>
                       {isExpanded && (
                         <tr style={{ background: 'rgba(255,255,255,0.01)' }}>
-                          <td colSpan="5" style={{ padding: '16px 24px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                Raw Query / Prompt Context
+                          <td colSpan="6" style={{ padding: '16px 24px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                              {call.api_url && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    Full API Endpoint URL
+                                  </div>
+                                  <div style={{ 
+                                    padding: '10px 14px', borderRadius: '8px', 
+                                    background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)',
+                                    color: '#cbd5e1', fontFamily: 'monospace', fontSize: '0.78rem',
+                                    wordBreak: 'break-all'
+                                  }}>
+                                    {call.api_url}
+                                  </div>
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                  Raw Query / Prompt Context
+                                </div>
+                                <pre style={{ 
+                                  margin: 0, padding: '14px', borderRadius: '8px', 
+                                  background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)',
+                                  color: '#e2e8f0', fontFamily: 'monospace', fontSize: '0.78rem', 
+                                  whiteSpace: 'pre-wrap', lineHeight: '1.5' 
+                                }}>
+                                  {call.query_brief}
+                                </pre>
                               </div>
-                              <pre style={{ 
-                                margin: 0, padding: '14px', borderRadius: '8px', 
-                                background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)',
-                                color: '#e2e8f0', fontFamily: 'monospace', fontSize: '0.78rem', 
-                                whiteSpace: 'pre-wrap', lineHeight: '1.5' 
-                              }}>
-                                {call.query_brief}
-                              </pre>
                             </div>
                           </td>
                         </tr>

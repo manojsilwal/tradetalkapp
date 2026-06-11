@@ -139,8 +139,8 @@ function App() {
             {/* Badge popup */}
             <BadgePopup badges={newBadges} />
 
-            {/* Premium Glassmorphic Sidebar */}
-            <aside className={`sidebar glass-panel ${sidebarCollapsed ? 'collapsed' : ''}`}>
+            {/* Premium Sidebar */}
+            <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
                 <div className="brand" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <Activity className="brand-icon" size={28} />
