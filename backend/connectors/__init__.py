@@ -17,6 +17,7 @@ from .backtest_data import (
 from .youtube import fetch_finance_videos
 from .fred import fetch_macro_snapshot
 from .price_movements import fetch_top_movers
+from .stock_fundamentals import fetch_stock_fundamentals
 
 __all__ = [
     "DataConnector",
@@ -36,5 +37,6 @@ __all__ = [
     "fetch_finance_videos",
     "fetch_macro_snapshot",
     "fetch_top_movers",
+    "fetch_stock_fundamentals",
 ]
 

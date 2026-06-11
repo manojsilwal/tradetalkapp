@@ -108,6 +108,8 @@ export function AnalysisProvider({ children }) {
             scorecardError: null,
             predMarketsData: cached.predMarkets,
             predMarketsLoading: false,
+            fundamentalsData: cached.fundamentals,
+            fundamentalsLoading: false,
           };
         }
         return null;
@@ -159,6 +161,8 @@ export function AnalysisProvider({ children }) {
             scorecardError: null,
             predMarketsData: null,
             predMarketsLoading: true,
+            fundamentalsData: null,
+            fundamentalsLoading: true,
         };
 
         setAnalyses(prev => {
@@ -177,6 +181,7 @@ export function AnalysisProvider({ children }) {
                         decisionLoading: false,
                         predMarketsLoading: false,
                         smallCapLoading: false,
+                        fundamentalsLoading: false,
                     };
                 }
             }
@@ -209,6 +214,7 @@ export function AnalysisProvider({ children }) {
                         decisionLoading: false,
                         scorecardLoading: false,
                         predMarketsLoading: false,
+                        fundamentalsLoading: false,
                     }
                 }));
                 validationFailed = true;
@@ -366,6 +372,16 @@ export function AnalysisProvider({ children }) {
                         scorecardLoading: false
                     });
                 }),
+
+            apiFetchTimed(`${API_BASE_URL}/stock-fundamentals/${sym}`, {}, FAST_TIMEOUT_MS)
+                .then((res) => {
+                    onSuccess();
+                    updateTickerState({ fundamentalsData: res, fundamentalsLoading: false });
+                })
+                .catch((err) => {
+                    onFail(err);
+                    updateTickerState({ fundamentalsData: null, fundamentalsLoading: false });
+                }),
         ];
 
         Promise.allSettled(jobs).then(() => {
@@ -398,7 +414,7 @@ export function AnalysisProvider({ children }) {
                     error: finalError
                 };
 
-                if (isSuccess && (updated.metricsData || updated.decisionData || updated.traceData)) {
+                if (isSuccess && (updated.metricsData || updated.decisionData || updated.traceData || updated.fundamentalsData)) {
                     setTimeout(() => {
                         addAnalysis(sym, {
                             trace: updated.traceData,
@@ -409,6 +425,7 @@ export function AnalysisProvider({ children }) {
                             predMarkets: updated.predMarketsData,
                             smallCap: updated.smallCapData,
                             capBucket: updated.capBucket,
+                            fundamentals: updated.fundamentalsData,
                         });
                     }, 0);
                 }

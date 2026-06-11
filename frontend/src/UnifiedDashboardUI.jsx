@@ -1,19 +1,14 @@
 import React, { useState, useMemo, useId, useEffect, useCallback, useRef } from 'react';
-
 import { useSearchParams } from 'react-router-dom';
-import { TrendingUp, Shield, CircleDollarSign, Wallet, PieChart, Scale, CheckCircle2, ArrowUpRight, HelpCircle, Loader2, Search, Zap, CheckCircle, BarChart3, TrendingDown, Target, Activity, ShieldAlert, XCircle } from 'lucide-react';
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, LineChart as ReLineChart, Line, Legend } from 'recharts';
-import { API_BASE_URL, apiFetch } from './api';
+import { TrendingUp, Shield, CircleDollarSign, Wallet, PieChart, Scale, CheckCircle2, ArrowUpRight, HelpCircle, Loader2, Search, Zap, XCircle, ShieldAlert } from 'lucide-react';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, LineChart as ReLineChart, Line } from 'recharts';
+import { API_BASE_URL } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
-import DashboardScorecardPanel from './components/DashboardScorecardPanel';
 import ActionableCompaniesPanel, { ActionableCompaniesButton, useActionableCompanies } from './components/ActionableCompaniesPanel';
-import DebateThreadPanel from './components/debate/DebateThreadPanel';
-import DebateVerdictSummary from './components/debate/DebateVerdictSummary';
 import './DecisionTerminalUI.css';
 import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
 
-// From Decision Terminal
 const QUALITY_ICONS = {
   roic: TrendingUp,
   moat: Shield,
@@ -114,18 +109,11 @@ function verdictTone(v) {
   return 'neutral';
 }
 
-const SMALL_CAP_BUCKETS = new Set(['Small Cap', 'Micro Cap']);
-
-function smallCapScoreColor(score) {
-  if (score === 'green') return '#00ff88';
-  if (score === 'red') return '#f87171';
-  return '#eab308';
-}
-
 function fmtUsdCompact(value) {
   if (value == null || Number.isNaN(Number(value))) return '—';
   const n = Number(value);
   const abs = Math.abs(n);
+  if (abs >= 1_000_000_000_000) return `$${(n / 1_000_000_000_000).toFixed(2)}T`;
   if (abs >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
   if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
@@ -135,233 +123,6 @@ function fmtUsdCompact(value) {
 function fmtPct(value) {
   if (value == null || Number.isNaN(Number(value))) return '—';
   return `${Number(value).toFixed(1)}%`;
-}
-
-function RevenueStreamsSection({ streams }) {
-  if (!streams?.length) return null;
-  return (
-    <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
-        Revenue Streams (5-Year History)
-      </div>
-      {streams.map(stream => (
-        <div key={stream.name} style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 700, color: '#f8fafc' }}>{stream.name}</span>
-            {stream.latest_share_pct != null && (
-              <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                ~{fmtPct(stream.latest_share_pct)} of revenue
-              </span>
-            )}
-            {stream.source && (
-              <span style={{ fontSize: '0.68rem', color: '#64748b', fontStyle: 'italic' }}>
-                Source: {stream.source}
-              </span>
-            )}
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', minWidth: 520 }}>
-              <thead>
-                <tr style={{ color: '#94a3b8', background: 'rgba(15,23,42,0.45)' }}>
-                  {['Year', 'Revenue', 'Gross Margin', 'Operating Margin'].map(h => (
-                    <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Year' ? 'left' : 'right', borderBottom: '1px solid rgba(148,163,184,0.15)' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(stream.years || []).map(row => (
-                  <tr key={`${stream.name}-${row.year}`} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
-                    <td style={{ padding: '7px 10px', fontWeight: 600 }}>{row.year}</td>
-                    <td style={{ padding: '7px 10px', textAlign: 'right' }}>{fmtUsdCompact(row.revenue_usd)}</td>
-                    <td style={{ padding: '7px 10px', textAlign: 'right' }}>{fmtPct(row.gross_margin_pct)}</td>
-                    <td style={{ padding: '7px 10px', textAlign: 'right' }}>{fmtPct(row.operating_margin_pct)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function MajorDealsSection({ deals }) {
-  if (!deals?.length) return null;
-  return (
-    <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
-        Major Enterprise Deals
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-        {deals.map((deal, idx) => (
-          <div
-            key={`${deal.partner}-${idx}`}
-            style={{
-              padding: '12px 14px',
-              borderRadius: 10,
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.08)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontWeight: 700, color: '#e2e8f0' }}>{deal.partner}</span>
-              <span style={{ fontSize: '0.72rem', color: '#a78bfa', whiteSpace: 'nowrap' }}>{deal.deal_type}</span>
-            </div>
-            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#facc15', marginBottom: 6 }}>
-              {deal.amount_label || fmtUsdCompact(deal.amount_usd)}
-              {deal.year ? ` · ${deal.year}` : ''}
-            </div>
-            {deal.summary && (
-              <div style={{ fontSize: '0.8rem', color: '#cbd5e1', lineHeight: 1.45, marginBottom: 6 }}>{deal.summary}</div>
-            )}
-            {deal.predictability_note && (
-              <div style={{ fontSize: '0.75rem', color: '#94a3b8', lineHeight: 1.45 }}>
-                <span style={{ color: '#64748b' }}>Visibility: </span>
-                {deal.predictability_note}
-              </div>
-            )}
-            {deal.source && (
-              <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: 6, fontStyle: 'italic' }}>
-                Source: {deal.source}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SmallCapSignalCard({ signal }) {
-  const [expanded, setExpanded] = useState(false);
-  const color = smallCapScoreColor(signal?.score);
-
-  return (
-    <div
-      style={{
-        padding: '14px 16px',
-        borderRadius: 12,
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        minHeight: 120,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: '50%',
-            background: color,
-            boxShadow: `0 0 8px ${color}55`,
-            flexShrink: 0,
-          }}
-          aria-hidden
-        />
-        <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#e2e8f0', letterSpacing: '0.02em' }}>
-          {signal?.label}
-        </div>
-      </div>
-      <div style={{ fontSize: '0.88rem', fontWeight: 600, lineHeight: 1.45, color: '#f8fafc' }}>
-        {signal?.headline}
-      </div>
-      {expanded && (
-        <div style={{ fontSize: '0.8rem', lineHeight: 1.55, color: 'var(--text-muted)' }}>
-          {signal?.detail}
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={() => setExpanded(v => !v)}
-        style={{
-          alignSelf: 'flex-start',
-          marginTop: 'auto',
-          background: 'transparent',
-          border: 'none',
-          color: '#94a3b8',
-          fontSize: '0.72rem',
-          cursor: 'pointer',
-          padding: 0,
-        }}
-      >
-        {expanded ? 'Hide detail' : 'Show detail'}
-      </button>
-    </div>
-  );
-}
-
-function SmallCapPanel({ data, loading, capBucket }) {
-  if (loading) {
-    return (
-      <section className="dt-panel" style={{ gridColumn: '1 / -1' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-          <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
-          Running growth-stage assessment…
-        </div>
-      </section>
-    );
-  }
-  if (!data?.signals?.length) return null;
-
-  const verdictColor = data.overall_verdict === 'Compelling'
-    ? '#00ff88'
-    : data.overall_verdict === 'Avoid'
-      ? '#f87171'
-      : '#eab308';
-
-  return (
-    <section className="dt-panel" style={{ gridColumn: '1 / -1' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-        <h2 className="dt-panel-title" style={{ margin: 0 }}>Growth-Stage Assessment</h2>
-        <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: 6, background: 'rgba(234,179,8,0.12)', color: '#facc15', fontWeight: 600 }}>
-          {capBucket || data.cap_bucket}
-        </span>
-        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-          Standard valuation metrics not applicable — growth-stage framework applied
-        </span>
-      </div>
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: 14,
-          marginTop: 14,
-        }}
-      >
-        {data.signals.map(signal => (
-          <SmallCapSignalCard key={signal.label} signal={signal} />
-        ))}
-      </div>
-
-      <RevenueStreamsSection streams={data.revenue_streams} />
-      <MajorDealsSection deals={data.major_deals} />
-
-      <div
-        style={{
-          marginTop: 18,
-          padding: '14px 16px',
-          borderRadius: 12,
-          background: 'rgba(255,255,255,0.04)',
-          border: `1px solid ${verdictColor}33`,
-        }}
-      >
-        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Overall Verdict
-        </div>
-        <div style={{ fontSize: '1.15rem', fontWeight: 800, color: verdictColor, marginTop: 6 }}>
-          {data.overall_verdict}
-        </div>
-        <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.55 }}>
-          {data.overall_rationale}
-        </div>
-      </div>
-    </section>
-  );
 }
 
 export default function UnifiedDashboardUI() {
@@ -374,8 +135,9 @@ export default function UnifiedDashboardUI() {
     return '';
   });
 
-  const [isPredictionMarketsExpanded, setIsPredictionMarketsExpanded] = useState(false);
   const [localError, setLocalError] = useState(null);
+  const [period, setPeriod] = useState('1mo');
+  const [perfPeriod, setPerfPeriod] = useState('quarterly');
 
   // Sync page context so the app-level assistant knows what ticker is on screen
   useEffect(() => {
@@ -422,6 +184,8 @@ export default function UnifiedDashboardUI() {
         scorecardError: null,
         predMarketsData: cached.predMarkets,
         predMarketsLoading: false,
+        fundamentalsData: cached.fundamentals,
+        fundamentalsLoading: false,
       };
     }
     
@@ -447,6 +211,8 @@ export default function UnifiedDashboardUI() {
       scorecardError: null,
       predMarketsData: null,
       predMarketsLoading: false,
+      fundamentalsData: null,
+      fundamentalsLoading: false,
     };
   }, [analyses, recentAnalyses, searchUpper]);
 
@@ -472,27 +238,12 @@ export default function UnifiedDashboardUI() {
     scorecardError,
     predMarketsData,
     predMarketsLoading,
+    fundamentalsData,
+    fundamentalsLoading,
   } = currentAnalysis;
 
   const error = localError || analysisError;
   const isAnalyzing = analysisStatus === 'loading';
-
-  const [showOverlay, setShowOverlay] = useState(false);
-  const [fadeActive, setFadeActive] = useState(false);
-
-  useEffect(() => {
-    if (isAnalyzing) {
-      setShowOverlay(true);
-      const frame = requestAnimationFrame(() => {
-        setFadeActive(true);
-      });
-      return () => cancelAnimationFrame(frame);
-    } else {
-      setFadeActive(false);
-      const timer = setTimeout(() => setShowOverlay(false), 500); // matches opacity transition
-      return () => clearTimeout(timer);
-    }
-  }, [isAnalyzing]);
 
   const analyzeTicker = useCallback((overrideTicker = ticker, forceRefresh = false) => {
     const sym = (overrideTicker ?? ticker).trim().toUpperCase();
@@ -506,10 +257,8 @@ export default function UnifiedDashboardUI() {
     contextAnalyzeTicker(sym, forceRefresh);
   }, [ticker, setSearchParams, contextAnalyzeTicker]);
 
-  // Async S&P 500 batch screener (202 + background worker + polling)
+  // Async S&P 500 batch screener
   const actionableState = useActionableCompanies();
-
-  // Do not set default ticker parameter if missing to allow empty landing at /dashboard
 
   // Deep-link: /?ticker=NVDA from Daily Brief or bookmarks
   useEffect(() => {
@@ -577,7 +326,7 @@ export default function UnifiedDashboardUI() {
   const expertPct = z?.expert_bullish_pct;
   const expertBullish = expertPct != null && expertPct >= 55;
 
-  const spot = v?.current_price_usd;
+  const spot = v?.current_price_usd || fundamentalsData?.company_info?.current_price;
   const scenarioPrices = useMemo(() => roadmapScenarioPrices(r, spot), [r, spot]);
 
   const roadmapChartData = useMemo(
@@ -595,16 +344,6 @@ export default function UnifiedDashboardUI() {
   const isBullish = traceData?.global_signal >= 2;
   const verdict = traceData?.global_verdict || "AWAITING ANALYSIS";
 
-  const getRationale = (factorKey) => {
-    if (!traceData?.factors?.[factorKey]) return 'Awaiting Scan...';
-    const factorData = traceData.factors[factorKey];
-    const history = Array.isArray(factorData.history) ? factorData.history : [];
-    if (history.length < 2) return factorData.rationale || 'No trace found.';
-    const snippet = history[history.length - 2]?.content;
-    if (!snippet) return factorData.rationale || 'No trace found.';
-    return snippet.length > 110 ? `${snippet.substring(0, 110)}...` : snippet;
-  };
-
   const chartTooltip = ({ active, payload, label }) => {
     if (!active || !payload || !payload.length) return null;
     return (
@@ -615,6 +354,21 @@ export default function UnifiedDashboardUI() {
             {entry.name}: ${Number(entry.value).toFixed(2)}
           </div>
         ))}
+      </div>
+    );
+  };
+
+  const priceChartTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    const priceVal = payload[0].value;
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', padding: '8px 12px', borderRadius: '6px', fontSize: '12px' }}>
+        <div style={{ color: 'var(--dt-muted)', marginBottom: 4 }}>
+          {label ? new Date(label).toLocaleString() : ''}
+        </div>
+        <div style={{ color: '#fff', fontWeight: 600 }}>
+          Price: ${Number(priceVal).toFixed(2)}
+        </div>
       </div>
     );
   };
@@ -631,6 +385,19 @@ export default function UnifiedDashboardUI() {
   const doneCount = useMemo(() => steps.filter(s => s.done).length, [steps]);
   const progressPct = useMemo(() => Math.round((doneCount / steps.length) * 100), [doneCount, steps.length]);
 
+  const isPricePositive = (fundamentalsData?.company_info?.price_change ?? 0) >= 0;
+
+  const PERIOD_TABS = [
+    { label: '1D', value: '1d' },
+    { label: '5D', value: '5d' },
+    { label: '1M', value: '1mo' },
+    { label: '6M', value: '6mo' },
+    { label: 'YTD', value: 'ytd' },
+    { label: '1Y', value: '1y' },
+    { label: '5Y', value: '5y' },
+    { label: 'MAX', value: 'max' },
+  ];
+
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
@@ -638,7 +405,7 @@ export default function UnifiedDashboardUI() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
          <div className="title-group">
             <h2 style={{ fontSize: '1.8rem', fontWeight: 700, margin: '0 0 5px 0' }}>Stock Analysis</h2>
-            <p style={{ color: 'var(--text-muted)', margin: 0 }}>Real-time Swarm Analysis & Valuation Hub</p>
+            <p style={{ color: 'var(--text-muted)', margin: 0 }}>Real-time Swarm Analysis &amp; Valuation Hub</p>
          </div>
 
          <div style={{ position: 'relative' }}>
@@ -698,10 +465,8 @@ export default function UnifiedDashboardUI() {
               ))}
             </div>
           )}
-        </div>
+         </div>
       </div>
-
-      {/* Loader is managed via the full-screen LoadingOverlay */}
 
       {error && (
         <div className="glass-panel" style={{ borderColor: 'var(--accent-red)', padding: '16px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)' }}>
@@ -715,402 +480,398 @@ export default function UnifiedDashboardUI() {
         </div>
       )}
 
-      {/* Actionable Companies — async S&P 500 batch screener results */}
+      {/* Actionable Companies batch screener results */}
       <ActionableCompaniesPanel state={actionableState} onSelectTicker={(sym) => analyzeTicker(sym)} />
 
-      {/* Main Content Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+      {/* Main Redesigned Layout Grid */}
+      <div className="dt-dashboard-grid">
 
-        {/* Quality Scorecard */}
-        <section className="dt-panel" style={{ gridColumn: 'span 1' }}>
+        {/* 1. BUSINESS QUALITY SCORECARD */}
+        <section className="dt-panel dt-area-scorecard">
           <h2 className="dt-panel-title">Business Quality Scorecard</h2>
-          {decisionLoading && (
+          {decisionLoading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 14, fontSize: '0.9rem' }}>
-              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Loading quality data…
+              <Loader2 className="spinner" size={18} /> Loading scorecard…
             </div>
-          )}
-          <div className="dt-quality-3x2" style={{ marginTop: '16px' }}>
-            {(q?.rows || []).map((row) => {
-              const IconComp = QUALITY_ICONS[row.id] || TrendingUp;
-              const st = (row.status_label || '').toLowerCase();
-              const tone = st.includes('good') && !st.includes('strong') ? 'warn' : ['excellent', 'strong', 'robust', 'low', 'high'].some((k) => st.includes(k)) ? 'ok' : 'muted';
-              return (
-                <div key={row.id} className="dt-q-tile">
-                  <div className="dt-q-tile-icon"><IconComp size={22} strokeWidth={1.6} /></div>
-                  <div className="dt-q-tile-body">
-                    <div className="dt-q-tile-label"><ProvenanceTip provenance={row.provenance} label={row.label} /></div>
-                    <div className="dt-q-tile-value">{row.value_label || '—'}</div>
-                    <div className={`dt-q-tile-status dt-tone-${tone}`}>{row.status_label || '—'}</div>
-                  </div>
-                </div>
-              );
-            })}
-            {!hasDecisionData &&
-              ['ROIC', 'Moat', 'FCF', 'Debt', 'Margin', 'Current ratio'].map((label) => (
-                <div key={label} className="dt-q-tile dt-q-tile-empty">
-                  <div className="dt-q-tile-icon muted"><TrendingUp size={22} /></div>
-                  <div className="dt-q-tile-body">
-                    <div className="dt-q-tile-label">{label}</div>
-                    <div className="dt-q-tile-value">—</div>
-                    <div className="dt-q-tile-status dt-tone-muted">—</div>
-                  </div>
-                </div>
-              ))}
-          </div>
-        </section>
-
-        {/* Verdict & Sentiment Hub */}
-        <section className="dt-panel" style={{ gridColumn: 'span 1' }}>
-          <h2 className="dt-panel-title">Verdict & Sentiment Hub</h2>
-          <div style={{ display: 'flex', gap: '24px', marginTop: '16px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-
-            {/* Social gauge */}
-            <div style={{ textAlign: 'center', minWidth: 120 }}>
-              <div className="dt-subblock-title" style={{ marginBottom: 10 }}>Social Sentiment</div>
-              {traceLoading
-                ? <Loader2 size={28} style={{ animation: 'spin 1s linear infinite', color: '#3b82f6', margin: '12px auto', display: 'block' }} />
-                : (
-                  <div className="dt-pm-gauge-wrap" style={{ position: 'relative', display: 'inline-block' }}>
-                    <SemiGauge fillRatio={socialFill} size="small" />
-                    <div className="dt-pm-label" style={{ position: 'absolute', bottom: '8px', left: '50%', transform: 'translateX(-50%)', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      {socialConfPct != null
-                        ? socialBullish ? `${socialConfPct}% Bullish` : `${100 - socialConfPct}% Mixed`
-                        : '—'}
+          ) : (
+            <div className="dt-quality-3x2" style={{ marginTop: '16px' }}>
+              {(q?.rows || []).map((row) => {
+                const IconComp = QUALITY_ICONS[row.id] || TrendingUp;
+                const st = (row.status_label || '').toLowerCase();
+                const tone = st.includes('good') && !st.includes('strong') ? 'warn' : ['excellent', 'strong', 'robust', 'low', 'high'].some((k) => st.includes(k)) ? 'ok' : 'muted';
+                return (
+                  <div key={row.id} className="dt-q-tile">
+                    <div className="dt-q-tile-icon"><IconComp size={20} strokeWidth={1.6} /></div>
+                    <div className="dt-q-tile-body">
+                      <div className="dt-q-tile-label"><ProvenanceTip provenance={row.provenance} label={row.label} /></div>
+                      <div className="dt-q-tile-value">{row.value_label || '—'}</div>
+                      <div className={`dt-q-tile-status dt-tone-${tone}`}>{row.status_label || '—'}</div>
                     </div>
                   </div>
-                )
-              }
-            </div>
-
-            {/* Verdict col */}
-            <div style={{ flex: 1, minWidth: 160 }}>
-              <div className="dt-subblock-title">Expert Consensus</div>
-              {decisionLoading
-                ? <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 8 }}><Loader2 size={16} style={{ animation: 'spin 1s linear infinite', marginRight: 6, verticalAlign: 'middle' }} />Analyzing…</div>
-                : (
-                  <div className={`dt-expert-pill ${expertBullish ? 'bull' : 'neutral'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 16, background: expertBullish ? 'rgba(0,255,136,0.1)' : 'rgba(255,255,255,0.05)', color: expertBullish ? '#00ff88' : '#fff', fontWeight: 600, fontSize: 14, marginTop: 8 }}>
-                    <ArrowUpRight size={18} />
-                    <span>{hasDecisionData && expertPct != null ? `${expertBullish ? 'Bullish' : 'Mixed'} — ${expertPct.toFixed(0)}%` : '—'}</span>
-                  </div>
-                )
-              }
-              <div className="dt-subblock-title" style={{ marginTop: 16 }}>Aggregate Verdict</div>
-              {decisionLoading
-                ? <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 4 }}>—</div>
-                : (
-                  <div className={`dt-aggregate ${verdictTone(z?.headline_verdict || verdict)}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '1.2rem', fontWeight: 700, marginTop: 6 }}>
-                    <CheckCircle2 size={24} />
-                    <span>{hasDecisionData ? (z?.headline_verdict || verdict).toUpperCase() : '—'}</span>
-                  </div>
-                )
-              }
-            </div>
-          </div>
-        </section>
-
-        {(smallCapLoading || smallCapData) && (
-          <SmallCapPanel data={smallCapData} loading={smallCapLoading} capBucket={capBucket} />
-        )}
-
-
-        <DashboardScorecardPanel
-          data={scorecardData}
-          ticker={searchUpper}
-          loading={scorecardLoading}
-          error={scorecardError}
-        />
-
-        {/* Future Price Roadmap */}
-        <section className="dt-panel" style={{ gridColumn: '1 / -1' }}>
-          <h2 className="dt-panel-title">Future Price Roadmap (3-Year Trajectory)</h2>
-          {decisionLoading && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 14, fontSize: '0.9rem' }}>
-              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Building scenario paths…
-            </div>
-          )}
-          <div style={{ marginTop: '16px', height: '300px' }}>
-            <div className="dt-roadmap-head" style={{ display: 'flex', gap: '16px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <span className="dt-roadmap-legend"><span className="dot bull" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#00ff88', marginRight: 6 }} /> Bull {scenarioPrices?.bull != null && ` ($${Number(scenarioPrices.bull).toFixed(0)})`}</span>
-              <span className="dt-roadmap-legend"><span className="dot base" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', marginRight: 6 }} /> Base {scenarioPrices?.base != null && ` ($${Number(scenarioPrices.base).toFixed(0)})`}</span>
-              <span className="dt-roadmap-legend"><span className="dot bear" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f87171', marginRight: 6 }} /> Bear {scenarioPrices?.bear != null && ` ($${Number(scenarioPrices.bear).toFixed(0)})`}</span>
-              {hasDecisionData && spot != null && (
-                <span
-                  data-testid="dashboard-current-price"
-                  data-symbol={decisionData?.ticker || searchUpper}
-                  style={{ fontSize: '12px', fontWeight: 600, color: '#fff', marginLeft: 'auto' }}
-                >
-                  Current price: ${Number(spot).toFixed(2)}
-                </span>
-              )}
-            </div>
-            {hasDecisionData && predictedCagrPct != null && (
-              <div className="dt-cagr-chip" style={{ display: 'inline-block', padding: '4px 8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', fontSize: '12px', marginBottom: '16px' }}>Predicted CAGR: {predictedCagrPct}%</div>
-            )}
-            <div className="dt-chart-box" style={{ height: 'calc(100% - 60px)', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '16px' }}>
-              {roadmapChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <ReLineChart data={roadmapChartData} margin={{ top: 16, right: 12, left: 4, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" vertical={false} />
-                    <XAxis dataKey="t" tick={{ fill: '#8ba0b5', fontSize: 11 }} axisLine={{ stroke: 'rgba(148,163,184,0.2)' }} tickLine={false} />
-                    <YAxis tick={{ fill: '#8ba0b5', fontSize: 10 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} tickFormatter={(x) => `$${Math.round(x)}`} />
-                    <RechartsTooltip content={chartTooltip} />
-                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8, color: '#cbd5e1' }} />
-                    <Line type="monotone" dataKey="bull" name="Bull case" stroke="#00ff88" strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 5" />
-                    <Line type="monotone" dataKey="base" name="Base case" stroke="#38bdf8" strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 5" />
-                    <Line type="monotone" dataKey="bear" name="Bear case" stroke="#f87171" strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 5" />
-                  </ReLineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="dt-chart-empty" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', fontSize: '14px' }}>Run analysis to load scenario paths</div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* Consumer Multi-Factor Details (Trendboards & Signals) */}
-        {(traceLoading || traceData) && (
-          <section className="dt-panel" style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <h2 className="dt-panel-title">Multi-Factor Analysis Signals</h2>
-            {traceLoading && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Running swarm analysis…
-              </div>
-            )}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
-
-              {/* Factor Signals using FactorSignalCard style simplified */}
-              {Object.entries(traceData?.factors || {}).map(([key, factorData], idx) => {
-                 const signal = Number(factorData?.trading_signal ?? 0);
-                 let sentiment = signal > 0 ? 'bullish' : signal < 0 ? 'bearish' : 'neutral';
-                 if (key === 'polymarket') {
-                   const brief = getBriefText();
-                   if (brief && brief.includes('Negative')) {
-                     sentiment = 'bearish';
-                   } else if (brief && brief.includes('Positive')) {
-                     sentiment = 'bullish';
-                   }
-                 }
-                 const titleText = sentiment === 'bullish'
-                   ? 'Bullish Signal'
-                   : sentiment === 'bearish'
-                     ? 'Bearish Signal'
-                     : (() => {
-                         if (key === 'short_interest') return 'Neutral (No Squeeze Setup)';
-                         if (key === 'polymarket') return 'Neutral (Mixed Sentiment)';
-                         if (key === 'social_sentiment') return 'Neutral (Mixed Buzz)';
-                         if (key === 'fundamentals') return 'Neutral (Stable Health)';
-                         return 'Neutral';
-                       })();
-                 const titleColor = sentiment === 'bullish'
-                   ? '#00ff88'
-                   : sentiment === 'bearish'
-                     ? '#f87171'
-                     : '#94a3b8';
-                 return (
-                   <div key={key} data-testid={`dashboard-factor-${key}`} style={{ padding: '20px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px' }}>
-                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                       <span style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, color: '#94a3b8' }}>
-                         {key.replace('_', ' ')}
-                       </span>
-                       {sentiment === 'bullish'
-                         ? <CheckCircle2 size={18} color="#00ff88" />
-                         : sentiment === 'bearish'
-                           ? <XCircle size={18} color="#f87171" />
-                           : <HelpCircle size={18} color="#94a3b8" />}
-                     </div>
-                     <p style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: 600, color: titleColor }}>
-                        {titleText}
-                        {factorData.confidence != null
-                          ? ` (Conf: ${(Number(factorData.confidence) * 100).toFixed(0)}%)`
-                          : ''}
-                     </p>
-                     <p style={{ margin: 0, fontSize: '13px', color: '#cbd5e1', lineHeight: 1.5 }}>
-                        {getRationale(key)}
-                     </p>
-                   </div>
-                 );
+                );
               })}
+              {(!hasDecisionData || !q?.rows?.length) &&
+                ['ROIC', 'Moat', 'FCF', 'Debt', 'Margin', 'Current ratio'].map((label) => (
+                  <div key={label} className="dt-q-tile dt-q-tile-empty">
+                    <div className="dt-q-tile-icon muted"><TrendingUp size={20} /></div>
+                    <div className="dt-q-tile-body">
+                      <div className="dt-q-tile-label">{label}</div>
+                      <div className="dt-q-tile-value">—</div>
+                      <div className="dt-q-tile-status dt-tone-muted">—</div>
+                    </div>
+                  </div>
+                ))}
             </div>
+          )}
+        </section>
 
-            {(metricsLoading || metricsData) && (
-               <div>
-                 <h3 style={{ fontSize: '14px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '20px', marginBottom: '16px' }}>Key Metrics Activity</h3>
-                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-                    {[
-                      { key: 'momentum_rsi', label: 'RSI (14D)', color: '#38bdf8' },
-                      { key: 'institutional_ownership', label: 'Inst. Ownership', color: '#00ff88' },
-                      { key: 'short_interest', label: 'Short Interest', color: '#f87171' },
-                    ].map(({ key, label, color }) => {
-                      const raw = metricsData?.[key]?.current;
-                      const value = raw && raw !== 'N/A' ? raw : null;
-                      return (
-                        <div key={key} style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', borderLeft: `3px solid ${color}` }}>
-                          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px' }}>{label}</div>
-                          <div style={{ fontSize: '24px', fontWeight: 700 }}>
-                            {metricsLoading
-                              ? <Loader2 size={22} style={{ animation: 'spin 1s linear infinite', color: '#94a3b8' }} />
-                              : (value || 'N/A')}
-                          </div>
-                        </div>
-                      );
-                    })}
-                 </div>
-               </div>
-            )}
-          </section>
-        )}
-
-        {(debateLoading || debateData || debateError) && (
-          <section className="dt-panel" style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <h2 className="dt-panel-title">AI Debate Panel</h2>
-            {debateLoading && (
-              <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
-                Running multi-agent debate and synthesizing verdict...
+        {/* 2. STOCK CHART CENTER PANEL */}
+        <section className="dt-panel dt-area-chart">
+          <div className="dt-chart-breadcrumb">STOCKS &gt; US &gt; <span>{searchUpper || 'AAPL'}</span></div>
+          <div className="dt-company-header">
+            <h1 className="dt-company-name">
+              {fundamentalsLoading ? 'Loading...' : (fundamentalsData?.company_info?.company_name || searchUpper || 'AAPL')}
+            </h1>
+            {!fundamentalsLoading && fundamentalsData?.company_info && (
+              <div className="dt-price-display">
+                <span className="dt-price-value" data-testid="dashboard-current-price" data-symbol={searchUpper}>${fundamentalsData.company_info.current_price?.toFixed(2) || '—'}</span>
+                {fundamentalsData.company_info.price_change_pct != null && (
+                  <span className={`dt-price-badge ${isPricePositive ? 'positive' : 'negative'}`}>
+                    {isPricePositive ? '▲' : '▼'} {Math.abs(fundamentalsData.company_info.price_change_pct).toFixed(2)}%
+                  </span>
+                )}
+                {fundamentalsData.company_info.price_change != null && (
+                  <span className="dt-price-change-abs">
+                    {isPricePositive ? '+' : ''}{fundamentalsData.company_info.price_change.toFixed(2)} Today
+                  </span>
+                )}
               </div>
             )}
-            {debateError && (
-              <div style={{
-                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
-                borderRadius: 10, padding: '12px 16px', color: '#f87171', fontSize: '0.85rem',
-              }}>
-                {debateError}
+          </div>
+          
+          <div className="dt-period-tabs">
+            {PERIOD_TABS.map((tab) => (
+              <button
+                key={tab.value}
+                type="button"
+                className={`dt-period-tab ${period === tab.value ? 'active' : ''}`}
+                onClick={() => setPeriod(tab.value)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="dt-stock-chart-container">
+            {fundamentalsLoading ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)' }}>
+                <Loader2 className="spinner" size={18} /> Loading price history…
+              </div>
+            ) : fundamentalsData?.price_history?.[period]?.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={fundamentalsData.price_history[period]} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={isPricePositive ? '#00ff88' : '#f87171'} stopOpacity={0.25}/>
+                      <stop offset="95%" stopColor={isPricePositive ? '#00ff88' : '#f87171'} stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                  <XAxis 
+                    dataKey="timestamp" 
+                    tick={{ fill: 'var(--dt-muted)', fontSize: 10 }}
+                    axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
+                    tickLine={false}
+                    tickFormatter={(tick) => {
+                      if (!tick) return '';
+                      try {
+                        const d = new Date(tick);
+                        if (period === '1d' || period === '5d') {
+                          return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                        }
+                        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+                      } catch {
+                        return tick;
+                      }
+                    }}
+                  />
+                  <YAxis 
+                    tick={{ fill: 'var(--dt-muted)', fontSize: 10 }}
+                    axisLine={false}
+                    tickLine={false}
+                    domain={['auto', 'auto']}
+                    tickFormatter={(val) => `$${val.toFixed(2)}`}
+                  />
+                  <RechartsTooltip content={priceChartTooltip} />
+                  <Area 
+                    type="monotone" 
+                    dataKey="close" 
+                    stroke={isPricePositive ? '#00ff88' : '#f87171'} 
+                    strokeWidth={2}
+                    fillOpacity={1} 
+                    fill="url(#colorPrice)" 
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)', fontSize: '0.85rem' }}>
+                No price history available.
               </div>
             )}
-            <DebateThreadPanel result={debateData} loading={debateLoading} />
-            {!debateLoading && debateData && <DebateVerdictSummary result={debateData} />}
-          </section>
-        )}
+          </div>
+        </section>
 
-        {/* Prediction Markets */}
-        <section className="dt-panel" style={{ gridColumn: '1 / -1' }}>
-          <div 
-            style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'space-between', 
-              cursor: 'pointer', 
-              userSelect: 'none' 
-            }}
-            onClick={() => setIsPredictionMarketsExpanded(v => !v)}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <h2 className="dt-panel-title" style={{ margin: 0 }}>Prediction Markets</h2>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Polymarket · Kalshi</span>
-              {predMarketsData?.context?.sector && (
-                <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: 6, background: 'rgba(99,102,241,0.12)', color: '#818cf8' }}>
-                  {predMarketsData.context.sector} · {(predMarketsData.context.indices || []).join(' · ')}
+        {/* 3. VERDICT & SENTIMENT + FUTURE PRICE ROADMAP */}
+        <section className="dt-panel dt-area-verdict">
+          <h2 className="dt-panel-title">Verdict &amp; Sentiment Hub</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
+            <div className="dt-verdict-row">
+              <span className="dt-verdict-row-label">Social Sentiment</span>
+              {traceLoading ? (
+                <Loader2 className="spinner" size={16} />
+              ) : (
+                <div className="dt-verdict-mini-gauge">
+                  <SemiGauge fillRatio={socialFill} size="small" />
+                </div>
+              )}
+            </div>
+            <div className="dt-verdict-row">
+              <span className="dt-verdict-row-label">Expert Consensus</span>
+              {decisionLoading ? (
+                <Loader2 className="spinner" size={16} />
+              ) : (
+                <span style={{ fontSize: '0.82rem', fontWeight: 700, color: expertBullish ? '#00ff88' : '#94a3b8' }}>
+                  {hasDecisionData && expertPct != null ? `${expertBullish ? 'Bullish' : 'Mixed'} (${expertPct.toFixed(0)}%)` : '—'}
                 </span>
               )}
-              {(() => {
-                const brief = getBriefText();
-                if (!brief) return null;
-                const isPos = brief.includes('Positive');
-                const isNeg = brief.includes('Negative');
-                const badgeColor = isPos ? '#00ff88' : isNeg ? '#f87171' : '#eab308';
-                const badgeBg = isPos ? 'rgba(0,255,136,0.1)' : isNeg ? 'rgba(248,113,113,0.1)' : 'rgba(234,179,8,0.1)';
-                return (
-                  <span style={{ 
-                    fontSize: '0.75rem', 
-                    fontWeight: 700, 
-                    padding: '2px 8px', 
-                    borderRadius: 6, 
-                    color: badgeColor, 
-                    background: badgeBg,
-                    border: `1px solid ${badgeColor}22` 
-                  }}>
-                    {brief}
-                  </span>
-                );
-              })()}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-              <span>{isPredictionMarketsExpanded ? 'Collapse' : 'Expand'}</span>
-              <span style={{ transform: isPredictionMarketsExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s', fontSize: '0.8rem' }}>
-                ▼
-              </span>
+            
+            <div className="dt-aggregate-card">
+              <div className="dt-aggregate-card-title">Aggregate Verdict</div>
+              {decisionLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--dt-muted)', fontSize: '0.82rem' }}>
+                  <Loader2 className="spinner" size={14} /> Synthesizing...
+                </div>
+              ) : (
+                <div className={`dt-aggregate-badge ${verdictTone(z?.headline_verdict || verdict)}`}>
+                  <CheckCircle2 size={16} />
+                  <span>{hasDecisionData ? (z?.headline_verdict || verdict).toUpperCase() : 'AWAITING ANALYSIS'}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="dt-roadmap-compact">
+              <h2 className="dt-panel-title">Future Price Roadmap</h2>
+              <div className="dt-roadmap-legend-row" style={{ marginTop: 6 }}>
+                <span className="dt-roadmap-legend-item">
+                  <span className="dt-roadmap-dot bull" />
+                  Bull {scenarioPrices?.bull != null && `($${Number(scenarioPrices.bull).toFixed(0)})`}
+                </span>
+                <span className="dt-roadmap-legend-item">
+                  <span className="dt-roadmap-dot base" />
+                  Base {scenarioPrices?.base != null && `($${Number(scenarioPrices.base).toFixed(0)})`}
+                </span>
+                <span className="dt-roadmap-legend-item">
+                  <span className="dt-roadmap-dot bear" />
+                  Bear {scenarioPrices?.bear != null && `($${Number(scenarioPrices.bear).toFixed(0)})`}
+                </span>
+              </div>
+              <div className="dt-roadmap-chart-sm" style={{ marginTop: 6 }}>
+                {decisionLoading ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)' }}>
+                    <Loader2 className="spinner" size={18} /> Generating paths…
+                  </div>
+                ) : roadmapChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ReLineChart data={roadmapChartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                      <XAxis dataKey="t" tick={{ fill: 'var(--dt-muted)', fontSize: 9 }} tickLine={false} axisLine={false} />
+                      <YAxis tick={{ fill: 'var(--dt-muted)', fontSize: 8 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
+                      <RechartsTooltip content={chartTooltip} />
+                      <Line type="monotone" dataKey="bull" name="Bull case" stroke="#00ff88" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
+                      <Line type="monotone" dataKey="base" name="Base case" stroke="#8b5cf6" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
+                      <Line type="monotone" dataKey="bear" name="Bear case" stroke="#f87171" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
+                    </ReLineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', fontSize: '11px' }}>
+                    Run analysis to load paths
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* 4. CONSOLIDATED METRICS */}
+        <section className="dt-panel dt-area-metrics">
+          <h2 className="dt-panel-title">Consolidated Metrics</h2>
+          {fundamentalsLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 14, fontSize: '0.9rem' }}>
+              <Loader2 className="spinner" size={18} /> Loading fundamental metrics…
+            </div>
+          ) : (
+            <div className="dt-consolidated" style={{ marginTop: '16px' }}>
+              {/* Left Column: Valuation & Margins */}
+              <div>
+                <h3 className="dt-metrics-section-title">Valuation</h3>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Market Cap</span>
+                  <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.valuation?.market_cap)}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">PE Ratio (TTM)</span>
+                  <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.trailing_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Price to Sales</span>
+                  <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.price_to_sales?.toFixed(2) || <span className="dt-metric-dash">—</span>}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">EV / EBITDA</span>
+                  <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.ev_to_ebitda?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                </div>
+
+                <h3 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Margins &amp; Growth</h3>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Profit Margin</span>
+                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.profit_margins != null ? fundamentalsData.metrics.margins_and_growth.profit_margins * 100 : null)}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Operating Margin</span>
+                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.operating_margins != null ? fundamentalsData.metrics.margins_and_growth.operating_margins * 100 : null)}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Earnings Growth YoY</span>
+                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.earnings_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.earnings_growth_yoy * 100 : null)}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Revenue Growth YoY</span>
+                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.revenue_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.revenue_growth_yoy * 100 : null)}</span>
+                </div>
+              </div>
+
+              {/* Right Column: Cash Flow, Balance Sheet, Dividends */}
+              <div>
+                <h3 className="dt-metrics-section-title">Cash Flow</h3>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Free Cash Flow</span>
+                  <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.cash_flow?.free_cash_flow)}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">FCF Yield</span>
+                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.cash_flow?.fcf_yield != null ? fundamentalsData.metrics.cash_flow.fcf_yield * 100 : null)}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">FCF Per Share</span>
+                  <span className="dt-metric-value">{fundamentalsData?.metrics?.cash_flow?.fcf_per_share != null ? `$${fundamentalsData.metrics.cash_flow.fcf_per_share.toFixed(2)}` : <span className="dt-metric-dash">—</span>}</span>
+                </div>
+
+                <h3 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Balance Sheet</h3>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Total Cash</span>
+                  <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_cash)}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Total Debt</span>
+                  <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_debt)}</span>
+                </div>
+
+                <h3 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Dividends</h3>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Dividend Yield</span>
+                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.dividend_yield != null ? fundamentalsData.metrics.dividend.dividend_yield * 100 : null)}</span>
+                </div>
+                <div className="dt-metric-row">
+                  <span className="dt-metric-label">Payout Ratio</span>
+                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.payout_ratio != null ? fundamentalsData.metrics.dividend.payout_ratio * 100 : null)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* 5. FINANCIAL PERFORMANCE */}
+        <section className="dt-panel dt-area-performance">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 className="dt-panel-title" style={{ margin: 0 }}>Financial Performance</h2>
+            <div className="dt-perf-toggle">
+              <button
+                type="button"
+                className={`dt-perf-toggle-btn ${perfPeriod === 'quarterly' ? 'active' : ''}`}
+                onClick={() => setPerfPeriod('quarterly')}
+              >
+                Quarterly
+              </button>
+              <button
+                type="button"
+                className={`dt-perf-toggle-btn ${perfPeriod === 'annual' ? 'active' : ''}`}
+                onClick={() => setPerfPeriod('annual')}
+              >
+                Annually
+              </button>
             </div>
           </div>
 
-          {isPredictionMarketsExpanded && (
-            <div style={{ marginTop: 16 }}>
-              {predMarketsLoading && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 14, fontSize: '0.9rem' }}>
-                  <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Fetching live prediction markets…
-                </div>
-              )}
-
-              {!predMarketsLoading && predMarketsData?.has_relevant_data && (() => {
-                const directEvts = (predMarketsData.events || []).filter(e => e.relevance_type !== 'sector');
-                const sectorEvts = (predMarketsData.events || []).filter(e => e.relevance_type === 'sector');
-
-                const EventRow = ({ ev }) => {
-                  const prob = ev.probability != null ? Math.round(ev.probability * 100) : null;
-                  const bullColor = prob != null ? (prob >= 60 ? '#00ff88' : prob >= 40 ? '#eab308' : '#f87171') : '#94a3b8';
-                  return (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                      <span style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: 5, background: ev.source === 'Kalshi' ? 'rgba(59,130,246,0.15)' : 'rgba(124,58,237,0.15)', color: ev.source === 'Kalshi' ? '#60a5fa' : '#a78bfa', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                        {ev.source}
-                      </span>
-                      <div style={{ flex: 1, fontSize: '0.875rem', lineHeight: 1.4 }}>
-                        {ev.market_question || ev.title}
-                      </div>
-                      {prob != null && (
-                        <div style={{ textAlign: 'right', minWidth: 56, flexShrink: 0 }}>
-                          <div style={{ fontSize: '1.15rem', fontWeight: 800, fontFamily: 'monospace', color: bullColor }}>{prob}%</div>
-                          <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>Yes</div>
-                        </div>
-                      )}
-                      {ev.volume > 0 && (
-                        <div style={{ textAlign: 'right', minWidth: 56, fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>
-                          ${ev.volume >= 1000 ? `${(ev.volume/1000).toFixed(1)}K` : ev.volume.toFixed(0)} vol
-                        </div>
-                      )}
-                      {ev.url && (
-                        <a href={ev.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-muted)', flexShrink: 0 }} title="Open on market">
-                          <BarChart3 size={14} />
-                        </a>
-                      )}
+          {fundamentalsLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 24, fontSize: '0.9rem' }}>
+              <Loader2 className="spinner" size={18} /> Loading financials…
+            </div>
+          ) : (
+            <div style={{ marginTop: 12 }}>
+              {/* Revenue Chart */}
+              <div className="dt-perf-chart-label">Revenue</div>
+              <div className="dt-perf-chart-box">
+                <div className="dt-perf-chart-inner">
+                  {fundamentalsData?.financials?.[perfPeriod]?.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={fundamentalsData.financials[perfPeriod]} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                        <XAxis dataKey="period" tick={{ fill: 'var(--dt-muted)', fontSize: 9 }} tickLine={false} axisLine={false} />
+                        <YAxis tick={{ fill: 'var(--dt-muted)', fontSize: 8 }} axisLine={false} tickLine={false} tickFormatter={(val) => fmtUsdCompact(val)} />
+                        <RechartsTooltip
+                          contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px' }}
+                          labelStyle={{ color: 'var(--dt-muted)', fontSize: '10px' }}
+                          itemStyle={{ color: '#fff', fontSize: '11px' }}
+                          formatter={(value) => [fmtUsdCompact(value), 'Revenue']}
+                        />
+                        <Bar dataKey="revenue" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)', fontSize: '0.8rem' }}>
+                      No revenue data
                     </div>
-                  );
-                };
+                  )}
+                </div>
+              </div>
 
-                return (
-                  <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    {directEvts.length > 0 && (
-                      <div>
-                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
-                          {searchUpper}-specific bets
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {directEvts.map((ev, i) => <EventRow key={`d-${i}`} ev={ev} />)}
-                        </div>
-                      </div>
-                    )}
-                    {sectorEvts.length > 0 && (
-                      <div>
-                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
-                          Sector / Index context ({(predMarketsData.context?.indices || []).join(', ')})
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {sectorEvts.map((ev, i) => <EventRow key={`s-${i}`} ev={ev} />)}
-                        </div>
-                      </div>
-                    )}
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem', margin: '2px 0 0' }}>
-                      Crowd-sourced probabilities — not financial advice. Sources: Polymarket, Kalshi public APIs.
-                    </p>
-                  </div>
-                );
-              })()}
-
-              {!predMarketsLoading && !predMarketsData?.has_relevant_data && searchUpper && (
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: 12 }}>
-                  No active prediction markets found for {searchUpper} on Polymarket or Kalshi.
-                </p>
-              )}
-              {!predMarketsLoading && !searchUpper && (
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: 12 }}>Run Analyze to load prediction markets.</p>
-              )}
+              {/* Net Income Chart */}
+              <div className="dt-perf-chart-label">Net Income</div>
+              <div className="dt-perf-chart-box">
+                <div className="dt-perf-chart-inner">
+                  {fundamentalsData?.financials?.[perfPeriod]?.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={fundamentalsData.financials[perfPeriod]} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                        <XAxis dataKey="period" tick={{ fill: 'var(--dt-muted)', fontSize: 9 }} tickLine={false} axisLine={false} />
+                        <YAxis tick={{ fill: 'var(--dt-muted)', fontSize: 8 }} axisLine={false} tickLine={false} tickFormatter={(val) => fmtUsdCompact(val)} />
+                        <RechartsTooltip
+                          contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px' }}
+                          labelStyle={{ color: 'var(--dt-muted)', fontSize: '10px' }}
+                          itemStyle={{ color: '#fff', fontSize: '11px' }}
+                          formatter={(value) => [fmtUsdCompact(value), 'Net Income']}
+                        />
+                        <Bar dataKey="net_income" fill="#10b981" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)', fontSize: '0.8rem' }}>
+                      No net income data
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </section>

@@ -1,5 +1,6 @@
 """Analysis endpoints — swarm trace, AI debate, deep analyze."""
 import asyncio
+import logging
 import os
 import time as _time
 from datetime import datetime as _dt2, timezone as _tz2
@@ -7,6 +8,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, Depends, HTTPException
 from pydantic import BaseModel
+
+from ..connectors.stock_fundamentals import fetch_stock_fundamentals
 
 from ..schemas import (
     MarketState, MarketRegime, SwarmConsensus, DebateResult,
@@ -620,3 +623,36 @@ async def prediction_markets(ticker: str = Query("AAPL")):
             },
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Stock fundamentals — consolidated data for analysis page redesign
+# ---------------------------------------------------------------------------
+_logger = logging.getLogger(__name__)
+
+
+@router.get("/stock-fundamentals/{ticker}")
+async def get_stock_fundamentals(ticker: str):
+    """
+    Consolidated stock data for the analysis page: price history (multiple
+    time-frames), valuation / cash-flow / margin / growth / balance /
+    dividend metrics, quarterly + annual financials, and company info.
+    """
+    from ..data_errors import InsufficientDataError
+
+    t = validate_ticker_query(ticker)
+
+    try:
+        result = await asyncio.to_thread(fetch_stock_fundamentals, t)
+        return result
+    except InsufficientDataError:
+        raise
+    except Exception as exc:
+        _logger.error("stock-fundamentals failed for %s: %s", t, exc)
+        raise InsufficientDataError(
+            "yfinance",
+            f"Stock fundamentals fetch failed for {t}: {exc}",
+            ticker=t,
+            missing=["stock_fundamentals"],
+        ) from exc
+

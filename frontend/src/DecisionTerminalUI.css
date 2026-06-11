@@ -19,7 +19,7 @@
 .dt-page {
   --dt-bg: #0b0f14;
   --dt-card: #12181f;
-  --dt-card-edge: rgba(0, 255, 136, 0.08);
+  --dt-card-edge: rgba(255, 255, 255, 0.06);
   --dt-neon: #00ff88;
   --dt-neon-dim: rgba(0, 255, 136, 0.14);
   --dt-teal: #2dd4bf;
@@ -28,6 +28,8 @@
   --dt-blue: #38bdf8;
   --dt-text: #e8eef4;
   --dt-muted: #8ba0b5;
+  --dt-surface: #161b22;
+  --dt-border: rgba(255, 255, 255, 0.06);
 
   display: block;
   background: var(--dt-bg);
@@ -187,7 +189,56 @@
   margin-bottom: 14px;
 }
 
-/* —— 2×2 dashboard —— */
+/* ═══════════════════════════════════════════════════
+   REDESIGNED LAYOUT — 3-col top + 2-col bottom
+   ═══════════════════════════════════════════════════ */
+
+/* Main dashboard grid */
+.dt-dashboard-grid {
+  display: grid;
+  grid-template-columns: 240px 1fr 280px;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "scorecard chart verdict"
+    "metrics   metrics performance";
+  gap: 16px;
+}
+
+@media (max-width: 1200px) {
+  .dt-dashboard-grid {
+    grid-template-columns: 220px 1fr 260px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .dt-dashboard-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "scorecard chart"
+      "verdict   chart"
+      "metrics   performance";
+  }
+}
+
+@media (max-width: 768px) {
+  .dt-dashboard-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "chart"
+      "scorecard"
+      "verdict"
+      "metrics"
+      "performance";
+  }
+}
+
+.dt-area-scorecard { grid-area: scorecard; }
+.dt-area-chart { grid-area: chart; }
+.dt-area-verdict { grid-area: verdict; }
+.dt-area-metrics { grid-area: metrics; }
+.dt-area-performance { grid-area: performance; }
+
+/* —— 2×2 dashboard (legacy) —— */
 .dt-dash-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -201,9 +252,10 @@
   }
 }
 
+/* Panel / Card */
 .dt-panel {
   background: var(--dt-card);
-  border: 1px solid var(--dt-card-edge);
+  border: 1px solid var(--dt-border);
   border-radius: 14px;
   padding: 18px 20px 20px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
@@ -218,7 +270,330 @@
   color: var(--dt-muted);
 }
 
-/* Valuation split */
+/* ── Stock Chart Center Panel ── */
+.dt-chart-breadcrumb {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--dt-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.dt-chart-breadcrumb span {
+  color: var(--dt-text);
+}
+
+.dt-company-header {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.dt-company-name {
+  font-size: 1.65rem;
+  font-weight: 800;
+  color: var(--dt-text);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.dt-price-display {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.dt-price-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--dt-text);
+  font-feature-settings: 'tnum';
+}
+
+.dt-price-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.dt-price-badge.positive {
+  background: rgba(0, 255, 136, 0.12);
+  color: #00ff88;
+}
+
+.dt-price-badge.negative {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+}
+
+.dt-price-change-abs {
+  font-size: 0.78rem;
+  color: var(--dt-muted);
+}
+
+.dt-period-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 14px;
+}
+
+.dt-period-tab {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dt-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  font-family: inherit;
+}
+
+.dt-period-tab:hover {
+  color: var(--dt-text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.dt-period-tab.active {
+  color: var(--dt-text);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.dt-stock-chart-container {
+  height: 280px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+@media (max-width: 768px) {
+  .dt-stock-chart-container {
+    height: 220px;
+  }
+}
+
+/* ── Verdict & Sentiment Right Panel ── */
+.dt-verdict-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.dt-verdict-row:last-child {
+  border-bottom: none;
+}
+
+.dt-verdict-row-label {
+  font-size: 0.82rem;
+  color: var(--dt-text);
+}
+
+.dt-verdict-mini-gauge {
+  width: 36px;
+  height: 36px;
+}
+
+/* Aggregate verdict card */
+.dt-aggregate-card {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--dt-border);
+}
+
+.dt-aggregate-card-title {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--dt-muted);
+  margin-bottom: 8px;
+}
+
+.dt-aggregate-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.dt-aggregate-badge.buy {
+  background: rgba(0, 255, 136, 0.08);
+  color: var(--dt-neon);
+}
+
+.dt-aggregate-badge.neutral {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dt-muted);
+}
+
+.dt-aggregate-badge.sell {
+  background: rgba(248, 113, 113, 0.08);
+  color: var(--dt-red);
+}
+
+/* ── Future Price Roadmap (compact) ── */
+.dt-roadmap-compact {
+  margin-top: 12px;
+}
+
+.dt-roadmap-compact .dt-panel-title {
+  margin-bottom: 8px;
+}
+
+.dt-roadmap-legend-row {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 10px;
+  font-size: 0.7rem;
+  color: var(--dt-muted);
+}
+
+.dt-roadmap-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dt-roadmap-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dt-roadmap-dot.bull { background: #00ff88; }
+.dt-roadmap-dot.base { background: #8b5cf6; }
+.dt-roadmap-dot.bear { background: #f87171; }
+
+.dt-roadmap-chart-sm {
+  height: 160px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+@media (max-width: 768px) {
+  .dt-roadmap-chart-sm {
+    height: 140px;
+  }
+}
+
+/* ── Consolidated Metrics (bottom left) ── */
+.dt-consolidated {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px 32px;
+}
+
+@media (max-width: 600px) {
+  .dt-consolidated {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dt-metrics-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--dt-text);
+  margin-bottom: 10px;
+  letter-spacing: 0.01em;
+}
+
+.dt-metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 5px 0;
+  font-size: 0.78rem;
+}
+
+.dt-metric-label {
+  color: var(--dt-muted);
+}
+
+.dt-metric-value {
+  color: var(--dt-text);
+  font-weight: 600;
+  font-feature-settings: 'tnum';
+}
+
+.dt-metric-dash {
+  color: rgba(139, 160, 181, 0.4);
+}
+
+/* ── Financial Performance Metrics (bottom right) ── */
+.dt-perf-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  float: right;
+}
+
+.dt-perf-toggle-btn {
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: var(--dt-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+
+.dt-perf-toggle-btn:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.dt-perf-toggle-btn:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.dt-perf-toggle-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--dt-text);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.dt-perf-chart-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--dt-text);
+  margin-bottom: 8px;
+  padding: 12px 14px 0;
+}
+
+.dt-perf-chart-box {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.dt-perf-chart-inner {
+  height: 120px;
+}
+
+/* Valuation split (legacy — kept for DecisionTerminalUI) */
 .dt-valuation-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -320,33 +695,36 @@
   opacity: 0.5;
 }
 
-/* Quality 3×2 */
+/* Quality 3×2 → 2×3 for left column */
 .dt-quality-3x2 {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 768px) {
   .dt-quality-3x2 {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
 @media (max-width: 520px) {
   .dt-quality-3x2 {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
 .dt-q-tile {
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 12px;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 14px 8px;
   background: rgba(8, 12, 18, 0.65);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 12px;
+  min-height: 100px;
 }
 
 .dt-q-tile-empty {
@@ -355,11 +733,11 @@
 
 .dt-q-tile-icon {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 10px;
-  background: rgba(0, 255, 136, 0.08);
-  color: var(--dt-neon);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dt-text);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -370,24 +748,31 @@
   color: var(--dt-muted);
 }
 
+.dt-q-tile-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
 .dt-q-tile-label {
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--dt-muted);
+  margin-top: 2px;
 }
 
 .dt-q-tile-value {
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   font-weight: 700;
   margin-top: 4px;
   color: var(--dt-text);
 }
 
 .dt-q-tile-status {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 600;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .dt-tone-ok {
