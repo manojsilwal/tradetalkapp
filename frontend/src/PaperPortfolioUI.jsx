@@ -954,12 +954,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
             {manualDraft.map((row, idx) => (
               <div
                 key={idx}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr 1fr auto",
-                  gap: 8,
-                  marginBottom: 8,
-                }}
+                className="portfolio-manual-draft-row"
               >
                 <input
                   placeholder="Ticker"
@@ -1296,7 +1291,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr 1fr",
+              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
               gap: 12,
               marginBottom: 12,
             }}
@@ -1404,15 +1399,12 @@ export default function PaperPortfolioUI({ onXpGained }) {
             return (
               <div
                 key={pos.id}
+                className="portfolio-position-row"
                 style={{
                   background: "rgba(255,255,255,0.03)",
                   border: "1px solid rgba(255,255,255,0.08)",
                   borderRadius: 12,
                   padding: "14px 18px",
-                  display: "grid",
-                  gridTemplateColumns: "auto 1fr auto auto auto",
-                  gap: "12px 16px",
-                  alignItems: "center",
                 }}
               >
                 {/* Direction badge */}
@@ -1657,13 +1649,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
             {reviewRows.map((row, idx) => (
               <div
                 key={idx}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "90px 1fr 1fr 1fr 32px",
-                  gap: 8,
-                  marginBottom: 8,
-                  alignItems: "center",
-                }}
+                className="portfolio-import-review-row"
               >
                 <span style={{ fontSize: 11, color: "#a78bfa" }}>
                   {rowStatus(row.ticker, reconciliation)}

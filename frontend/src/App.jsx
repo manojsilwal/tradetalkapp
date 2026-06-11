@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense, useEffect, useRef } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2 } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2, Settings, Bell, HelpCircle, FileText, ChevronRight, ExternalLink, MoreHorizontal, BarChart2 } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -8,7 +8,7 @@ import AuthGate from './components/AuthGate'
 import { useAuth } from './AuthContext'
 import { AUTH_REQUIRED } from './authConfig'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
-import { API_BASE_URL, getToken } from './api'
+import { API_BASE_URL, getToken, apiFetch } from './api'
 import AppAssistantPanel from './AppAssistantPanel'
 import { useAnalysisHistory, analysisStillRunning } from './AnalysisContext.jsx'
 
@@ -68,6 +68,19 @@ function App() {
     const [xpFlash, setXpFlash]    = useState(null)
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
     const [chatPrefetch, setChatPrefetch] = useState(null)
+    const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+    const [unreadNotifications, setUnreadNotifications] = useState(3) // default to 3 to match design
+
+    React.useEffect(() => {
+        const headers = { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) }
+        apiFetch(`${API_BASE_URL}/notifications/history`, { headers })
+            .then(data => {
+                if (data && typeof data.unread === 'number') {
+                    setUnreadNotifications(data.unread);
+                }
+            })
+            .catch(() => {});
+    }, []);
 
     React.useEffect(() => {
         const headers = { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) }
@@ -364,6 +377,194 @@ function App() {
 
             {/* Global floating loader bar (Bottom-Left Corner) */}
             <GlobalLoadingBar />
+
+            {/* Mobile Bottom Navigation Bar (Hidden on Desktop) */}
+            <nav className="mobile-bottom-nav">
+                <button
+                    className={`mobile-bottom-nav-btn ${activeTab === 'daily_brief' && !moreMenuOpen ? 'active' : ''}`}
+                    onClick={() => { navigate('/'); setMoreMenuOpen(false); }}
+                >
+                    <Home size={22} />
+                    <span>Home</span>
+                </button>
+                <button
+                    className={`mobile-bottom-nav-btn ${activeTab === 'consumer' && !moreMenuOpen ? 'active' : ''}`}
+                    onClick={() => { navigate('/dashboard'); setMoreMenuOpen(false); }}
+                >
+                    <BarChart2 size={22} />
+                    <span>Analysis</span>
+                </button>
+                <button
+                    className={`mobile-bottom-nav-btn ${activeTab === 'macro' && !moreMenuOpen ? 'active' : ''}`}
+                    onClick={() => { navigate('/macro'); setMoreMenuOpen(false); }}
+                >
+                    <Globe size={22} />
+                    <span>Macro</span>
+                </button>
+                <button
+                    className={`mobile-bottom-nav-btn ${activeTab === 'backtest' && !moreMenuOpen ? 'active' : ''}`}
+                    onClick={() => { navigate('/backtest'); setMoreMenuOpen(false); }}
+                >
+                    <FlaskConical size={22} />
+                    <span>Lab</span>
+                </button>
+                <button
+                    className={`mobile-bottom-nav-btn ${moreMenuOpen ? 'active' : ''}`}
+                    onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+                >
+                    <MoreHorizontal size={22} />
+                    <span>More</span>
+                </button>
+            </nav>
+
+            {/* Slide-up Bottom Sheet Drawer (Mobile Only) */}
+            {moreMenuOpen && (
+                <div className="mobile-drawer-backdrop" onClick={() => setMoreMenuOpen(false)}>
+                    <div className="mobile-drawer" onClick={(e) => e.stopPropagation()}>
+                        <div className="drawer-handle" onClick={() => setMoreMenuOpen(false)}></div>
+                        
+                        {/* Profile Header section */}
+                        <div className="drawer-profile-section" onClick={() => { setMoreMenuOpen(false); navigate('/portfolio'); }}>
+                            <div className="drawer-profile-avatar-container">
+                                {user && user.avatar ? (
+                                    <img src={user.avatar} className="drawer-profile-avatar" alt={user.name} />
+                                ) : (
+                                    <img 
+                                        src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop" 
+                                        className="drawer-profile-avatar" 
+                                        alt="Default Avatar" 
+                                    />
+                                )}
+                            </div>
+                            <div className="drawer-profile-info">
+                                <div className="drawer-profile-name">{user && user.name ? user.name : 'Elias Thorne'}</div>
+                                <div className="drawer-profile-tier">{user && !user.guest ? 'QUANT PRO TIER' : 'QUANT PRO TIER'}</div>
+                            </div>
+                            <ChevronRight className="drawer-chevron-right" size={20} />
+                        </div>
+                        
+                        <div className="drawer-divider"></div>
+                        
+                        {/* Scrollable menu content */}
+                        <div className="drawer-menu-content">
+                            {/* Standard options from mockup */}
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); alert('Settings are managed via browser preferences.'); }}>
+                                <Settings size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">Settings</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/chat'); }}>
+                                <Bell size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">Notifications</span>
+                                {unreadNotifications > 0 && (
+                                    <span className="drawer-notification-badge">{unreadNotifications} NEW</span>
+                                )}
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/learning'); }}>
+                                <HelpCircle size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">Help & Support</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                            
+                            <a 
+                                href="https://tradetalk.app/terms" 
+                                target="_blank" 
+                                rel="noreferrer" 
+                                className="drawer-item"
+                                onClick={() => setMoreMenuOpen(false)}
+                                style={{ textDecoration: 'none', color: 'inherit' }}
+                            >
+                                <FileText size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">Terms of Service</span>
+                                <ExternalLink size={16} className="drawer-chevron-arrow" style={{ opacity: 0.6 }} />
+                            </a>
+
+                            <div className="drawer-section-title">TradeTalk Features</div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/portfolio'); }}>
+                                <Target size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">Paper Portfolio</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/learning'); }}>
+                                <BookOpen size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">Investor Academy</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+
+                            {/* Dev Suite Section */}
+                            <div className="drawer-section-title">Developer Suite</div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/observer'); }}>
+                                <Terminal size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">Developer Trace</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/llm-calls'); }}>
+                                <Cpu size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">LLM Call Log</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/swarm-score'); }}>
+                                <Sparkles size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">SwarmScore Eval</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/ubds'); }}>
+                                <Gauge size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">UBDS Benchmark</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/systemmap'); }}>
+                                <Network size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">System Map</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                            
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/api-catalog'); }}>
+                                <FileCode2 size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">API Catalog</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+
+                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/system-diagrams'); }}>
+                                <Network size={20} className="drawer-item-icon" />
+                                <span className="drawer-item-label">System Diagrams</span>
+                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                            </div>
+                        </div>
+                        
+                        <div className="drawer-divider"></div>
+                        
+                        {/* Log Out Action button */}
+                        {user && !user.guest ? (
+                            <div 
+                                className="drawer-item log-out-item" 
+                                onClick={() => { setMoreMenuOpen(false); logout(); }}
+                            >
+                                <LogOut size={20} className="drawer-item-icon log-out-icon" />
+                                <span className="drawer-item-label log-out-label">Log Out</span>
+                            </div>
+                        ) : (
+                            <div 
+                                className="drawer-item log-out-item" 
+                                onClick={() => { setMoreMenuOpen(false); navigate('/login'); }}
+                            >
+                                <LogIn size={20} className="drawer-item-icon log-out-icon" />
+                                <span className="drawer-item-label log-out-label" style={{ color: '#60a5fa' }}>Log In</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

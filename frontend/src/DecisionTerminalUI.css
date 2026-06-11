@@ -11,8 +11,8 @@
 
 @media (max-width: 768px) {
   .dt-page-bleed {
-    margin: -24px;
-    width: calc(100% + 48px);
+    margin: -16px;
+    width: calc(100% + 32px);
   }
 }
 

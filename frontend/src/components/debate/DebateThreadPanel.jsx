@@ -73,7 +73,7 @@ function AgentCard({ argument, agent }) {
 export default function DebateThreadPanel({ result, loading = false }) {
   if (!loading && !result) return null;
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
       {DEBATE_AGENTS.map((agent, idx) => {
         const isLast = idx === 4;
         const argument = result?.arguments?.find((a) => a.agent_role === agent.role);

@@ -11,7 +11,9 @@ on:
 
 concurrency:
   group: vercel-production-${{ github.ref }}
-  cancel-in-progress: true
+  # Manual dispatch runs were stuck queued for days when cancel-in-progress
+  # kept superseding jobs that never acquired a runner.
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   deploy:

@@ -144,54 +144,56 @@ function ActionTimeline({ actions }) {
             </button>
 
             {openYears[year] && (
-              <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                {/* Header */}
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: '82px 70px 60px 70px 70px 70px 1fr',
-                  gap: 8, padding: '5px 14px',
-                  fontSize: '0.67rem', color: '#334155', textTransform: 'uppercase', letterSpacing: '0.06em',
-                }}>
-                  <span>Date</span><span>Action</span><span>Ticker</span>
-                  <span>Price</span><span>Shares</span><span>P&amp;L $</span><span>Reason</span>
-                </div>
-                {groups[year].map((a, i) => (
-                  <div key={i} style={{
+              <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2, minWidth: '600px' }}>
+                  {/* Header */}
+                  <div style={{
                     display: 'grid',
                     gridTemplateColumns: '82px 70px 60px 70px 70px 70px 1fr',
-                    gap: 8, alignItems: 'center',
-                    background: 'rgba(15,23,42,0.5)', borderRadius: 6, padding: '7px 14px',
-                    fontSize: '0.78rem',
+                    gap: 8, padding: '5px 14px',
+                    fontSize: '0.67rem', color: '#334155', textTransform: 'uppercase', letterSpacing: '0.06em',
                   }}>
-                    <span style={{ color: '#475569' }}>{a.date}</span>
-                    <ActionBadge action={a.action} />
-                    <span style={{ color: '#94a3b8', fontWeight: 600 }}>{a.ticker}</span>
-                    <span style={{ color: '#64748b' }}>${a.price?.toFixed(2)}</span>
-                    <span style={{ color: '#64748b' }}>
-                      {a.shares > 0 ? a.shares.toFixed(2) : '—'}
-                    </span>
-                    {a.action === 'SELL' ? (
-                      <span style={{
-                        color: a.profit_loss_dollars >= 0 ? '#10b981' : '#ef4444',
-                        fontWeight: 700, whiteSpace: 'nowrap',
-                      }}>
-                        {a.profit_loss_dollars >= 0 ? '+' : ''}
-                        ${Math.abs(a.profit_loss_dollars || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        <span style={{ fontSize: '0.68rem', opacity: 0.7, marginLeft: 2 }}>
-                          ({a.return_pct >= 0 ? '+' : ''}{a.return_pct?.toFixed(1)}%)
-                        </span>
-                      </span>
-                    ) : (
-                      <span style={{ color: '#334155' }}>—</span>
-                    )}
-                    <span style={{
-                      color: '#334155', fontSize: '0.7rem',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>
-                      {a.reason}
-                    </span>
+                    <span>Date</span><span>Action</span><span>Ticker</span>
+                    <span>Price</span><span>Shares</span><span>P&amp;L $</span><span>Reason</span>
                   </div>
-                ))}
+                  {groups[year].map((a, i) => (
+                    <div key={i} style={{
+                      display: 'grid',
+                      gridTemplateColumns: '82px 70px 60px 70px 70px 70px 1fr',
+                      gap: 8, alignItems: 'center',
+                      background: 'rgba(15,23,42,0.5)', borderRadius: 6, padding: '7px 14px',
+                      fontSize: '0.78rem',
+                    }}>
+                      <span style={{ color: '#475569' }}>{a.date}</span>
+                      <ActionBadge action={a.action} />
+                      <span style={{ color: '#94a3b8', fontWeight: 600 }}>{a.ticker}</span>
+                      <span style={{ color: '#64748b' }}>${a.price?.toFixed(2)}</span>
+                      <span style={{ color: '#64748b' }}>
+                        {a.shares > 0 ? a.shares.toFixed(2) : '—'}
+                      </span>
+                      {a.action === 'SELL' ? (
+                        <span style={{
+                          color: a.profit_loss_dollars >= 0 ? '#10b981' : '#ef4444',
+                          fontWeight: 700, whiteSpace: 'nowrap',
+                        }}>
+                          {a.profit_loss_dollars >= 0 ? '+' : ''}
+                          ${Math.abs(a.profit_loss_dollars || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          <span style={{ fontSize: '0.68rem', opacity: 0.7, marginLeft: 2 }}>
+                            ({a.return_pct >= 0 ? '+' : ''}{a.return_pct?.toFixed(1)}%)
+                          </span>
+                        </span>
+                      ) : (
+                        <span style={{ color: '#334155' }}>—</span>
+                      )}
+                      <span style={{
+                        color: '#334155', fontSize: '0.7rem',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {a.reason}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -258,57 +260,59 @@ function Leaderboard() {
   );
 
   return (
-    <div>
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '28px 1fr 80px 80px 80px 80px 90px',
-        gap: 10, padding: '6px 14px',
-        fontSize: '0.67rem', color: '#334155',
-        textTransform: 'uppercase', letterSpacing: '0.06em',
-      }}>
-        <span>#</span><span>Strategy</span>
-        <span>Total Return</span><span>CAGR</span>
-        <span>Sharpe</span><span>Win Rate</span><span>Period</span>
-      </div>
-      {entries.map((e, i) => (
-        <div key={e.id} style={{
+    <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <div style={{ minWidth: '600px' }}>
+        <div style={{
           display: 'grid',
           gridTemplateColumns: '28px 1fr 80px 80px 80px 80px 90px',
-          gap: 10, alignItems: 'center',
-          background: i < 3 ? 'rgba(245,158,11,0.04)' : 'rgba(15,23,42,0.4)',
-          border: `1px solid ${i < 3 ? 'rgba(245,158,11,0.12)' : 'rgba(255,255,255,0.04)'}`,
-          borderRadius: 8, padding: '10px 14px', marginBottom: 4,
-          fontSize: '0.8rem',
+          gap: 10, padding: '6px 14px',
+          fontSize: '0.67rem', color: '#334155',
+          textTransform: 'uppercase', letterSpacing: '0.06em',
         }}>
-          <span style={{ fontSize: '0.9rem' }}>{MEDAL[i] || `${i + 1}`}</span>
-          <div>
-            <div style={{ color: '#e2e8f0', fontWeight: 600, marginBottom: 2 }}>{e.strategy_name}</div>
-            <div style={{ color: '#334155', fontSize: '0.7rem' }}>
-              {e.strategy_category && e.strategy_category !== 'custom' && (
-                <span style={{ color: '#64748b', marginRight: 6 }}>{e.strategy_category}</span>
-              )}
-              {e.start_date} → {e.end_date}
-              {e.preset_id && <span style={{ color: '#475569', marginLeft: 6 }}>({e.preset_id})</span>}
-              {e.outperformed && <span style={{ color: '#10b981', marginLeft: 6 }}>▲ beat SPY</span>}
-            </div>
-          </div>
-          <span style={{ color: e.total_return_pct >= 0 ? '#10b981' : '#ef4444', fontWeight: 700 }}>
-            {e.total_return_pct >= 0 ? '+' : ''}{e.total_return_pct?.toFixed(1)}%
-          </span>
-          <span style={{ color: e.cagr >= 0 ? '#10b981' : '#ef4444', fontWeight: 700 }}>
-            {e.cagr >= 0 ? '+' : ''}{e.cagr?.toFixed(1)}%
-          </span>
-          <span style={{ color: e.sharpe >= 1 ? '#818cf8' : '#94a3b8' }}>
-            {e.sharpe?.toFixed(2)}
-          </span>
-          <span style={{ color: e.win_rate >= 50 ? '#10b981' : '#ef4444' }}>
-            {e.win_rate?.toFixed(0)}%
-          </span>
-          <span style={{ color: '#475569', fontSize: '0.72rem' }}>
-            {e.total_trades} trades
-          </span>
+          <span>#</span><span>Strategy</span>
+          <span>Total Return</span><span>CAGR</span>
+          <span>Sharpe</span><span>Win Rate</span><span>Period</span>
         </div>
-      ))}
+        {entries.map((e, i) => (
+          <div key={e.id} style={{
+            display: 'grid',
+            gridTemplateColumns: '28px 1fr 80px 80px 80px 80px 90px',
+            gap: 10, alignItems: 'center',
+            background: i < 3 ? 'rgba(245,158,11,0.04)' : 'rgba(15,23,42,0.4)',
+            border: `1px solid ${i < 3 ? 'rgba(245,158,11,0.12)' : 'rgba(255,255,255,0.04)'}`,
+            borderRadius: 8, padding: '10px 14px', marginBottom: 4,
+            fontSize: '0.8rem',
+          }}>
+            <span style={{ fontSize: '0.9rem' }}>{MEDAL[i] || `${i + 1}`}</span>
+            <div>
+              <div style={{ color: '#e2e8f0', fontWeight: 600, marginBottom: 2 }}>{e.strategy_name}</div>
+              <div style={{ color: '#334155', fontSize: '0.7rem' }}>
+                {e.strategy_category && e.strategy_category !== 'custom' && (
+                  <span style={{ color: '#64748b', marginRight: 6 }}>{e.strategy_category}</span>
+                )}
+                {e.start_date} → {e.end_date}
+                {e.preset_id && <span style={{ color: '#475569', marginLeft: 6 }}>({e.preset_id})</span>}
+                {e.outperformed && <span style={{ color: '#10b981', marginLeft: 6 }}>▲ beat SPY</span>}
+              </div>
+            </div>
+            <span style={{ color: e.total_return_pct >= 0 ? '#10b981' : '#ef4444', fontWeight: 700 }}>
+              {e.total_return_pct >= 0 ? '+' : ''}{e.total_return_pct?.toFixed(1)}%
+            </span>
+            <span style={{ color: e.cagr >= 0 ? '#10b981' : '#ef4444', fontWeight: 700 }}>
+              {e.cagr >= 0 ? '+' : ''}{e.cagr?.toFixed(1)}%
+            </span>
+            <span style={{ color: e.sharpe >= 1 ? '#818cf8' : '#94a3b8' }}>
+              {e.sharpe?.toFixed(2)}
+            </span>
+            <span style={{ color: e.win_rate >= 50 ? '#10b981' : '#ef4444' }}>
+              {e.win_rate?.toFixed(0)}%
+            </span>
+            <span style={{ color: '#475569', fontSize: '0.72rem' }}>
+              {e.total_trades} trades
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -701,7 +705,7 @@ export default function BacktestUI() {
                     Portfolio Summary
                   </span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16 }}>
                   {[
                     { label: 'Starting Capital', val: `$${result.initial_investment.toLocaleString()}`, color: '#64748b' },
                     { label: 'Final Value', val: `$${result.final_value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, color: totalReturnPositive ? '#10b981' : '#ef4444' },
@@ -760,7 +764,7 @@ export default function BacktestUI() {
               </div>
 
               {/* ── Stats + Chart ── */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20, marginBottom: 20 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <StatCard label="CAGR"        value={result.cagr}           benchmark={result.benchmark_cagr} />
                   <StatCard label="Sharpe Ratio" value={result.sharpe_ratio}   benchmark={1.0} unit="" />

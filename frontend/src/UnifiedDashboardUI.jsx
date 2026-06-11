@@ -719,7 +719,7 @@ export default function UnifiedDashboardUI() {
       <ActionableCompaniesPanel state={actionableState} onSelectTicker={(sym) => analyzeTicker(sym)} />
 
       {/* Main Content Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
 
         {/* Quality Scorecard */}
         <section className="dt-panel" style={{ gridColumn: 'span 1' }}>

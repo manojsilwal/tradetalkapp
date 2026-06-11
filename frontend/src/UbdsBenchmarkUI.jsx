@@ -344,7 +344,7 @@ export default function UbdsBenchmarkUI() {
                         </div>
                     )}
                     {tab === 'issues' && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
                             <div>
                                 <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#4ade80' }}>
                                     <CheckCircle2 size={18} /> Strengths

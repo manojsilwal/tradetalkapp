@@ -289,7 +289,7 @@ function AgentDetailScreen({ agent, factor, ticker, macroState }) {
         <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
             {/* ── Row 1: Status + Confidence + Signal ── */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
                 <StatCard
                     label="Verification Status"
                     value={passed ? 'Passed' : 'Failed'}
@@ -314,7 +314,7 @@ function AgentDetailScreen({ agent, factor, ticker, macroState }) {
             </div>
 
             {/* ── Row 2: Data Source + Warnings ── */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
                 {/* Data Source */}
                 <div style={{ padding: '20px 24px', borderRadius: '14px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
@@ -431,7 +431,7 @@ function NotificationTraceScreen({ trace }) {
         <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
             {/* ── Row 1: Pipeline Summary ── */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
                 <StatCard label="Headlines Scanned" value={trace.total_scanned} sub="From Google News RSS" color="#60a5fa" icon={<Search size={20} />} />
                 <StatCard label="Passed Filter" value={trace.passed_filter} sub={`NotificationAgent threshold ≥ 5`} color="var(--accent-green)" icon={<CheckCircle2 size={20} />} />
                 <StatCard label="Rejected" value={trace.rejected} sub="Below importance threshold" color="var(--accent-red)" icon={<XCircle size={20} />} />
