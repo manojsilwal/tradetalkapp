@@ -458,18 +458,100 @@ class KnowledgeStore:
                 f"Urgency: {alert.urgency}/10. "
                 f"Affected sectors: {', '.join(alert.affected_sectors)}."
             )
+            
+            # Identify associated tickers
+            ticker_associations = {
+                "AAPL": ["AAPL", "Apple"],
+                "MSFT": ["MSFT", "Microsoft"],
+                "GOOGL": ["GOOGL", "GOOG", "Google", "Alphabet"],
+                "AMZN": ["AMZN", "Amazon"],
+                "TSLA": ["TSLA", "Tesla"],
+                "NVDA": ["NVDA", "Nvidia"],
+                "META": ["META", "Facebook"],
+                "SPY": ["SPY", "S&P 500", "SP500", "S&P500"],
+                "QQQ": ["QQQ", "NASDAQ", "Nasdaq-100", "Nasdaq100"],
+                "IJR": ["IJR", "Small-Cap", "Small Cap", "IJR ETF"],
+                "GLD": ["GLD", "Gold", "XAU", "Bullion"],
+            }
+            combined = (alert.title + " " + alert.summary).upper()
+            associated_tickers = []
+            if getattr(alert, "tickers", None):
+                for t in alert.tickers:
+                    if t and t not in associated_tickers:
+                        associated_tickers.append(t.upper())
+
+            for ticker, keywords in ticker_associations.items():
+                if any(kw.upper() in combined for kw in keywords):
+                    if ticker not in associated_tickers:
+                        associated_tickers.append(ticker)
+
             col.add(
                 documents=[doc],
                 metadatas=[{
                     "source": alert.source,
                     "urgency": alert.urgency,
                     "sectors": json.dumps(alert.affected_sectors),
+                    "tickers": json.dumps(associated_tickers),
                     "date": str(datetime.now(timezone.utc).date()),
+                    "link": alert.link,
+                    "timestamp": alert.timestamp,
+                    "urgency_label": alert.urgency_label,
+                    "summary": alert.summary,
+                    "title": alert.title,
                 }],
                 ids=[alert.id],
             )
         except Exception as e:
             logger.warning(f"[KnowledgeStore] add_macro_alert failed (likely duplicate): {e}")
+
+    def query_macro_alerts(self, query_text: str, n_results: int = 5) -> list[dict]:
+        """Search the macro_alerts collection using semantic search."""
+        col = self._safe_col("macro_alerts")
+        if not col:
+            return []
+        try:
+            count = col.count()
+            if count == 0:
+                return []
+            actual_n = min(n_results, count)
+            results = col.query(query_texts=[query_text], n_results=actual_n)
+            
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            ids = results.get("ids", [[]])[0] if results.get("ids") else []
+            
+            out = []
+            for i, doc in enumerate(docs):
+                meta = metas[i] if i < len(metas) else {}
+                sectors = []
+                if "sectors" in meta:
+                    try:
+                        sectors = json.loads(meta["sectors"])
+                    except Exception:
+                        pass
+                tickers = []
+                if "tickers" in meta:
+                    try:
+                        tickers = json.loads(meta["tickers"])
+                    except Exception:
+                        pass
+                out.append({
+                    "id": ids[i] if i < len(ids) else "",
+                    "document": doc,
+                    "title": meta.get("title") or doc[:80],
+                    "summary": meta.get("summary") or doc,
+                    "source": meta.get("source") or "Unknown",
+                    "link": meta.get("link") or "",
+                    "timestamp": meta.get("timestamp") or time.time(),
+                    "urgency": meta.get("urgency") or 5,
+                    "urgency_label": meta.get("urgency_label") or "moderate",
+                    "sectors": sectors,
+                    "tickers": tickers,
+                })
+            return out
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] query_macro_alerts failed: {e}")
+            return []
 
     def add_backtest(self, result) -> None:
         """Store a BacktestResult after /backtest."""

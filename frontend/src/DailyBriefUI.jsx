@@ -55,6 +55,24 @@ export default function DailyBriefUI() {
   const [portfolioNews, setPortfolioNews] = useState([])
   const [extraLoading, setExtraLoading] = useState(false)
 
+  const sessionStatus = data?.market_session?.status || portfolioBrief?.market_session?.status;
+  const isWeekendOrAfterHours = sessionStatus === 'weekend' || sessionStatus === 'after_hours';
+  const isWeekend = sessionStatus === 'weekend';
+
+  const formatTradeDate = (isoDateStr) => {
+    if (!isoDateStr) return '';
+    try {
+      const parts = isoDateStr.split('-');
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const d = new Date(year, month, day);
+      return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    } catch (e) {
+      return isoDateStr;
+    }
+  };
+
   const loadExtraData = useCallback(async () => {
     setExtraLoading(true)
     try {
@@ -63,11 +81,12 @@ export default function DailyBriefUI() {
         setPortfolioBrief(briefData)
         const tickers = briefData.impact_movers?.map(m => m.symbol).filter(Boolean) || []
         const uniqueTickers = [...new Set(tickers)].join(',')
-        if (uniqueTickers) {
-          const newsData = await apiFetch(`${API_BASE_URL}/portfolio/news?tickers=${encodeURIComponent(uniqueTickers)}`).catch(() => null)
-          if (newsData?.items) {
-            setPortfolioNews(newsData.items)
-          }
+        const url = uniqueTickers
+          ? `${API_BASE_URL}/portfolio/news?tickers=${encodeURIComponent(uniqueTickers)}`
+          : `${API_BASE_URL}/portfolio/news`;
+        const newsData = await apiFetch(url).catch(() => null)
+        if (newsData?.items) {
+          setPortfolioNews(newsData.items)
         }
       }
     } catch (err) {
@@ -246,6 +265,29 @@ export default function DailyBriefUI() {
 
       {data && (
         <>
+          {/* Weekend Session Info Banner */}
+          {((data?.market_session?.status === 'weekend') || (portfolioBrief?.market_session?.status === 'weekend')) && (
+            <div className="glass-panel" style={{
+              padding: '16px 20px',
+              marginBottom: 20,
+              borderColor: 'rgba(59, 130, 246, 0.4)',
+              background: 'rgba(59, 130, 246, 0.05)',
+              color: '#93c5fd',
+              borderRadius: 12,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4
+            }}>
+              <div style={{ fontWeight: 700, fontSize: '1.05rem', color: '#60a5fa', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Shield size={18} />
+                Markets are closed today (Weekend)
+              </div>
+              <div style={{ color: '#94a3b8', fontSize: '0.92rem' }}>
+                Stock markets are currently closed. Displaying data as of the last trading session {data?.trade_date ? `(${formatTradeDate(data.trade_date)})` : ''}. <strong>Crypto markets trade 24/7</strong> and may continue to move.
+              </div>
+            </div>
+          )}
+
           {/* Top Row Cards */}
           <div className="brief-grid">
             {/* Portfolio Card */}
@@ -285,8 +327,14 @@ export default function DailyBriefUI() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <h3 className="brief-label">Portfolio</h3>
                   {portfolioChange != null && (
-                    <span className={portfolioChange >= 0 ? 'brief-pill-green' : 'brief-pill-red'}>
-                      {portfolioChange >= 0 ? '+' : ''}{portfolioChange.toFixed(1)}% Today
+                    <span className={
+                      portfolioChange === 0
+                        ? 'brief-pill-neutral'
+                        : portfolioChange > 0
+                        ? 'brief-pill-green'
+                        : 'brief-pill-red'
+                    }>
+                      {portfolioChange > 0 ? '+' : ''}{portfolioChange.toFixed(1)}% {isWeekendOrAfterHours ? 'Session' : 'Today'}
                     </span>
                   )}
                 </div>
@@ -298,33 +346,38 @@ export default function DailyBriefUI() {
 
             {/* Market Benchmarks Card */}
             <div className="brief-card">
-              <h3 className="brief-label">Market Benchmarks</h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <h3 className="brief-label">Market Benchmarks</h3>
+                {isWeekendOrAfterHours && (
+                  <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>Last Session</span>
+                )}
+              </div>
               <div style={{ marginTop: 12 }}>
                 <div className="brief-benchmark-row">
                   <div className="brief-benchmark-item">
-                    <span className={spyChange == null ? 'brief-bullet-red' : (spyChange >= 0 ? 'brief-bullet-green' : 'brief-bullet-red')} />
+                    <span className={spyChange == null ? 'brief-bullet-neutral' : (spyChange > 0 ? 'brief-bullet-green' : (spyChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
                     <span>SP500</span>
                   </div>
-                  <span style={{ color: spyChange == null ? '#94a3b8' : (spyChange >= 0 ? '#34d399' : '#f87171'), fontWeight: 700 }}>
-                    {spyChange != null ? `${spyChange >= 0 ? '+' : ''}${spyChange.toFixed(1)}%` : '—'}
+                  <span style={{ color: spyChange == null ? '#94a3b8' : (spyChange > 0 ? '#34d399' : (spyChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
+                    {spyChange != null ? `${spyChange > 0 ? '+' : ''}${spyChange.toFixed(1)}%` : '—'}
                   </span>
                 </div>
                 <div className="brief-benchmark-row">
                   <div className="brief-benchmark-item">
-                    <span className={qqqChange == null ? 'brief-bullet-red' : (qqqChange >= 0 ? 'brief-bullet-green' : 'brief-bullet-red')} />
+                    <span className={qqqChange == null ? 'brief-bullet-neutral' : (qqqChange > 0 ? 'brief-bullet-green' : (qqqChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
                     <span>NASDAQ (QQQ)</span>
                   </div>
-                  <span style={{ color: qqqChange == null ? '#94a3b8' : (qqqChange >= 0 ? '#34d399' : '#f87171'), fontWeight: 700 }}>
-                    {qqqChange != null ? `${qqqChange >= 0 ? '+' : ''}${qqqChange.toFixed(1)}%` : '—'}
+                  <span style={{ color: qqqChange == null ? '#94a3b8' : (qqqChange > 0 ? '#34d399' : (qqqChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
+                    {qqqChange != null ? `${qqqChange > 0 ? '+' : ''}${qqqChange.toFixed(1)}%` : '—'}
                   </span>
                 </div>
                 <div className="brief-benchmark-row">
                   <div className="brief-benchmark-item">
-                    <span className={ijrChange == null ? 'brief-bullet-red' : (ijrChange >= 0 ? 'brief-bullet-green' : 'brief-bullet-red')} />
+                    <span className={ijrChange == null ? 'brief-bullet-neutral' : (ijrChange > 0 ? 'brief-bullet-green' : (ijrChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
                     <span>iShares S&P Small-Cap ETF (IJR)</span>
                   </div>
-                  <span style={{ color: ijrChange == null ? '#94a3b8' : (ijrChange >= 0 ? '#34d399' : '#f87171'), fontWeight: 700 }}>
-                    {ijrChange != null ? `${ijrChange >= 0 ? '+' : ''}${ijrChange.toFixed(1)}%` : '—'}
+                  <span style={{ color: ijrChange == null ? '#94a3b8' : (ijrChange > 0 ? '#34d399' : (ijrChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
+                    {ijrChange != null ? `${ijrChange > 0 ? '+' : ''}${ijrChange.toFixed(1)}%` : '—'}
                   </span>
                 </div>
               </div>
@@ -344,9 +397,14 @@ export default function DailyBriefUI() {
               {/* S&P 500 Losers Card */}
               <div className="brief-card" style={{ padding: '20px 24px' }}>
                 <div className="brief-card-header">
-                  <div className="brief-card-title-group">
-                    <TrendingDown size={18} color="#f87171" />
+                  <div className="brief-card-title-group" style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <TrendingDown size={18} color="#f87171" style={{ alignSelf: 'center' }} />
                     <h2 className="brief-card-title">S&P 500 Losers</h2>
+                    {data?.trade_date && (
+                      <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
+                        ({isWeekendOrAfterHours ? 'As of ' : ''}{formatTradeDate(data.trade_date)})
+                      </span>
+                    )}
                   </div>
                   <span className="brief-card-link" onClick={() => navigate('/learning')}>Expand View</span>
                 </div>
@@ -389,8 +447,8 @@ export default function DailyBriefUI() {
                           <td>
                             <span style={{ color: '#cbd5e1' }}>{row.pe}</span>
                           </td>
-                          <td style={{ color: row.move >= 0 ? '#34d399' : '#f87171', fontWeight: 600 }}>
-                            {row.move >= 0 ? '+' : ''}{row.move.toFixed(1)}%
+                          <td style={{ color: row.move > 0 ? '#34d399' : (row.move < 0 ? '#f87171' : '#94a3b8'), fontWeight: 600 }}>
+                            {row.move > 0 ? '+' : ''}{row.move.toFixed(1)}%
                           </td>
                           <td>
                             <span className="brief-pill-neutral">{row.insider}</span>
@@ -407,9 +465,14 @@ export default function DailyBriefUI() {
               {/* Portfolio Exposure: Key Holdings Card */}
               <div className="brief-card" style={{ padding: '20px 24px' }}>
                 <div className="brief-card-header">
-                  <div className="brief-card-title-group">
-                    <Shield size={18} color="#60a5fa" />
+                  <div className="brief-card-title-group" style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <Shield size={18} color="#60a5fa" style={{ alignSelf: 'center' }} />
                     <h2 className="brief-card-title">Portfolio Exposure: Key Holdings</h2>
+                    {data?.trade_date && (
+                      <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
+                        ({isWeekendOrAfterHours ? 'As of ' : ''}{formatTradeDate(data.trade_date)})
+                      </span>
+                    )}
                   </div>
                   <span className="brief-pill-neutral" style={{ textTransform: 'uppercase', fontSize: 10, fontWeight: 700 }}>
                     Exposure: {hasPortfolioSetup ? 'Yes' : 'No'}
@@ -488,8 +551,8 @@ export default function DailyBriefUI() {
                             <td>
                               <span style={{ color: '#cbd5e1' }}>{row.pe}</span>
                             </td>
-                            <td style={{ color: row.move >= 0 ? '#34d399' : '#f87171', fontWeight: 600 }}>
-                              {row.move >= 0 ? '+' : ''}{row.move.toFixed(1)}%
+                            <td style={{ color: row.move > 0 ? '#34d399' : (row.move < 0 ? '#f87171' : '#94a3b8'), fontWeight: 600 }}>
+                              {row.move > 0 ? '+' : ''}{row.move.toFixed(1)}%
                             </td>
                             <td>
                               <span className="brief-pill-neutral">{row.insider}</span>

@@ -165,6 +165,56 @@ class TestBuildNewsFeed(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(items, [])
 
+    async def test_rag_fallback_when_yfinance_empty(self):
+        """When yfinance returns no news, the feed should fall back to RAG macro alerts."""
+        from backend.routers.portfolio_news import _build_news_feed
+        
+        fake_rag_hits = [{
+            "id": "alert123",
+            "title": "Fed hints at rate cuts in upcoming session",
+            "summary": "Analyst sentiment is positive regarding Powell statement.",
+            "source": "Bloomberg",
+            "link": "https://example.com/fed",
+            "timestamp": 1700000000,
+            "urgency_label": "important",
+            "tickers": ["AAPL"]
+        }]
+        
+        mock_query = MagicMock(side_effect=lambda q, n_results: fake_rag_hits if "news related to" in q else [])
+        
+        with patch("backend.routers.portfolio_news._fetch_yf_news_sync", return_value=[]):
+            with patch("backend.deps.knowledge_store.query_macro_alerts", mock_query):
+                with patch("backend.routers.portfolio_news.DEFAULT_MACRO_NEWS", []):
+                    items = await _build_news_feed(["AAPL"], disable_fallbacks=False)
+                    mock_query.assert_any_call("news related to AAPL", n_results=5)
+                
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["ticker"], "AAPL")
+        self.assertEqual(items[0]["title"], "Fed hints at rate cuts in upcoming session")
+        self.assertEqual(items[0]["publisher"], "Bloomberg")
+        self.assertEqual(items[0]["sentiment"], "negative")
+
+    def test_news_ingestion_writes_to_rag_with_tickers(self):
+        """Writing news to RAG should preserve ticker associations."""
+        from backend.routers.portfolio_news import _write_news_to_rag
+        
+        test_items = [{
+            "ticker": "GLD",
+            "title": "Gold price spikes to record high",
+            "publisher": "Reuters",
+            "link": "https://example.com/gold",
+            "published_at": 1700000000,
+            "sentiment": "positive",
+            "impact": "Gold rally reflects safe-haven demand.",
+        }]
+        
+        with patch("backend.deps.knowledge_store.add_macro_alert") as mock_add:
+            _write_news_to_rag(test_items)
+            mock_add.assert_called_once()
+            alert_arg = mock_add.call_args[0][0]
+            self.assertEqual(alert_arg.tickers, ["GLD"])
+
+
 
 class TestCacheKey(unittest.TestCase):
     def test_order_independent(self):

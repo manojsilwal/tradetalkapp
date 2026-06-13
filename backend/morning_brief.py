@@ -135,11 +135,22 @@ def rank_card_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 def _resolve_trade_date() -> date:
     try:
-        from .daily_brief import get_latest_trade_date
+        from .daily_brief import get_latest_trade_date, _adjust_weekend_to_friday
 
-        return get_latest_trade_date() or date.today()
+        td = get_latest_trade_date() or date.today()
+        return _adjust_weekend_to_friday(td)
     except Exception:
-        return date.today()
+        td = date.today()
+        try:
+            from .daily_brief import _adjust_weekend_to_friday
+            return _adjust_weekend_to_friday(td)
+        except Exception:
+            from datetime import timedelta
+            if td.weekday() == 5:
+                return td - timedelta(days=1)
+            if td.weekday() == 6:
+                return td - timedelta(days=2)
+            return td
 
 
 def _daily_pct_from_hist(hist) -> Optional[float]:
@@ -520,6 +531,9 @@ def _emit_morning_brief_decision(user_id: str, brief: Dict[str, Any]) -> None:
 def _headline_from_summary(daily_return_pct: Optional[float]) -> str:
     if daily_return_pct is None:
         return "Here is what we noticed in your portfolio today."
+    session = _market_session_context()
+    if session.get("status") == "weekend":
+        return "Your portfolio is quiet today (markets closed)."
     if abs(daily_return_pct) < 0.05:
         return "Your portfolio was mostly quiet today."
     direction = "up" if daily_return_pct > 0 else "down"
@@ -635,6 +649,7 @@ def _fetch_relative_volume_batch(symbols: List[str]) -> Dict[str, float]:
 
 
 def _fetch_company_metadata(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    from .daily_brief import STATIC_TICKER_METADATA_FALLBACKS
     out: Dict[str, Dict[str, Any]] = {}
     for sym in symbols:
         s = sym.upper()
@@ -642,13 +657,54 @@ def _fetch_company_metadata(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             import yfinance as yf
 
             info = yf.Ticker(s).info or {}
+            held = info.get("heldPercentInsiders")
+            insider_sentiment = f"{held * 100:.1f}% Insiders" if held is not None else None
+            
+            # Check for rate-limiting or empty info
+            if not info.get("industry") and s in STATIC_TICKER_METADATA_FALLBACKS:
+                fb = STATIC_TICKER_METADATA_FALLBACKS[s]
+                out[s] = {
+                    "company_name": fb["company_name"],
+                    "sector": fb["sector"],
+                    "industry": fb["industry"],
+                    "market_cap": fb["market_cap"],
+                    "pe_ratio": fb["pe_ratio"],
+                    "forward_pe": fb["forward_pe"],
+                    "insider_sentiment": fb["insider_sentiment"],
+                }
+                continue
+
             out[s] = {
                 "company_name": info.get("longName") or info.get("shortName") or s,
                 "sector": info.get("sector") or "Unknown",
-                "industry": info.get("industry") or "",
+                "industry": info.get("industry") or "Unknown",
+                "market_cap": info.get("marketCap"),
+                "pe_ratio": info.get("trailingPE") or info.get("forwardPE"),
+                "forward_pe": info.get("forwardPE") or info.get("trailingPE"),
+                "insider_sentiment": insider_sentiment or "N/A",
             }
         except Exception:
-            out[s] = {"company_name": s, "sector": "Unknown", "industry": ""}
+            if s in STATIC_TICKER_METADATA_FALLBACKS:
+                fb = STATIC_TICKER_METADATA_FALLBACKS[s]
+                out[s] = {
+                    "company_name": fb["company_name"],
+                    "sector": fb["sector"],
+                    "industry": fb["industry"],
+                    "market_cap": fb["market_cap"],
+                    "pe_ratio": fb["pe_ratio"],
+                    "forward_pe": fb["forward_pe"],
+                    "insider_sentiment": fb["insider_sentiment"],
+                }
+            else:
+                out[s] = {
+                    "company_name": s,
+                    "sector": "Unknown",
+                    "industry": "Unknown",
+                    "market_cap": None,
+                    "pe_ratio": None,
+                    "forward_pe": None,
+                    "insider_sentiment": "N/A",
+                }
     return out
 
 
@@ -720,6 +776,10 @@ def _build_impact_movers(
             "impact_score": round(rank_score * 100),
             "relative_volume": _relative_volume_for_symbol(sym, movement, rel_vols),
             "sparkline_5d": sparklines.get(sym, []),
+            "market_cap": m.get("market_cap"),
+            "pe_ratio": m.get("pe_ratio"),
+            "forward_pe": m.get("forward_pe"),
+            "insider_sentiment": m.get("insider_sentiment"),
         })
     return movers
 
@@ -985,6 +1045,8 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
             "title": f"{top_s[0]} exposure",
             "reason": f"{top_s[1] * 100:.0f}% of portfolio",
         })
+
+
 
     base["headline"] = _headline_from_summary(
         float(daily_return_pct) if daily_return_pct is not None else None
