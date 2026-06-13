@@ -784,6 +784,15 @@ body {
   box-shadow: 0 0 6px #34d39955;
 }
 
+.brief-bullet-neutral {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #94a3b8;
+  display: inline-block;
+  box-shadow: 0 0 6px #94a3b855;
+}
+
 .brief-insight-text {
   font-size: 13px;
   line-height: 1.6;
@@ -1148,7 +1157,6 @@ body {
     text-align: left !important;
   }
 }
-
-
-
-
+.spinner {
+  animation: spin 0.8s linear infinite;
+}

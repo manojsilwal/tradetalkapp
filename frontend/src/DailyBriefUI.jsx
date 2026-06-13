@@ -54,6 +54,8 @@ export default function DailyBriefUI() {
   const [portfolioBrief, setPortfolioBrief] = useState(null)
   const [portfolioNews, setPortfolioNews] = useState([])
   const [extraLoading, setExtraLoading] = useState(false)
+  const [showMoversTab, setShowMoversTab] = useState('losers')
+  const [isMoversExpanded, setIsMoversExpanded] = useState(false)
 
   const sessionStatus = data?.market_session?.status || portfolioBrief?.market_session?.status;
   const isWeekendOrAfterHours = sessionStatus === 'weekend' || sessionStatus === 'after_hours';
@@ -142,7 +144,27 @@ export default function DailyBriefUI() {
 
   const mapRealLosers = () => {
     if (data?.losers && data.losers.length > 0) {
-      return data.losers.slice(0, 3).map(r => {
+      const limit = isMoversExpanded ? 15 : 3
+      return data.losers.slice(0, limit).map(r => {
+        const meta = getTickerMetadata(r.symbol, r)
+        return {
+          symbol: r.symbol,
+          move: r.daily_return_pct,
+          insider: r.insider_sentiment || 'N/A',
+          marketCap: meta.marketCap,
+          pe: meta.pe,
+          industry: meta.industry,
+          rationale: r.one_line_reason || 'Movers analysis from session EOD.'
+        }
+      })
+    }
+    return []
+  }
+
+  const mapRealGainers = () => {
+    if (data?.gainers && data.gainers.length > 0) {
+      const limit = isMoversExpanded ? 15 : 3
+      return data.gainers.slice(0, limit).map(r => {
         const meta = getTickerMetadata(r.symbol, r)
         return {
           symbol: r.symbol,
@@ -200,8 +222,78 @@ export default function DailyBriefUI() {
   }
 
   const tableLosers = mapRealLosers()
+  const tableGainers = mapRealGainers()
   const tableHoldings = mapRealHoldings()
   const timelineNews = mapRealNews()
+  const currentTableMovers = showMoversTab === 'losers' ? tableLosers : tableGainers
+
+  if (loading || extraLoading) {
+    return (
+      <div 
+        className="fade-in" 
+        style={{ 
+          display: 'flex', 
+          flexDirection: 'column',
+          justifyContent: 'center', 
+          alignItems: 'center', 
+          minHeight: '80vh',
+          width: '100%',
+          padding: '24px',
+          boxSizing: 'border-box'
+        }}
+      >
+        <div 
+          className="glass-panel" 
+          style={{ 
+            padding: '40px 48px', 
+            borderRadius: 20, 
+            textAlign: 'center', 
+            maxWidth: 480, 
+            width: '100%',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 20
+          }}
+        >
+          <div style={{ position: 'relative', width: 64, height: 64, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <div style={{
+              position: 'absolute',
+              width: 72,
+              height: 72,
+              borderRadius: '50%',
+              border: '2px solid rgba(59, 130, 246, 0.25)',
+              animation: 'pulse 2s infinite ease-in-out',
+              boxShadow: '0 0 20px rgba(59, 130, 246, 0.15)'
+            }} />
+            <Loader2 className="spinner" size={36} color="var(--accent-blue)" />
+          </div>
+          
+          <div>
+            <h3 style={{ 
+              margin: '0 0 6px 0', 
+              fontSize: '1.15rem', 
+              fontWeight: 600, 
+              color: '#f8fafc',
+              letterSpacing: '0.02em'
+            }}>
+              Loading Market Brief
+            </h3>
+            <p style={{ 
+              margin: 0, 
+              fontSize: '0.875rem', 
+              color: '#64748b',
+              fontWeight: 500,
+              lineHeight: 1.5
+            }}>
+              Securing grounded RAG context & analyzing portfolio trends...
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
@@ -253,13 +345,6 @@ export default function DailyBriefUI() {
       {error && (
         <div className="glass-panel" style={{ padding: 16, marginBottom: 20, borderColor: 'rgba(239,68,68,0.4)', color: '#fca5a5' }}>
           {error}
-        </div>
-      )}
-
-      {loading && !data && (
-        <div style={{ padding: 48, textAlign: 'center', color: '#94a3b8' }}>
-          <Loader2 size={32} className="spinner" style={{ margin: '0 auto 12px' }} />
-          Loading market brief…
         </div>
       )}
 
@@ -394,24 +479,56 @@ export default function DailyBriefUI() {
           <div className="brief-columns-grid">
             {/* Left Column: Losers and Holdings Tables */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-              {/* S&P 500 Losers Card */}
+              {/* S&P 500 Movers Card */}
               <div className="brief-card" style={{ padding: '20px 24px' }}>
-                <div className="brief-card-header">
-                  <div className="brief-card-title-group" style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <TrendingDown size={18} color="#f87171" style={{ alignSelf: 'center' }} />
-                    <h2 className="brief-card-title">S&P 500 Losers</h2>
+                <div className="brief-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                    <div 
+                      onClick={() => setShowMoversTab('losers')} 
+                      style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 8, 
+                        cursor: 'pointer',
+                        paddingBottom: 4,
+                        borderBottom: showMoversTab === 'losers' ? '2px solid #f87171' : '2px solid transparent',
+                        opacity: showMoversTab === 'losers' ? 1 : 0.6,
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <TrendingDown size={18} color="#f87171" />
+                      <h2 className="brief-card-title" style={{ margin: 0 }}>S&P 500 Losers</h2>
+                    </div>
+                    <div 
+                      onClick={() => setShowMoversTab('gainers')} 
+                      style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 8, 
+                        cursor: 'pointer',
+                        paddingBottom: 4,
+                        borderBottom: showMoversTab === 'gainers' ? '2px solid #34d399' : '2px solid transparent',
+                        opacity: showMoversTab === 'gainers' ? 1 : 0.6,
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <TrendingDown size={18} color="#34d399" style={{ transform: 'rotate(180deg)', alignSelf: 'center' }} />
+                      <h2 className="brief-card-title" style={{ margin: 0 }}>S&P 500 Gainers</h2>
+                    </div>
                     {data?.trade_date && (
                       <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
                         ({isWeekendOrAfterHours ? 'As of ' : ''}{formatTradeDate(data.trade_date)})
                       </span>
                     )}
                   </div>
-                  <span className="brief-card-link" onClick={() => navigate('/learning')}>Expand View</span>
+                  <span className="brief-card-link" onClick={() => setIsMoversExpanded(!isMoversExpanded)}>
+                    {isMoversExpanded ? 'Collapse View' : 'Expand View'}
+                  </span>
                 </div>
                 
-                {tableLosers.length === 0 ? (
+                {currentTableMovers.length === 0 ? (
                   <p style={{ color: '#94a3b8', fontSize: '0.9rem', padding: '16px 4px', margin: 0 }}>
-                    Live losers data is unavailable right now — nothing to show. Try Refresh later.
+                    Live movers data is unavailable right now — nothing to show. Try Refresh later.
                   </p>
                 ) : (
                 <div className="brief-table-container">
@@ -428,7 +545,7 @@ export default function DailyBriefUI() {
                       </tr>
                     </thead>
                     <tbody>
-                      {tableLosers.map((row) => (
+                      {currentTableMovers.map((row) => (
                         <tr key={row.symbol} style={{ cursor: 'pointer' }} onClick={() => goAnalyze(row.symbol)}>
                           <td>
                             <div className="brief-table-ticker">
