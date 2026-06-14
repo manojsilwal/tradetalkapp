@@ -743,6 +743,42 @@ STATIC_TICKER_METADATA_FALLBACKS: Dict[str, Dict[str, Any]] = {
         "forward_pe": 14.0,
         "insider_sentiment": "0.3% Insiders",
     },
+    "ADBE": {
+        "company_name": "Adobe Inc.",
+        "sector": "Technology",
+        "industry": "Application Software",
+        "market_cap": 220000000000,
+        "pe_ratio": 30.2,
+        "forward_pe": 26.0,
+        "insider_sentiment": "0.1% Insiders",
+    },
+    "LEN": {
+        "company_name": "Lennar Corporation",
+        "sector": "Consumer Cyclical",
+        "industry": "Homebuilding",
+        "market_cap": 45000000000,
+        "pe_ratio": 10.5,
+        "forward_pe": 9.5,
+        "insider_sentiment": "1.5% Insiders",
+    },
+    "FOX": {
+        "company_name": "Fox Corporation",
+        "sector": "Communication Services",
+        "industry": "Broadcasting",
+        "market_cap": 18000000000,
+        "pe_ratio": 12.5,
+        "forward_pe": 11.0,
+        "insider_sentiment": "0.8% Insiders",
+    },
+    "DOV": {
+        "company_name": "Dover Corporation",
+        "sector": "Industrials",
+        "industry": "Specialty Industrial Machinery",
+        "market_cap": 29300000000,
+        "pe_ratio": 27.2,
+        "forward_pe": 24.0,
+        "insider_sentiment": "1.3% Insiders",
+    },
     "SPY": {
         "company_name": "SPDR S&P 500 ETF Trust",
         "sector": "Exchange Traded Funds",
@@ -814,15 +850,29 @@ def enrich_daily_brief_rows(rows: List[Dict[str, Any]]) -> None:
                 insider_sentiment = f"{held * 100:.1f}% Insiders" if held is not None else None
                 
                 # Check for rate-limiting or empty info
-                if not info.get("industry") and sym in STATIC_TICKER_METADATA_FALLBACKS:
-                    fb = STATIC_TICKER_METADATA_FALLBACKS[sym]
-                    return sym, {
-                        "industry": fb["industry"],
-                        "market_cap": fb["market_cap"],
-                        "pe_ratio": fb["pe_ratio"],
-                        "forward_pe": fb["forward_pe"],
-                        "insider_sentiment": fb["insider_sentiment"]
-                    }
+                if not info.get("industry"):
+                    try:
+                        from backend.deps import knowledge_store
+                        rag_data = knowledge_store.get_sp500_fundamental(sym)
+                        if rag_data:
+                            return sym, {
+                                "industry": rag_data["industry"],
+                                "market_cap": rag_data["market_cap"],
+                                "pe_ratio": rag_data["pe_ratio"],
+                                "forward_pe": rag_data["forward_pe"],
+                                "insider_sentiment": rag_data["insider_sentiment"]
+                            }
+                    except Exception:
+                        pass
+                    if sym in STATIC_TICKER_METADATA_FALLBACKS:
+                        fb = STATIC_TICKER_METADATA_FALLBACKS[sym]
+                        return sym, {
+                            "industry": fb["industry"],
+                            "market_cap": fb["market_cap"],
+                            "pe_ratio": fb["pe_ratio"],
+                            "forward_pe": fb["forward_pe"],
+                            "insider_sentiment": fb["insider_sentiment"]
+                        }
                 
                 res = {
                     "industry": info.get("industry") or "Unknown",
@@ -834,6 +884,19 @@ def enrich_daily_brief_rows(rows: List[Dict[str, Any]]) -> None:
                 return sym, res
             except Exception as e:
                 logger.warning("[DailyBriefEnrich] failed to fetch %s: %s", sym, e)
+                try:
+                    from backend.deps import knowledge_store
+                    rag_data = knowledge_store.get_sp500_fundamental(sym)
+                    if rag_data:
+                        return sym, {
+                            "industry": rag_data["industry"],
+                            "market_cap": rag_data["market_cap"],
+                            "pe_ratio": rag_data["pe_ratio"],
+                            "forward_pe": rag_data["forward_pe"],
+                            "insider_sentiment": rag_data["insider_sentiment"]
+                        }
+                except Exception:
+                    pass
                 # Return static fallback if available
                 if sym in STATIC_TICKER_METADATA_FALLBACKS:
                     fb = STATIC_TICKER_METADATA_FALLBACKS[sym]
@@ -865,13 +928,26 @@ def enrich_daily_brief_rows(rows: List[Dict[str, Any]]) -> None:
             r["pe_ratio"] = meta.get("pe_ratio") or r.get("pe_ratio")
             r["forward_pe"] = meta.get("forward_pe") or r.get("forward_pe")
             r["insider_sentiment"] = meta.get("insider_sentiment") or r.get("insider_sentiment") or "N/A"
-        elif sym in STATIC_TICKER_METADATA_FALLBACKS:
-            fb = STATIC_TICKER_METADATA_FALLBACKS[sym]
-            r["industry"] = fb["industry"]
-            r["market_cap"] = fb["market_cap"]
-            r["pe_ratio"] = fb["pe_ratio"]
-            r["forward_pe"] = fb["forward_pe"]
-            r["insider_sentiment"] = fb["insider_sentiment"]
+        else:
+            try:
+                from backend.deps import knowledge_store
+                rag_data = knowledge_store.get_sp500_fundamental(sym)
+                if rag_data:
+                    r["industry"] = rag_data["industry"]
+                    r["market_cap"] = rag_data["market_cap"]
+                    r["pe_ratio"] = rag_data["pe_ratio"]
+                    r["forward_pe"] = rag_data["forward_pe"]
+                    r["insider_sentiment"] = rag_data["insider_sentiment"]
+                    continue
+            except Exception:
+                pass
+            if sym in STATIC_TICKER_METADATA_FALLBACKS:
+                fb = STATIC_TICKER_METADATA_FALLBACKS[sym]
+                r["industry"] = fb["industry"]
+                r["market_cap"] = fb["market_cap"]
+                r["pe_ratio"] = fb["pe_ratio"]
+                r["forward_pe"] = fb["forward_pe"]
+                r["insider_sentiment"] = fb["insider_sentiment"]
 
 
 def build_daily_brief(

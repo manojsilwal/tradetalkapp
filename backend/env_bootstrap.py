@@ -16,6 +16,9 @@ def _load() -> None:
     root = Path(__file__).resolve().parent
     load_dotenv(root / ".env")
     load_dotenv(root / ".env.local", override=True)
+    import os
+    if "OPENROUTER_KEY" in os.environ:
+        os.environ["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_KEY"]
 
 
 _load()

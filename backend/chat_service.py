@@ -245,7 +245,9 @@ async def chat_rag_context(
             merged_cap = 72
             if len(merged) > merged_cap:
                 merged = merged[:merged_cap]
-            ranked = rerank_hits(merged)[:RAG_TOP_K]
+            raw_ranked = rerank_hits(merged)
+            from .swarm_reliability.retrieval_fusion import clean_and_cap_raw_hits
+            ranked = clean_and_cap_raw_hits(raw_ranked, max_records=RAG_TOP_K)
 
         try:
             span.set_attribute("rag.merged_count", len(merged))

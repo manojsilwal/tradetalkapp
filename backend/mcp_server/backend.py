@@ -36,10 +36,114 @@ class DuckDBBackend:
         prices_glob = os.path.join(_DATA_LAKE_DIR, "daily_prices", "*.parquet")
         events_glob = os.path.join(_DATA_LAKE_DIR, "events", "*.parquet")
 
-        self.con.execute(f"""
-            CREATE OR REPLACE VIEW daily_prices AS
-            SELECT * FROM read_parquet('{prices_glob}', union_by_name=true)
-        """)
+        # Create all tables from BigQuery schema as empty tables in DuckDB to avoid Catalog Errors
+        try:
+            from .bq_schema import TABLE_SCHEMAS
+            def bq_type_to_duckdb(field: dict) -> str:
+                t = field["type"].upper()
+                mode = field.get("mode", "").upper()
+                if mode == "REPEATED":
+                    return "VARCHAR[]"
+                if t == "STRING":
+                    return "VARCHAR"
+                if t in ("FLOAT64", "FLOAT"):
+                    return "DOUBLE"
+                if t in ("INT64", "INTEGER"):
+                    return "BIGINT"
+                if t in ("BOOL", "BOOLEAN"):
+                    return "BOOLEAN"
+                if t == "TIMESTAMP":
+                    return "TIMESTAMP"
+                if t == "DATE":
+                    return "DATE"
+                if t == "JSON":
+                    return "JSON"
+                return "VARCHAR"
+
+            for table_name, schema in TABLE_SCHEMAS.items():
+                if table_name == "daily_prices":
+                    continue
+                cols_str = ", ".join(f'"{f["name"]}" {bq_type_to_duckdb(f)}' for f in schema)
+                self.con.execute(f"CREATE TABLE IF NOT EXISTS {table_name} ({cols_str})")
+        except Exception as e:
+            logger.warning("[DuckDB] Failed to pre-create tables from schema: %s", e)
+
+        # Dynamic mapping for daily_prices view
+        try:
+            cols_prices = []
+            try:
+                res = self.con.execute(f"DESCRIBE SELECT * FROM read_parquet('{prices_glob}', union_by_name=true, filename=true)")
+                cols_prices = [r[0] for r in res.fetchall()]
+            except Exception as e:
+                logger.debug("Could not describe daily_prices parquet files: %s", e)
+
+            if cols_prices:
+                proj = []
+                if "filename" in cols_prices:
+                    proj.append("regexp_extract(filename, '([^/]+)\\.parquet$', 1) AS symbol")
+                else:
+                    proj.append("CAST(NULL AS VARCHAR) AS symbol")
+
+                if "Date" in cols_prices:
+                    proj.append('"Date"::DATE AS trade_date')
+                elif "trade_date" in cols_prices:
+                    proj.append('trade_date::DATE AS trade_date')
+                else:
+                    proj.append("CAST(NULL AS DATE) AS trade_date")
+
+                for col_name in ["open", "high", "low", "close"]:
+                    matching = [c for c in cols_prices if c.lower() == col_name]
+                    if matching:
+                        proj.append(f'"{matching[0]}" AS {col_name}')
+                    else:
+                        proj.append(f"CAST(NULL AS DOUBLE) AS {col_name}")
+
+                if "Volume" in cols_prices:
+                    proj.append('"Volume"::BIGINT AS volume')
+                elif "volume" in cols_prices:
+                    proj.append('volume::BIGINT AS volume')
+                else:
+                    proj.append("CAST(NULL AS BIGINT) AS volume")
+
+                for col_name in ["daily_return_pct", "ma_20", "ma_50", "ma_200", "relative_volume"]:
+                    matching = [c for c in cols_prices if c.lower() == col_name]
+                    if matching:
+                        proj.append(f'"{matching[0]}" AS {col_name}')
+                    else:
+                        proj.append(f"CAST(NULL AS DOUBLE) AS {col_name}")
+
+                if "ingested_at" in cols_prices:
+                    proj.append("ingested_at::TIMESTAMP AS ingested_at")
+                else:
+                    proj.append("CAST(NULL AS TIMESTAMP) AS ingested_at")
+
+                select_clause = ", ".join(proj)
+                self.con.execute(f"""
+                    CREATE OR REPLACE VIEW daily_prices AS
+                    SELECT {select_clause}
+                    FROM read_parquet('{prices_glob}', union_by_name=true, filename=true)
+                """)
+            else:
+                raise ValueError("No columns found in parquet files")
+        except Exception as e:
+            logger.warning("Failed to register daily_prices view from parquet, creating empty table fallback: %s", e)
+            self.con.execute("""
+                CREATE TABLE IF NOT EXISTS daily_prices (
+                    symbol VARCHAR,
+                    trade_date DATE,
+                    open DOUBLE,
+                    high DOUBLE,
+                    low DOUBLE,
+                    close DOUBLE,
+                    volume BIGINT,
+                    daily_return_pct DOUBLE,
+                    ma_20 DOUBLE,
+                    ma_50 DOUBLE,
+                    ma_200 DOUBLE,
+                    relative_volume DOUBLE,
+                    ingested_at TIMESTAMP
+                )
+            """)
 
         try:
             self.con.execute(f"""

@@ -661,18 +661,35 @@ def _fetch_company_metadata(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             insider_sentiment = f"{held * 100:.1f}% Insiders" if held is not None else None
             
             # Check for rate-limiting or empty info
-            if not info.get("industry") and s in STATIC_TICKER_METADATA_FALLBACKS:
-                fb = STATIC_TICKER_METADATA_FALLBACKS[s]
-                out[s] = {
-                    "company_name": fb["company_name"],
-                    "sector": fb["sector"],
-                    "industry": fb["industry"],
-                    "market_cap": fb["market_cap"],
-                    "pe_ratio": fb["pe_ratio"],
-                    "forward_pe": fb["forward_pe"],
-                    "insider_sentiment": fb["insider_sentiment"],
-                }
-                continue
+            if not info.get("industry"):
+                try:
+                    from backend.deps import knowledge_store
+                    rag_data = knowledge_store.get_sp500_fundamental(s)
+                    if rag_data:
+                        out[s] = {
+                            "company_name": s,
+                            "sector": rag_data["sector"],
+                            "industry": rag_data["industry"],
+                            "market_cap": rag_data["market_cap"],
+                            "pe_ratio": rag_data["pe_ratio"],
+                            "forward_pe": rag_data["forward_pe"],
+                            "insider_sentiment": rag_data["insider_sentiment"],
+                        }
+                        continue
+                except Exception:
+                    pass
+                if s in STATIC_TICKER_METADATA_FALLBACKS:
+                    fb = STATIC_TICKER_METADATA_FALLBACKS[s]
+                    out[s] = {
+                        "company_name": fb["company_name"],
+                        "sector": fb["sector"],
+                        "industry": fb["industry"],
+                        "market_cap": fb["market_cap"],
+                        "pe_ratio": fb["pe_ratio"],
+                        "forward_pe": fb["forward_pe"],
+                        "insider_sentiment": fb["insider_sentiment"],
+                    }
+                    continue
 
             out[s] = {
                 "company_name": info.get("longName") or info.get("shortName") or s,
@@ -684,6 +701,22 @@ def _fetch_company_metadata(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 "insider_sentiment": insider_sentiment or "N/A",
             }
         except Exception:
+            try:
+                from backend.deps import knowledge_store
+                rag_data = knowledge_store.get_sp500_fundamental(s)
+                if rag_data:
+                    out[s] = {
+                        "company_name": s,
+                        "sector": rag_data["sector"],
+                        "industry": rag_data["industry"],
+                        "market_cap": rag_data["market_cap"],
+                        "pe_ratio": rag_data["pe_ratio"],
+                        "forward_pe": rag_data["forward_pe"],
+                        "insider_sentiment": rag_data["insider_sentiment"],
+                    }
+                    continue
+            except Exception:
+                pass
             if s in STATIC_TICKER_METADATA_FALLBACKS:
                 fb = STATIC_TICKER_METADATA_FALLBACKS[s]
                 out[s] = {

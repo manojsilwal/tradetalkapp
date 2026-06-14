@@ -1,7 +1,35 @@
 from __future__ import annotations
 
+import math
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict, List
+
+
+def _parse_meta_date(meta: dict) -> datetime | None:
+    for key in ("date", "ingested_at", "timestamp", "run_date"):
+        raw = meta.get(key)
+        if not raw:
+            continue
+        s = str(raw)[:32]
+        try:
+            if "T" in s:
+                return datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return datetime.strptime(s[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+    return None
+
+
+def _recency_boost(meta: dict, recency_lambda: float = 0.02) -> float:
+    dt = _parse_meta_date(meta)
+    if dt is None:
+        return 1.0
+    now = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    age_h = max(0.0, (now - dt).total_seconds() / 3600.0)
+    return math.exp(-recency_lambda * age_h)
 
 
 def _rrf_score(rank: int, k: int) -> float:
@@ -108,7 +136,22 @@ def fuse_and_cap_hits(
                 boost = float(h.get("_harness_weight", 1.0))
             except (ValueError, TypeError):
                 boost = 1.0
-            row["_rrf"] = float(row.get("_rrf", 0.0)) + _rrf_score(rank, rrf_k) * boost
+
+            # Compute similarity boost (1.0 + similarity)
+            dist_val = h.get("distance")
+            if dist_val is not None:
+                try:
+                    dist_float = float(dist_val)
+                    sim = max(0.0, min(1.0, 1.0 - dist_float))
+                except (ValueError, TypeError):
+                    sim = 0.0
+            else:
+                sim = 0.0
+
+            # Compute recency boost based on age decay
+            recency = _recency_boost(h.get("metadata") or {})
+
+            row["_rrf"] = float(row.get("_rrf", 0.0)) + _rrf_score(rank, rrf_k) * boost * (1.0 + sim) * recency
 
     ranked = sorted(by_key.values(), key=lambda x: float(x.get("_rrf", 0.0)), reverse=True)
     if max_records > 0:
@@ -129,4 +172,42 @@ def fuse_and_cap_hits(
         clipped["document"] = doc
         out.append(clipped)
     return out
+
+
+def clean_and_cap_raw_hits(
+    hits: List[dict],
+    *,
+    max_records: int = 12,
+    allowed_meta_fields: List[str] | None = None,
+) -> List[dict]:
+    """Clean and cap raw hits without RRF fusion, preserving citation/hygiene rules."""
+    allowed_meta_fields = allowed_meta_fields or [
+        "source",
+        "ticker",
+        "symbol",
+        "strategy_name",
+        "channel",
+        "date",
+        "timestamp",
+        "ingested_at",
+        "run_date",
+    ]
+    if max_records > 0:
+        hits = hits[:max_records]
+    out: List[dict] = []
+    for h in hits:
+        doc = str(h.get("document") or "").strip()
+        if not doc:
+            continue
+        collection = str(h.get("collection") or "")
+        meta = _allowed_meta(h.get("metadata") or {}, allowed_meta_fields)
+        max_chars = _max_text_chars_for_collection(collection)
+        if max_chars > 0:
+            doc = doc[:max_chars]
+        clipped = dict(h)
+        clipped["metadata"] = meta
+        clipped["document"] = doc
+        out.append(clipped)
+    return out
+
 

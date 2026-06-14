@@ -1296,6 +1296,7 @@ def log_llm_api_call(
         or "local" in model_lower
         or "phi" in model_lower
         or "mistral" in model_lower
+        or "gemma" in model_lower
     )
 
     if is_local:

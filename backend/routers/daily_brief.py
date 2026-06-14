@@ -64,6 +64,8 @@ async def get_daily_brief(
         persist=False,
     )
     payload = overlay_realtime_quotes(payload)
+    from ..morning_brief import _market_session_context
+    payload["market_session"] = _market_session_context()
     payload["deep_refresh"] = get_deep_refresh_status()
     return payload
 
@@ -120,6 +122,10 @@ async def get_screener_results(
     else:
         from ..daily_brief import get_latest_trade_date
         td = get_latest_trade_date() or date.today()
+
+    from ..daily_brief import _adjust_weekend_to_friday
+    if td:
+        td = _adjust_weekend_to_friday(td)
         
     from ..daily_brief import load_snapshot
     snapshot = load_snapshot(td)

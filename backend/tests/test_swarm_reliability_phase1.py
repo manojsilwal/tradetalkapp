@@ -26,6 +26,39 @@ class TestRetrievalFusionCaps(unittest.TestCase):
             self.assertNotIn("extra", row.get("metadata", {}))
             self.assertNotIn("other", row.get("metadata", {}))
 
+    def test_rrf_similarity_and_recency_boost(self):
+        from datetime import datetime, timezone, timedelta
+        now_str = datetime.now(timezone.utc).isoformat()
+        old_str = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        
+        # Test 1: Similarity (distance) boost comparison
+        channels_sim = {
+            "macro_snapshots": [
+                # Same rank, different distance
+                {"id": "doc_close", "document": "Doc Close", "distance": 0.1, "metadata": {"source": "fred"}, "collection": "macro_snapshots"},
+            ],
+            "debate_history": [
+                {"id": "doc_far", "document": "Doc Far", "distance": 0.9, "metadata": {"source": "fred"}, "collection": "macro_snapshots"},
+            ]
+        }
+        out_sim = fuse_and_cap_hits(channels_sim)
+        # The document with lower distance (closer) should have higher RRF score and rank first
+        self.assertEqual(out_sim[0]["id"], "doc_close")
+
+        # Test 2: Recency boost comparison
+        channels_time = {
+            "macro_snapshots": [
+                # Same rank, same distance, different age
+                {"id": "doc_fresh", "document": "Doc Fresh", "distance": 0.5, "metadata": {"source": "fred", "date": now_str}, "collection": "macro_snapshots"},
+            ],
+            "debate_history": [
+                {"id": "doc_stale", "document": "Doc Stale", "distance": 0.5, "metadata": {"source": "fred", "date": old_str}, "collection": "macro_snapshots"},
+            ]
+        }
+        out_time = fuse_and_cap_hits(channels_time)
+        # The fresher document should have higher RRF score and rank first
+        self.assertEqual(out_time[0]["id"], "doc_fresh")
+
     def test_news_depth_cap(self):
         long_doc = "x" * 5000
         channels = {
@@ -36,6 +69,24 @@ class TestRetrievalFusionCaps(unittest.TestCase):
         out = fuse_and_cap_hits(channels, max_records=1)
         self.assertEqual(len(out), 1)
         self.assertLessEqual(len(out[0]["document"]), 700)
+
+    def test_clean_and_cap_raw_hits(self):
+        from backend.swarm_reliability.retrieval_fusion import clean_and_cap_raw_hits
+        long_doc = "y" * 5000
+        raw_hits = [
+            {
+                "id": "h1",
+                "document": long_doc,
+                "metadata": {"source": "feed", "extra_garbage": "should_be_removed"},
+                "collection": "market_news",
+            }
+        ]
+        out = clean_and_cap_raw_hits(raw_hits, max_records=1)
+        self.assertEqual(len(out), 1)
+        self.assertLessEqual(len(out[0]["document"]), 700)
+        self.assertNotIn("extra_garbage", out[0]["metadata"])
+        self.assertEqual(out[0]["metadata"]["source"], "feed")
+
 
 
 class TestStaleGate(unittest.TestCase):

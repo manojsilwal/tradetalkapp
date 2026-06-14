@@ -99,7 +99,7 @@ def nvidia_llm_model_cascade() -> List[str]:
     return out
 GUARDRAILS_ENABLE = os.environ.get("GUARDRAILS_ENABLE", "1").strip() != "0"
 LLM_MAX_CONCURRENCY = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "2")))
-LLM_MAX_TOKENS = max(256, int(os.environ.get("LLM_MAX_TOKENS", "1500")))
+LLM_MAX_TOKENS = max(256, int(os.environ.get("LLM_MAX_TOKENS", "16384")))
 RAG_TOP_K_DEFAULT = max(1, int(os.environ.get("RAG_TOP_K", "5")))
 
 # ── Role-to-model tier mapping ────────────────────────────────────────────────
@@ -721,7 +721,7 @@ class LLMClient:
             out = gemini_simple_completion_sync(
                 system=system,
                 user=user,
-                max_tokens=min(900, LLM_MAX_TOKENS),
+                max_tokens=LLM_MAX_TOKENS,
                 temperature=0.2,
                 json_mode=False,
                 model=model,
@@ -1363,7 +1363,7 @@ class LLMClient:
                                         {"role": "user", "content": user},
                                     ],
                                     temperature=0.2,
-                                    max_tokens=min(900, LLM_MAX_TOKENS),
+                                    max_tokens=LLM_MAX_TOKENS,
                                 )
                         return sync_client.chat.completions.create(
                             model=_model,
@@ -1372,7 +1372,7 @@ class LLMClient:
                                 {"role": "user", "content": user},
                             ],
                             temperature=0.2,
-                            max_tokens=min(900, LLM_MAX_TOKENS),
+                            max_tokens=LLM_MAX_TOKENS,
                         )
 
                     start_time = time.time()
@@ -1465,7 +1465,7 @@ class LLMClient:
                 session_id=session_id,
                 message_id=message_id,
             )
-        mt = max_tokens if max_tokens is not None else min(2048, LLM_MAX_TOKENS)
+        mt = max_tokens if max_tokens is not None else LLM_MAX_TOKENS
         _429_same_delay = float(os.environ.get("OPENROUTER_429_SAME_KEY_DELAY_SEC", "2.5"))
         _429_key_delay = float(os.environ.get("OPENROUTER_429_KEY_FAILOVER_DELAY_SEC", "1.0"))
         if self._openrouter_pool is None and not gemini_usable_for_chat():

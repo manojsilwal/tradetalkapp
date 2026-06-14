@@ -1141,6 +1141,29 @@ class KnowledgeStore:
         except Exception as e:
             logger.warning(f"[KnowledgeStore] upsert_sp500_fundamental({ticker}) failed: {e}")
 
+    def get_sp500_fundamental(self, ticker: str) -> Optional[dict]:
+        """Retrieve the latest fundamental narrative metadata for one S&P 500 ticker."""
+        col = self._safe_col("sp500_fundamentals_narratives")
+        if not col:
+            return None
+        try:
+            res = col.get(where={"ticker": ticker.upper()})
+            metadatas = res.get("metadatas")
+            if metadatas and len(metadatas) > 0:
+                meta = metadatas[0]
+                return {
+                    "ticker": ticker.upper(),
+                    "sector": meta.get("sector") or "Unknown",
+                    "industry": meta.get("sector") or "Unknown",
+                    "market_cap": float(meta.get("market_cap_b") or 0.0) * 1e9 if meta.get("market_cap_b") else None,
+                    "pe_ratio": meta.get("pe_ratio"),
+                    "forward_pe": meta.get("pe_ratio"),
+                    "insider_sentiment": f"{meta.get('eps')} EPS" if meta.get('eps') else "N/A",
+                }
+        except Exception as e:
+            logger.warning(f"[KnowledgeStore] get_sp500_fundamental({ticker}) failed: {e}")
+        return None
+
     def query_sp500_fundamentals(self, query_text: str, n_results: int = 5,
                                   sector: Optional[str] = None) -> list[str]:
         """Semantic search over S&P 500 fundamental narratives. Optionally filter by sector."""

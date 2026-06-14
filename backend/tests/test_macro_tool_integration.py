@@ -69,6 +69,7 @@ class _EnvIsolated(unittest.TestCase):
 
 def _mock_yfinance_with_vix(vix_level: float):
     """Patch yfinance so ``MacroHealthConnector`` returns ``vix_level``."""
+    import contextlib
 
     class _FakeHist:
         def __init__(self, v):
@@ -97,10 +98,17 @@ def _mock_yfinance_with_vix(vix_level: float):
         def __getattr__(self, _name):
             return {}
 
-    return mock.patch("backend.connectors.macro.yf", mock.MagicMock(
-        Ticker=_fake_ticker,
-        Tickers=_FakeTickers,
-    ))
+    @contextlib.contextmanager
+    def _combined_mock():
+        with mock.patch("backend.connectors.macro.yf", mock.MagicMock(
+            Ticker=_fake_ticker,
+            Tickers=_FakeTickers,
+        )):
+            with mock.patch("backend.connectors.quote_fallbacks._yahoo_chart_spot", return_value=None):
+                yield
+
+    return _combined_mock()
+
 
 
 # ── Flag-off regression ───────────────────────────────────────────────────────
