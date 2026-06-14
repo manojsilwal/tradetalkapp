@@ -402,7 +402,7 @@ flowchart TD
 
 ## 9. Data Trust Layer (Freshness & Truthful "As Of")
 
-The **Data Trust Layer** ensures every market surface is honest about data age. A shared `market_calendar` computes the real last completed US session (holiday-aware, never-expiring). The `freshness.py` policy registry stamps a `DataFreshness` envelope on API payloads (`tier`, `is_stale`, `degraded`, `source`). The frontend renders `FreshnessBadge`, `StaleValue`, and `DataTrustBanner` across Macro, Dashboard, Decision Terminal, Daily Brief, Backtest, Chat quote cards, and the live-quote widget. Observability: `GET /health/data-freshness`.
+The **Data Trust Layer** ensures every market surface is honest about data age. A shared \`market_calendar\` computes the real last completed US session (holiday-aware, never-expiring). The \`freshness.py\` policy registry stamps a \`DataFreshness\` envelope on API payloads (\`tier\`, \`is_stale\`, \`degraded\`, \`source\`). The frontend renders \`FreshnessBadge\`, \`StaleValue\`, and \`DataTrustBanner\` across Macro, Dashboard, Decision Terminal, Daily Brief, Backtest, Chat quote cards, and the live-quote widget. Observability: \`GET /health/data-freshness\`.
 
 \`\`\`mermaid
 flowchart TD
@@ -451,7 +451,7 @@ flowchart TD
 
 ## 10. MCP S&P 500 Live Quote Surface
 
-The `/mcp/sp500` server historically served **historical** data-lake queries (`price-window`, `movement-context`, …). It now also exposes **live** quotes via a hedged keyless engine: Yahoo `fast_info` primary (250ms hedge), then parallel Yahoo chart / Stooq / FinCrawler, then EOD fallback from `daily_prices` populated by `sp500-ingest`. The home-page `LiveQuoteWidget` calls `GET /mcp/sp500/live-quote` and renders price/change with trust badges.
+The \`/mcp/sp500\` server historically served **historical** data-lake queries (\`price-window\`, \`movement-context\`, …). It now also exposes **live** quotes via a hedged keyless engine: Yahoo \`fast_info\` primary (250ms hedge), then parallel Yahoo chart / Stooq, then FinCrawler last, then EOD fallback from \`daily_prices\` populated by \`sp500-ingest\`. The home-page \`LiveQuoteWidget\` calls \`GET /mcp/sp500/live-quote\` and renders price/change with trust badges.
 
 \`\`\`mermaid
 flowchart TD
