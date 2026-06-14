@@ -577,7 +577,7 @@ function GlobalLoadingBar() {
     const activeAnalysis = loadingTicker ? analyses[loadingTicker] : null
 
     const [prevTicker, setPrevTicker] = useState('')
-    const [isMinimized, setIsMinimized] = useState(false)
+    const [isMinimized, setIsMinimized] = useState(true)
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
 
     useEffect(() => {
@@ -588,7 +588,7 @@ function GlobalLoadingBar() {
 
     useEffect(() => {
         if (loadingTicker && loadingTicker !== prevTicker) {
-            setIsMinimized(false)
+            setIsMinimized(true)
             setPrevTicker(loadingTicker)
         }
     }, [loadingTicker, prevTicker])
