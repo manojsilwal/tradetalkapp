@@ -1,6 +1,6 @@
 {
-  "run_id": "eval_20260611_143424",
-  "timestamp": "2026-06-11T14:34:24Z",
+  "run_id": "eval_20260613_234615",
+  "timestamp": "2026-06-13T23:46:15Z",
   "production_version": "v1.0.0",
   "benchmark_suite": "agentic_swarm_eval_v1",
   "decision": "hold",
@@ -47,13 +47,13 @@
       "maintainability": 78.0
     },
     "no_critic": {
-      "aes": 80.65,
+      "aes": 80.85,
       "task_success": 84.0,
       "rag_quality": 88.0,
       "orchestration": 80.0,
       "continual_learning": 73.0,
       "efficiency": 71.0,
-      "safety_groundedness": 88.0,
+      "safety_groundedness": 90.0,
       "maintainability": 74.0
     },
     "no_reflection": {
@@ -67,13 +67,13 @@
       "maintainability": 76.0
     },
     "no_rrf_memory": {
-      "aes": 80.6,
-      "task_success": 82.0,
-      "rag_quality": 82.0,
+      "aes": 81.8,
+      "task_success": 84.0,
+      "rag_quality": 84.0,
       "orchestration": 86.0,
       "continual_learning": 70.0,
       "efficiency": 74.0,
-      "safety_groundedness": 88.0,
+      "safety_groundedness": 92.0,
       "maintainability": 74.0
     },
     "no_mutation_engine": {
@@ -103,8 +103,8 @@
     {
       "component": "Critic agent",
       "with_score": 90.8,
-      "without_score": 80.65,
-      "delta": 10.15,
+      "without_score": 80.85,
+      "delta": 9.95,
       "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
@@ -121,8 +121,8 @@
     {
       "component": "RRF memory retrieval",
       "with_score": 90.8,
-      "without_score": 80.6,
-      "delta": 10.2,
+      "without_score": 81.8,
+      "delta": 9.0,
       "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
@@ -147,18 +147,18 @@
     }
   ],
   "safety": {
-    "hallucination_rate": 0.02,
+    "hallucination_rate": 0.018,
     "critical_hallucinations": 0,
     "fabricated_tool_call_claims": 0,
-    "tool_call_validity": 0.95,
-    "citation_validity": 0.9
+    "tool_call_validity": 0.96,
+    "citation_validity": 0.92
   },
   "recommendations": [
     "Keep production swarm as baseline until a candidate clearly wins."
   ],
   "dashboard_notification": {
-    "run_id": "eval_20260611_143424",
-    "timestamp": "2026-06-11T14:34:24Z",
+    "run_id": "eval_20260613_234615",
+    "timestamp": "2026-06-13T23:46:15Z",
     "status": "pass",
     "winner": "Production 5-Agent Swarm",
     "production_score": 90.8,
@@ -171,7 +171,7 @@
     "p95_latency_ms": 4800.0,
     "cost_per_task": 0.1,
     "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-11/weekly_swarm_effectiveness_report.md",
+    "report_path": "/evals/reports/2026-06-13/weekly_swarm_effectiveness_report.md",
     "dashboard_badge": {
       "label": "Eval: Pass",
       "color": "green"
@@ -251,13 +251,13 @@
       "name": "Production swarm without critic",
       "status": "ok",
       "status_reason": null,
-      "aes": 80.65,
+      "aes": 80.85,
       "task_success": 84.0,
       "rag_quality": 88.0,
       "orchestration": 80.0,
       "learning": 73.0,
       "efficiency": 71.0,
-      "safety": 88.0,
+      "safety": 90.0,
       "maintainability": 74.0,
       "p95_latency_ms": 5000.0,
       "cost_per_task": 0.1,
@@ -283,13 +283,13 @@
       "name": "Production swarm without RRF memory retrieval",
       "status": "ok",
       "status_reason": null,
-      "aes": 80.6,
-      "task_success": 82.0,
-      "rag_quality": 82.0,
+      "aes": 81.8,
+      "task_success": 84.0,
+      "rag_quality": 84.0,
       "orchestration": 86.0,
       "learning": 70.0,
       "efficiency": 74.0,
-      "safety": 88.0,
+      "safety": 92.0,
       "maintainability": 74.0,
       "p95_latency_ms": 5100.0,
       "cost_per_task": 0.1,

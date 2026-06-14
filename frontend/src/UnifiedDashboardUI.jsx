@@ -563,7 +563,7 @@ export default function UnifiedDashboardUI() {
           </div>
 
           <div className="dt-stock-chart-container">
-            {fundamentalsLoading ? (
+            {fundamentalsLoading || (loading && !fundamentalsData?.price_history?.[period]) ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)' }}>
                 <Loader2 className="spinner" size={18} /> Loading price history…
               </div>
@@ -706,94 +706,96 @@ export default function UnifiedDashboardUI() {
         {/* 4. CONSOLIDATED METRICS & FINANCIAL PERFORMANCE */}
         <section className="dt-panel dt-area-metrics-perf">
           <h2 className="dt-panel-title">Financial Health &amp; Performance</h2>
-          {fundamentalsLoading ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 14, fontSize: '0.9rem' }}>
-              <Loader2 className="spinner" size={18} /> Loading financial diagnostics…
-            </div>
-          ) : (
             <div style={{ display: 'flex', gap: '40px', flexWrap: 'wrap', marginTop: '20px', alignItems: 'flex-start' }}>
               {/* Left Column: Consolidated Metrics (approx 38% width) */}
               <div style={{ flex: '1.2 1 360px', minWidth: '320px' }}>
                 <h3 className="dt-metrics-section-title" style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.05em', marginBottom: 16 }}>
                   Consolidated Metrics
                 </h3>
-                <div className="dt-consolidated" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 28px' }}>
-                  {/* Left Column: Valuation & Margins */}
-                  <div>
-                    <h4 className="dt-metrics-section-title">Valuation</h4>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Market Cap</span>
-                      <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.valuation?.market_cap)}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">PE Ratio (TTM)</span>
-                      <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.trailing_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Price to Sales</span>
-                      <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.price_to_sales?.toFixed(2) || <span className="dt-metric-dash">—</span>}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">EV / EBITDA</span>
-                      <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.ev_to_ebitda?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                {fundamentalsLoading || (loading && !fundamentalsData?.metrics) ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 0', gap: 12 }}>
+                    <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
+                    <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Loading metrics...</span>
+                  </div>
+                ) : (
+                  <div className="dt-consolidated" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 28px' }}>
+                    {/* Left Column: Valuation & Margins */}
+                    <div>
+                      <h4 className="dt-metrics-section-title">Valuation</h4>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Market Cap</span>
+                        <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.valuation?.market_cap)}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">PE Ratio (TTM)</span>
+                        <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.trailing_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Price to Sales</span>
+                        <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.price_to_sales?.toFixed(2) || <span className="dt-metric-dash">—</span>}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">EV / EBITDA</span>
+                        <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.ev_to_ebitda?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                      </div>
+
+                      <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Margins &amp; Growth</h4>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Profit Margin</span>
+                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.profit_margins != null ? fundamentalsData.metrics.margins_and_growth.profit_margins * 100 : null)}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Operating Margin</span>
+                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.operating_margins != null ? fundamentalsData.metrics.margins_and_growth.operating_margins * 100 : null)}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Earnings Growth YoY</span>
+                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.earnings_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.earnings_growth_yoy * 100 : null)}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Revenue Growth YoY</span>
+                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.revenue_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.revenue_growth_yoy * 100 : null)}</span>
+                      </div>
                     </div>
 
-                    <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Margins &amp; Growth</h4>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Profit Margin</span>
-                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.profit_margins != null ? fundamentalsData.metrics.margins_and_growth.profit_margins * 100 : null)}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Operating Margin</span>
-                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.operating_margins != null ? fundamentalsData.metrics.margins_and_growth.operating_margins * 100 : null)}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Earnings Growth YoY</span>
-                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.earnings_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.earnings_growth_yoy * 100 : null)}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Revenue Growth YoY</span>
-                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.revenue_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.revenue_growth_yoy * 100 : null)}</span>
+                    {/* Right Column: Cash Flow, Balance Sheet, Dividends */}
+                    <div>
+                      <h4 className="dt-metrics-section-title">Cash Flow</h4>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Free Cash Flow</span>
+                        <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.cash_flow?.free_cash_flow)}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">FCF Yield</span>
+                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.cash_flow?.fcf_yield != null ? fundamentalsData.metrics.cash_flow.fcf_yield * 100 : null)}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">FCF Per Share</span>
+                        <span className="dt-metric-value">{fundamentalsData?.metrics?.cash_flow?.fcf_per_share != null ? `$${fundamentalsData.metrics.cash_flow.fcf_per_share.toFixed(2)}` : <span className="dt-metric-dash">—</span>}</span>
+                      </div>
+
+                      <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Balance Sheet</h4>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Total Cash</span>
+                        <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_cash)}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Total Debt</span>
+                        <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_debt)}</span>
+                      </div>
+
+                      <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Dividends</h4>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Dividend Yield</span>
+                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.dividend_yield != null ? fundamentalsData.metrics.dividend.dividend_yield * 100 : null)}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">Payout Ratio</span>
+                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.payout_ratio != null ? fundamentalsData.metrics.dividend.payout_ratio * 100 : null)}</span>
+                      </div>
                     </div>
                   </div>
-
-                  {/* Right Column: Cash Flow, Balance Sheet, Dividends */}
-                  <div>
-                    <h4 className="dt-metrics-section-title">Cash Flow</h4>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Free Cash Flow</span>
-                      <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.cash_flow?.free_cash_flow)}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">FCF Yield</span>
-                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.cash_flow?.fcf_yield != null ? fundamentalsData.metrics.cash_flow.fcf_yield * 100 : null)}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">FCF Per Share</span>
-                      <span className="dt-metric-value">{fundamentalsData?.metrics?.cash_flow?.fcf_per_share != null ? `$${fundamentalsData.metrics.cash_flow.fcf_per_share.toFixed(2)}` : <span className="dt-metric-dash">—</span>}</span>
-                    </div>
-
-                    <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Balance Sheet</h4>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Total Cash</span>
-                      <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_cash)}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Total Debt</span>
-                      <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_debt)}</span>
-                    </div>
-
-                    <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Dividends</h4>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Dividend Yield</span>
-                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.dividend_yield != null ? fundamentalsData.metrics.dividend.dividend_yield * 100 : null)}</span>
-                    </div>
-                    <div className="dt-metric-row">
-                      <span className="dt-metric-label">Payout Ratio</span>
-                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.payout_ratio != null ? fundamentalsData.metrics.dividend.payout_ratio * 100 : null)}</span>
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Right Column: Financial Performance Graph (approx 62% width) */}
@@ -822,7 +824,12 @@ export default function UnifiedDashboardUI() {
 
                 <div className="dt-perf-chart-box" style={{ padding: '20px 24px', margin: 0 }}>
                   <div className="dt-perf-chart-inner" style={{ height: '310px' }}>
-                    {fundamentalsData?.financials?.[perfPeriod]?.length > 0 ? (
+                    {fundamentalsLoading || (loading && !fundamentalsData?.financials?.[perfPeriod]) ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12 }}>
+                        <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
+                        <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Loading chart...</span>
+                      </div>
+                    ) : fundamentalsData?.financials?.[perfPeriod]?.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={fundamentalsData.financials[perfPeriod]} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
