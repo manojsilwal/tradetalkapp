@@ -99,7 +99,10 @@ def nvidia_llm_model_cascade() -> List[str]:
     return out
 GUARDRAILS_ENABLE = os.environ.get("GUARDRAILS_ENABLE", "1").strip() != "0"
 LLM_MAX_CONCURRENCY = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "6")))
-LLM_MAX_TOKENS = max(256, int(os.environ.get("LLM_MAX_TOKENS", "16384")))
+# OpenRouter pre-reserves credits from max_tokens; 16k × parallel debate agents
+# triggers HTTP 402 on modest balances. 1500 matches backend/.env.example and is
+# ample for JSON debate/swarm roles; chat can override per call.
+LLM_MAX_TOKENS = max(256, int(os.environ.get("LLM_MAX_TOKENS", "1500")))
 RAG_TOP_K_DEFAULT = max(1, int(os.environ.get("RAG_TOP_K", "5")))
 
 # ── Role-to-model tier mapping ────────────────────────────────────────────────
