@@ -15,6 +15,10 @@ import threading
 import time
 from typing import Any, Callable, List, Optional, Tuple
 
+# Per-request HTTP timeout (seconds) for all OpenAI-compatible LLM calls. Without
+# this a hung provider holds an LLM concurrency slot forever. Tunable via env.
+LLM_HTTP_TIMEOUT_S = max(5.0, float(os.environ.get("LLM_HTTP_TIMEOUT_S", "60")))
+
 __all__ = [
     "collect_openrouter_api_keys",
     "collect_nvidia_llm_api_keys",
@@ -197,11 +201,13 @@ class OpenRouterClientPool:
                         base_url=base_url,
                         api_key=api_key,
                         default_headers=headers,
+                        timeout=LLM_HTTP_TIMEOUT_S,
                     ),
                     AsyncOpenAI(
                         base_url=base_url,
                         api_key=api_key,
                         default_headers=headers,
+                        timeout=LLM_HTTP_TIMEOUT_S,
                     ),
                 )
             )

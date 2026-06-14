@@ -1488,7 +1488,14 @@ async def chat_send_message(
             except Exception as e:
                 logger.warning("[Chat] quote_card prefetch failed: %s", e)
                 qbody = f"Could not load quote for {qc_ticker}: {e}"
-            yield f"data: {json.dumps({'type': 'quote_card', 'ticker': qc_ticker, 'body': qbody[:12000]})}\n\n"
+            qc_freshness = None
+            try:
+                from ..freshness import assess_spot
+
+                qc_freshness = assess_spot(source="yfinance").model_dump()
+            except Exception:
+                qc_freshness = None
+            yield f"data: {json.dumps({'type': 'quote_card', 'ticker': qc_ticker, 'body': qbody[:12000], 'data_freshness': qc_freshness})}\n\n"
         assistant_parts: list[str] = []
         try:
             stream_gen = llm_client.stream_chat_plain(

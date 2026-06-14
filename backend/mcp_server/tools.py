@@ -272,6 +272,28 @@ def get_gold_spx_context(
     return row
 
 
+def _latest_close_from_lake(symbol: str) -> Optional[Dict[str, Any]]:
+    """Last EOD close from sp500-ingest data lake (daily_prices)."""
+    from ..connectors.live_quote import latest_close_from_lake
+
+    return latest_close_from_lake(symbol)
+
+
+async def get_live_quote(symbol: str) -> Dict[str, Any]:
+    """Live (or data-lake EOD fallback) quote for one S&P 500 symbol."""
+    from ..connectors.live_quote import get_live_quote as _get
+
+    payload, _ = await _get(symbol)
+    return payload
+
+
+async def get_live_quotes(symbols: List[str]) -> List[Dict[str, Any]]:
+    """Bulk live quotes for S&P 500 symbols."""
+    from ..connectors.live_quote import get_live_quotes as _get_many
+
+    return await _get_many(symbols)
+
+
 TOOL_DESCRIPTORS = [
     {
         "name": "get_price_window",
@@ -314,6 +336,20 @@ TOOL_DESCRIPTORS = [
         "description": "Gold-equity correlation, risk regime, and DXY context for a date",
         "parameters": {
             "trade_date": {"type": "string", "format": "date", "required": True},
+        },
+    },
+    {
+        "name": "get_live_quote",
+        "description": "Live spot quote for an S&P 500 symbol (hedged multi-provider; data-lake EOD fallback)",
+        "parameters": {
+            "symbol": {"type": "string", "required": True},
+        },
+    },
+    {
+        "name": "get_live_quotes",
+        "description": "Bulk live spot quotes for S&P 500 symbols",
+        "parameters": {
+            "symbols": {"type": "array", "items": {"type": "string"}, "required": True},
         },
     },
 ]

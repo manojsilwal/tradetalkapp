@@ -1,8 +1,73 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, RefreshCw, TrendingDown, Shield, List, Zap, Plus } from 'lucide-react'
+import { Loader2, RefreshCw, TrendingDown, Shield, List, Zap, Plus, AlertTriangle } from 'lucide-react'
 import { API_BASE_URL, apiFetch } from './api'
 import { useAnalysisHistory } from './AnalysisContext'
+import { DataTrustBanner } from './components/Freshness'
+import LiveQuoteWidget from './components/LiveQuoteWidget'
+import { isBriefSessionTrustworthy, isSessionDateStale } from './freshness'
+
+function formatTradeDateLabel(isoDateStr) {
+  if (!isoDateStr) return ''
+  try {
+    const parts = isoDateStr.split('-')
+    const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10))
+    return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+  } catch (e) {
+    return isoDateStr
+  }
+}
+
+// Reusable truthful-data indicator. When the underlying data is stale, it
+// renders a prominent warning with the true age and never lets the caller
+// label the data as "the last trading session". When fresh/live it renders a
+// small, unobtrusive badge.
+function DataFreshnessBadge({ freshness, variant = 'inline' }) {
+  if (!freshness) return null
+  const isStale = !!freshness.is_stale
+  const lastDate = freshness.db_latest_date
+  const days = freshness.staleness_days
+
+  if (!isStale) {
+    const isLive = freshness.source === 'realtime_overlay' || freshness.source === 'market_intel_live' || freshness.source === 'market_intel'
+    if (!isLive) return null
+    return (
+      <span style={{
+        fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4,
+        color: '#34d399', background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.35)',
+        borderRadius: 6, padding: '2px 6px',
+      }}>Live</span>
+    )
+  }
+
+  const ageText = lastDate
+    ? `Last updated ${formatTradeDateLabel(lastDate)}${typeof days === 'number' ? ` (${days} day${days === 1 ? '' : 's'} ago)` : ''}.`
+    : 'No recent market data available.'
+
+  if (variant === 'banner') {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        color: '#fbbf24', background: 'rgba(251,191,36,0.10)', border: '1px solid rgba(251,191,36,0.35)',
+        borderRadius: 10, padding: '10px 14px', fontSize: '0.9rem',
+      }}>
+        <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+        <span><strong>Stale market data.</strong> {ageText} Live refresh is currently unavailable — these figures are not current.</span>
+      </div>
+    )
+  }
+
+  return (
+    <span title={`${ageText} Live refresh unavailable.`} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4,
+      color: '#fbbf24', background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.35)',
+      borderRadius: 6, padding: '2px 6px',
+    }}>
+      <AlertTriangle size={12} /> Stale{lastDate ? ` · ${formatTradeDateLabel(lastDate)}` : ''}
+    </span>
+  )
+}
 
 function getCompanyLogoStyle(symbol) {
   const s = (symbol || '').toUpperCase()
@@ -61,6 +126,15 @@ export default function DailyBriefUI() {
   const isWeekendOrAfterHours = sessionStatus === 'weekend' || sessionStatus === 'after_hours';
   const isWeekend = sessionStatus === 'weekend';
 
+  const briefFreshness = data?.data_freshness;
+  const portfolioFreshness = portfolioBrief?.data_freshness;
+  const freshness = briefFreshness || portfolioFreshness;
+  const isBriefStale = !isBriefSessionTrustworthy(data);
+  const isPortfolioStale = portfolioFreshness?.is_stale
+    || isSessionDateStale(portfolioBrief?.trade_date, portfolioFreshness);
+  const isStaleData = !!freshness?.is_stale || isBriefStale;
+  const showMoversLoader = loading;
+
   const formatTradeDate = (isoDateStr) => {
     if (!isoDateStr) return '';
     try {
@@ -98,10 +172,14 @@ export default function DailyBriefUI() {
     }
   }, [])
 
+  const initialLoadDone = useRef(false);
+
   useEffect(() => {
-    loadDailyBrief(false)
-    loadExtraData()
-  }, [loadDailyBrief, loadExtraData])
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+    loadDailyBrief(false);
+    loadExtraData();
+  }, [loadDailyBrief, loadExtraData]);
 
   const load = (refresh = false) => {
     loadDailyBrief(refresh)
@@ -117,6 +195,7 @@ export default function DailyBriefUI() {
   }
 
   const hasPortfolioSetup = portfolioBrief?.has_portfolio === true
+  const showHoldingsLoader = (loading || extraLoading) && hasPortfolioSetup;
   const deepRunning = deepStatus?.status === 'running' || deepBusy
 
   // Data mapping
@@ -232,8 +311,9 @@ export default function DailyBriefUI() {
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
       {/* Header section */}
-      <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'flex-end' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+      <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <LiveQuoteWidget defaultSymbol="AAPL" />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start' }}>
           <button
             type="button"
             onClick={() => load(true)}
@@ -282,6 +362,8 @@ export default function DailyBriefUI() {
         </div>
       )}
 
+      {freshness && <DataTrustBanner envelope={freshness} />}
+
         <>
           {/* Weekend Session Info Banner */}
           {((data?.market_session?.status === 'weekend') || (portfolioBrief?.market_session?.status === 'weekend')) && (
@@ -300,9 +382,13 @@ export default function DailyBriefUI() {
                 <Shield size={18} />
                 Markets are closed today (Weekend)
               </div>
-              <div style={{ color: '#94a3b8', fontSize: '0.92rem' }}>
-                Stock markets are currently closed. Displaying data as of the last trading session {data?.trade_date ? `(${formatTradeDate(data.trade_date)})` : ''}. <strong>Crypto markets trade 24/7</strong> and may continue to move.
-              </div>
+              {isStaleData ? (
+                <DataFreshnessBadge freshness={freshness} variant="banner" />
+              ) : (
+                <div style={{ color: '#94a3b8', fontSize: '0.92rem' }}>
+                  Stock markets are currently closed. Displaying data as of the last trading session {data?.trade_date ? `(${formatTradeDate(data.trade_date)})` : ''}. <strong>Crypto markets trade 24/7</strong> and may continue to move.
+                </div>
+              )}
             </div>
           )}
 
@@ -458,7 +544,9 @@ export default function DailyBriefUI() {
                       <TrendingDown size={18} color="#34d399" style={{ transform: 'rotate(180deg)', alignSelf: 'center' }} />
                       <h2 className="brief-card-title" style={{ margin: 0 }}>S&P 500 Gainers</h2>
                     </div>
-                    {data?.trade_date && (
+                    {isBriefStale || briefFreshness?.is_stale ? (
+                      <DataFreshnessBadge freshness={briefFreshness || freshness} />
+                    ) : data?.trade_date && isBriefSessionTrustworthy(data) && (
                       <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
                         ({isWeekendOrAfterHours ? 'As of ' : ''}{formatTradeDate(data.trade_date)})
                       </span>
@@ -469,10 +557,10 @@ export default function DailyBriefUI() {
                   </span>
                 </div>
                 
-                {(loading || extraLoading) && currentTableMovers.length === 0 ? (
+                {showMoversLoader ? (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: 12 }}>
                     <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
-                    <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Loading top movers...</span>
+                    <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Loading top movers…</span>
                   </div>
                 ) : currentTableMovers.length === 0 ? (
                   <p style={{ color: '#94a3b8', fontSize: '0.9rem', padding: '16px 4px', margin: 0 }}>
@@ -533,7 +621,14 @@ export default function DailyBriefUI() {
                   <div className="brief-card-title-group" style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                     <Shield size={18} color="#60a5fa" style={{ alignSelf: 'center' }} />
                     <h2 className="brief-card-title">Portfolio Exposure: Key Holdings</h2>
-                    {data?.trade_date && (
+                    {isPortfolioStale ? (
+                      <DataFreshnessBadge freshness={portfolioFreshness || freshness} />
+                    ) : portfolioBrief?.trade_date && !isPortfolioStale && (
+                      <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
+                        ({isWeekendOrAfterHours ? 'As of ' : ''}{formatTradeDate(portfolioBrief.trade_date)})
+                      </span>
+                    )}
+                    {!isPortfolioStale && !portfolioBrief?.trade_date && data?.trade_date && isBriefSessionTrustworthy(data) && (
                       <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
                         ({isWeekendOrAfterHours ? 'As of ' : ''}{formatTradeDate(data.trade_date)})
                       </span>
@@ -544,10 +639,10 @@ export default function DailyBriefUI() {
                   </span>
                 </div>
 
-                {(loading || extraLoading) && hasPortfolioSetup && tableHoldings.length === 0 ? (
+                {showHoldingsLoader && tableHoldings.length === 0 ? (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: 12 }}>
                     <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
-                    <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Analyzing holdings exposure...</span>
+                    <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Analyzing holdings exposure…</span>
                   </div>
                 ) : !hasPortfolioSetup ? (
                   <div

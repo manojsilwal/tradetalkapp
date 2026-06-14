@@ -20,7 +20,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
 } from 'recharts';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, apiFetch } from './api';
 
 // ── Market definitions ────────────────────────────────────────────────────────
 const MARKETS = [
@@ -116,9 +116,9 @@ export default function GlobalMarketsChart() {
     try {
       const tickers = MARKETS.map(m => m.id).join(',');
       const url = `${API_BASE_URL}/macro/global-markets?period=${p}&tickers=${encodeURIComponent(tickers)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
+      // Route through apiFetch so this surface participates in the auth +
+      // truthful-data contract (insufficient_data handling) like every other call.
+      const json = await apiFetch(url);
       setRawData(json);
     } catch (e) {
       setError(e.message || 'Failed to load market data');

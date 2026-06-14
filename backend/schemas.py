@@ -7,6 +7,36 @@ class VerificationStatus(str, Enum):
     REJECTED = "REJECTED"
     VERIFIED = "VERIFIED"
 
+
+class FreshnessTier(str, Enum):
+    """How fresh a value is *expected* to be for its data class."""
+    LIVE = "live"            # real-time quote during an open session
+    DELAYED = "delayed"      # intraday but lagged (e.g. ~15 min)
+    EOD = "eod"              # end-of-day close for the last session
+    HISTORICAL = "historical"  # historical series / derived analytics
+    REFERENCE = "reference"  # static or slowly-changing reference data
+
+
+class DataFreshness(BaseModel):
+    """Provenance + freshness envelope attached to any data-bearing payload.
+
+    Extends the truthful-data contract from "missing data" (InsufficientDataError)
+    to "stale data": a value is either accompanied by this envelope proving it
+    meets its data class's SLA, or it must not be rendered as a live number.
+    See backend/freshness.py for the policy registry and ``assess()``.
+    """
+    data_class: str = Field(description="Policy key, e.g. live_quote, eod_movers, macro_fred.")
+    source: str = Field(description="Origin, e.g. yfinance_live, yfinance_eod, fred, snapshot, heuristic.")
+    tier: FreshnessTier = Field(default=FreshnessTier.EOD)
+    as_of: Optional[str] = Field(default=None, description="ISO time/date the data is effective as of.")
+    captured_at: Optional[str] = Field(default=None, description="ISO time the data was fetched.")
+    expected_as_of: Optional[str] = Field(default=None, description="ISO anchor the value is compared against (e.g. last session).")
+    is_stale: bool = Field(default=False, description="True if the value violates its data class SLA.")
+    staleness_seconds: Optional[float] = Field(default=None, description="Age beyond expected, in seconds (or None if unknown).")
+    degraded: bool = Field(default=False, description="True if a fallback/lower-confidence source was used.")
+    policy_max_age_s: Optional[float] = Field(default=None, description="Max allowed age for this data class, in seconds.")
+    note: Optional[str] = Field(default=None, description="Optional human-readable provenance note.")
+
 class MarketRegime(str, Enum):
     BULL_NORMAL = "BULL_NORMAL"
     BULL_EXCESS = "BULL_EXCESS"
@@ -156,6 +186,10 @@ class MacroDataResponse(BaseModel):
     unemployment_rate: Optional[float] = None
     macro_narrative: str = ""
     fred_fetched_at: Optional[str] = None
+    data_freshness: Optional["DataFreshness"] = Field(
+        default=None,
+        description="Freshness/provenance envelope for the live VIX-derived indicators.",
+    )
 
 class MetricDataPoint(BaseModel):
     current: str
@@ -361,6 +395,7 @@ class BacktestResult(BaseModel):
     reflection: BacktestReflection
     retrieval_telemetry: RetrievalTelemetry = Field(default_factory=RetrievalTelemetry)
     knowledge_context: str
+    data_freshness: Optional["DataFreshness"] = None
 
 
 # ── Gold Advisor (investor snapshot, not real-time trading) ───────────────────
@@ -383,6 +418,7 @@ class GoldAdvisorResponse(BaseModel):
 
     context: Dict[str, Any]
     briefing: Dict[str, Any]
+    data_freshness: Optional["DataFreshness"] = None
 
 
 # ── K2 Investor Decision Terminal (glanceable view-model) ─────────────────────
@@ -490,6 +526,14 @@ class DecisionTerminalPayload(BaseModel):
     quality: TerminalQualityPanel
     verdict: TerminalVerdictPanel
     roadmap: TerminalRoadmapPanel
+    swarm: Optional[SwarmConsensus] = Field(
+        default=None,
+        description="Full swarm consensus used to build this terminal; lets the dashboard render the Trace tab from one call.",
+    )
+    debate: Optional[DebateResult] = Field(
+        default=None,
+        description="Full debate result used to build this terminal; lets the dashboard render the Debate tab from one call.",
+    )
     market_data_degraded: bool = Field(
         default=False,
         description="True when Yahoo history/momentum may be incomplete (fallback spot used).",
@@ -504,4 +548,8 @@ class DecisionTerminalPayload(BaseModel):
             "When requested (provider_audit / audit=1), maps each Decision Terminal block to "
             "upstream data families: yfinance, Stooq, FinCrawler, Polymarket, heuristics, LLM, data lake."
         ),
+    )
+    data_freshness: Optional["DataFreshness"] = Field(
+        default=None,
+        description="Freshness/provenance envelope for the spot price (folds market_data_degraded + spot_price_source).",
     )

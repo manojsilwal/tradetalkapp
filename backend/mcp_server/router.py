@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from . import tools
 
@@ -68,6 +68,41 @@ async def gold_spx_context(
     """Gold-equity correlation, risk regime, and DXY context."""
     result = tools.get_gold_spx_context(trade_date)
     return result
+
+
+@router.get("/live-quote")
+async def live_quote(
+    symbol: str = Query(..., description="S&P 500 ticker symbol"),
+):
+    """Live spot quote with hedged multi-provider fetch and data-lake EOD fallback."""
+    from ..data_errors import InsufficientDataError
+
+    try:
+        result = await tools.get_live_quote(symbol)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if result.get("price") is None:
+        sym = (symbol or "").upper().strip()
+        raise InsufficientDataError(
+            "live_quote",
+            f"No live or data-lake quote available for {sym}.",
+            ticker=sym,
+            missing=["spot_price"],
+        )
+    return result
+
+
+@router.get("/live-quotes")
+async def live_quotes(
+    symbols: str = Query(..., description="Comma-separated S&P 500 tickers"),
+):
+    """Bulk live spot quotes (parallel Yahoo batch + per-symbol hedged fallback)."""
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not sym_list:
+        return {"count": 0, "quotes": []}
+    rows = await tools.get_live_quotes(sym_list)
+    return {"count": len(rows), "quotes": rows}
 
 
 @router.get("/tools")

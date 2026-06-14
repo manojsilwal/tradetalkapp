@@ -2,12 +2,12 @@
 US equity spot fallbacks when yfinance history/quote is empty (e.g. cloud IP blocks).
 
 Chain (``fetch_us_equity_spot``) — non-Yahoo by default:
-  1. FinCrawler GET /quote when ``FINCRAWLER_URL`` + ``FINCRAWLER_KEY`` are set
-  2. Stooq CSV — only when the response is real CSV (Stooq often serves a JS bot wall)
-  3. Yahoo chart (query1) — only if ``QUOTE_FALLBACK_ALLOW_YAHOO_CHART=1``
+  1. Stooq CSV — only when the response is real CSV (Stooq often serves a JS bot wall)
+  2. Yahoo chart (query1) — only if ``QUOTE_FALLBACK_ALLOW_YAHOO_CHART=1``
+  3. FinCrawler GET /quote when ``FINCRAWLER_URL`` + ``FINCRAWLER_KEY`` are set (last resort)
 
 Configure ``backend/.env.local`` (see ``backend/.env.example``) with a reachable FinCrawler
-URL so yfinance failures recover without hitting Yahoo again.
+URL so yfinance failures can still recover after keyless fallbacks fail.
 """
 from __future__ import annotations
 
@@ -132,7 +132,7 @@ def _stooq_us_spot(symbol: str) -> Optional[float]:
 
         if _is_html_bot_wall(raw):
             logger.info(
-                "[QuoteFallbacks] Stooq %s bot wall for %s — use FinCrawler or Yahoo chart",
+                "[QuoteFallbacks] Stooq %s bot wall for %s — try Yahoo chart or FinCrawler last",
                 host,
                 symbol,
             )
@@ -176,11 +176,6 @@ def fetch_us_equity_spot(ticker: str) -> Optional[Tuple[float, str]]:
     if not sym:
         return None
 
-    fc_spot = _fincrawler_quote_sync(sym)
-    if fc_spot is not None:
-        logger.info("[QuoteFallbacks] spot from fincrawler ticker=%s price=%s", sym, fc_spot)
-        return (fc_spot, "fincrawler")
-
     if re.match(r"^[A-Z]{1,6}(\.[A-Z])?$", sym):
         stooq = _stooq_us_spot(sym)
         if stooq is not None:
@@ -193,6 +188,11 @@ def fetch_us_equity_spot(ticker: str) -> Optional[Tuple[float, str]]:
             logger.info("[QuoteFallbacks] spot from yahoo_chart ticker=%s price=%s", sym, yahoo)
             return (yahoo, "yahoo_chart")
 
+    fc_spot = _fincrawler_quote_sync(sym)
+    if fc_spot is not None:
+        logger.info("[QuoteFallbacks] spot from fincrawler ticker=%s price=%s", sym, fc_spot)
+        return (fc_spot, "fincrawler")
+
     return None
 
 
@@ -200,13 +200,14 @@ def quote_fallback_status() -> dict:
     """Lightweight diagnostics for logs / debug (no network I/O)."""
     from backend.fincrawler_client import fc
 
-    chain = ["fincrawler", "stooq"]
+    chain = ["stooq"]
     if _allow_yahoo_chart_fallback():
         chain.append("yahoo_chart")
+    chain.append("fincrawler")
     return {
         "fincrawler_configured": fc.enabled,
         "fincrawler_url": fc.base_url if fc.enabled else None,
         "allow_yahoo_chart": _allow_yahoo_chart_fallback(),
         "chain": chain,
-        "stooq_note": "Stooq CSV often blocked by JS bot wall; FinCrawler recommended",
+        "stooq_note": "Stooq CSV often blocked by JS bot wall; FinCrawler is last resort",
     }

@@ -56,6 +56,24 @@ DISCLAIMER = (
     "synthesis — not audited models or investment advice."
 )
 
+
+def _terminal_data_freshness(spot_price_source, market_data_degraded, generated_at_utc):
+    """Best-effort spot-price freshness envelope for the Decision Terminal.
+
+    Folds the existing degraded flag + spot source into the shared DataFreshness
+    contract (the spot is fetched live at request time).
+    """
+    try:
+        from .freshness import assess_spot
+
+        return assess_spot(
+            source=str(spot_price_source or "yfinance"),
+            captured_at=generated_at_utc,
+            degraded=bool(market_data_degraded),
+        )
+    except Exception:
+        return None
+
 _EQUITY_CONTEXT_TERMS = (
     "stock",
     "stocks",
@@ -868,6 +886,9 @@ async def build_decision_terminal_payload(
             market_data_degraded=market_data_degraded,
             spot_price_source=spot_price_source,
             provider_audit=provider_audit,
+            swarm=swarm,
+            debate=debate,
+            data_freshness=_terminal_data_freshness(spot_price_source, market_data_degraded, now),
         )
     )
 
@@ -908,12 +929,41 @@ async def run_decision_terminal_request(
                 missing=["polymarket_events"],
             ) from e
 
-    analysis, debate_data, poly_raw, ext = await asyncio.gather(
-        execute_analyze(t, credit_stress, auth_user, award_deep_analysis_xp=False),
-        tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0),
-        _safe_poly(),
-        asyncio.to_thread(_sync_extended_snapshot, t),
+    # Fetch debate market data once, then reuse it for both the debate pipeline
+    # (inside execute_analyze) and the payload assembly below — previously this
+    # data was fetched twice per decision-terminal request. Start it as a task
+    # so the network fetch overlaps with the swarm phase, the Polymarket fetch,
+    # and the extended snapshot instead of blocking ahead of them.
+    debate_data_task = asyncio.ensure_future(
+        tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0)
     )
+
+    try:
+        analysis, poly_raw, ext = await asyncio.gather(
+            execute_analyze(
+                t, credit_stress, auth_user,
+                award_deep_analysis_xp=False, debate_data_task=debate_data_task,
+            ),
+            _safe_poly(),
+            asyncio.to_thread(_sync_extended_snapshot, t),
+        )
+    except BaseException:
+        # Avoid a "Task was destroyed but it is pending" warning if a sibling
+        # (e.g. swarm) fails before the debate phase awaits the fetch; if the
+        # fetch already finished with an error, retrieve it so it is not later
+        # reported as "exception never retrieved".
+        if not debate_data_task.done():
+            debate_data_task.cancel()
+        else:
+            try:
+                debate_data_task.exception()
+            except BaseException:
+                pass
+        raise
+
+    # execute_analyze's debate phase already awaited this task, so it is done;
+    # awaiting again just returns the cached fetched dict for payload assembly.
+    debate_data = await debate_data_task
 
     payload = await build_decision_terminal_payload(
         t,

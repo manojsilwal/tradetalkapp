@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Scale, ExternalLink } from 'lucide-react';
+import { FreshnessBadge } from './Freshness';
 
 const SIGNAL_COLORS = {
   Exceptional: '#10b981',
@@ -94,6 +95,7 @@ export default function DashboardScorecardPanel({ data, ticker, loading, error }
             </p>
           </div>
         </div>
+        {data?.data_freshness && <FreshnessBadge freshness={data.data_freshness} showEod />}
       </div>
 
       {loading && (

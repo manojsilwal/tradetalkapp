@@ -313,13 +313,21 @@ async def _execute_debate(
     swarm_context: str = "",
     *,
     award_debate_xp: bool = True,
+    debate_data: Optional[dict] = None,
+    debate_data_task: Optional["asyncio.Future"] = None,
 ) -> DebateResult:
     from ..debate_agents import run_full_debate
 
-    try:
-        debate_data = await tool_registry.invoke("fetch_debate_data", {"ticker": ticker}, timeout_s=90.0)
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail={"error": "timeout", "tool": "fetch_debate_data", "message": "Debate market data fetch timed out"}) from None
+    if debate_data is None:
+        try:
+            # Caller may hand us an in-flight fetch (started concurrently with
+            # other work) instead of a materialized dict — await it here.
+            if debate_data_task is not None:
+                debate_data = await debate_data_task
+            else:
+                debate_data = await tool_registry.invoke("fetch_debate_data", {"ticker": ticker}, timeout_s=90.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail={"error": "timeout", "tool": "fetch_debate_data", "message": "Debate market data fetch timed out"}) from None
 
     try:
         macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=45.0)
@@ -386,6 +394,8 @@ async def _execute_analyze(
     _auth_user,
     *,
     award_deep_analysis_xp: bool = True,
+    debate_data: Optional[dict] = None,
+    debate_data_task: Optional["asyncio.Future"] = None,
 ) -> AnalyzeResponse:
     swarm_result = await _execute_swarm_trace(ticker, credit_stress, _auth_user)
     factor_summary = "; ".join(f"{name}: signal={fr.trading_signal}, conf={fr.confidence:.2f}" for name, fr in swarm_result.factors.items())
@@ -394,7 +404,7 @@ async def _execute_analyze(
         f"Verdict: {swarm_result.global_verdict}, confidence: {swarm_result.confidence:.2f}. "
         f"Factors: {factor_summary}. {swarm_result.consensus_rationale}"
     )
-    debate_result = await _execute_debate(ticker, _auth_user, swarm_context=swarm_context, award_debate_xp=False)
+    debate_result = await _execute_debate(ticker, _auth_user, swarm_context=swarm_context, award_debate_xp=False, debate_data=debate_data, debate_data_task=debate_data_task)
     if _auth_user and award_deep_analysis_xp:
         try:
             up.award_xp(_auth_user.id, "deep_analysis", note=ticker)
@@ -506,6 +516,26 @@ async def decision_terminal_post(body: AnalyzeIngressRequest, _auth_user=Depends
     )
 
 
+def _stamp_forecast_freshness(res) -> None:
+    """Attach a model_forecast freshness envelope (best-effort; never raises)."""
+    try:
+        from datetime import datetime, timezone
+        from ..freshness import assess
+
+        env = assess(
+            data_class="model_forecast",
+            source="predictor",
+            captured_at=datetime.now(timezone.utc),
+            degraded=(getattr(res, "status", "ok") in ("degraded", "stale_data")),
+        ).model_dump()
+        if hasattr(res, "data_freshness"):
+            res.data_freshness = env
+        elif isinstance(res, dict):
+            res["data_freshness"] = env
+    except Exception:
+        pass
+
+
 @router.get("/predictor/forecast", response_model=PredictorForecastResponse, dependencies=[Depends(_rl_expensive)])
 async def predictor_forecast_get(
     ticker: str = Query("AAPL", description="Stock ticker."),
@@ -520,12 +550,14 @@ async def predictor_forecast_get(
     from ..predictor.agent import run_predictor_forecast
 
     hs = [h.strip() for h in horizon.split(",") if h.strip()]
-    return await run_predictor_forecast(
+    res = await run_predictor_forecast(
         ticker,
         horizons=hs or ["1d", "5d", "21d", "63d"],
         tool_registry=tool_registry,
         emit_ledger=True,
     )
+    _stamp_forecast_freshness(res)
+    return res
 
 
 @router.post("/predictor/forecast", response_model=PredictorForecastResponse, dependencies=[Depends(_rl_expensive)])
@@ -536,12 +568,14 @@ async def predictor_forecast_post(
     from ..predictor.agent import run_predictor_forecast
 
     t = validate_ticker_query(body.ticker)
-    return await run_predictor_forecast(
+    res = await run_predictor_forecast(
         t,
         horizons=body.horizons or ["1d", "5d", "21d", "63d"],
         tool_registry=tool_registry,
         emit_ledger=True,
     )
+    _stamp_forecast_freshness(res)
+    return res
 
 
 @router.get("/prediction-markets")
@@ -601,6 +635,19 @@ async def prediction_markets(ticker: str = Query("AAPL")):
     # Aggregate context (sector / indices) from either connector
     ctx = poly_result.get("context") or kalshi_result.get("context") or {}
 
+    pm_freshness = None
+    try:
+        from datetime import datetime, timezone
+        from ..freshness import assess
+
+        pm_freshness = assess(
+            data_class="prediction_market",
+            source="polymarket_kalshi",
+            captured_at=datetime.now(timezone.utc),
+        ).model_dump()
+    except Exception:
+        pm_freshness = None
+
     return {
         "ticker": t,
         "has_relevant_data": bool(all_events),
@@ -622,6 +669,7 @@ async def prediction_markets(ticker: str = Query("AAPL")):
                 "count": len(kalshi_events),
             },
         },
+        "data_freshness": pm_freshness,
     }
 
 
@@ -629,6 +677,22 @@ async def prediction_markets(ticker: str = Query("AAPL")):
 # Stock fundamentals — consolidated data for analysis page redesign
 # ---------------------------------------------------------------------------
 _logger = logging.getLogger(__name__)
+
+
+def _latest_price_date(result: dict):
+    """Latest date across all price-history bars (the data's effective 'as of')."""
+    latest = None
+    ph = (result or {}).get("price_history") or {}
+    for bars in ph.values():
+        if not isinstance(bars, list) or not bars:
+            continue
+        ts = bars[-1].get("timestamp") if isinstance(bars[-1], dict) else None
+        if not ts:
+            continue
+        d = str(ts)[:10]
+        if latest is None or d > latest:
+            latest = d
+    return latest
 
 
 @router.get("/stock-fundamentals/{ticker}")
@@ -644,6 +708,17 @@ async def get_stock_fundamentals(ticker: str):
 
     try:
         result = await asyncio.to_thread(fetch_stock_fundamentals, t)
+        # Additive freshness envelope: anchor on the latest price bar date so a
+        # stale upstream (bars older than the last session) is surfaced, not hidden.
+        try:
+            from ..freshness import assess
+            result["data_freshness"] = assess(
+                data_class="session_pct",
+                source="yfinance",
+                as_of=_latest_price_date(result),
+            ).model_dump()
+        except Exception:
+            pass
         return result
     except InsufficientDataError:
         raise

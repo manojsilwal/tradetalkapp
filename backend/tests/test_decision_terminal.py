@@ -68,6 +68,63 @@ class TestJsonSafeFloats(unittest.TestCase):
         self.assertIsNone(safe.verdict.expert_bullish_pct)
         json.dumps(safe.model_dump(mode="json"))
 
+    def test_payload_carries_swarm_and_debate(self):
+        swarm = SwarmConsensus(
+            ticker="AAPL",
+            macro_state=MarketState(market_regime=MarketRegime.BULL_NORMAL),
+            global_signal=1,
+            global_verdict="BUY",
+            confidence=0.7,
+            factors={
+                "short_interest": FactorResult(
+                    factor_name="Short Interest",
+                    status=VerificationStatus.VERIFIED,
+                    confidence=0.8,
+                    rationale="ok",
+                    trading_signal=1,
+                ),
+            },
+        )
+        debate = DebateResult(
+            ticker="AAPL",
+            arguments=[],
+            verdict="BUY",
+            consensus_confidence=0.8,
+            moderator_summary="summary",
+            bull_score=3,
+            bear_score=1,
+            neutral_score=1,
+        )
+        payload = DecisionTerminalPayload(
+            ticker="AAPL",
+            disclaimer="d",
+            generated_at_utc="t",
+            valuation=TerminalValuationPanel(
+                current_price_usd=100.0,
+                average_fair_value_usd=110.0,
+                pct_vs_average=10.0,
+                gauge_label="",
+                models=[],
+            ),
+            quality=TerminalQualityPanel(rows=[]),
+            verdict=TerminalVerdictPanel(
+                headline_verdict="BUY",
+                debate_verdict="BUY",
+                swarm_verdict="BUY",
+                expert_bullish_pct=75.0,
+            ),
+            roadmap=TerminalRoadmapPanel(
+                confidence_0_1=0.5,
+                provenance=TerminalFieldProvenance(),
+            ),
+            swarm=swarm,
+            debate=debate,
+        )
+        self.assertIsNotNone(payload.swarm)
+        self.assertIsNotNone(payload.debate)
+        self.assertEqual(payload.swarm.ticker, "AAPL")
+        self.assertEqual(payload.debate.ticker, "AAPL")
+
 
 class TestPolymarketRelevance(unittest.TestCase):
     def test_equity_title_scores_high(self):

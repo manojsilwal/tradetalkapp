@@ -126,6 +126,20 @@ async def run_backtest_endpoint(req: BacktestRequest, _auth_user=Depends(get_opt
         except Exception:
             pass
 
+    try:
+        from datetime import datetime, timezone
+        from ..freshness import assess
+
+        result.data_freshness = assess(
+            data_class="backtest",
+            source="data_lake",
+            as_of=getattr(rules, "end_date", None),
+            captured_at=datetime.now(timezone.utc),
+            note="Backtest over a historical window; computed at request time.",
+        )
+    except Exception:
+        pass
+
     return result
 
 

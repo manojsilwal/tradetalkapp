@@ -42,12 +42,14 @@ def _backend_type() -> str:
 
 
 def _adjust_weekend_to_friday(d: date) -> date:
-    from datetime import timedelta
-    if d.weekday() == 5: # Saturday
-        return d - timedelta(days=1)
-    if d.weekday() == 6: # Sunday
-        return d - timedelta(days=2)
-    return d
+    """Holiday-aware: return the most recent trading day on/before ``d``.
+
+    Kept under the original name for import compatibility; now delegates to the
+    single market calendar so weekends *and* holidays are handled consistently.
+    """
+    from .market_calendar import adjust_to_trading_day
+
+    return adjust_to_trading_day(d)
 
 
 def get_latest_trade_date() -> Optional[date]:
@@ -65,6 +67,47 @@ def get_latest_trade_date() -> Optional[date]:
     except Exception as e:
         logger.warning("[DailyBrief] failed to get latest trade date: %s", e)
     return None
+
+
+# Calendar-day tolerance before stored data is flagged stale. 2 days absorbs
+# normal EOD ingestion lag while still catching multi-day/year staleness.
+STALE_TOLERANCE_DAYS = max(0, int(os.environ.get("DAILY_BRIEF_STALE_TOLERANCE_DAYS", "2")))
+
+
+def expected_last_session(today: Optional[date] = None) -> date:
+    """The real last completed US cash-equity trading session.
+
+    Thin wrapper over the single market calendar (weekend- and holiday-aware,
+    ET cash-close semantics). Kept under this name for import compatibility.
+    """
+    from .market_calendar import last_completed_session
+
+    return last_completed_session(today)
+
+
+def compute_data_freshness(
+    db_latest: Optional[date],
+    *,
+    source: str = "snapshot",
+    today: Optional[date] = None,
+) -> Dict[str, Any]:
+    """Compare stored data's latest session to the real last session.
+
+    Returns a JSON-serializable block the frontend uses to decide whether to
+    present the date as "the last trading session" or as an explicit staleness
+    warning.
+    """
+    expected = expected_last_session(today)
+    staleness_days = (expected - db_latest).days if db_latest is not None else None
+    is_stale = db_latest is None or (staleness_days is not None and staleness_days >= STALE_TOLERANCE_DAYS)
+    return {
+        "db_latest_date": db_latest.isoformat() if db_latest is not None else None,
+        "expected_last_session": expected.isoformat(),
+        "staleness_days": staleness_days,
+        "is_stale": bool(is_stale),
+        "source": source,
+        "tolerance_days": STALE_TOLERANCE_DAYS,
+    }
 
 
 def classify_company_preset(metrics: Dict[str, Any]) -> str:
@@ -639,6 +682,8 @@ def overlay_realtime_quotes(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     payload["realtime_overlay"] = overlaid > 0
     payload["rt_overlay_count"] = overlaid
+    if overlaid > 0:
+        payload["trade_date"] = expected_last_session().isoformat()
     logger.info("[DailyBrief] RT overlay: %d/%d symbols updated", overlaid, len(symbols))
     return payload
 
@@ -818,136 +863,240 @@ STATIC_TICKER_METADATA_FALLBACKS: Dict[str, Dict[str, Any]] = {
 }
 
 
+def _enrichment_is_usable(meta: Optional[Dict[str, Any]]) -> bool:
+    if not meta:
+        return False
+    if meta.get("market_cap"):
+        return True
+    if meta.get("pe_ratio"):
+        return True
+    industry = meta.get("industry")
+    return bool(industry and industry not in ("Unknown", "N/A"))
+
+
+def _metadata_from_fundamentals(fund: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "company_name": fund.get("company_name"),
+        "sector": fund.get("sector") or "Unknown",
+        "industry": fund.get("industry") or "Unknown",
+        "market_cap": fund.get("market_cap"),
+        "pe_ratio": fund.get("trailing_pe") or fund.get("forward_pe"),
+        "forward_pe": fund.get("forward_pe") or fund.get("trailing_pe"),
+        "insider_sentiment": "N/A",
+    }
+
+
+def _merge_enrichment(
+    base: Optional[Dict[str, Any]],
+    overlay: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not base and not overlay:
+        return None
+    out = dict(base or {})
+    if overlay:
+        for key, val in overlay.items():
+            if val is None or val == "":
+                continue
+            if key == "industry" and val == "Unknown" and out.get("industry") not in (None, "", "Unknown"):
+                continue
+            out[key] = val
+    return out or None
+
+
+def _gics_baseline(sym: str) -> Optional[Dict[str, Any]]:
+    try:
+        from backend.sp500_gics_reference import get_sp500_gics, gics_to_enrichment
+
+        row = get_sp500_gics(sym)
+        if row:
+            return gics_to_enrichment(row)
+    except Exception as e:
+        logger.debug("[DailyBriefEnrich] gics reference failed %s: %s", sym, e)
+    try:
+        from backend.connectors.market_context import get_ticker_context
+
+        ctx = get_ticker_context(sym)
+        sector = ctx.get("sector")
+        if sector:
+            return {
+                "company_name": sym,
+                "sector": sector,
+                "industry": sector,
+                "market_cap": None,
+                "pe_ratio": None,
+                "forward_pe": None,
+                "insider_sentiment": "N/A",
+                "source": "market_context",
+            }
+    except Exception:
+        pass
+    return None
+
+
+def _chart_name_hint(sym: str) -> Optional[Dict[str, Any]]:
+    try:
+        from backend.connectors.quote_fallbacks import _yahoo_chart_meta
+
+        meta = _yahoo_chart_meta(sym)
+        if not meta:
+            return None
+        name = meta.get("longName") or meta.get("shortName")
+        if not name:
+            return None
+        return {"company_name": name}
+    except Exception as e:
+        logger.debug("[DailyBriefEnrich] chart name failed %s: %s", sym, e)
+        return None
+
+
+def _fetch_ticker_enrichment(sym: str) -> Optional[Dict[str, Any]]:
+    """
+    Layered metadata fetch for daily brief / morning brief tables.
+    GICS reference + chart names work when yfinance is rate-limited; live
+    fundamentals overlay market cap / P/E / insider when Yahoo responds.
+    """
+    sym = (sym or "").upper().strip()
+    if not sym:
+        return None
+
+    meta = _gics_baseline(sym)
+
+    fi: Dict[str, Any] = {}
+    info: Dict[str, Any] = {}
+    try:
+        import yfinance as yf
+
+        t = yf.Ticker(sym)
+        try:
+            fi = dict(t.fast_info)
+        except Exception:
+            fi = {}
+        try:
+            info = t.info or {}
+        except Exception:
+            info = {}
+    except Exception as e:
+        logger.debug("[DailyBriefEnrich] yfinance open failed %s: %s", sym, e)
+
+    held = info.get("heldPercentInsiders")
+    insider = f"{held * 100:.1f}% Insiders" if held is not None else None
+    industry = info.get("industry") or info.get("sector")
+    market_cap = info.get("marketCap") or fi.get("marketCap")
+    pe = info.get("trailingPE") or info.get("forwardPE")
+    fwd = info.get("forwardPE") or info.get("trailingPE")
+    company_name = info.get("longName") or info.get("shortName")
+
+    if industry or market_cap or pe or fi.get("marketCap"):
+        meta = _merge_enrichment(
+            meta,
+            {
+                "company_name": company_name or sym,
+                "sector": info.get("sector") or (meta or {}).get("sector") or "Unknown",
+                "industry": industry or (meta or {}).get("industry") or "Unknown",
+                "market_cap": market_cap,
+                "pe_ratio": pe,
+                "forward_pe": fwd,
+                "insider_sentiment": insider or (meta or {}).get("insider_sentiment") or "N/A",
+                "source": "yfinance",
+            },
+        )
+        if meta and _enrichment_is_usable(meta):
+            return meta
+
+    try:
+        from backend.actionable_companies import fetch_fundamentals
+
+        fund = fetch_fundamentals(sym)
+        if fund.get("industry") or fund.get("market_cap") or fund.get("trailing_pe"):
+            meta = _merge_enrichment(meta, _metadata_from_fundamentals(fund))
+            if meta:
+                meta["company_name"] = meta.get("company_name") or company_name or sym
+                meta["source"] = "fetch_fundamentals"
+            if meta and _enrichment_is_usable(meta):
+                return meta
+    except Exception as e:
+        logger.debug("[DailyBriefEnrich] fetch_fundamentals failed %s: %s", sym, e)
+
+    try:
+        from backend.deps import knowledge_store
+
+        rag_data = knowledge_store.get_sp500_fundamental(sym)
+        if rag_data:
+            meta = _merge_enrichment(
+                meta,
+                {
+                    "company_name": company_name or sym,
+                    "sector": rag_data.get("sector") or "Unknown",
+                    "industry": rag_data.get("industry") or "Unknown",
+                    "market_cap": rag_data.get("market_cap"),
+                    "pe_ratio": rag_data.get("pe_ratio"),
+                    "forward_pe": rag_data.get("forward_pe"),
+                    "insider_sentiment": rag_data.get("insider_sentiment") or "N/A",
+                    "source": "knowledge_store",
+                },
+            )
+            if meta and _enrichment_is_usable(meta):
+                return meta
+    except Exception as e:
+        logger.debug("[DailyBriefEnrich] knowledge_store failed %s: %s", sym, e)
+
+    if sym in STATIC_TICKER_METADATA_FALLBACKS:
+        meta = _merge_enrichment(meta, dict(STATIC_TICKER_METADATA_FALLBACKS[sym]))
+
+    meta = _merge_enrichment(meta, _chart_name_hint(sym))
+
+    if meta and _enrichment_is_usable(meta):
+        return meta
+
+    return None
+
+
 def enrich_daily_brief_rows(rows: List[Dict[str, Any]]) -> None:
-    """Enrich daily brief rows with company metadata (industry, market cap, P/E, insider sentiment) from yfinance."""
+    """Enrich daily brief rows with company metadata (industry, market cap, P/E, insider sentiment)."""
     if not rows:
         return
-    import yfinance as yf
-    from concurrent.futures import ThreadPoolExecutor
     from backend.connector_cache import get_cached, set_cached
 
     symbols = list({r["symbol"].upper() for r in rows if r.get("symbol")})
     if not symbols:
         return
 
-    # Check cache first
     needed_symbols = []
-    symbol_metadata = {}
+    symbol_metadata: Dict[str, Dict[str, Any]] = {}
     for sym in symbols:
-        cached = get_cached("daily_brief_enrich", sym, ttl=86400)  # cache for 24 hours
-        if cached:
+        cached = get_cached("daily_brief_enrich", sym, ttl=86400)
+        if _enrichment_is_usable(cached):
             symbol_metadata[sym] = cached
         else:
             needed_symbols.append(sym)
 
-    # Fetch from yfinance in parallel for missing symbols
     if needed_symbols:
-        def fetch_info(sym: str) -> Optional[tuple[str, Optional[Dict[str, Any]]]]:
+        import time
+
+        for sym in needed_symbols:
             try:
-                t = yf.Ticker(sym)
-                info = t.info or {}
-                held = info.get("heldPercentInsiders")
-                insider_sentiment = f"{held * 100:.1f}% Insiders" if held is not None else None
-                
-                # Check for rate-limiting or empty info
-                if not info.get("industry"):
-                    try:
-                        from backend.deps import knowledge_store
-                        rag_data = knowledge_store.get_sp500_fundamental(sym)
-                        if rag_data:
-                            return sym, {
-                                "industry": rag_data["industry"],
-                                "market_cap": rag_data["market_cap"],
-                                "pe_ratio": rag_data["pe_ratio"],
-                                "forward_pe": rag_data["forward_pe"],
-                                "insider_sentiment": rag_data["insider_sentiment"]
-                            }
-                    except Exception:
-                        pass
-                    if sym in STATIC_TICKER_METADATA_FALLBACKS:
-                        fb = STATIC_TICKER_METADATA_FALLBACKS[sym]
-                        return sym, {
-                            "industry": fb["industry"],
-                            "market_cap": fb["market_cap"],
-                            "pe_ratio": fb["pe_ratio"],
-                            "forward_pe": fb["forward_pe"],
-                            "insider_sentiment": fb["insider_sentiment"]
-                        }
-                
-                res = {
-                    "industry": info.get("industry") or "Unknown",
-                    "market_cap": info.get("marketCap"),
-                    "pe_ratio": info.get("trailingPE") or info.get("forwardPE"),
-                    "forward_pe": info.get("forwardPE") or info.get("trailingPE"),
-                    "insider_sentiment": insider_sentiment or "N/A"
-                }
-                return sym, res
+                data = _fetch_ticker_enrichment(sym)
             except Exception as e:
                 logger.warning("[DailyBriefEnrich] failed to fetch %s: %s", sym, e)
-                try:
-                    from backend.deps import knowledge_store
-                    rag_data = knowledge_store.get_sp500_fundamental(sym)
-                    if rag_data:
-                        return sym, {
-                            "industry": rag_data["industry"],
-                            "market_cap": rag_data["market_cap"],
-                            "pe_ratio": rag_data["pe_ratio"],
-                            "forward_pe": rag_data["forward_pe"],
-                            "insider_sentiment": rag_data["insider_sentiment"]
-                        }
-                except Exception:
-                    pass
-                # Return static fallback if available
-                if sym in STATIC_TICKER_METADATA_FALLBACKS:
-                    fb = STATIC_TICKER_METADATA_FALLBACKS[sym]
-                    return sym, {
-                        "industry": fb["industry"],
-                        "market_cap": fb["market_cap"],
-                        "pe_ratio": fb["pe_ratio"],
-                        "forward_pe": fb["forward_pe"],
-                        "insider_sentiment": fb["insider_sentiment"]
-                    }
-                return sym, None
+                data = None
+            if _enrichment_is_usable(data):
+                symbol_metadata[sym] = data
+                set_cached("daily_brief_enrich", data, sym)
+            time.sleep(0.2)
 
-        with ThreadPoolExecutor(max_workers=min(len(needed_symbols), 10)) as executor:
-            results = executor.map(fetch_info, needed_symbols)
-            for res in results:
-                if res:
-                    sym, data = res
-                    if data:
-                        symbol_metadata[sym] = data
-                        set_cached("daily_brief_enrich", data, sym)
-
-    # Populate rows
     for r in rows:
         sym = r.get("symbol", "").upper()
         meta = symbol_metadata.get(sym)
+        if not meta:
+            meta = _fetch_ticker_enrichment(sym)
         if meta:
             r["industry"] = meta.get("industry") or r.get("industry") or "Unknown"
             r["market_cap"] = meta.get("market_cap") or r.get("market_cap")
             r["pe_ratio"] = meta.get("pe_ratio") or r.get("pe_ratio")
             r["forward_pe"] = meta.get("forward_pe") or r.get("forward_pe")
             r["insider_sentiment"] = meta.get("insider_sentiment") or r.get("insider_sentiment") or "N/A"
-        else:
-            try:
-                from backend.deps import knowledge_store
-                rag_data = knowledge_store.get_sp500_fundamental(sym)
-                if rag_data:
-                    r["industry"] = rag_data["industry"]
-                    r["market_cap"] = rag_data["market_cap"]
-                    r["pe_ratio"] = rag_data["pe_ratio"]
-                    r["forward_pe"] = rag_data["forward_pe"]
-                    r["insider_sentiment"] = rag_data["insider_sentiment"]
-                    continue
-            except Exception:
-                pass
-            if sym in STATIC_TICKER_METADATA_FALLBACKS:
-                fb = STATIC_TICKER_METADATA_FALLBACKS[sym]
-                r["industry"] = fb["industry"]
-                r["market_cap"] = fb["market_cap"]
-                r["pe_ratio"] = fb["pe_ratio"]
-                r["forward_pe"] = fb["forward_pe"]
-                r["insider_sentiment"] = fb["insider_sentiment"]
+            if meta.get("company_name"):
+                r["company_name"] = meta.get("company_name")
 
 
 def build_daily_brief(
@@ -958,7 +1107,39 @@ def build_daily_brief(
     use_snapshot: bool = True,
     persist: bool = False,
 ) -> Dict[str, Any]:
-    td = trade_date or get_latest_trade_date()
+    db_latest = get_latest_trade_date()
+    freshness = compute_data_freshness(db_latest, source="snapshot")
+
+    # Truthful-data: when stored data is materially older than the real last
+    # session and the caller did not pin a specific date, try LIVE movers first
+    # (yfinance, not weekend-gated). Only fall back to the stale store if live
+    # data is unavailable — return empty movers (not misleading rows) with
+    # is_stale=True so the UI shows a loader / unavailable state.
+    if freshness["is_stale"] and trade_date is None:
+        try:
+            live_rows = _fetch_movers_from_intel(n_losers, n_gainers)
+        except Exception as e:
+            logger.warning("[DailyBrief] live stale-refresh failed: %s", e)
+            live_rows = []
+        if live_rows:
+            live_td = expected_last_session()
+            payload = _payload_from_rows(live_rows, live_td, "market_intel_live", verdict_tier="heuristic")
+            payload["from_snapshot"] = False
+            enrich_daily_brief_rows(payload.get("rows", []))
+            payload["losers"] = [r for r in payload["rows"] if r["bucket"] == "loser"]
+            payload["gainers"] = [r for r in payload["rows"] if r["bucket"] == "gainer"]
+            payload["compelling"] = [r for r in payload["rows"] if r.get("is_compelling")]
+            payload["data_freshness"] = compute_data_freshness(live_td, source="market_intel_live")
+            return payload
+        # Live unavailable: do not serve stale snapshot rows as current movers.
+        empty_td = expected_last_session()
+        payload = _payload_from_rows([], empty_td, "snapshot", verdict_tier="heuristic")
+        payload["from_snapshot"] = False
+        payload["data_freshness"] = freshness
+        payload["stale_unavailable"] = True
+        return payload
+
+    td = trade_date or db_latest
     if td:
         td = _adjust_weekend_to_friday(td)
     if use_snapshot and td:
@@ -970,6 +1151,7 @@ def build_daily_brief(
             cached["losers"] = [r for r in cached["rows"] if r["bucket"] == "loser"]
             cached["gainers"] = [r for r in cached["rows"] if r["bucket"] == "gainer"]
             cached["compelling"] = [r for r in cached["rows"] if r.get("is_compelling")]
+            cached["data_freshness"] = freshness
             return cached
 
     td, source, rows = _compute_movers(trade_date, n_losers, n_gainers)
@@ -980,6 +1162,12 @@ def build_daily_brief(
     payload["losers"] = [r for r in payload["rows"] if r["bucket"] == "loser"]
     payload["gainers"] = [r for r in payload["rows"] if r["bucket"] == "gainer"]
     payload["compelling"] = [r for r in payload["rows"] if r.get("is_compelling")]
+    # If we computed from a live/intel source, the data is fresh; otherwise keep
+    # the snapshot-based staleness assessment.
+    if source == "market_intel":
+        payload["data_freshness"] = compute_data_freshness(expected_last_session(), source="market_intel")
+    else:
+        payload["data_freshness"] = freshness
 
     if persist and _backend_type() == "bigquery":
         persist_snapshot(payload)

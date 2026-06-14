@@ -119,7 +119,8 @@ def is_market_open() -> bool:
     except ImportError:
         from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
     now_et = datetime.now(ZoneInfo("America/New_York"))
-    if now_et.weekday() >= 5:
+    from .market_calendar import is_trading_day
+    if not is_trading_day(now_et.date()):
         return False
     market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
     market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
@@ -138,9 +139,10 @@ def needs_realtime_overlay() -> bool:
     except ImportError:
         from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
     now_et = datetime.now(ZoneInfo("America/New_York"))
-    if now_et.weekday() >= 5:
+    from .market_calendar import is_trading_day
+    if not is_trading_day(now_et.date()):
         return False
-    # From 4 AM (pre-market) to midnight on weekdays
+    # From 4 AM (pre-market) to midnight on trading days
     return now_et.hour >= 4
 
 

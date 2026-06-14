@@ -21,14 +21,14 @@ _ET = ZoneInfo("America/New_York")
 
 
 def us_equity_market_hours_open(now: Optional[datetime] = None) -> bool:
-    """True during regular US equity session Mon–Fri 09:30–16:00 ET."""
-    dt = now or datetime.now(_ET)
-    if dt.weekday() >= 5:
-        return False
-    minutes = dt.hour * 60 + dt.minute
-    open_m = 9 * 60 + 30
-    close_m = 16 * 60
-    return open_m <= minutes < close_m
+    """True during the regular US equity session (now holiday-aware).
+
+    Delegates to the single market calendar so weekends *and* holidays are
+    handled identically to every other surface.
+    """
+    from .market_calendar import is_market_open
+
+    return is_market_open(now or datetime.now(_ET))
 
 
 def _intel_one_liner(intel: dict[str, Any]) -> str:

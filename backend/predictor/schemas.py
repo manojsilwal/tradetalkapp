@@ -48,6 +48,7 @@ class PredictorForecastResponse(BaseModel):
     config_hash: str = ""
     shadow_diff_logged: bool = False
     meta: Dict[str, Any] = Field(default_factory=dict)
+    data_freshness: Optional[Dict[str, Any]] = None
 
 
 class PredictorForecastToolInput(BaseModel):

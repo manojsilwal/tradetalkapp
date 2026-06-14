@@ -10,6 +10,16 @@ router = APIRouter(tags=["macro"])
 
 _rl_expensive = rate_limit("expensive")
 
+
+def _macro_data_freshness():
+    """Best-effort freshness envelope for the live VIX-derived macro indicators."""
+    try:
+        from ..freshness import assess_spot
+
+        return assess_spot(source="yfinance_vix")
+    except Exception:
+        return None
+
 _ALLOWED_FLOW_IV = frozenset({"1d", "1w", "1m", "1y"})
 
 
@@ -75,6 +85,7 @@ async def get_macro_data():
         unemployment_rate=ind.get("unemployment"),
         macro_narrative=ind.get("macro_narrative") or "",
         fred_fetched_at=ind.get("fred_fetched_at"),
+        data_freshness=_macro_data_freshness(),
     )
 
 
@@ -183,12 +194,21 @@ async def validate_ticker_fast(ticker: str):
             "exists": False,
             "reason": reason or "no_quote",
         }
-    return {
+    out = {
         "ticker": sym,
         "exists": True,
         "last_price": price,
         "source": source,
     }
+    try:
+        from ..freshness import assess_spot
+
+        out["data_freshness"] = assess_spot(
+            source=source, degraded=(source != "yahoo_chart")
+        ).model_dump()
+    except Exception:
+        pass
+    return out
 
 
 @router.get("/advisor/gold", response_model=GoldAdvisorResponse, dependencies=[Depends(_rl_expensive)])
@@ -201,7 +221,18 @@ async def gold_advisor_snapshot(_auth_user=Depends(get_optional_user)):
             up.award_xp(_auth_user.id, "gold_advisor", note="gold_snapshot")
         except Exception:
             pass
-    return GoldAdvisorResponse(context=result["context"], briefing=result["briefing"])
+    gold_freshness = None
+    try:
+        from ..freshness import assess_spot
+
+        gold_freshness = assess_spot(source="yfinance_fred")
+    except Exception:
+        gold_freshness = None
+    return GoldAdvisorResponse(
+        context=result["context"],
+        briefing=result["briefing"],
+        data_freshness=gold_freshness,
+    )
 
 
 @router.get("/macro/flow/categories")
@@ -519,5 +550,16 @@ async def get_global_markets(
 
     # Run yfinance blocking calls in a thread pool to avoid blocking the event loop
     result = await asyncio.to_thread(_fetch)
+    try:
+        from ..freshness import assess
+
+        dates = result.get("dates") or []
+        result["data_freshness"] = assess(
+            data_class="session_pct",
+            source="yfinance",
+            as_of=(dates[-1] if dates else None),
+        ).model_dump()
+    except Exception:
+        pass
     return result
 

@@ -6,6 +6,7 @@ import { API_BASE_URL } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
 import ActionableCompaniesPanel, { ActionableCompaniesButton, useActionableCompanies } from './components/ActionableCompaniesPanel';
+import { StaleValue, FreshnessBadge } from './components/Freshness';
 import './DecisionTerminalUI.css';
 import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
 
@@ -218,7 +219,6 @@ export default function UnifiedDashboardUI() {
 
   const {
     status: analysisStatus,
-    loading,
     loadingStep,
     error: analysisError,
     traceData,
@@ -244,6 +244,9 @@ export default function UnifiedDashboardUI() {
 
   const error = localError || analysisError;
   const isAnalyzing = analysisStatus === 'loading';
+  const showFundamentalsMetricsLoader = fundamentalsLoading || (isAnalyzing && !fundamentalsData?.metrics);
+  const showFundamentalsPriceLoader = fundamentalsLoading || (isAnalyzing && !fundamentalsData?.price_history?.[period]);
+  const showFundamentalsChartLoader = fundamentalsLoading || (isAnalyzing && !fundamentalsData?.financials?.[perfPeriod]);
 
   const analyzeTicker = useCallback((overrideTicker = ticker, forceRefresh = false) => {
     const sym = (overrideTicker ?? ticker).trim().toUpperCase();
@@ -534,17 +537,20 @@ export default function UnifiedDashboardUI() {
             </h1>
             {!fundamentalsLoading && fundamentalsData?.company_info && (
               <div className="dt-price-display">
-                <span className="dt-price-value" data-testid="dashboard-current-price" data-symbol={searchUpper}>${fundamentalsData.company_info.current_price?.toFixed(2) || '—'}</span>
-                {fundamentalsData.company_info.price_change_pct != null && (
-                  <span className={`dt-price-badge ${isPricePositive ? 'positive' : 'negative'}`}>
-                    {isPricePositive ? '▲' : '▼'} {Math.abs(fundamentalsData.company_info.price_change_pct).toFixed(2)}%
-                  </span>
-                )}
-                {fundamentalsData.company_info.price_change != null && (
-                  <span className="dt-price-change-abs">
-                    {isPricePositive ? '+' : ''}{fundamentalsData.company_info.price_change.toFixed(2)} Today
-                  </span>
-                )}
+                <StaleValue freshness={fundamentalsData.data_freshness} priceSensitive>
+                  <span className="dt-price-value" data-testid="dashboard-current-price" data-symbol={searchUpper}>${fundamentalsData.company_info.current_price?.toFixed(2) || '—'}</span>
+                  {fundamentalsData.company_info.price_change_pct != null && (
+                    <span className={`dt-price-badge ${isPricePositive ? 'positive' : 'negative'}`}>
+                      {isPricePositive ? '▲' : '▼'} {Math.abs(fundamentalsData.company_info.price_change_pct).toFixed(2)}%
+                    </span>
+                  )}
+                  {fundamentalsData.company_info.price_change != null && (
+                    <span className="dt-price-change-abs">
+                      {isPricePositive ? '+' : ''}{fundamentalsData.company_info.price_change.toFixed(2)} Today
+                    </span>
+                  )}
+                </StaleValue>
+                {fundamentalsData.data_freshness && <FreshnessBadge freshness={fundamentalsData.data_freshness} />}
               </div>
             )}
           </div>
@@ -563,7 +569,7 @@ export default function UnifiedDashboardUI() {
           </div>
 
           <div className="dt-stock-chart-container">
-            {fundamentalsLoading || (loading && !fundamentalsData?.price_history?.[period]) ? (
+            {showFundamentalsPriceLoader ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)' }}>
                 <Loader2 className="spinner" size={18} /> Loading price history…
               </div>
@@ -712,7 +718,7 @@ export default function UnifiedDashboardUI() {
                 <h3 className="dt-metrics-section-title" style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.05em', marginBottom: 16 }}>
                   Consolidated Metrics
                 </h3>
-                {fundamentalsLoading || (loading && !fundamentalsData?.metrics) ? (
+                {showFundamentalsMetricsLoader ? (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 0', gap: 12 }}>
                     <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
                     <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Loading metrics...</span>
@@ -824,7 +830,7 @@ export default function UnifiedDashboardUI() {
 
                 <div className="dt-perf-chart-box" style={{ padding: '20px 24px', margin: 0 }}>
                   <div className="dt-perf-chart-inner" style={{ height: '310px' }}>
-                    {fundamentalsLoading || (loading && !fundamentalsData?.financials?.[perfPeriod]) ? (
+                    {showFundamentalsChartLoader ? (
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12 }}>
                         <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
                         <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Loading chart...</span>
@@ -856,7 +862,6 @@ export default function UnifiedDashboardUI() {
                 </div>
               </div>
             </div>
-          )}
         </section>
 
       </div>

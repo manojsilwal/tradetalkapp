@@ -9,7 +9,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from ..daily_brief import (
     build_daily_brief,
+    compute_data_freshness,
+    expected_last_session,
     get_deep_refresh_status,
+    get_latest_trade_date,
     materialize_heuristic_snapshot,
     overlay_realtime_quotes,
     run_deep_refresh,
@@ -64,6 +67,16 @@ async def get_daily_brief(
         persist=False,
     )
     payload = overlay_realtime_quotes(payload)
+    # A successful realtime overlay means prices were refreshed live, so the
+    # surface is fresh regardless of the underlying snapshot date.
+    if payload.get("realtime_overlay"):
+        payload["data_freshness"] = compute_data_freshness(
+            expected_last_session(), source="realtime_overlay"
+        )
+    elif not payload.get("data_freshness"):
+        payload["data_freshness"] = compute_data_freshness(
+            get_latest_trade_date(), source="snapshot"
+        )
     from ..morning_brief import _market_session_context
     payload["market_session"] = _market_session_context()
     payload["deep_refresh"] = get_deep_refresh_status()

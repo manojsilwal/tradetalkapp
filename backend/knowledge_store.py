@@ -1146,20 +1146,32 @@ class KnowledgeStore:
         col = self._safe_col("sp500_fundamentals_narratives")
         if not col:
             return None
+        sym = (ticker or "").upper().strip()
+        if not sym:
+            return None
         try:
-            res = col.get(where={"ticker": ticker.upper()})
-            metadatas = res.get("metadatas")
-            if metadatas and len(metadatas) > 0:
-                meta = metadatas[0]
-                return {
-                    "ticker": ticker.upper(),
-                    "sector": meta.get("sector") or "Unknown",
-                    "industry": meta.get("sector") or "Unknown",
-                    "market_cap": float(meta.get("market_cap_b") or 0.0) * 1e9 if meta.get("market_cap_b") else None,
-                    "pe_ratio": meta.get("pe_ratio"),
-                    "forward_pe": meta.get("pe_ratio"),
-                    "insider_sentiment": f"{meta.get('eps')} EPS" if meta.get('eps') else "N/A",
-                }
+            res = col.get()
+            metas = res.get("metadatas") or []
+            ids = res.get("ids") or []
+            matches: list[tuple[str, dict]] = []
+            for i, meta in enumerate(metas):
+                if not meta:
+                    continue
+                if (meta.get("ticker") or "").upper() == sym:
+                    doc_id = ids[i] if i < len(ids) else ""
+                    matches.append((doc_id, meta))
+            if not matches:
+                return None
+            _, meta = sorted(matches, key=lambda x: x[1].get("date") or "", reverse=True)[0]
+            return {
+                "ticker": sym,
+                "sector": meta.get("sector") or "Unknown",
+                "industry": meta.get("industry") or meta.get("sector") or "Unknown",
+                "market_cap": float(meta.get("market_cap_b") or 0.0) * 1e9 if meta.get("market_cap_b") else None,
+                "pe_ratio": meta.get("pe_ratio"),
+                "forward_pe": meta.get("pe_ratio"),
+                "insider_sentiment": f"{meta.get('eps')} EPS" if meta.get("eps") else "N/A",
+            }
         except Exception as e:
             logger.warning(f"[KnowledgeStore] get_sp500_fundamental({ticker}) failed: {e}")
         return None

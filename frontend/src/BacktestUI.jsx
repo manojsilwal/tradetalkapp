@@ -7,6 +7,7 @@ import {
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { API_BASE_URL, fetchJsonWithMeta } from './api';
 import { EducationTooltip } from './components/EducationLink.jsx';
+import { DataTrustBanner } from './components/Freshness';
 
 const EXAMPLE_STRATEGIES = [
   "Buy Mag7 stocks (AAPL, MSFT, GOOGL, META, AMZN, NVDA, TSLA) when PE ratio is below 25, sell when PE ratio exceeds 35",
@@ -692,6 +693,8 @@ export default function BacktestUI() {
           {/* ── Results ── */}
           {result && !loading && (
             <div style={{ animation: 'fadeIn 0.5s ease-out both' }}>
+
+              {result.data_freshness && <DataTrustBanner envelope={result.data_freshness} />}
 
               {/* ── Portfolio Summary Banner ── */}
               <div style={{

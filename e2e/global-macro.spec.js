@@ -16,8 +16,8 @@ test.describe('Global Macro Dashboard', () => {
   });
 
   test('renders core visualization components with data', async ({ page }) => {
-    await expect(page.getByTestId('macro-consumer-spending-chart')).toBeVisible({ timeout: 30000 });
-    await expect(page.getByTestId('macro-cash-reserves-chart')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId('macro-credit-stress-card')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId('macro-fed-funds-card')).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId('macro-flow-section')).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId('global-markets-chart')).toBeVisible({ timeout: 30000 });
 

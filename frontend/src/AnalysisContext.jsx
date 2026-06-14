@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import { API_BASE_URL, apiFetch, apiFetchTimed } from './api';
+import { isBriefSessionTrustworthy, shouldSkipDailyBriefRefetch } from './freshness';
 
 const FAST_TIMEOUT_MS = 30000;
 const LLM_TIMEOUT_MS = 120000;
@@ -8,6 +9,10 @@ function metricsKeyActivityMissing(metrics) {
     if (!metrics || Object.keys(metrics).length === 0) return true;
     const cur = metrics?.momentum_rsi?.current;
     return !cur || cur === 'N/A';
+}
+
+function fundamentalsMissing(fundamentals) {
+    return !fundamentals?.metrics;
 }
 
 export function analysisStillRunning(state) {
@@ -19,7 +24,8 @@ export function analysisStillRunning(state) {
         state.traceLoading ||
         state.decisionLoading ||
         state.predMarketsLoading ||
-        state.smallCapLoading
+        state.smallCapLoading ||
+        state.fundamentalsLoading
     );
 }
 
@@ -48,6 +54,16 @@ export function AnalysisProvider({ children }) {
         deepBusy: false,
         activeTab: 'movers',
     });
+    const dailyBriefDataRef = useRef(null);
+    const dailyBriefLoadingRef = useRef(true);
+    const dailyBriefFetchedAtRef = useRef(0);
+    const dailyBriefScreenerRef = useRef(null);
+
+    useEffect(() => {
+        dailyBriefDataRef.current = dailyBriefState.data;
+        dailyBriefLoadingRef.current = dailyBriefState.loading;
+        dailyBriefScreenerRef.current = dailyBriefState.screenerData;
+    }, [dailyBriefState.data, dailyBriefState.loading, dailyBriefState.screenerData]);
 
     // 3. Global Macro States
     const [macroState, setMacroState] = useState({
@@ -128,7 +144,7 @@ export function AnalysisProvider({ children }) {
 
         // Check if already fetched (re-fetch when key metrics were empty from a prior rate-limit)
         const existing = getAnalysisState(sym);
-        if (existing?.status === 'success' && !forceRefresh && !metricsKeyActivityMissing(existing.metricsData)) {
+        if (existing?.status === 'success' && !forceRefresh && !metricsKeyActivityMissing(existing.metricsData) && !fundamentalsMissing(existing.fundamentalsData)) {
             if (!analysesRef.current[sym]) {
                 setAnalyses(prev => ({
                     ...prev,
@@ -319,40 +335,35 @@ export function AnalysisProvider({ children }) {
                     updateTickerState({ predMarketsData: null, predMarketsLoading: false });
                 }),
 
-            apiFetchTimed(`${API_BASE_URL}/trace?ticker=${sym}`, {}, LLM_TIMEOUT_MS)
+            // Consolidated: /decision-terminal runs swarm + debate ONCE and now
+            // returns them embedded, so the Trace and Debate tabs are derived from
+            // the same payload instead of re-running those pipelines via /trace + /debate.
+            apiFetchTimed(`${API_BASE_URL}/decision-terminal?ticker=${sym}`, {}, LLM_TIMEOUT_MS)
                 .then((res) => {
                     onSuccess();
-                    updateTickerState({ traceData: res, traceLoading: false });
-                })
-                .catch((err) => {
-                    onFail(err);
-                    updateTickerState({ traceData: null, traceLoading: false });
-                }),
-
-            apiFetchTimed(`${API_BASE_URL}/debate?ticker=${sym}`, {}, LLM_TIMEOUT_MS)
-                .then((res) => {
-                    onSuccess();
-                    updateTickerState({ debateData: res, debateError: null, debateLoading: false });
+                    updateTickerState({
+                        decisionData: res,
+                        decisionLoading: false,
+                        traceData: res?.swarm ?? null,
+                        traceLoading: false,
+                        debateData: res?.debate ?? null,
+                        debateError: null,
+                        debateLoading: false,
+                    });
                 })
                 .catch((err) => {
                     onFail(err);
                     updateTickerState({
+                        decisionData: null,
+                        decisionLoading: false,
+                        traceData: null,
+                        traceLoading: false,
+                        debateData: null,
                         debateError: err?.isInsufficientData
                             ? (err.message || 'Insufficient live data for the debate.')
                             : 'Debate temporarily unavailable.',
-                        debateData: null,
-                        debateLoading: false
+                        debateLoading: false,
                     });
-                }),
-
-            apiFetchTimed(`${API_BASE_URL}/decision-terminal?ticker=${sym}`, {}, LLM_TIMEOUT_MS)
-                .then((res) => {
-                    onSuccess();
-                    updateTickerState({ decisionData: res, decisionLoading: false });
-                })
-                .catch((err) => {
-                    onFail(err);
-                    updateTickerState({ decisionData: null, decisionLoading: false });
                 }),
 
             apiFetchTimed(
@@ -441,10 +452,11 @@ export function AnalysisProvider({ children }) {
 
     // Daily Brief Action
     const loadDailyBrief = useCallback(async (forceRefresh = false) => {
-        if (dailyBriefState.loading && dailyBriefState.data && !forceRefresh) {
+        const existing = dailyBriefDataRef.current;
+        if (dailyBriefLoadingRef.current && existing && !forceRefresh) {
             return;
         }
-        if (dailyBriefState.data && !forceRefresh) {
+        if (shouldSkipDailyBriefRefetch(existing, dailyBriefFetchedAtRef.current, forceRefresh)) {
             return;
         }
 
@@ -455,36 +467,48 @@ export function AnalysisProvider({ children }) {
         }));
 
         try {
-            const q = forceRefresh ? '?refresh=true' : '';
+            const useRefresh = forceRefresh || !isBriefSessionTrustworthy(existing);
+            const q = useRefresh ? '?refresh=true' : '';
             const briefJson = await apiFetch(`${API_BASE_URL}/daily-brief${q}`);
-            let screenerJson = null;
+            dailyBriefFetchedAtRef.current = Date.now();
+            dailyBriefDataRef.current = briefJson;
+
+            let screenerJson = dailyBriefScreenerRef.current;
             let activeTab = 'movers';
 
-            try {
-                screenerJson = await apiFetch(`${API_BASE_URL}/daily-brief/screener`);
-                if (screenerJson && screenerJson.rows && screenerJson.rows.length > 0) {
-                    activeTab = 'growth';
+            if (!briefJson.stale_unavailable && (!screenerJson || forceRefresh)) {
+                try {
+                    screenerJson = await apiFetch(`${API_BASE_URL}/daily-brief/screener`);
+                    if (screenerJson && screenerJson.rows && screenerJson.rows.length > 0) {
+                        activeTab = 'growth';
+                    }
+                } catch (screenerErr) {
+                    if (screenerErr?.status !== 429) {
+                        console.warn('Failed to load screener data, falling back to movers', screenerErr);
+                    }
                 }
-            } catch (screenerErr) {
-                console.warn('Failed to load screener data, falling back to movers', screenerErr);
             }
 
             setDailyBriefState(prev => ({
                 ...prev,
                 data: briefJson,
-                screenerData: screenerJson,
-                activeTab,
+                screenerData: screenerJson ?? prev.screenerData,
+                activeTab: activeTab === 'growth' ? 'growth' : prev.activeTab,
                 deepStatus: briefJson.deep_refresh || prev.deepStatus,
-                loading: false
+                loading: false,
+                error: null,
             }));
         } catch (e) {
+            dailyBriefFetchedAtRef.current = Date.now();
             setDailyBriefState(prev => ({
                 ...prev,
-                error: e.message || 'Failed to load daily brief',
+                error: e.status === 429
+                    ? (e.message || 'Too many requests — wait a minute and try Refresh.')
+                    : (e.message || 'Failed to load daily brief'),
                 loading: false
             }));
         }
-    }, [dailyBriefState.loading, dailyBriefState.data]);
+    }, []);
 
     const startDailyBriefDeepRefresh = useCallback(async () => {
         setDailyBriefState(prev => ({

@@ -28,24 +28,38 @@ flowchart TB
   end
   subgraph fe [Frontend]
     SPA[Vite React SPA]
+    TrustUI[Data Trust UI\nFreshnessBadge StaleValue\nLiveQuoteWidget]
   end
   subgraph be [Backend]
     API[FastAPI app]
-    Routers[routers: analysis backtest macro knowledge notifications chat auth ...]
+    Routers[routers: analysis backtest macro knowledge chat daily-brief health ...]
+    MCP["/mcp/sp500\nhistorical + live-quote"]
     Deps[deps: connectors knowledge_store llm_client]
+    DTL[freshness.py + market_calendar.py]
+    LiveEng[connectors/live_quote.py]
     API --> Routers
+    API --> MCP
     Routers --> Deps
+    MCP --> LiveEng
+    LiveEng --> DTL
+    Routers --> DTL
   end
   subgraph intel [Intelligence]
     LLM[LLMClient Gemini or OpenRouter]
     KS[KnowledgeStore RAG]
     GR[Guardrails]
   end
+  subgraph lake [Data lake]
+    DL[daily_prices Parquet or BigQuery\nsp500-ingest cron]
+  end
   Browser --> SPA
+  SPA --> TrustUI
   SPA -->|HTTPS VITE_API_BASE_URL| API
   Routers --> LLM
   Routers --> KS
   Routers --> GR
+  LiveEng -.->|EOD fallback| DL
+  MCP -.->|historical tools| DL
 ```
 
 At runtime, the **React** app (built with Vite) calls the **FastAPI** backend using the base URL from `VITE_API_BASE_URL` (see `frontend/.env.local`). The backend loads shared singletons from `backend/deps.py` (connectors, `knowledge_store`, `llm_client`, SSE state) and implements routes under `backend/routers/`.
@@ -91,7 +105,7 @@ At runtime, the **React** app (built with Vite) calls the **FastAPI** backend us
 
 | Concern | Router file | Example paths |
 |---------|-------------|----------------|
-| Swarm + debate | `backend/routers/analysis.py` | `GET/POST /trace`, `GET/POST /debate` |
+| Swarm + debate | `backend/routers/analysis.py` | `GET/POST /trace`, `GET/POST /debate`, `GET/POST /decision-terminal` |
 | Backtest | `backend/routers/backtest.py` | `POST /backtest`, validation helpers |
 | Macro | `backend/routers/macro.py` | `GET /macro` |
 | Notifications + SSE | `backend/routers/notifications.py` | `GET /notifications/stream`, history, `GET /notifications/trace` |
@@ -100,6 +114,8 @@ At runtime, the **React** app (built with Vite) calls the **FastAPI** backend us
 | Risk-Return Scorecard | `backend/routers/scorecard.py` | `GET /scorecard/presets`, `POST /scorecard/compare`, `GET /scorecard/{ticker}` |
 
 **Naming note:** `GET /trace` (analysis router) runs the **swarm** and returns a `SwarmConsensus`. `GET /notifications/trace` returns the **last background news-scan trace** from memory — different purpose, different path.
+
+**Consolidated analysis call:** the Stock Analysis dashboard issues a **single** `GET /decision-terminal` request instead of separately calling `/trace`, `/debate`, and `/decision-terminal`. `decision_terminal.run_decision_terminal_request` runs the full analyze pipeline (swarm then debate) **once**, and `DecisionTerminalPayload` now embeds the full `swarm` (`SwarmConsensus`) and `debate` (`DebateResult`) objects so the Trace and Debate tabs render from the same payload. `fetch_debate_data` is fetched once per request and threaded into `_execute_debate` (no duplicate fetch); it is started as a task (`debate_data_task`) so the network fetch overlaps with the swarm phase, the Polymarket fetch, and the extended snapshot instead of blocking ahead of them. The standalone `/trace` and `/debate` routes remain for API consumers and FaultHunter.
 
 ---
 
@@ -113,6 +129,8 @@ At runtime, the **React** app (built with Vite) calls the **FastAPI** backend us
 - **OpenRouter-primary mode** (`GEMINI_PRIMARY=0`, default) — OpenRouter is primary (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, optional `OPENROUTER_MODEL_LIGHT`). Gemini is consulted only as a best-effort fallback when OpenRouter fails (toggleable with `GEMINI_LLM_FALLBACK`). Without any key, verdict roles raise `InsufficientDataError`; only non-verdict roles use rule-based templates.
 
 **Verdict-role fallback policy (truthful-data contract, §5.9):** `VERDICT_ROLES` in `llm_client.py` (bull, bear, macro, value, momentum, moderator, swarm_synthesizer, swarm_analyst, small_cap_analyst, scorecard_verdict, gold_advisor, sitg_scorer, execution_risk_scorer) must never be answered with a canned template — when no real model output is available the client raises `InsufficientDataError` so the user sees "insufficient data" instead of a fabricated verdict. Non-verdict roles (video text, daily-brief batch rows, ingestion judging, decision-terminal roadmap JSON, news classifier) may still degrade gracefully to templates.
+
+**Concurrency & timeouts:** all LLM calls share a single async gateway bounded by a global semaphore — `LLM_MAX_CONCURRENCY` (default **6**) — so parallel agents (swarm + debate) overlap their provider round-trips instead of serializing, without overwhelming the upstream rate limits. Each provider call carries a per-request HTTP timeout (`LLM_HTTP_TIMEOUT_S`, applied to both the sync and async OpenAI/OpenRouter clients in `backend/openrouter_pool.py`) so a slow upstream fails fast into the fallback path (§5.1) rather than stalling the whole analysis.
 
 Both modes honor the same **role-to-tier mapping** (`MODEL_TIER` in `llm_client.py`). Heavy-reasoning roles — bull, bear, moderator, strategy_parser, gold_advisor, backtest_explainer — resolve to `GEMINI_MODEL` (default `gemini-3.1-pro-preview`) or `OPENROUTER_MODEL`. Light roles — swarm_analyst, swarm_synthesizer, swarm_reflection_writer, rag_narrative_polish, video_scene_director, video_veo_text_fallback, decision_terminal_roadmap — resolve to `GEMINI_MODEL_LIGHT` (default `gemini-3.1-flash`) or `OPENROUTER_MODEL_LIGHT`. Video clip generation is always Google Veo (`backend/video_generation_agent.py`), independent of the Gemini-primary flag.
 
@@ -230,6 +248,51 @@ What raises (instead of the previous silent fallbacks):
 **Frontend:** `apiFetch` (`frontend/src/api.js`) detects the `insufficient_data` body, marks the thrown error with `isInsufficientData`, and `AnalysisContext.jsx` treats any insufficient-data refusal as a full analysis error (no more "partial success" dashboards) with the backend's message shown to the user.
 
 **Tests:** `backend/tests/test_insufficient_data.py` (offline, mocked I/O) plus the rewritten `test_debate_data_fallback.py` and `test_gemini_primary_routing.py` encode this contract.
+
+### 5.11 Data freshness (truthful "as of")
+
+The truthful-data contract (§5.9) bans fabricated inputs; the **freshness contract** is its time-axis companion: a surface must never present *stale* stored data as if it were the current session. The locally-seeded data lake can lag the real market by months, so every market surface compares its stored data to the **real** last completed US cash-equity session before labelling anything "the last trading session."
+
+- **Market calendar (single source of truth)** — `backend/market_calendar.py` is the one trading-calendar module: `is_trading_day`, `is_market_holiday`, `previous_trading_day`, `adjust_to_trading_day`, and `last_completed_session(today=None)` (ET-aware; before ~16:00 ET on a trading day it rolls back to the prior session). Crucially the NYSE holiday set is **computed from the holidays' defining rules** (n-th-weekday rules + Gregorian Easter for Good Friday + official Sat/Sun observance, with the New-Year's-Saturday exception) via `us_market_holidays(year)`, so it **never expires** — replacing the old hand-maintained set that stopped at 2026. `daily_brief.expected_last_session` / `_adjust_weekend_to_friday`, `morning_brief._resolve_trade_date`, and `market_intel.is_market_open` / `needs_realtime_overlay` all delegate here so weekends **and** holidays are handled identically everywhere. Tests: `backend/tests/test_market_calendar.py` (includes a regression lock to the retired 2024-2026 table).
+- **Freshness policy registry** — `backend/freshness.py` is the single decision point for "is this value fresh enough for its data class?" `assess(data_class=..., source=..., as_of=..., captured_at=...)` returns a `DataFreshness` envelope (`backend/schemas.py`: `data_class`, `source`, `tier`, `as_of`, `captured_at`, `expected_as_of`, `is_stale`, `staleness_seconds`, `degraded`, `policy_max_age_s`). Policies are env-tunable and use two modes: **age** (clock vs `max_age_s` — `live_quote` ~60s, `delayed_quote`/`prediction_market` ~15m, `macro_fred` ~36h, `model_forecast` ~24h) and **session** (value's `as_of` date vs `market_calendar.last_completed_session` with a day tolerance — `session_pct`, `eod_movers`, `daily_brief`, `fundamentals`). Unknown classes fall back to a forgiving session policy rather than crashing the producer. Tests: `backend/tests/test_freshness.py`.
+- **Legacy freshness helper** (`backend/daily_brief.py`): `compute_data_freshness(db_latest, source=...)` predates the registry and still backs the home/portfolio surfaces (`db_latest_date`, `expected_last_session`, `staleness_days`, `is_stale`, `source`, `tolerance_days`); it now shares the same calendar. New producers should prefer `freshness.assess` + the `DataFreshness` model.
+- **"Both" strategy** in `build_daily_brief`: when stored data is stale and the caller did not pin an explicit `trade_date`, it tries **live** movers first via `_fetch_movers_from_intel` (`market_intel.get_live_movers_snapshot` → yfinance, not weekend-gated). On success the payload is rebuilt with `source="market_intel_live"` and `is_stale=false`; on failure it falls back to the stored snapshot but keeps `is_stale=true` plus a warning. Either way `payload["data_freshness"]` is **always** stamped (including the cached-snapshot early return).
+- **Envelope at the boundary**: `backend/routers/daily_brief.py` guarantees `data_freshness` exists on every response (a successful realtime overlay marks it `source="realtime_overlay"`, `is_stale=false`). `backend/morning_brief.py` mirrors the same block onto the portfolio brief (`source="portfolio"`).
+- **Frontend**: `frontend/src/DailyBriefUI.jsx` reads `data?.data_freshness || portfolioBrief?.data_freshness` and renders a reusable `DataFreshnessBadge` on the weekend banner, Top Movers, and Portfolio Exposure headers. When `is_stale`, the misleading "last trading session" copy is suppressed in favor of an explicit staleness warning.
+- **Tests:** `backend/tests/test_daily_brief_freshness.py` (offline) covers `expected_last_session` weekend/holiday logic, `compute_data_freshness` stale/fresh/None cases, and the `build_daily_brief` stale→live and live-fail→stored-fallback paths.
+
+### 5.12 MCP S&P 500 live quotes (`/mcp/sp500/live-quote`)
+
+Historical MCP tools (`price-window`, `movement-context`, …) read the **data lake** populated by `sp500-ingest`. Live quotes add a hedged keyless provider lane plus the same lake as EOD fallback:
+
+| Step | Source | Freshness |
+|------|--------|-----------|
+| 1 (primary) | Yahoo `fast_info` via `market_intel._fetch_single_rt_quote` | `assess_spot` (live/delayed) |
+| 2 (after ~250ms hedge) | Yahoo chart, Stooq, FinCrawler (parallel, first valid) | `assess_spot`, `degraded=true` for non-primary |
+| 3 (fallback) | `daily_prices` last close from sp500-ingest | `assess(session_pct)`, `source=data_lake` — stale when session lags |
+
+- Engine: [`backend/connectors/live_quote.py`](../backend/connectors/live_quote.py); routes: [`backend/mcp_server/router.py`](../backend/mcp_server/router.py).
+- UI: [`frontend/src/components/LiveQuoteWidget.jsx`](../frontend/src/components/LiveQuoteWidget.jsx) on the home page (`DailyBriefUI`), using `StaleValue` + `FreshnessBadge`.
+- Env: `LIVE_QUOTE_TTL_SEC`, `LIVE_QUOTE_HEDGE_DELAY_MS`, `LIVE_QUOTE_HARD_DEADLINE_S`, `QUOTE_FALLBACK_ALLOW_YAHOO_CHART`.
+
+```mermaid
+flowchart TD
+  UI[LiveQuoteWidget DailyBriefUI] --> Route["GET /mcp/sp500/live-quote"]
+  Route --> Engine[connectors/live_quote.py]
+  Engine --> Cache{TTL cache}
+  Cache -->|miss| Primary[yahoo fast_info primary 250ms hedge]
+  Primary -->|valid| SpotFresh[assess_spot live or delayed]
+  Primary -->|timeout| FanOut[yahoo_chart stooq fincrawler parallel]
+  FanOut -->|valid| SpotFresh
+  FanOut -->|all fail| Lake[daily_prices EOD from sp500-ingest]
+  Lake -->|close| SessionFresh[assess session_pct EOD stale]
+  Lake -->|missing| Err503[503 insufficient_data]
+  SpotFresh --> Envelope[data_freshness envelope]
+  SessionFresh --> Envelope
+  Envelope --> TrustUI[StaleValue FreshnessBadge]
+```
+
+> **Scope / status of the app-wide Data Trust Layer:** **done (all workstreams A–H)** — (1) the shared calculator (`backend/market_calendar.py`, all duplicate session calculators migrated to it); (2) the freshness policy registry (`backend/freshness.py` + `DataFreshness` schema); (3) `GET /health/data-freshness` observability probe (`backend/routers/health.py`); (4) removed the hardcoded MacroUI GDP/Brent/Fed-Funds/CPI placeholders (now show only live VIX + Credit Stress, with explicit "Live data unavailable" otherwise) and routed `GlobalMarketsChart` through `apiFetch`. (5) **D-P0 (partial)** — the `DataFreshness` envelope now rides on `/macro` (live VIX, via `freshness.assess_spot`), `/metrics/validate/{ticker}`, and `/stock-fundamentals/{ticker}` (session-anchored on the latest price bar so a stale upstream is caught); `/daily-brief` and `/portfolio/morning-brief` already carry the legacy `data_freshness` block. (6) **E — frontend trust components**: `frontend/src/freshness.js` (`parseFreshness` handles both the new envelope and the legacy daily-brief block; `isStrictMode` kill switch via `VITE_DATA_TRUST_STRICT=0`; `shouldHideValue`) and `frontend/src/components/Freshness.jsx` (`FreshnessBadge`, `StaleValue` — strict-hides a price-sensitive stale number — and `DataTrustBanner`). (7) **C — canonical spot fetch**: `backend/connectors/spot.py:get_spot_with_freshness(ticker)` returns `(value, DataFreshness)`, wrapping the FinCrawler→Stooq→Yahoo fallback chain and stamping provenance/degraded; `strict_when_open=True` raises `InsufficientDataError` when no live quote is available during an open session (test `backend/tests/test_spot_freshness.py`). New code should prefer it; existing call sites migrate incrementally. (8) **D (more endpoints)**: the envelope now also rides on `/macro/global-markets` (session-anchored on the last bar), `/portfolio/performance` (`assess_spot`), and the **Decision Terminal** payload (`DecisionTerminalPayload.data_freshness`, folding the legacy `market_data_degraded` + `spot_price_source` flags via `_terminal_data_freshness`). (9) **F — strict rendering wired into the high-traffic surfaces**: MacroUI header (`FreshnessBadge` from `data.data_freshness`), UnifiedDashboardUI spot price/change (wrapped in `StaleValue` + badge from `/stock-fundamentals`), DecisionTerminalUI (`DataTrustBanner` from `payload.data_freshness`), and DailyBriefUI (shared `DataTrustBanner`). (10) **D P1/P2 — remaining endpoints**: the envelope now also rides on `/advisor/gold` (`assess_spot`), `/backtest` (new `backtest` policy — HISTORICAL, anchored on `captured_at=now` so a freshly-computed historical window is never flagged stale), scorecard `/compare` + `/{ticker}` (new `scorecard` policy), `/prediction-markets` (`prediction_market` policy), `/predictor/forecast` GET+POST (`model_forecast` policy via `_stamp_forecast_freshness`), and the chat **quote_card** SSE event (`assess_spot`). (11) **F P1/P2 — UI**: ChatUI quote card renders a `FreshnessBadge` (honest `QUOTE` label instead of always "LIVE"), BacktestUI shows a `DataTrustBanner`, and DashboardScorecardPanel shows a `FreshnessBadge`. (12) **H — E2E**: `e2e/data-trust-freshness.spec.js` injects a stale (and a live) `data_freshness` envelope into `/macro` via route interception and asserts the stale badge appears / is absent. Backend coverage: `backend/tests/test_dtl_p1_envelopes.py`, `test_spot_freshness.py`. (13) **MCP live S&P 500 quote surface**: `GET /mcp/sp500/live-quote` and `/live-quotes` (`backend/connectors/live_quote.py` hedged engine: yahoo fast_info primary → parallel yahoo_chart/stooq/fincrawler → `daily_prices` data-lake EOD fallback from `sp500-ingest`; always stamped with `data_freshness`). Home page widget: `frontend/src/components/LiveQuoteWidget.jsx` on `DailyBriefUI`. Tests: `backend/tests/test_live_quote.py`.
 
 ---
 
@@ -379,6 +442,8 @@ flowchart LR
   end
   subgraph api [API]
     R[Render FastAPI]
+    MCP["/mcp/sp500 MCP router"]
+    LQ[live_quote hedged engine]
   end
   subgraph stores [Durable services]
     SB[(Supabase pgvector)]
@@ -387,6 +452,7 @@ flowchart LR
   end
   subgraph ingest [Scheduled ingestion]
     DP[Daily pipeline]
+    SP500[sp500-ingest cron]
   end
   subgraph fetch [Resilient fetch layer §5.10]
     YB[yfinance_batch chunked download]
@@ -402,6 +468,11 @@ flowchart LR
   end
   U --> V
   V -->|API calls| R
+  R --> MCP
+  MCP --> LQ
+  LQ --> YF
+  LQ -.->|EOD fallback| DL
+  MCP -.->|historical tools| DL
   R --> OR
   R --> YB
   YB --> YF
@@ -412,6 +483,8 @@ flowchart LR
   DP --> YB
   DP --> YT
   DP --> SB
+  SP500 --> DL
+  R -->|POST /knowledge/sp500-ingest| SP500
   R --> SB
   R --> SQL
   R --> DL
@@ -444,6 +517,39 @@ flowchart TB
   POLY -->|tag fetch failed| ERR
   KAL -->|all probes failed| ERR
   DT --> batch
+```
+
+### 13.2 MCP live quote path (hedged providers + data-lake fallback)
+
+```mermaid
+flowchart LR
+  subgraph client [Client]
+    W[LiveQuoteWidget]
+  end
+  subgraph mcp [MCP /mcp/sp500]
+    RQ[live-quote route]
+    ENG[live_quote.py]
+  end
+  subgraph live [Keyless live providers]
+    YFI[yahoo fast_info primary]
+    YCH[yahoo chart]
+    ST[Stooq CSV]
+    FC[FinCrawler optional]
+  end
+  subgraph fallback [Cron fallback]
+    LAKE[daily_prices data lake]
+  end
+  subgraph trust [Data Trust Layer]
+    FRESH[freshness assess_spot or session_pct]
+    UI[StaleValue FreshnessBadge]
+  end
+  W --> RQ --> ENG
+  ENG --> YFI
+  ENG --> YCH
+  ENG --> ST
+  ENG --> FC
+  ENG -.->|all live fail| LAKE
+  ENG --> FRESH --> UI
 ```
 
 This architecture document is the intended **stable narrative** for onboarding and refactors; update it when behavior changes.

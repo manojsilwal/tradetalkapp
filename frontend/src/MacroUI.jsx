@@ -5,6 +5,7 @@ import { API_BASE_URL, apiFetch } from './api';
 import MacroFlowPanel from './MacroFlowPanel';
 import GlobalMarketsChart from './GlobalMarketsChart';
 import { useAnalysisHistory } from './AnalysisContext';
+import { FreshnessBadge } from './components/Freshness';
 
 const FLOW_PERIODS = [
     { id: '1d', label: '1D' },
@@ -75,6 +76,7 @@ export default function MacroUI() {
                         <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'monospace' }}>
                             Core Macro Indicators
                         </span>
+                        {data?.data_freshness && <FreshnessBadge freshness={data.data_freshness} />}
                     </div>
                     {/* Market Regime Badge */}
                     {data && (
@@ -97,58 +99,58 @@ export default function MacroUI() {
                         No core macro indicators data available.
                     </div>
                 ) : (
-                    /* Grid */
+                    /* Grid — only live, sourced indicators. Values with no wired
+                       live source render an explicit "unavailable" state rather
+                       than a fabricated placeholder (truthful-data contract). */
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '24px' }}>
-                        {/* GDP */}
+                        {/* VIX — live (^VIX) */}
                         <div className="macro-col" data-testid="macro-vix-card">
-                            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>Global GDP Est. (Q3)</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#ffffff', letterSpacing: '-0.02em' }}>2.4%</span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '4px 8px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.12)', color: '#f87171', fontSize: '0.72rem', fontWeight: 700 }}>
-                                    <ChevronDown size={12} strokeWidth={2.5} />
-                                    <span>0.1%</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Fed Funds Rate */}
-                        <div className="macro-col" data-testid="macro-consumer-spending-chart">
-                            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>US Fed Funds Rate</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#93c5fd', letterSpacing: '-0.02em' }}>
-                                    {data.fed_funds_rate !== null && data.fed_funds_rate !== undefined ? `${data.fed_funds_rate}%` : '5.25%'}
-                                </span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.05)', color: '#94a3b8', fontSize: '0.72rem', fontWeight: 700 }}>
-                                    <ArrowRightLeft size={12} strokeWidth={2.5} style={{ color: '#94a3b8' }} />
-                                    <span>— UNCH</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* CPI */}
-                        <div className="macro-col" data-testid="macro-cash-reserves-chart">
-                            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>US Core CPI (YoY)</div>
+                            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>VIX (Volatility)</div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#ffffff', letterSpacing: '-0.02em' }}>
-                                    {data.cpi_yoy !== null && data.cpi_yoy !== undefined ? `${data.cpi_yoy}%` : '3.8%'}
+                                    {data.vix_level !== null && data.vix_level !== undefined ? Number(data.vix_level).toFixed(2) : 'N/A'}
                                 </span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '4px 8px', borderRadius: '6px', background: 'rgba(16, 185, 129, 0.12)', color: '#34d399', fontSize: '0.72rem', fontWeight: 700 }}>
-                                    <ChevronDown size={12} strokeWidth={2.5} />
-                                    <span>0.2%</span>
-                                </div>
+                                {data.vix_level !== null && data.vix_level !== undefined && (
+                                    <span style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 700, background: data.vix_level >= 20 ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)', color: data.vix_level >= 20 ? '#f87171' : '#34d399' }}>
+                                        {data.vix_level >= 20 ? 'Elevated' : 'Calm'}
+                                    </span>
+                                )}
                             </div>
                         </div>
 
-                        {/* Brent Crude */}
-                        <div className="macro-col" style={{ borderRight: 'none', paddingRight: 0 }}>
-                            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>Brent Crude</div>
+                        {/* Credit Stress Index — live (derived from ^VIX) */}
+                        <div className="macro-col" data-testid="macro-credit-stress-card">
+                            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>Credit Stress Index</div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#c084fc', letterSpacing: '-0.02em' }}>$84.30</span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '4px 8px', borderRadius: '6px', background: 'rgba(139, 92, 246, 0.12)', color: '#a78bfa', fontSize: '0.72rem', fontWeight: 700 }}>
-                                    <ChevronUp size={12} strokeWidth={2.5} />
-                                    <span>1.2%</span>
-                                </div>
+                                <span style={{ fontSize: '2.0rem', fontWeight: 800, color: isStress ? '#f87171' : '#34d399', letterSpacing: '-0.02em' }}>
+                                    {data.credit_stress_index !== null && data.credit_stress_index !== undefined ? Number(data.credit_stress_index).toFixed(2) : 'N/A'}
+                                </span>
+                                {data.credit_stress_index !== null && data.credit_stress_index !== undefined && (
+                                    <span style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 700, background: isStress ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)', color: isStress ? '#f87171' : '#34d399' }}>
+                                        {isStress ? 'Stress' : 'Normal'}
+                                    </span>
+                                )}
                             </div>
+                        </div>
+
+                        {/* Fed Funds Rate — shows N/A unless a live source is wired */}
+                        <div className="macro-col" data-testid="macro-fed-funds-card">
+                            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>US Fed Funds Rate</div>
+                            {data.fed_funds_rate !== null && data.fed_funds_rate !== undefined ? (
+                                <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#93c5fd', letterSpacing: '-0.02em' }}>{data.fed_funds_rate}%</span>
+                            ) : (
+                                <span style={{ fontSize: '0.82rem', color: '#64748b', fontStyle: 'italic' }}>Live data unavailable</span>
+                            )}
+                        </div>
+
+                        {/* Core CPI (YoY) — shows N/A unless a live source is wired */}
+                        <div className="macro-col" style={{ borderRight: 'none', paddingRight: 0 }} data-testid="macro-cpi-card">
+                            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '8px', fontWeight: 500 }}>US Core CPI (YoY)</div>
+                            {data.cpi_yoy !== null && data.cpi_yoy !== undefined ? (
+                                <span style={{ fontSize: '2.0rem', fontWeight: 800, color: '#ffffff', letterSpacing: '-0.02em' }}>{data.cpi_yoy}%</span>
+                            ) : (
+                                <span style={{ fontSize: '0.82rem', color: '#64748b', fontStyle: 'italic' }}>Live data unavailable</span>
+                            )}
                         </div>
                     </div>
                 )}

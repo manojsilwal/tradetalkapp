@@ -25,6 +25,7 @@ import {
 } from 'recharts';
 import { API_BASE_URL, apiFetch } from './api';
 import { SP500_TICKERS } from './sp500';
+import { DataTrustBanner } from './components/Freshness';
 import './DecisionTerminalUI.css';
 import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
 
@@ -249,6 +250,7 @@ export default function DecisionTerminalUI() {
         )}
 
         {payload?.disclaimer && <div className="dt-disclaimer">{payload.disclaimer}</div>}
+        {payload?.data_freshness && <DataTrustBanner envelope={payload.data_freshness} />}
         {(payload?.market_data_degraded ||
           (payload?.spot_price_source &&
             payload.spot_price_source !== 'yfinance_history')) && (

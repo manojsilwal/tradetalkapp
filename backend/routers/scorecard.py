@@ -113,6 +113,7 @@ class ScorecardRowOut(BaseModel):
     one_line_reason: str
     # Original raw data bundle echoed back for UI / audit
     inputs: Dict[str, Any]
+    data_freshness: Optional[Dict[str, Any]] = None
 
 
 class ScorecardResponse(BaseModel):
@@ -121,9 +122,26 @@ class ScorecardResponse(BaseModel):
     denominators: Dict[str, float]
     rows: List[ScorecardRowOut]
     notes: List[str] = Field(default_factory=list)
+    data_freshness: Optional[Dict[str, Any]] = None
 
 
 # ── Handlers ─────────────────────────────────────────────────────────────────
+
+def _scorecard_freshness() -> Optional[Dict[str, Any]]:
+    """Freshness envelope: scorecard is fundamentals-derived analytics computed now."""
+    try:
+        from datetime import datetime, timezone
+        from ..freshness import assess
+
+        return assess(
+            data_class="scorecard",
+            source="yfinance",
+            captured_at=datetime.now(timezone.utc),
+            note="Peer-normalized scorecard computed from fundamentals at request time.",
+        ).model_dump()
+    except Exception:
+        return None
+
 
 @router.get("/presets")
 def list_presets() -> Dict[str, Dict[str, float]]:
@@ -236,6 +254,7 @@ async def compare_scorecard(
         denominators=basket.denominators,
         rows=rows_out,
         notes=notes,
+        data_freshness=_scorecard_freshness(),
     )
 
 
@@ -317,6 +336,7 @@ async def single_ticker_scorecard(
         verdict=str(v.get("verdict", "Balanced")),
         one_line_reason=str(v.get("one_line_reason", "")),
         inputs=data.to_dict(),
+        data_freshness=_scorecard_freshness(),
     )
 
 

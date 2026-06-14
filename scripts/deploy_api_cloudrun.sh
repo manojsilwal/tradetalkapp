@@ -60,10 +60,14 @@ SP500_INGEST_ON_STARTUP=0,\
 FINCRAWLER_URL=https://fincrawler.onrender.com,\
 SEPL_TOOL_ENABLE=1,\
 SEPL_TOOL_DRY_RUN=0,\
-SEPL_TOOL_AUTOCOMMIT=1"
+SEPL_TOOL_AUTOCOMMIT=1,\
+LLM_HTTP_PROVIDER=openrouter,\
+GEMINI_PRIMARY=0,\
+OPENROUTER_MODEL=minimax/minimax-m3,\
+OPENROUTER_MODEL_LIGHT=minimax/minimax-m3"
 
 # Load secret keys dynamically from local environment configuration files if present
-for env_file in .env.gcp .env; do
+for env_file in .env.gcp backend/.env .env; do
   if [[ -f "$env_file" ]]; then
     echo "Found local config $env_file, appending keys..."
     while IFS= read -r line || [[ -n "$line" ]]; do

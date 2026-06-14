@@ -55,21 +55,27 @@ flowchart TB
     end
 
     subgraph Backend["FastAPI Backend (Render)"]
-        API["API Routers"]
+        API["API Routers\n+ /mcp/sp500"]
         Agents["Agent Swarms & Debates"]
         RAG["Knowledge Store (RAG)"]
         LLM_Client["LLM Client Engine"]
-        Background["Background Tasks\n(News loop, Cron)"]
+        DTL["Data Trust Layer\nfreshness.py + market_calendar"]
+        LiveQuote["Live Quote Engine\nconnectors/live_quote.py"]
+        Background["Background Tasks\n(News loop, Cron, sp500-ingest)"]
 
         API --> Agents
+        API --> DTL
+        API --> LiveQuote
         API --> Background
         Agents --> RAG
         Agents --> LLM_Client
+        LiveQuote --> DTL
     end
 
     subgraph DataStores["Data Stores"]
-        SQLite[("SQLite (Disk)\nAlerts, Users")]
+        SQLite[("SQLite (Disk)\nAlerts, Users, Ledger")]
         Supabase[("Supabase (pgvector)\nVector Embeddings")]
+        DataLake[("Data Lake\nParquet / BigQuery\ndaily_prices")]
     end
 
     subgraph External["External APIs & Sources"]
@@ -90,6 +96,9 @@ flowchart TB
 
     Agents --> YFinance
     Background --> YFinance
+    LiveQuote --> YFinance
+    Background --> DataLake
+    LiveQuote -.->|EOD fallback| DataLake
 
     RAG -.->|Optional| HF
 \`\`\`
@@ -141,6 +150,7 @@ flowchart LR
     subgraph Triggers ["Triggers"]
         NewsLoop(("60s News Loop\n(Internal)"))
         CronJob(("00:05 UTC Cron\n(GitHub Actions)"))
+        SP500Ingest(("sp500-ingest\n(Cron / startup)"))
     end
 
     subgraph Connectors ["Data Connectors"]
@@ -158,6 +168,7 @@ flowchart LR
     subgraph Storage ["Knowledge Store"]
         DB[("Supabase pgvector\n(Vector Memory)")]
         SQL[("SQLite\n(Macro Alerts)")]
+        Lake[("Data Lake\ndaily_prices Parquet")]
         SSE(("Real-time SSE\nNotifications"))
     end
 
@@ -165,11 +176,13 @@ flowchart LR
     CronJob --> FRED
     CronJob --> YT
     CronJob --> Prices
+    SP500Ingest --> Prices
 
     RSS --> Summarizer
     FRED --> Summarizer
     YT --> Summarizer
     Prices --> Summarizer
+    SP500Ingest --> Lake
 
     Summarizer --> Embedder
     Embedder --> DB
@@ -198,51 +211,51 @@ flowchart TD
     Backend -.->|4. Keep-alive ping| Spaces
 \`\`\`
 
-## 5. Agent Swarm & Debate Architecture
+## 5. Analysis Pipeline: Swarm + Debate (Consolidated)
 
-TradeTalk simulates a Wall Street analyst team. A request goes to multiple parallel agents, each looking at different data, before a Moderator agent resolves their disagreements.
+TradeTalk simulates a Wall Street analyst team. The dashboard issues a **single** \`/decision-terminal\` request; the backend runs the swarm factor agents and then the 5-agent investment-committee debate **once**, and embeds both results (plus the roadmap) in one payload — so the Trace and Debate tabs render from the same call instead of re-running the pipeline. Every LLM call flows through one gateway bounded by a global concurrency semaphore (\`LLM_MAX_CONCURRENCY\`, default 6) with a per-call HTTP timeout and an NVIDIA-to-Gemini fallback.
 
 \`\`\`mermaid
 flowchart TB
-    Input["User: Evaluate AAPL"]
+    Input["Dashboard: Evaluate AAPL\n(single /decision-terminal call)"]
 
-    subgraph Parallel_Agents ["Parallel Specialist Agents"]
-        Bull["Bull Agent\n(Growth & Upside)"]
-        Bear["Bear Agent\n(Risk & Macro)"]
-        Value["Value Agent\n(Fundamentals)"]
-        Momentum["Momentum Agent\n(Price Action)"]
-        Macro["Macro Agent\n(Credit & Rates)"]
+    subgraph Swarm ["1. Swarm Factor Agents (parallel)"]
+        Short["Short Interest"]
+        Social["Social Sentiment"]
+        Poly["Polymarket"]
+        Fund["Fundamental Health"]
     end
 
-    subgraph Knowledge ["Retrieval Augmented Generation"]
-        RAG[("Vector Memory\n(Past lessons, YouTube, Debates)")]
+    subgraph Debate ["2. IC Debate Agents (parallel)"]
+        Bull["Bull (Growth)"]
+        Bear["Bear (Risk)"]
+        Value["Value (Fundamentals)"]
+        Momentum["Momentum (Price)"]
+        Macro["Macro (Credit & Rates)"]
     end
 
-    Input --> Bull
-    Input --> Bear
-    Input --> Value
-    Input --> Momentum
-    Input --> Macro
+    subgraph Gateway ["LLM Gateway"]
+        Sem{"Concurrency semaphore\nLLM_MAX_CONCURRENCY=6\n+ per-call HTTP timeout"}
+        Fallback["NVIDIA then Gemini fallback"]
+    end
 
-    RAG --> Bull
-    RAG --> Bear
-    RAG --> Value
-    RAG --> Momentum
-    RAG --> Macro
+    RAG[("Vector Memory (RAG)\nPast lessons, YouTube, Debates")]
+    Moderator{"Moderator Agent"}
+    Payload["DecisionTerminalPayload\nverdict + roadmap +\nembedded swarm + debate"]
 
+    Input --> Swarm
+    Swarm -->|swarm_context| Debate
+    RAG --> Debate
     Bull --> Moderator
     Bear --> Moderator
     Value --> Moderator
     Momentum --> Moderator
     Macro --> Moderator
-
-    subgraph Synthesis ["Synthesis Layer"]
-        Moderator{"Moderator Agent"}
-        Verdict["Final Investment Verdict\n(Buy/Hold/Sell)"]
-    end
-
-    Moderator --> Verdict
-    Verdict --> RAG
+    Swarm -.->|LLM calls| Sem
+    Debate -.->|LLM calls| Sem
+    Sem --> Fallback
+    Moderator --> Payload
+    Payload --> RAG
 \`\`\`
 
 ## 6. Decision Ledger & Outcome Grader Loop
@@ -385,6 +398,89 @@ flowchart TD
 
     Trace -->|record_attempt| Attempts
     Dream -->|add_skill| Skills
+\`\`\`
+
+## 9. Data Trust Layer (Freshness & Truthful "As Of")
+
+The **Data Trust Layer** ensures every market surface is honest about data age. A shared `market_calendar` computes the real last completed US session (holiday-aware, never-expiring). The `freshness.py` policy registry stamps a `DataFreshness` envelope on API payloads (`tier`, `is_stale`, `degraded`, `source`). The frontend renders `FreshnessBadge`, `StaleValue`, and `DataTrustBanner` across Macro, Dashboard, Decision Terminal, Daily Brief, Backtest, Chat quote cards, and the live-quote widget. Observability: `GET /health/data-freshness`.
+
+\`\`\`mermaid
+flowchart TD
+    subgraph Producers ["API producers (envelope at boundary)"]
+        Brief["/daily-brief\n/morning-brief"]
+        Macro["/macro\n/stock-fundamentals"]
+        DT["/decision-terminal"]
+        MCP["/mcp/sp500/live-quote"]
+        Other["/backtest, /scorecard,\n/predictor/forecast, chat quote_card"]
+    end
+
+    Calendar["market_calendar.py\nlast_completed_session\n(holiday-aware)"]
+    Registry["freshness.py\nassess / assess_spot\n(age vs session policies)"]
+    Envelope["DataFreshness envelope\ntier, is_stale, degraded, source"]
+    Health["GET /health/data-freshness"]
+
+    subgraph BriefFlow ["Daily brief: live-first strategy"]
+        Stale{"stored data\nis_stale?"}
+        LiveMovers["market_intel live movers"]
+        Stored["stored snapshot\n+ staleness warning"]
+    end
+
+    subgraph UI ["Frontend trust components"]
+        Badge["FreshnessBadge"]
+        StaleVal["StaleValue\n(strict hides stale prices)"]
+        Banner["DataTrustBanner"]
+    end
+
+    Brief --> Stale
+    Calendar --> Registry
+    Stale -- "fresh" --> Registry
+    Stale -- "stale" --> LiveMovers
+    LiveMovers -- "ok" --> Registry
+    LiveMovers -- "fail" --> Stored --> Registry
+
+    Macro --> Registry
+    DT --> Registry
+    MCP --> Registry
+    Other --> Registry
+    Registry --> Envelope
+    Registry --> Health
+    Envelope --> Badge
+    Envelope --> StaleVal
+    Envelope --> Banner
+\`\`\`
+
+## 10. MCP S&P 500 Live Quote Surface
+
+The `/mcp/sp500` server historically served **historical** data-lake queries (`price-window`, `movement-context`, …). It now also exposes **live** quotes via a hedged keyless engine: Yahoo `fast_info` primary (250ms hedge), then parallel Yahoo chart / Stooq / FinCrawler, then EOD fallback from `daily_prices` populated by `sp500-ingest`. The home-page `LiveQuoteWidget` calls `GET /mcp/sp500/live-quote` and renders price/change with trust badges.
+
+\`\`\`mermaid
+flowchart TD
+    Widget["LiveQuoteWidget\n(DailyBrief home page)"]
+    Route["GET /mcp/sp500/live-quote\nGET /live-quotes"]
+    Engine["connectors/live_quote.py"]
+    Gate{"S&P 500\nuniverse gate"}
+    Cache{"TTL cache\nLIVE_QUOTE_TTL_SEC"}
+
+    Primary["Primary: yahoo fast_info\n(wait LIVE_QUOTE_HEDGE_DELAY_MS)"]
+    FanOut["Fan-out parallel:\nyahoo_chart, stooq, fincrawler\nfirst valid wins"]
+    Lake["EOD fallback:\ndaily_prices last close\n(sp500-ingest cron)"]
+    None503["503 insufficient_data\n(live + lake both fail)"]
+
+    FreshLive["assess_spot\nlive / delayed / degraded"]
+    FreshEod["assess session_pct\nEOD / stale"]
+    TrustUI["StaleValue + FreshnessBadge"]
+
+    Widget --> Route --> Gate --> Engine
+    Engine --> Cache
+    Cache -->|miss| Primary
+    Primary -->|valid| FreshLive
+    Primary -->|timeout or fail| FanOut
+    FanOut -->|valid| FreshLive
+    FanOut -->|all fail| Lake
+    Lake -->|has close| FreshEod
+    Lake -->|missing| None503
+    FreshLive --> TrustUI
+    FreshEod --> TrustUI
 \`\`\`
 
 `;

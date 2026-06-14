@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { API_BASE_URL, getToken, apiFetch } from './api'
+import { FreshnessBadge } from './components/Freshness'
 
 /** Persisted chat session id — survives refresh; server must still have the row (TTL). */
 const CHAT_SESSION_STORAGE_KEY = 'tradetalk_chat_session_id'
@@ -398,7 +399,7 @@ export default function ChatUI({ prefetch = null }) {
               setStreaming(assistant)
             }
             if (j.type === 'quote_card' && j.ticker && j.body) {
-              setQuoteCards((qc) => [...qc, { ticker: j.ticker, body: j.body }])
+              setQuoteCards((qc) => [...qc, { ticker: j.ticker, body: j.body, freshness: j.data_freshness }])
             }
             if (j.type === 'error') setErr(j.message || 'Stream error')
             if (j.type === 'evidence_contract' && j.data) setEvidenceContract(j.data)
@@ -558,8 +559,11 @@ export default function ChatUI({ prefetch = null }) {
             }}
             data-testid="quote-card"
           >
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#34d399', marginBottom: 6, letterSpacing: '0.04em' }}>
-              LIVE QUOTE · {q.ticker}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#34d399', letterSpacing: '0.04em' }}>
+                QUOTE · {q.ticker}
+              </span>
+              {q.freshness && <FreshnessBadge freshness={q.freshness} showEod />}
             </div>
             {q.body}
           </div>

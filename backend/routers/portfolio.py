@@ -189,6 +189,13 @@ def get_performance(user: UserInfo = Depends(get_current_user_or_dev)):
     perf = pp.get_portfolio_performance(user.id)
     if perf.get("beating_spy"):
         up.award_xp(user.id, "prediction_right", note="beat_spy")
+    try:
+        from ..freshness import assess_spot
+
+        if isinstance(perf, dict):
+            perf["data_freshness"] = assess_spot(source="yfinance").model_dump()
+    except Exception:
+        pass
     return perf
 
 

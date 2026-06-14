@@ -134,23 +134,19 @@ def rank_card_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 
 def _resolve_trade_date() -> date:
-    try:
-        from .daily_brief import get_latest_trade_date, _adjust_weekend_to_friday
+    from .market_calendar import adjust_to_trading_day, last_completed_session
 
-        td = get_latest_trade_date() or date.today()
-        return _adjust_weekend_to_friday(td)
+    try:
+        from .daily_brief import get_latest_trade_date
+
+        td = get_latest_trade_date()
+        if td is not None:
+            return adjust_to_trading_day(td)
     except Exception:
-        td = date.today()
-        try:
-            from .daily_brief import _adjust_weekend_to_friday
-            return _adjust_weekend_to_friday(td)
-        except Exception:
-            from datetime import timedelta
-            if td.weekday() == 5:
-                return td - timedelta(days=1)
-            if td.weekday() == 6:
-                return td - timedelta(days=2)
-            return td
+        pass
+    # No stored trade date available — fall back to the real last session
+    # (weekend- and holiday-aware) rather than raw today's date.
+    return last_completed_session()
 
 
 def _daily_pct_from_hist(hist) -> Optional[float]:
@@ -483,20 +479,32 @@ def _select_cards(
 
 
 def _market_session_context() -> Dict[str, Any]:
-    """US cash session hint for copy (weekend / after-hours vs open)."""
-    try:
-        from zoneinfo import ZoneInfo
+    """US cash session hint for copy (closed / after-hours vs open).
 
-        et = datetime.now(ZoneInfo("America/New_York"))
-    except Exception:
-        et = datetime.now(timezone.utc)
-    if et.weekday() >= 5:
+    Holiday-aware via the single market calendar. The public ``status`` contract
+    is kept at ``open`` | ``after_hours`` | ``weekend`` (the frontend keys off
+    ``weekend`` to show the "markets closed" banner); holidays map to ``weekend``
+    with holiday-specific copy.
+    """
+    from .market_calendar import (
+        SESSION_CLOSED_HOLIDAY,
+        SESSION_CLOSED_WEEKEND,
+        SESSION_REGULAR,
+        session_status,
+    )
+
+    status = session_status()
+    if status == SESSION_CLOSED_HOLIDAY:
+        return {
+            "status": "weekend",
+            "message": "U.S. markets are closed for a holiday today. Here's what changed during the last trading session.",
+        }
+    if status == SESSION_CLOSED_WEEKEND:
         return {
             "status": "weekend",
             "message": "Markets are closed today. Here's what changed during the last trading session.",
         }
-    minutes = et.hour * 60 + et.minute
-    if minutes < 9 * 60 + 30 or minutes >= 16 * 60:
+    if status != SESSION_REGULAR:  # pre_market / post_market
         return {
             "status": "after_hours",
             "message": "Here's what changed in your portfolio during the last trading session.",
@@ -649,95 +657,32 @@ def _fetch_relative_volume_batch(symbols: List[str]) -> Dict[str, float]:
 
 
 def _fetch_company_metadata(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
-    from .daily_brief import STATIC_TICKER_METADATA_FALLBACKS
+    from .daily_brief import _fetch_ticker_enrichment
+
     out: Dict[str, Dict[str, Any]] = {}
     for sym in symbols:
         s = sym.upper()
-        try:
-            import yfinance as yf
-
-            info = yf.Ticker(s).info or {}
-            held = info.get("heldPercentInsiders")
-            insider_sentiment = f"{held * 100:.1f}% Insiders" if held is not None else None
-            
-            # Check for rate-limiting or empty info
-            if not info.get("industry"):
-                try:
-                    from backend.deps import knowledge_store
-                    rag_data = knowledge_store.get_sp500_fundamental(s)
-                    if rag_data:
-                        out[s] = {
-                            "company_name": s,
-                            "sector": rag_data["sector"],
-                            "industry": rag_data["industry"],
-                            "market_cap": rag_data["market_cap"],
-                            "pe_ratio": rag_data["pe_ratio"],
-                            "forward_pe": rag_data["forward_pe"],
-                            "insider_sentiment": rag_data["insider_sentiment"],
-                        }
-                        continue
-                except Exception:
-                    pass
-                if s in STATIC_TICKER_METADATA_FALLBACKS:
-                    fb = STATIC_TICKER_METADATA_FALLBACKS[s]
-                    out[s] = {
-                        "company_name": fb["company_name"],
-                        "sector": fb["sector"],
-                        "industry": fb["industry"],
-                        "market_cap": fb["market_cap"],
-                        "pe_ratio": fb["pe_ratio"],
-                        "forward_pe": fb["forward_pe"],
-                        "insider_sentiment": fb["insider_sentiment"],
-                    }
-                    continue
-
+        meta = _fetch_ticker_enrichment(s)
+        if meta:
             out[s] = {
-                "company_name": info.get("longName") or info.get("shortName") or s,
-                "sector": info.get("sector") or "Unknown",
-                "industry": info.get("industry") or "Unknown",
-                "market_cap": info.get("marketCap"),
-                "pe_ratio": info.get("trailingPE") or info.get("forwardPE"),
-                "forward_pe": info.get("forwardPE") or info.get("trailingPE"),
-                "insider_sentiment": insider_sentiment or "N/A",
+                "company_name": meta.get("company_name") or s,
+                "sector": meta.get("sector") or "Unknown",
+                "industry": meta.get("industry") or "Unknown",
+                "market_cap": meta.get("market_cap"),
+                "pe_ratio": meta.get("pe_ratio"),
+                "forward_pe": meta.get("forward_pe"),
+                "insider_sentiment": meta.get("insider_sentiment") or "N/A",
             }
-        except Exception:
-            try:
-                from backend.deps import knowledge_store
-                rag_data = knowledge_store.get_sp500_fundamental(s)
-                if rag_data:
-                    out[s] = {
-                        "company_name": s,
-                        "sector": rag_data["sector"],
-                        "industry": rag_data["industry"],
-                        "market_cap": rag_data["market_cap"],
-                        "pe_ratio": rag_data["pe_ratio"],
-                        "forward_pe": rag_data["forward_pe"],
-                        "insider_sentiment": rag_data["insider_sentiment"],
-                    }
-                    continue
-            except Exception:
-                pass
-            if s in STATIC_TICKER_METADATA_FALLBACKS:
-                fb = STATIC_TICKER_METADATA_FALLBACKS[s]
-                out[s] = {
-                    "company_name": fb["company_name"],
-                    "sector": fb["sector"],
-                    "industry": fb["industry"],
-                    "market_cap": fb["market_cap"],
-                    "pe_ratio": fb["pe_ratio"],
-                    "forward_pe": fb["forward_pe"],
-                    "insider_sentiment": fb["insider_sentiment"],
-                }
-            else:
-                out[s] = {
-                    "company_name": s,
-                    "sector": "Unknown",
-                    "industry": "Unknown",
-                    "market_cap": None,
-                    "pe_ratio": None,
-                    "forward_pe": None,
-                    "insider_sentiment": "N/A",
-                }
+        else:
+            out[s] = {
+                "company_name": s,
+                "sector": "Unknown",
+                "industry": "Unknown",
+                "market_cap": None,
+                "pe_ratio": None,
+                "forward_pe": None,
+                "insider_sentiment": "N/A",
+            }
     return out
 
 
@@ -922,8 +867,16 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
         logger.warning("[MorningBrief] failed to fetch realtime quotes for benchmarks: %s", e)
 
     now = datetime.now(timezone.utc).isoformat()
+    try:
+        from .daily_brief import compute_data_freshness, get_latest_trade_date
+
+        _data_freshness = compute_data_freshness(get_latest_trade_date(), source="portfolio")
+    except Exception as e:
+        logger.warning("[MorningBrief] freshness compute failed: %s", e)
+        _data_freshness = None
     base: Dict[str, Any] = {
         "as_of": now,
+        "data_freshness": _data_freshness,
         "user_id": user_id,
         "greeting": _greeting(),
         "headline": "Your Morning starts once you add your portfolio.",
