@@ -1,18 +1,31 @@
 #!/usr/bin/env bash
-# start_llm.sh — Start Ollama, start Cloudflare quick tunnel, and auto-update environment configuration.
+# start_llm.sh — Start LM Studio, start Cloudflare quick tunnel, and auto-update environment configuration.
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 cd "$(dirname "$0")/.."
 
-echo "Starting Ollama..."
-open -a Ollama
+echo "Starting LM Studio..."
+open -a "LM Studio"
 
-echo "Waiting for Ollama to start..."
-until curl -s http://localhost:11434 > /dev/null; do
+# Start LM Studio Local Server if not running
+/Users/manojsilwal/.lmstudio/bin/lms server start
+
+# Check if the model is already loaded to prevent duplicate memory instances
+if /Users/manojsilwal/.lmstudio/bin/lms ps | grep -q "google/gemma-4-e4b"; then
+  echo "Model google/gemma-4-e4b is already loaded!"
+else
+  echo "Loading model google/gemma-4-e4b..."
+  if ! /Users/manojsilwal/.lmstudio/bin/lms load google/gemma-4-e4b; then
+    echo "Warning: CLI model loading failed. Please ensure 'google/gemma-4-e4b' is loaded in the LM Studio GUI."
+  fi
+fi
+
+echo "Waiting for LM Studio to start..."
+until curl -s http://localhost:1234/v1/models > /dev/null; do
   sleep 1
 done
-echo "Ollama is ready!"
+echo "LM Studio is ready!"
 
 # Setup shutdown handler to run on launchd exit / logoff / restart / shutdown
 cleanup() {
@@ -24,7 +37,7 @@ trap cleanup SIGINT SIGTERM
 
 echo "Starting Cloudflare Quick Tunnel..."
 mkdir -p ~/.cloudflared
-cloudflared tunnel --url http://localhost:11434 --http-host-header localhost > ~/.cloudflared/quick_tunnel.log 2>&1 &
+cloudflared tunnel --url http://localhost:1234 --http-host-header localhost > ~/.cloudflared/quick_tunnel.log 2>&1 &
 TUNNEL_PID=$!
 sleep 5
 
@@ -59,6 +72,14 @@ if [ -n "$TUNNEL_URL" ]; then
   else
     echo "Warning: env.gcp in ~/.cloudflared not found. Please update it manually."
   fi
+
+  # Auto-update FinCrawler environment files if present
+  for fc_file in "/Users/manojsilwal/workspace/fincrawler/.env" "/Users/manojsilwal/workspace/fincrawler/.env.gcp" "/Users/manojsilwal/workspace/fincrawler/fincrawler_env_gcp"; do
+    if [ -f "$fc_file" ]; then
+      sed -i '' -E 's|LLM_BASE_URL=https://.*\.trycloudflare\.com/v1|LLM_BASE_URL='"$TUNNEL_URL"'/v1|g' "$fc_file"
+      echo "Updated FinCrawler config $fc_file with the new tunnel URL."
+    fi
+  done
 else
   echo "Error: Could not retrieve Cloudflare Tunnel URL. Check ~/.cloudflared/quick_tunnel.log"
 fi
@@ -68,4 +89,3 @@ if [ -n "$TUNNEL_PID" ]; then
   echo "Waiting on Cloudflare Tunnel (PID: $TUNNEL_PID) for termination..."
   wait $TUNNEL_PID
 fi
-
