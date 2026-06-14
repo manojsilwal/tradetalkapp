@@ -36,11 +36,31 @@ function AgentCardSkeleton({ agent }) {
 
 function AgentCard({ argument, agent }) {
   const stanceStyle = STANCE_STYLES[argument.stance] || STANCE_STYLES.NEUTRAL;
+  const isDegraded = argument.degraded;
   return (
-    <div style={{ background: 'rgba(15,23,42,0.7)', borderRadius: 12, padding: '20px 24px', border: '1px solid rgba(255,255,255,0.07)', borderTop: `3px solid ${agent.color}` }}>
+    <div style={{
+      background: isDegraded ? 'rgba(15,23,42,0.4)' : 'rgba(15,23,42,0.7)',
+      borderRadius: 12,
+      padding: '20px 24px',
+      border: isDegraded ? '1px solid rgba(245,158,11,0.25)' : '1px solid rgba(255,255,255,0.07)',
+      borderTop: `3px solid ${isDegraded ? '#f59e0b' : agent.color}`,
+      opacity: isDegraded ? 0.7 : 1,
+      position: 'relative',
+    }}>
+      {isDegraded && (
+        <div style={{
+          position: 'absolute', top: 8, right: 10,
+          padding: '2px 8px', borderRadius: 10,
+          background: 'rgba(245,158,11,0.15)', color: '#f59e0b',
+          fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+        }}>
+          Heuristic only
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: agent.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <AgentIcon role={argument.agent_role} color={agent.color} size={18} />
+          <AgentIcon role={argument.agent_role} color={isDegraded ? '#f59e0b' : agent.color} size={18} />
         </div>
         <div>
           <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: '0.88rem' }}>{agent.label}</div>
@@ -55,14 +75,14 @@ function AgentCard({ argument, agent }) {
       <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {(argument.key_points || []).map((pt, i) => (
           <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 6, background: agent.color }} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 6, background: isDegraded ? '#f59e0b' : agent.color }} />
             <span style={{ color: '#94a3b8', fontSize: '0.83rem', lineHeight: 1.5 }}>{pt}</span>
           </li>
         ))}
       </ul>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
         <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.05)' }}>
-          <div style={{ height: '100%', borderRadius: 2, width: `${Math.round((argument.confidence || 0) * 100)}%`, background: agent.color, transition: 'width 0.8s ease' }} />
+          <div style={{ height: '100%', borderRadius: 2, width: `${Math.round((argument.confidence || 0) * 100)}%`, background: isDegraded ? '#f59e0b' : agent.color, transition: 'width 0.8s ease' }} />
         </div>
         <span style={{ color: '#475569', fontSize: '0.7rem', whiteSpace: 'nowrap' }}>{Math.round((argument.confidence || 0) * 100)}% confidence</span>
       </div>

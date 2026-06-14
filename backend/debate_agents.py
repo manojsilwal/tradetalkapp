@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from .schemas import DebateArgument, DebateResult, AgentStance
 from .swarm_reliability.retrieval_fusion import fuse_and_cap_hits
 from .agent_policy_guardrails import ensure_capability, workload_scope
+from .data_errors import InsufficientDataError
+from .llm_client import FALLBACK_TEMPLATES
 from .telemetry import get_tracer
 from .tool_configs import get_tool_config
 from .tool_handlers import decide_debate_bull_stance, decide_debate_bear_stance
@@ -248,6 +250,65 @@ async def _run_agent(role: str, ticker: str, live_data: dict, ks, llm,
     )
 
 
+_AGENT_RETRY_BACKOFF_S = float(os.environ.get("DEBATE_AGENT_RETRY_BACKOFF_S", "1.5"))
+
+
+def _build_degraded_argument(role: str, ticker: str, live_data: dict) -> DebateArgument:
+    """Build a clearly-labelled degraded argument using heuristic stance + fallback
+    template content when the LLM provider is unreachable.  Confidence is pinned
+    to 0.0 so the moderator and scoring logic naturally down-weight this agent."""
+    template = FALLBACK_TEMPLATES.get(role, {})
+    headline = f"[LLM unavailable] {template.get('headline', f'{role.capitalize()} analysis could not be completed.')}"
+    key_points = template.get("key_points", [f"The {role} agent could not reach the model provider."])
+    stance = _determine_stance(role, live_data, {})
+    meta = AGENT_META.get(role, {"icon": "AlertCircle", "color": "#6b7280"})
+    return DebateArgument(
+        agent_role=role,
+        agent_icon=meta["icon"],
+        stance=stance,
+        headline=headline,
+        key_points=key_points if isinstance(key_points, list) else [str(key_points)],
+        supporting_data={k: v for k, v in live_data.items() if k in (
+            "current_price", "price_return_1m", "price_return_3m",
+            "short_interest_ratio", "pe_ratio", "roe", "revenue_growth",
+            "debt_to_equity", "pct_of_52wk_high", "beta",
+        )},
+        confidence=0.0,
+        degraded=True,
+    )
+
+
+async def _resilient_run_agent(role: str, ticker: str, live_data: dict, ks, llm,
+                               swarm_context: str = "",
+                               *, out_refs: list | None = None) -> DebateArgument:
+    """Wrap ``_run_agent`` with one retry on ``InsufficientDataError``.
+
+    If the retry also fails, return a degraded argument instead of raising —
+    this lets the remaining agents' results survive ``asyncio.gather``.
+    """
+    for attempt in range(2):
+        try:
+            return await _run_agent(
+                role, ticker, live_data, ks, llm,
+                swarm_context=swarm_context, out_refs=out_refs,
+            )
+        except InsufficientDataError:
+            if attempt == 0:
+                logger.warning(
+                    "[Debate] role=%s LLM unavailable, retrying in %.1fs…",
+                    role, _AGENT_RETRY_BACKOFF_S,
+                )
+                await asyncio.sleep(_AGENT_RETRY_BACKOFF_S)
+            else:
+                logger.warning(
+                    "[Debate] role=%s LLM unavailable after retry — returning degraded argument",
+                    role,
+                )
+                return _build_degraded_argument(role, ticker, live_data)
+    # unreachable, but satisfy type-checkers
+    return _build_degraded_argument(role, ticker, live_data)  # pragma: no cover
+
+
 async def run_bull_agent(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
                          swarm_context: str = "",
                          *, out_refs: list | None = None) -> DebateArgument:
@@ -392,24 +453,40 @@ async def run_moderator(
 
     quality_warning = None
     max_attempts = 2
+    last_err_msg = ""
+    verdict = "NEUTRAL"
+    summary = "Mixed signals across specialist agents."
     for attempt in range(max_attempts):
-        with workload_scope("debate", "llm_inference"):
-            result = await llm.generate_moderator_verdict(ticker, args_dicts, context)
+        try:
+            with workload_scope("debate", "llm_inference"):
+                result = await llm.generate_moderator_verdict(ticker, args_dicts, context)
 
-        verdict = result.get("verdict", "").upper().strip()
-        summary = result.get("summary", "Mixed signals across specialist agents.")
-        confidence = float(result.get("confidence", avg_confidence))
+            verdict = result.get("verdict", "").upper().strip()
+            summary = result.get("summary", "Mixed signals across specialist agents.")
+            confidence = float(result.get("confidence", avg_confidence))
 
-        if verdict in VALID_VERDICTS and confidence >= 0.3:
-            return verdict, round(confidence, 3), summary, quality_warning
+            if verdict in VALID_VERDICTS and confidence >= 0.3:
+                return verdict, round(confidence, 3), summary, quality_warning
 
-        if attempt == 0:
-            logger.warning(
-                "[Moderator] Invalid verdict '%s' (conf=%.2f) on attempt %d, retrying...",
-                verdict, confidence, attempt + 1,
-            )
+            if attempt == 0:
+                logger.warning(
+                    "[Moderator] Invalid verdict '%s' (conf=%.2f) on attempt %d, retrying...",
+                    verdict, confidence, attempt + 1,
+                )
+        except Exception as e:
+            last_err_msg = str(e)
+            if attempt == 0:
+                logger.warning(
+                    "[Moderator] LLM call failed on attempt %d: %s, retrying...",
+                    attempt + 1, e,
+                )
+                await asyncio.sleep(0.5)
+            else:
+                quality_warning = f"LLM moderator unavailable: {last_err_msg}; using heuristic."
+                logger.warning("[Moderator] %s", quality_warning)
+                return "NEUTRAL", round(avg_confidence, 3), "LLM moderator unavailable; fell back to agent consensus.", quality_warning
 
-    # All attempts exhausted — fall back to heuristic
+    # All attempts exhausted — fall back to heuristic due to invalid formats
     quality_warning = f"LLM moderator returned invalid verdict '{verdict}'; using heuristic."
     logger.warning("[Moderator] %s", quality_warning)
     return "NEUTRAL", round(avg_confidence, 3), summary, quality_warning
@@ -476,20 +553,63 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
     momentum_refs: list = []
     moderator_refs: list = []
 
-    bull_arg, bear_arg, macro_arg, value_arg, momentum_arg = await asyncio.gather(
-        run_bull_agent(ticker, debate_data, macro_state, ks, llm,
-                       swarm_context=swarm_context, out_refs=bull_refs),
-        run_bear_agent(ticker, debate_data, macro_state, ks, llm,
-                       swarm_context=swarm_context, out_refs=bear_refs),
-        run_macro_agent(ticker, macro_state, ks, llm,
-                        swarm_context=swarm_context, out_refs=macro_refs),
-        run_value_agent(ticker, debate_data, ks, llm,
-                        swarm_context=swarm_context, out_refs=value_refs),
-        run_momentum_agent(ticker, debate_data, ks, llm,
-                           swarm_context=swarm_context, out_refs=momentum_refs),
+    # ── Per-role resilient execution ───────────────────────────────────────
+    # Each agent is wrapped in _resilient_run_agent which retries once on
+    # InsufficientDataError and falls back to a degraded (heuristic-only)
+    # argument.  Belt-and-suspenders: return_exceptions=True ensures that
+    # any *unexpected* exception is caught post-gather rather than aborting
+    # the entire coroutine group.
+    role_live = {**debate_data, **macro_state}
+    role_configs = [
+        ("bull",     role_live),
+        ("bear",     role_live),
+        ("macro",    macro_state),
+        ("value",    debate_data),
+        ("momentum", debate_data),
+    ]
+    ref_buckets = [bull_refs, bear_refs, macro_refs, value_refs, momentum_refs]
+
+    raw_results = await asyncio.gather(
+        *[
+            _resilient_run_agent(
+                role, ticker, live, ks, llm,
+                swarm_context=swarm_context, out_refs=refs,
+            )
+            for (role, live), refs in zip(role_configs, ref_buckets)
+        ],
+        return_exceptions=True,
     )
 
-    arguments = [bull_arg, bear_arg, macro_arg, value_arg, momentum_arg]
+    # Post-gather: replace any remaining Exception results with degraded args
+    arguments: list[DebateArgument] = []
+    degraded_roles: list[str] = []
+    for (role, live), result in zip(role_configs, raw_results):
+        if isinstance(result, BaseException):
+            logger.error(
+                "[Debate] role=%s unexpected error after resilient wrapper: %s",
+                role, result,
+            )
+            arg = _build_degraded_argument(role, ticker, live)
+            arguments.append(arg)
+            degraded_roles.append(role)
+        else:
+            arguments.append(result)
+            if getattr(result, "degraded", False):
+                degraded_roles.append(role)
+
+    # If ALL 5 agents are degraded, the debate has no real LLM content.
+    # Honour the truthful-data contract: raise rather than show an
+    # all-heuristic debate as if it were a real analysis.
+    if len(degraded_roles) == 5:
+        raise InsufficientDataError(
+            "llm",
+            "LLM analysis unavailable for all debate agents — refusing to "
+            "return a fabricated verdict. Try again when the model provider "
+            "is reachable.",
+            ticker=ticker,
+            missing=[f"llm_output:{r}" for r in degraded_roles],
+        )
+
     bull_score, bear_score, neutral_score = _score_arguments(arguments)
 
     if bull_score >= 4:
@@ -510,6 +630,16 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
     if not verdict or verdict == "NEUTRAL" and heuristic_verdict != "NEUTRAL":
         verdict = heuristic_verdict
 
+    # Append degradation info to quality_warning so frontend can show an
+    # amber banner instead of a red error.
+    if degraded_roles:
+        degraded_note = (
+            f"⚠ {len(degraded_roles)} of 5 agents could not reach the LLM "
+            f"provider ({', '.join(degraded_roles)}). Their analysis is based "
+            f"on heuristic data only and has zero confidence weight."
+        )
+        quality_warning = f"{quality_warning}\n{degraded_note}" if quality_warning else degraded_note
+
     # Store per-agent data snapshots for future learning
     try:
         for arg in arguments:
@@ -527,6 +657,7 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
         bear_score=bear_score,
         neutral_score=neutral_score,
         quality_warning=quality_warning,
+        degraded_roles=degraded_roles,
     )
 
     # ── Decision-Outcome Ledger emission (Harness Engineering Phase 2) ──

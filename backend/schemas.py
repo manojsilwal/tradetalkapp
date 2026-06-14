@@ -299,6 +299,7 @@ class DebateArgument(BaseModel):
     key_points: List[str]
     supporting_data: Dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0)
+    degraded: bool = False
 
 
 class DebateResult(BaseModel):
@@ -311,6 +312,7 @@ class DebateResult(BaseModel):
     bear_score: int
     neutral_score: int
     quality_warning: Optional[str] = None
+    degraded_roles: List[str] = Field(default_factory=list)
 
 
 # ── Strategy Backtesting Models ───────────────────────────────────────────────

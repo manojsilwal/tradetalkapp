@@ -477,6 +477,16 @@ export default function UnifiedDashboardUI() {
         </div>
       )}
 
+      {/* Partial-degradation amber warning: debate succeeded but some agents fell back to heuristic */}
+      {!error && debateData?.quality_warning && debateData?.degraded_roles?.length > 0 && (
+        <div className="glass-panel" style={{ borderColor: '#f59e0b', padding: '14px 16px', borderRadius: '8px', background: 'rgba(245, 158, 11, 0.08)' }}>
+          <p style={{ color: '#f59e0b', margin: 0, display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.85rem', lineHeight: 1.5 }}>
+            <ShieldAlert size={18} style={{ flexShrink: 0, marginTop: 2 }} />
+            <span>{debateData.quality_warning}</span>
+          </p>
+        </div>
+      )}
+
       {!isAnalyzing && !error && !hasDecisionData && !traceData && (
         <div className="dt-prompt-banner glass-panel" style={{ padding: '16px', marginBottom: 4, color: '#94a3b8', fontSize: '0.9rem' }}>
           Enter a ticker and click Analyze. First load can take up to a minute (swarm, debate, and decision terminal).
