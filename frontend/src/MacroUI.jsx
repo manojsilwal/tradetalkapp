@@ -44,8 +44,6 @@ export default function MacroUI() {
 
     const setFlowPeriod = setMacroFlowPeriod;
 
-    const setFlowPeriod = setMacroFlowPeriod;
-
     const isStress = data?.credit_stress_index > 1.1;
 
     return (
