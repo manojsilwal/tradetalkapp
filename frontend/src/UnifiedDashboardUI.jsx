@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useId, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { TrendingUp, Shield, CircleDollarSign, Wallet, PieChart, Scale, CheckCircle2, ArrowUpRight, HelpCircle, Loader2, Search, Zap, XCircle, ShieldAlert } from 'lucide-react';
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, LineChart as ReLineChart, Line } from 'recharts';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, LineChart as ReLineChart, Line, Legend } from 'recharts';
 import { API_BASE_URL } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
@@ -579,7 +579,7 @@ export default function UnifiedDashboardUI() {
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
                   <XAxis 
                     dataKey="timestamp" 
-                    tick={{ fill: 'var(--dt-muted)', fontSize: 10 }}
+                    tick={{ fill: '#94a3b8', fontSize: 10 }}
                     axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
                     tickLine={false}
                     tickFormatter={(tick) => {
@@ -596,7 +596,7 @@ export default function UnifiedDashboardUI() {
                     }}
                   />
                   <YAxis 
-                    tick={{ fill: 'var(--dt-muted)', fontSize: 10 }}
+                    tick={{ fill: '#94a3b8', fontSize: 10 }}
                     axisLine={false}
                     tickLine={false}
                     domain={['auto', 'auto']}
@@ -685,8 +685,8 @@ export default function UnifiedDashboardUI() {
                   <ResponsiveContainer width="100%" height="100%">
                     <ReLineChart data={roadmapChartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                      <XAxis dataKey="t" tick={{ fill: 'var(--dt-muted)', fontSize: 9 }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fill: 'var(--dt-muted)', fontSize: 8 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
+                      <XAxis dataKey="t" tick={{ fill: '#94a3b8', fontSize: 9 }} tickLine={false} axisLine={false} />
+                      <YAxis tick={{ fill: '#94a3b8', fontSize: 8 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
                       <RechartsTooltip content={chartTooltip} />
                       <Line type="monotone" dataKey="bull" name="Bull case" stroke="#00ff88" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
                       <Line type="monotone" dataKey="base" name="Base case" stroke="#8b5cf6" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
@@ -703,178 +703,155 @@ export default function UnifiedDashboardUI() {
           </div>
         </section>
 
-        {/* 4. CONSOLIDATED METRICS */}
-        <section className="dt-panel dt-area-metrics">
-          <h2 className="dt-panel-title">Consolidated Metrics</h2>
+        {/* 4. CONSOLIDATED METRICS & FINANCIAL PERFORMANCE */}
+        <section className="dt-panel dt-area-metrics-perf">
+          <h2 className="dt-panel-title">Financial Health &amp; Performance</h2>
           {fundamentalsLoading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 14, fontSize: '0.9rem' }}>
-              <Loader2 className="spinner" size={18} /> Loading fundamental metrics…
+              <Loader2 className="spinner" size={18} /> Loading financial diagnostics…
             </div>
           ) : (
-            <div className="dt-consolidated" style={{ marginTop: '16px' }}>
-              {/* Left Column: Valuation & Margins */}
-              <div>
-                <h3 className="dt-metrics-section-title">Valuation</h3>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Market Cap</span>
-                  <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.valuation?.market_cap)}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">PE Ratio (TTM)</span>
-                  <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.trailing_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Price to Sales</span>
-                  <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.price_to_sales?.toFixed(2) || <span className="dt-metric-dash">—</span>}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">EV / EBITDA</span>
-                  <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.ev_to_ebitda?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
-                </div>
+            <div style={{ display: 'flex', gap: '40px', flexWrap: 'wrap', marginTop: '20px', alignItems: 'flex-start' }}>
+              {/* Left Column: Consolidated Metrics (approx 38% width) */}
+              <div style={{ flex: '1.2 1 360px', minWidth: '320px' }}>
+                <h3 className="dt-metrics-section-title" style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.05em', marginBottom: 16 }}>
+                  Consolidated Metrics
+                </h3>
+                <div className="dt-consolidated" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 28px' }}>
+                  {/* Left Column: Valuation & Margins */}
+                  <div>
+                    <h4 className="dt-metrics-section-title">Valuation</h4>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Market Cap</span>
+                      <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.valuation?.market_cap)}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">PE Ratio (TTM)</span>
+                      <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.trailing_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Price to Sales</span>
+                      <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.price_to_sales?.toFixed(2) || <span className="dt-metric-dash">—</span>}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">EV / EBITDA</span>
+                      <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.ev_to_ebitda?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                    </div>
 
-                <h3 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Margins &amp; Growth</h3>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Profit Margin</span>
-                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.profit_margins != null ? fundamentalsData.metrics.margins_and_growth.profit_margins * 100 : null)}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Operating Margin</span>
-                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.operating_margins != null ? fundamentalsData.metrics.margins_and_growth.operating_margins * 100 : null)}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Earnings Growth YoY</span>
-                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.earnings_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.earnings_growth_yoy * 100 : null)}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Revenue Growth YoY</span>
-                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.revenue_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.revenue_growth_yoy * 100 : null)}</span>
+                    <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Margins &amp; Growth</h4>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Profit Margin</span>
+                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.profit_margins != null ? fundamentalsData.metrics.margins_and_growth.profit_margins * 100 : null)}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Operating Margin</span>
+                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.operating_margins != null ? fundamentalsData.metrics.margins_and_growth.operating_margins * 100 : null)}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Earnings Growth YoY</span>
+                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.earnings_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.earnings_growth_yoy * 100 : null)}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Revenue Growth YoY</span>
+                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.revenue_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.revenue_growth_yoy * 100 : null)}</span>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Cash Flow, Balance Sheet, Dividends */}
+                  <div>
+                    <h4 className="dt-metrics-section-title">Cash Flow</h4>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Free Cash Flow</span>
+                      <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.cash_flow?.free_cash_flow)}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">FCF Yield</span>
+                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.cash_flow?.fcf_yield != null ? fundamentalsData.metrics.cash_flow.fcf_yield * 100 : null)}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">FCF Per Share</span>
+                      <span className="dt-metric-value">{fundamentalsData?.metrics?.cash_flow?.fcf_per_share != null ? `$${fundamentalsData.metrics.cash_flow.fcf_per_share.toFixed(2)}` : <span className="dt-metric-dash">—</span>}</span>
+                    </div>
+
+                    <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Balance Sheet</h4>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Total Cash</span>
+                      <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_cash)}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Total Debt</span>
+                      <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_debt)}</span>
+                    </div>
+
+                    <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Dividends</h4>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Dividend Yield</span>
+                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.dividend_yield != null ? fundamentalsData.metrics.dividend.dividend_yield * 100 : null)}</span>
+                    </div>
+                    <div className="dt-metric-row">
+                      <span className="dt-metric-label">Payout Ratio</span>
+                      <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.payout_ratio != null ? fundamentalsData.metrics.dividend.payout_ratio * 100 : null)}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Right Column: Cash Flow, Balance Sheet, Dividends */}
-              <div>
-                <h3 className="dt-metrics-section-title">Cash Flow</h3>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Free Cash Flow</span>
-                  <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.cash_flow?.free_cash_flow)}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">FCF Yield</span>
-                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.cash_flow?.fcf_yield != null ? fundamentalsData.metrics.cash_flow.fcf_yield * 100 : null)}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">FCF Per Share</span>
-                  <span className="dt-metric-value">{fundamentalsData?.metrics?.cash_flow?.fcf_per_share != null ? `$${fundamentalsData.metrics.cash_flow.fcf_per_share.toFixed(2)}` : <span className="dt-metric-dash">—</span>}</span>
-                </div>
-
-                <h3 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Balance Sheet</h3>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Total Cash</span>
-                  <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_cash)}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Total Debt</span>
-                  <span className="dt-metric-value">{fmtUsdCompact(fundamentalsData?.metrics?.balance?.total_debt)}</span>
+              {/* Right Column: Financial Performance Graph (approx 62% width) */}
+              <div style={{ flex: '2 1 500px', minWidth: '400px', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <h3 className="dt-metrics-section-title" style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.05em', margin: 0 }}>
+                    Financial Performance
+                  </h3>
+                  <div className="dt-perf-toggle">
+                    <button
+                      type="button"
+                      className={`dt-perf-toggle-btn ${perfPeriod === 'quarterly' ? 'active' : ''}`}
+                      onClick={() => setPerfPeriod('quarterly')}
+                    >
+                      Quarterly
+                    </button>
+                    <button
+                      type="button"
+                      className={`dt-perf-toggle-btn ${perfPeriod === 'annual' ? 'active' : ''}`}
+                      onClick={() => setPerfPeriod('annual')}
+                    >
+                      Annually
+                    </button>
+                  </div>
                 </div>
 
-                <h3 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Dividends</h3>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Dividend Yield</span>
-                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.dividend_yield != null ? fundamentalsData.metrics.dividend.dividend_yield * 100 : null)}</span>
-                </div>
-                <div className="dt-metric-row">
-                  <span className="dt-metric-label">Payout Ratio</span>
-                  <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.payout_ratio != null ? fundamentalsData.metrics.dividend.payout_ratio * 100 : null)}</span>
+                <div className="dt-perf-chart-box" style={{ padding: '20px 24px', margin: 0 }}>
+                  <div className="dt-perf-chart-inner" style={{ height: '310px' }}>
+                    {fundamentalsData?.financials?.[perfPeriod]?.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={fundamentalsData.financials[perfPeriod]} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                          <XAxis dataKey="period" tick={{ fill: '#94a3b8', fontSize: 9 }} tickLine={false} axisLine={false} />
+                          <YAxis tick={{ fill: '#94a3b8', fontSize: 8 }} axisLine={false} tickLine={false} tickFormatter={(val) => fmtUsdCompact(val)} />
+                          <RechartsTooltip
+                            contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px' }}
+                            labelStyle={{ color: '#94a3b8', fontSize: '10px' }}
+                            itemStyle={{ color: '#fff', fontSize: '11px' }}
+                            formatter={(value) => [fmtUsdCompact(value)]}
+                            cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8', paddingTop: 10 }} />
+                          <Bar dataKey="revenue" fill="#3b82f6" name="Revenue" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="net_income" fill="#10b981" name="Net Income" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                        No financial performance data
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
           )}
         </section>
 
-        {/* 5. FINANCIAL PERFORMANCE */}
-        <section className="dt-panel dt-area-performance">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 className="dt-panel-title" style={{ margin: 0 }}>Financial Performance</h2>
-            <div className="dt-perf-toggle">
-              <button
-                type="button"
-                className={`dt-perf-toggle-btn ${perfPeriod === 'quarterly' ? 'active' : ''}`}
-                onClick={() => setPerfPeriod('quarterly')}
-              >
-                Quarterly
-              </button>
-              <button
-                type="button"
-                className={`dt-perf-toggle-btn ${perfPeriod === 'annual' ? 'active' : ''}`}
-                onClick={() => setPerfPeriod('annual')}
-              >
-                Annually
-              </button>
-            </div>
-          </div>
-
-          {fundamentalsLoading ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 24, fontSize: '0.9rem' }}>
-              <Loader2 className="spinner" size={18} /> Loading financials…
-            </div>
-          ) : (
-            <div style={{ marginTop: 12 }}>
-              {/* Revenue Chart */}
-              <div className="dt-perf-chart-label">Revenue</div>
-              <div className="dt-perf-chart-box">
-                <div className="dt-perf-chart-inner">
-                  {fundamentalsData?.financials?.[perfPeriod]?.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={fundamentalsData.financials[perfPeriod]} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                        <XAxis dataKey="period" tick={{ fill: 'var(--dt-muted)', fontSize: 9 }} tickLine={false} axisLine={false} />
-                        <YAxis tick={{ fill: 'var(--dt-muted)', fontSize: 8 }} axisLine={false} tickLine={false} tickFormatter={(val) => fmtUsdCompact(val)} />
-                        <RechartsTooltip
-                          contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px' }}
-                          labelStyle={{ color: 'var(--dt-muted)', fontSize: '10px' }}
-                          itemStyle={{ color: '#fff', fontSize: '11px' }}
-                          formatter={(value) => [fmtUsdCompact(value), 'Revenue']}
-                        />
-                        <Bar dataKey="revenue" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)', fontSize: '0.8rem' }}>
-                      No revenue data
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Net Income Chart */}
-              <div className="dt-perf-chart-label">Net Income</div>
-              <div className="dt-perf-chart-box">
-                <div className="dt-perf-chart-inner">
-                  {fundamentalsData?.financials?.[perfPeriod]?.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={fundamentalsData.financials[perfPeriod]} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                        <XAxis dataKey="period" tick={{ fill: 'var(--dt-muted)', fontSize: 9 }} tickLine={false} axisLine={false} />
-                        <YAxis tick={{ fill: 'var(--dt-muted)', fontSize: 8 }} axisLine={false} tickLine={false} tickFormatter={(val) => fmtUsdCompact(val)} />
-                        <RechartsTooltip
-                          contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px' }}
-                          labelStyle={{ color: 'var(--dt-muted)', fontSize: '10px' }}
-                          itemStyle={{ color: '#fff', fontSize: '11px' }}
-                          formatter={(value) => [fmtUsdCompact(value), 'Net Income']}
-                        />
-                        <Bar dataKey="net_income" fill="#10b981" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)', fontSize: '0.8rem' }}>
-                      No net income data
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
       </div>
     </div>
   );

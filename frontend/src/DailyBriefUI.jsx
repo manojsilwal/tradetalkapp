@@ -227,73 +227,7 @@ export default function DailyBriefUI() {
   const timelineNews = mapRealNews()
   const currentTableMovers = showMoversTab === 'losers' ? tableLosers : tableGainers
 
-  if (loading || extraLoading) {
-    return (
-      <div 
-        className="fade-in" 
-        style={{ 
-          display: 'flex', 
-          flexDirection: 'column',
-          justifyContent: 'center', 
-          alignItems: 'center', 
-          minHeight: '80vh',
-          width: '100%',
-          padding: '24px',
-          boxSizing: 'border-box'
-        }}
-      >
-        <div 
-          className="glass-panel" 
-          style={{ 
-            padding: '40px 48px', 
-            borderRadius: 20, 
-            textAlign: 'center', 
-            maxWidth: 480, 
-            width: '100%',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 20
-          }}
-        >
-          <div style={{ position: 'relative', width: 64, height: 64, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            <div style={{
-              position: 'absolute',
-              width: 72,
-              height: 72,
-              borderRadius: '50%',
-              border: '2px solid rgba(59, 130, 246, 0.25)',
-              animation: 'pulse 2s infinite ease-in-out',
-              boxShadow: '0 0 20px rgba(59, 130, 246, 0.15)'
-            }} />
-            <Loader2 className="spinner" size={36} color="var(--accent-blue)" />
-          </div>
-          
-          <div>
-            <h3 style={{ 
-              margin: '0 0 6px 0', 
-              fontSize: '1.15rem', 
-              fontWeight: 600, 
-              color: '#f8fafc',
-              letterSpacing: '0.02em'
-            }}>
-              Loading Market Brief
-            </h3>
-            <p style={{ 
-              margin: 0, 
-              fontSize: '0.875rem', 
-              color: '#64748b',
-              fontWeight: 500,
-              lineHeight: 1.5
-            }}>
-              Securing grounded RAG context & analyzing portfolio trends...
-            </p>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // Page-level loading is now handled at the component level to render the shell immediately
 
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
@@ -348,7 +282,6 @@ export default function DailyBriefUI() {
         </div>
       )}
 
-      {data && (
         <>
           {/* Weekend Session Info Banner */}
           {((data?.market_session?.status === 'weekend') || (portfolioBrief?.market_session?.status === 'weekend')) && (
@@ -407,6 +340,10 @@ export default function DailyBriefUI() {
                 <Plus size={28} color="#64748b" style={{ marginBottom: 6 }} />
                 <span style={{ color: '#94a3b8', fontSize: '0.9rem', fontWeight: 700 }}>New portfolio</span>
               </div>
+            ) : (loading || extraLoading) && portfolioVal == null ? (
+              <div className="brief-card" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '110px' }}>
+                <Loader2 className="spinner" size={20} color="var(--accent-blue)" />
+              </div>
             ) : (
               <div className="brief-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -437,35 +374,41 @@ export default function DailyBriefUI() {
                   <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>Last Session</span>
                 )}
               </div>
-              <div style={{ marginTop: 12 }}>
-                <div className="brief-benchmark-row">
-                  <div className="brief-benchmark-item">
-                    <span className={spyChange == null ? 'brief-bullet-neutral' : (spyChange > 0 ? 'brief-bullet-green' : (spyChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
-                    <span>SP500</span>
-                  </div>
-                  <span style={{ color: spyChange == null ? '#94a3b8' : (spyChange > 0 ? '#34d399' : (spyChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
-                    {spyChange != null ? `${spyChange > 0 ? '+' : ''}${spyChange.toFixed(1)}%` : '—'}
-                  </span>
+              {(loading || extraLoading) && spyChange == null ? (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60px', marginTop: 12 }}>
+                  <Loader2 className="spinner" size={20} color="var(--accent-blue)" />
                 </div>
-                <div className="brief-benchmark-row">
-                  <div className="brief-benchmark-item">
-                    <span className={qqqChange == null ? 'brief-bullet-neutral' : (qqqChange > 0 ? 'brief-bullet-green' : (qqqChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
-                    <span>NASDAQ (QQQ)</span>
+              ) : (
+                <div style={{ marginTop: 12 }}>
+                  <div className="brief-benchmark-row">
+                    <div className="brief-benchmark-item">
+                      <span className={spyChange == null ? 'brief-bullet-neutral' : (spyChange > 0 ? 'brief-bullet-green' : (spyChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
+                      <span>SP500</span>
+                    </div>
+                    <span style={{ color: spyChange == null ? '#94a3b8' : (spyChange > 0 ? '#34d399' : (spyChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
+                      {spyChange != null ? `${spyChange > 0 ? '+' : ''}${spyChange.toFixed(1)}%` : '—'}
+                    </span>
                   </div>
-                  <span style={{ color: qqqChange == null ? '#94a3b8' : (qqqChange > 0 ? '#34d399' : (qqqChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
-                    {qqqChange != null ? `${qqqChange > 0 ? '+' : ''}${qqqChange.toFixed(1)}%` : '—'}
-                  </span>
-                </div>
-                <div className="brief-benchmark-row">
-                  <div className="brief-benchmark-item">
-                    <span className={ijrChange == null ? 'brief-bullet-neutral' : (ijrChange > 0 ? 'brief-bullet-green' : (ijrChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
-                    <span>iShares S&P Small-Cap ETF (IJR)</span>
+                  <div className="brief-benchmark-row">
+                    <div className="brief-benchmark-item">
+                      <span className={qqqChange == null ? 'brief-bullet-neutral' : (qqqChange > 0 ? 'brief-bullet-green' : (qqqChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
+                      <span>NASDAQ (QQQ)</span>
+                    </div>
+                    <span style={{ color: qqqChange == null ? '#94a3b8' : (qqqChange > 0 ? '#34d399' : (qqqChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
+                      {qqqChange != null ? `${qqqChange > 0 ? '+' : ''}${qqqChange.toFixed(1)}%` : '—'}
+                    </span>
                   </div>
-                  <span style={{ color: ijrChange == null ? '#94a3b8' : (ijrChange > 0 ? '#34d399' : (ijrChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
-                    {ijrChange != null ? `${ijrChange > 0 ? '+' : ''}${ijrChange.toFixed(1)}%` : '—'}
-                  </span>
+                  <div className="brief-benchmark-row">
+                    <div className="brief-benchmark-item">
+                      <span className={ijrChange == null ? 'brief-bullet-neutral' : (ijrChange > 0 ? 'brief-bullet-green' : (ijrChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
+                      <span>iShares S&P Small-Cap ETF (IJR)</span>
+                    </div>
+                    <span style={{ color: ijrChange == null ? '#94a3b8' : (ijrChange > 0 ? '#34d399' : (ijrChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
+                      {ijrChange != null ? `${ijrChange > 0 ? '+' : ''}${ijrChange.toFixed(1)}%` : '—'}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Key Insights Card */}
@@ -526,7 +469,12 @@ export default function DailyBriefUI() {
                   </span>
                 </div>
                 
-                {currentTableMovers.length === 0 ? (
+                {(loading || extraLoading) && currentTableMovers.length === 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: 12 }}>
+                    <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
+                    <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Loading top movers...</span>
+                  </div>
+                ) : currentTableMovers.length === 0 ? (
                   <p style={{ color: '#94a3b8', fontSize: '0.9rem', padding: '16px 4px', margin: 0 }}>
                     Live movers data is unavailable right now — nothing to show. Try Refresh later.
                   </p>
@@ -596,7 +544,12 @@ export default function DailyBriefUI() {
                   </span>
                 </div>
 
-                {!hasPortfolioSetup ? (
+                {(loading || extraLoading) && hasPortfolioSetup && tableHoldings.length === 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: 12 }}>
+                    <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
+                    <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Analyzing holdings exposure...</span>
+                  </div>
+                ) : !hasPortfolioSetup ? (
                   <div
                     onClick={() => navigate('/portfolio')}
                     style={{
@@ -693,7 +646,12 @@ export default function DailyBriefUI() {
                 </div>
               </div>
 
-              {timelineNews.length === 0 ? (
+              {(loading || extraLoading) && timelineNews.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: 12 }}>
+                  <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
+                  <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Fetching macro news timeline...</span>
+                </div>
+              ) : timelineNews.length === 0 ? (
                 <p style={{ color: '#94a3b8', fontSize: '0.9rem', padding: '16px 4px', margin: 0 }}>
                   No live news could be fetched for your portfolio tickers — nothing to show. Try Refresh later.
                 </p>
@@ -719,7 +677,6 @@ export default function DailyBriefUI() {
             </div>
           </div>
         </>
-      )}
     </div>
   )
 }
