@@ -237,6 +237,7 @@
 .dt-area-verdict { grid-area: verdict; }
 .dt-area-metrics { grid-area: metrics; }
 .dt-area-performance { grid-area: performance; }
+.dt-area-metrics-perf { grid-column: 1 / -1; }
 
 /* —— 2×2 dashboard (legacy) —— */
 .dt-dash-grid {
@@ -516,6 +517,19 @@
   margin-bottom: 10px;
   letter-spacing: 0.01em;
 }
+
+h4.dt-metrics-section-title {
+  color: var(--dt-blue);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 12px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 3px;
+}
+
 
 .dt-metric-row {
   display: flex;
