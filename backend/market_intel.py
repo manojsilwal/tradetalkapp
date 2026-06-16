@@ -30,7 +30,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +227,97 @@ def _fast_info_mover_row(sym: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _latest_stored_closes() -> Dict[str, float]:
+    """Most recent per-symbol close from the data lake (latest ingested session)."""
+    closes: Dict[str, float] = {}
+    try:
+        from backend.mcp_server.backend import backend
+
+        rows = backend().query(
+            "SELECT symbol, close FROM daily_prices "
+            "WHERE trade_date = (SELECT MAX(trade_date) FROM daily_prices WHERE close IS NOT NULL) "
+            "AND close IS NOT NULL"
+        )
+        for r in rows or []:
+            sym = (r.get("symbol") or "").upper()
+            c = r.get("close")
+            if sym and c:
+                try:
+                    closes[sym] = float(c)
+                except (TypeError, ValueError):
+                    continue
+    except Exception as e:
+        logger.warning("[MarketIntel] latest stored closes query failed: %s", e)
+    return closes
+
+
+def _fetch_movers_via_fincrawler(max_symbols: int = 250) -> List[Dict[str, Any]]:
+    """Cloud-reliable movers: FinCrawler spot price vs the latest stored close.
+
+    yfinance bulk/fast_info scans are throttled from cloud egress IPs. FinCrawler's
+    ``/quote`` endpoint scrapes from its own host and stays reliable, so we pair
+    those live prices with the most recent close in ``daily_prices`` to derive a
+    session-style percentage move. Bounded to ``max_symbols`` liquid names to keep
+    latency sane (runs in the background revalidation thread).
+    """
+    from backend.fincrawler_client import fc
+
+    if not fc.enabled:
+        return []
+
+    closes = _latest_stored_closes()
+    if not closes:
+        return []
+
+    universe = [s for s in _get_sp500_universe() if s in closes]
+    if not universe:
+        universe = list(closes.keys())
+    universe = universe[:max_symbols]
+
+    quotes: Dict[str, float] = {}
+
+    def _one(sym: str) -> Optional[Tuple[str, float]]:
+        price = fc.get_quote_price_sync(sym)
+        if price and price > 0:
+            return sym, float(price)
+        return None
+
+    try:
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            futures = [executor.submit(_one, s) for s in universe]
+            for future in as_completed(futures):
+                try:
+                    res = future.result()
+                    if res:
+                        quotes[res[0]] = res[1]
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning("[MarketIntel] fincrawler movers scan failed: %s", e)
+        return []
+
+    movers: List[Dict[str, Any]] = []
+    for sym, price in quotes.items():
+        prev = closes.get(sym)
+        if not prev or prev <= 0:
+            continue
+        pct = (price - prev) / prev * 100.0
+        movers.append({
+            "sym": sym,
+            "price": round(float(price), 2),
+            "pct": round(float(pct), 2),
+            "volume": 0,
+            "relative_volume": 1.0,
+            "return_zscore_60d": 0.0,
+        })
+    logger.info(
+        "[MarketIntel] fincrawler movers: %d/%d via /quote vs stored close",
+        len(movers),
+        len(universe),
+    )
+    return movers
+
+
 def _compute_live_movers_parallel() -> Dict[str, Any]:
     """
     Scan curated universe with a single batch download — much faster and doesn't exhaust connections.
@@ -293,11 +384,16 @@ def _compute_live_movers_parallel() -> Dict[str, Any]:
     except Exception as e:
         logger.warning("[MarketIntel] live movers batch download failed: %s", e)
 
-    # Fallback when the bulk batch download returns nothing (common on cloud
-    # hosts where Yahoo throttles `yf.download` of the full universe). Reuse the
-    # proven parallel fast_info path (`fetch_realtime_quotes`) — the same one the
-    # benchmark/home overlay relies on — across the whole universe. force=True so
-    # it runs regardless of the current session window.
+    # Fallback 1 (cloud-reliable): when the bulk download returns nothing —
+    # common on cloud egress IPs where Yahoo throttles `yf.download`/fast_info of
+    # the full universe — derive movers from FinCrawler spot prices (scraped on
+    # the FinCrawler host, not throttled here) versus the latest stored close.
+    if not movers:
+        movers = _fetch_movers_via_fincrawler()
+
+    # Fallback 2: the proven parallel fast_info path (`fetch_realtime_quotes`),
+    # the same one the benchmark/home overlay relies on. Works where direct
+    # yfinance access is available (local/dev). force=True bypasses session gating.
     if not movers:
         logger.info(
             "[MarketIntel] batch empty; scanning %d-name universe via parallel fast_info...",
@@ -922,6 +1018,19 @@ def _fetch_movers_and_sectors() -> Dict[str, Any]:
                         movers.append(entry)
             except Exception:
                 continue
+
+        # When direct yfinance is throttled (cloud egress IPs), fast_info also
+        # returns nothing — derive movers from FinCrawler spot prices vs stored
+        # closes so the scheduled refresh still populates top movers.
+        if not movers:
+            for m in _fetch_movers_via_fincrawler():
+                m.setdefault("catalyst_status", "no_catalyst")
+                m.setdefault("primary_cause_category", "none")
+                m.setdefault("primary_cause_headline", "")
+                m.setdefault("primary_cause_weight", 0.0)
+                m.setdefault("market_regime", "Balanced")
+                movers.append(m)
+
         movers.sort(key=lambda x: x["pct"])
         return {
             "losers": movers[:25],

@@ -35,8 +35,16 @@ def as_et_today() -> date:
 
 
 def target_through_date() -> date:
-    """Last completed calendar day in US/Eastern (yfinance supplies prior session bars)."""
-    return as_et_today() - timedelta(days=1)
+    """The last *completed* US trading session in US/Eastern.
+
+    Holiday/weekend-aware and close-time aware: an evening run (after the 16:00 ET
+    cash close) ingests the session that just closed, while a pre-close run still
+    targets the prior session. This lets the same job run both in the evening
+    (shortly after close) and the next morning without missing a session.
+    """
+    from backend.market_calendar import last_completed_session
+
+    return last_completed_session()
 
 
 def get_bq_last_trade_date() -> Optional[date]:

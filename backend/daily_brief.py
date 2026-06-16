@@ -406,6 +406,20 @@ def _fetch_movers_from_intel(n_losers: int, n_gainers: int) -> List[Dict[str, An
     from backend import market_intel
 
     snap = market_intel.get_live_movers_snapshot()
+
+    # On a cold cache the snapshot returns an immediate (often empty) fallback
+    # while it revalidates in the background. Rather than declare the surface
+    # unavailable on that first request, derive movers synchronously from the
+    # cloud-reliable FinCrawler source (spot price vs latest stored close).
+    if not (snap.get("losers") or snap.get("gainers")):
+        fc_movers = market_intel._fetch_movers_via_fincrawler()
+        if fc_movers:
+            fc_movers.sort(key=lambda x: x["pct"])
+            snap = {
+                "losers": fc_movers[:25],
+                "gainers": list(reversed(fc_movers))[:25],
+            }
+
     rows: List[Dict[str, Any]] = []
     today = date.today().isoformat()
     for bucket, key, limit in (

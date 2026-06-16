@@ -15,9 +15,15 @@ REGION="${GCP_REGION:-us-central1}"
 JOB_NAME="sp500-daily-update"
 IMAGE="gcr.io/${PROJECT_ID}/sp500-ingest:latest"
 SA_EMAIL="tradetalk-etl@${PROJECT_ID}.iam.gserviceaccount.com"
+# Two triggers per weekday so the just-closed session is ingested the same
+# evening (shrinking the overnight "stale" window) and re-checked the next
+# morning. The job is idempotent (resolve_ingest_window returns None if current).
+#   evening: 22:30 UTC Mon–Fri (~18:30 ET) — after the 16:00 ET cash close + settle
+#   morning: 12:00 UTC Mon–Fri (~08:00 ET) — backstop before US market open
 SCHEDULER_NAME="sp500-daily-update-trigger"
-# 12:00 UTC Mon–Fri (08:00 ET during EDT)
 CRON="0 12 * * 1-5"
+SCHEDULER_NAME_PM="sp500-daily-update-trigger-pm"
+CRON_PM="30 22 * * 1-5"
 EXECUTE=0
 SKIP_BUILD=0
 
@@ -60,25 +66,33 @@ gcloud run jobs deploy "$JOB_NAME" \
   --quiet
 
 echo "[3/4] Cloud Scheduler (OAuth as $SA_EMAIL)..."
-if gcloud scheduler jobs describe "$SCHEDULER_NAME" --location="$REGION" &>/dev/null; then
-  gcloud scheduler jobs update http "$SCHEDULER_NAME" \
-    --location="$REGION" \
-    --schedule="$CRON" \
-    --time-zone="UTC" \
-    --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run" \
-    --http-method=POST \
-    --oauth-service-account-email="$SA_EMAIL" \
-    --quiet
-else
-  gcloud scheduler jobs create http "$SCHEDULER_NAME" \
-    --location="$REGION" \
-    --schedule="$CRON" \
-    --time-zone="UTC" \
-    --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run" \
-    --http-method=POST \
-    --oauth-service-account-email="$SA_EMAIL" \
-    --quiet
-fi
+JOB_URI="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run"
+
+upsert_scheduler() {
+  local name="$1" cron="$2"
+  if gcloud scheduler jobs describe "$name" --location="$REGION" &>/dev/null; then
+    gcloud scheduler jobs update http "$name" \
+      --location="$REGION" \
+      --schedule="$cron" \
+      --time-zone="UTC" \
+      --uri="$JOB_URI" \
+      --http-method=POST \
+      --oauth-service-account-email="$SA_EMAIL" \
+      --quiet
+  else
+    gcloud scheduler jobs create http "$name" \
+      --location="$REGION" \
+      --schedule="$cron" \
+      --time-zone="UTC" \
+      --uri="$JOB_URI" \
+      --http-method=POST \
+      --oauth-service-account-email="$SA_EMAIL" \
+      --quiet
+  fi
+}
+
+upsert_scheduler "$SCHEDULER_NAME" "$CRON"
+upsert_scheduler "$SCHEDULER_NAME_PM" "$CRON_PM"
 
 echo "[4/4] Grant scheduler SA permission to invoke job..."
 gcloud run jobs add-iam-policy-binding "$JOB_NAME" \

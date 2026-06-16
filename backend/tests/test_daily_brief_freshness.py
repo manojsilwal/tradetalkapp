@@ -212,5 +212,47 @@ class TestMorningBriefHomeLive(unittest.TestCase):
         self.assertTrue(out["data_freshness"]["is_stale"])
 
 
+class TestFinCrawlerMoversFallback(unittest.TestCase):
+    def test_fincrawler_movers_pct_from_stored_close(self):
+        from backend import market_intel
+        from backend.fincrawler_client import fc
+
+        closes = {"AAA": 100.0, "BBB": 50.0, "CCC": 200.0}
+        prices = {"AAA": 110.0, "BBB": 45.0, "CCC": 200.0}
+        with mock.patch.object(market_intel, "_latest_stored_closes", return_value=closes), \
+                mock.patch.object(market_intel, "_get_sp500_universe", return_value=list(closes)), \
+                mock.patch.object(type(fc), "enabled", property(lambda self: True)), \
+                mock.patch.object(fc, "get_quote_price_sync", side_effect=lambda s: prices.get(s)):
+            movers = market_intel._fetch_movers_via_fincrawler()
+        by_sym = {m["sym"]: m["pct"] for m in movers}
+        self.assertEqual(by_sym["AAA"], 10.0)
+        self.assertEqual(by_sym["BBB"], -10.0)
+        self.assertEqual(by_sym["CCC"], 0.0)
+
+    def test_fincrawler_disabled_returns_empty(self):
+        from backend import market_intel
+        from backend.fincrawler_client import fc
+
+        with mock.patch.object(type(fc), "enabled", property(lambda self: False)):
+            self.assertEqual(market_intel._fetch_movers_via_fincrawler(), [])
+
+    def test_fetch_movers_from_intel_uses_fincrawler_when_snapshot_empty(self):
+        # When the live snapshot is empty (cold cache), the stale path should
+        # synchronously derive movers from FinCrawler rather than return nothing.
+        empty_snap = {"losers": [], "gainers": []}
+        fc_rows = [
+            {"sym": "AAA", "price": 110.0, "pct": 10.0, "volume": 0,
+             "relative_volume": 1.0, "return_zscore_60d": 0.0},
+            {"sym": "BBB", "price": 45.0, "pct": -10.0, "volume": 0,
+             "relative_volume": 1.0, "return_zscore_60d": 0.0},
+        ]
+        with mock.patch("backend.market_intel.get_live_movers_snapshot", return_value=empty_snap), \
+                mock.patch("backend.market_intel._fetch_movers_via_fincrawler", return_value=fc_rows):
+            rows = daily_brief._fetch_movers_from_intel(5, 5)
+        symbols = {r["symbol"] for r in rows}
+        self.assertIn("AAA", symbols)
+        self.assertIn("BBB", symbols)
+
+
 if __name__ == "__main__":
     unittest.main()

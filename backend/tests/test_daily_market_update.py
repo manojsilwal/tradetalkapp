@@ -15,10 +15,14 @@ from backend.data_lake.daily_market_update import (
 
 
 class TestDailyMarketWindow(unittest.TestCase):
-    def test_target_through_is_yesterday_et(self):
-        with patch("backend.data_lake.daily_market_update.as_et_today") as mock_today:
-            mock_today.return_value = date(2026, 5, 31)
-            self.assertEqual(target_through_date(), date(2026, 5, 30))
+    def test_target_through_uses_last_completed_session(self):
+        # Evening run after close should target the session that just closed so
+        # the same job works both in the evening and the next morning.
+        with patch(
+            "backend.market_calendar.last_completed_session",
+            return_value=date(2026, 5, 29),
+        ):
+            self.assertEqual(target_through_date(), date(2026, 5, 29))
 
     def test_resolve_window_when_behind(self):
         with patch("backend.data_lake.daily_market_update.get_bq_last_trade_date") as mock_last:
