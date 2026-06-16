@@ -128,7 +128,7 @@ async def _ingest_macro_snapshot(knowledge_store) -> dict:
     # Merge FRED economic data (rates, CPI, unemployment, treasury yields)
     try:
         from .connectors import fetch_macro_snapshot
-        fred_data = await asyncio.to_thread(fetch_macro_snapshot)
+        fred_data = await fetch_macro_snapshot()
         if fred_data:
             for key in ("fed_funds_rate", "cpi_yoy", "treasury_10y", "treasury_2y",
                          "unemployment", "m2_supply"):

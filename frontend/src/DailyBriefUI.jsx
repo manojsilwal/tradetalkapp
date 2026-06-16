@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, RefreshCw, TrendingDown, Shield, List, Zap, Plus, AlertTriangle } from 'lucide-react'
+import { Loader2, RefreshCw, TrendingDown, Shield, List, Plus, AlertTriangle } from 'lucide-react'
 import { API_BASE_URL, apiFetch } from './api'
 import { useAnalysisHistory } from './AnalysisContext'
 import { DataTrustBanner } from './components/Freshness'
-import LiveQuoteWidget from './components/LiveQuoteWidget'
+import ActionableCompaniesPanel, { ActionableCompaniesButton, useActionableCompanies } from './components/ActionableCompaniesPanel'
 import { isBriefSessionTrustworthy, isSessionDateStale } from './freshness'
 
 function formatTradeDateLabel(isoDateStr) {
@@ -113,8 +113,9 @@ function getTickerMetadata(symbol, rowData) {
 
 export default function DailyBriefUI() {
   const navigate = useNavigate()
-  const { dailyBriefState, loadDailyBrief, startDailyBriefDeepRefresh } = useAnalysisHistory()
-  const { data, loading, error, deepStatus, deepBusy } = dailyBriefState
+  const { dailyBriefState, loadDailyBrief } = useAnalysisHistory()
+  const { data, loading, error } = dailyBriefState
+  const actionableState = useActionableCompanies()
 
   const [portfolioBrief, setPortfolioBrief] = useState(null)
   const [portfolioNews, setPortfolioNews] = useState([])
@@ -186,17 +187,12 @@ export default function DailyBriefUI() {
     loadExtraData()
   }
 
-  const startDeepRefresh = () => {
-    startDailyBriefDeepRefresh()
-  }
-
   const goAnalyze = (sym) => {
     navigate(`/dashboard?ticker=${encodeURIComponent(sym)}`)
   }
 
   const hasPortfolioSetup = portfolioBrief?.has_portfolio === true
   const showHoldingsLoader = (loading || extraLoading) && hasPortfolioSetup;
-  const deepRunning = deepStatus?.status === 'running' || deepBusy
 
   // Data mapping
   const portfolioVal = portfolioBrief?.summary?.total_value != null
@@ -311,8 +307,7 @@ export default function DailyBriefUI() {
   return (
     <div className="dt-wrap fade-in" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
       {/* Header section */}
-      <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <LiveQuoteWidget defaultSymbol="AAPL" />
+      <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'flex-end' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start' }}>
           <button
             type="button"
@@ -333,26 +328,7 @@ export default function DailyBriefUI() {
             {loading || extraLoading ? <Loader2 size={16} className="spinner" /> : <RefreshCw size={16} />}
             Refresh
           </button>
-          <button
-            type="button"
-            onClick={startDeepRefresh}
-            disabled={deepRunning || loading}
-            title="Batched LLM + scorecard enrichment (background)"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: '1px solid rgba(167,139,250,0.45)',
-              background: 'rgba(124,58,237,0.15)',
-              color: '#e9d5ff',
-              cursor: deepRunning ? 'wait' : 'pointer',
-            }}
-          >
-            {deepRunning ? <Loader2 size={16} className="spinner" /> : <Zap size={16} />}
-            Actionable Companies
-          </button>
+          <ActionableCompaniesButton busy={actionableState.busy} onClick={actionableState.startScan} />
         </div>
       </header>
 
@@ -363,6 +339,8 @@ export default function DailyBriefUI() {
       )}
 
       {freshness && <DataTrustBanner envelope={freshness} />}
+
+      <ActionableCompaniesPanel state={actionableState} onSelectTicker={goAnalyze} />
 
         <>
           {/* Weekend Session Info Banner */}

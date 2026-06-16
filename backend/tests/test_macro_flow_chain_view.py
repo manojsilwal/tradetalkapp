@@ -103,6 +103,18 @@ class TestValueChainView(unittest.TestCase):
         self.assertTrue(payload["spend"]["available"])
         self.assertEqual(payload["spend"]["metric"], "capex_ttm")
         self.assertGreater(payload["spend"]["stage_totals"][1]["latest_usd"], 100e9)
+        self.assertTrue(payload.get("spend_flow_groups"))
+        hyperscaler = next(g for g in payload["spend_flow_groups"] if g["to_stage_id"] == "hyperscaler")
+        self.assertTrue(hyperscaler["top_spenders"])
+        self.assertTrue(hyperscaler["top_beneficiaries"])
+        semi = next(g for g in payload["spend_flow_groups"] if g["to_stage_id"] == "semiconductor")
+        beneficiary_ids = [b["entity_id"] for b in semi["top_beneficiaries"]]
+        self.assertIn("NVDA", beneficiary_ids)
+        foundry = next(g for g in payload["spend_flow_groups"] if g["to_stage_id"] == "foundry_infra")
+        self.assertIn("TSM", [b["entity_id"] for b in foundry["top_beneficiaries"]])
+        materials = next(g for g in payload["spend_flow_groups"] if g["to_stage_id"] == "materials")
+        self.assertIn("TSM", [s["entity_id"] for s in materials["top_spenders"]])
+        self.assertIn("ASML", [b["entity_id"] for b in materials["top_beneficiaries"]])
 
 
 if __name__ == "__main__":

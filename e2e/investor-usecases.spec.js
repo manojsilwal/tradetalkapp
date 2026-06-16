@@ -36,12 +36,10 @@ test.describe('Investor Use Cases', () => {
   test('macro page loads key investor context (FaultHunter: macro-allocation-week)', async ({ page }) => {
     await page.goto('/macro', { waitUntil: 'domcontentloaded' });
     await dismissOnboarding(page);
-    await expect(page.getByRole('heading', { name: 'Global Macroeconomic Grounding' })).toBeVisible({
-      timeout: 60000,
-    });
-    await expect(page.getByTestId('macro-flow-section')).toBeVisible({ timeout: 120000 });
-    await expect(page.getByRole('heading', { name: 'Thematic capital flow' })).toBeVisible({ timeout: 120000 });
-    await expect(page.getByRole('heading', { name: 'Global Capital Flows' })).toBeVisible({ timeout: 60000 });
+    await expect(page.getByText('Global Macro')).toBeVisible({ timeout: 60000 });
+    await expect(page.getByTestId('global-cap-flow-dashboard')).toBeVisible({ timeout: 120000 });
+    await expect(page.getByText('Market Regime')).toBeVisible({ timeout: 120000 });
+    await expect(page.getByTestId('global-markets-chart')).toBeVisible({ timeout: 60000 });
   });
 
 

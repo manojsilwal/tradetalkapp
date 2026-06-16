@@ -82,6 +82,48 @@ class TestMacroFlowCronRefresh(unittest.TestCase):
 
 
 
+class TestMacroSpendChain(unittest.TestCase):
+    def test_spend_chain_endpoint_returns_groups(self):
+        with TestClient(app) as client:
+            response = client.get("/macro/spend-chain")
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload.get("available"))
+        groups = payload.get("spend_flow_groups") or []
+        self.assertGreaterEqual(len(groups), 4)
+        hyperscaler = next(g for g in groups if g["to_stage_id"] == "hyperscaler")
+        self.assertIn("MSFT", [b["entity_id"] for b in hyperscaler["top_beneficiaries"]])
+
+
+class TestMacroFredSnapshot(unittest.TestCase):
+    @patch("backend.connectors.fred._sync_fetch_all")
+    def test_fred_snapshot_endpoint(self, mock_fetch):
+        mock_fetch.return_value = {
+            "fed_funds_rate": 3.63,
+            "cpi_yoy": 2.8,
+            "unemployment": 4.3,
+            "fetched_at": "2026-06-14T00:00:00+00:00",
+            "source": "fred.stlouisfed.org",
+        }
+        with TestClient(app) as client:
+            response = client.get("/macro/fred-snapshot")
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["fed_funds_rate"], 3.63)
+        self.assertEqual(payload["cpi_yoy"], 2.8)
+        self.assertEqual(payload["source"], "fred.stlouisfed.org")
+
+    @patch("backend.connectors.fred._fetch_series_latest", side_effect=RuntimeError("timeout"))
+    @patch("backend.connectors.fred._compute_core_cpi_yoy", side_effect=RuntimeError("timeout"))
+    def test_fred_seed_fallback_when_live_unavailable(self, _cpi, _fed):
+        from backend.connectors.fred import _sync_fetch_all
+
+        snapshot = _sync_fetch_all(include_extended=False)
+        self.assertEqual(snapshot["fed_funds_rate"], 3.63)
+        self.assertEqual(snapshot["cpi_yoy"], 2.8)
+        self.assertTrue(snapshot.get("degraded"))
+
+
 class TestMacroGlobalMarkets(unittest.TestCase):
     @patch("yfinance.download")
     def test_get_global_markets_success(self, mock_download):

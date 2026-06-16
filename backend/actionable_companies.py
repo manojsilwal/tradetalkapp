@@ -1,7 +1,7 @@
 """
-Actionable Companies — async S&P 500 batch screener for the Stock Analysis page.
+Actionable Companies — async S&P 500 batch screener for the home page.
 
-Pipeline (triggered by the "Actionable Companies" button on /dashboard):
+Pipeline (triggered by the "Actionable Companies" button on /):
 
   1. ``POST /actionable-companies/run`` returns **202 Accepted** immediately and
      hands the scan to an asyncio background task (single in-process worker;

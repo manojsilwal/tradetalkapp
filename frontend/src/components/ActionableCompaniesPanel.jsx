@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Zap, Loader2, RefreshCw, Clock, ShieldAlert } from 'lucide-react';
 import { API_BASE_URL, apiFetch, apiPost } from '../api';
+import '../DecisionTerminalUI.css';
 
 const POLL_INTERVAL_MS = 2500;
 

@@ -286,6 +286,50 @@ async def macro_flow_chain(interval: str = Query("1w")):
     return await build_value_chain_payload(iv)
 
 
+@router.get("/macro/spend-chain")
+async def macro_spend_chain():
+    """Fast spend-chain top spenders/beneficiaries from supply_chains.json (no macro_flow DB)."""
+    from ..macro_flow.chain_view import build_spend_flow_groups
+
+    groups = build_spend_flow_groups()
+    latest_year = groups[0]["latest_year"] if groups else None
+    return {
+        "spend_flow_groups": groups,
+        "latest_year": latest_year,
+        "source": "supply_chains.json",
+        "available": bool(groups),
+    }
+
+
+@router.get("/macro/fred-snapshot")
+async def macro_fred_snapshot():
+    """Live Fed funds + Core CPI YoY from FRED (lightweight, no yfinance)."""
+    from ..connectors.fred import fetch_macro_snapshot
+    from ..freshness import assess_spot
+
+    data = await fetch_macro_snapshot(include_extended=False)
+    freshness = None
+    try:
+        from ..freshness import assess
+
+        freshness = assess(
+            data_class="macro_fred",
+            source="fred",
+            as_of=data.get("fetched_at"),
+        )
+    except Exception:
+        pass
+    return {
+        "fed_funds_rate": data.get("fed_funds_rate"),
+        "cpi_yoy": data.get("cpi_yoy"),
+        "unemployment_rate": data.get("unemployment"),
+        "fred_fetched_at": data.get("fetched_at"),
+        "source": data.get("source") or "fred.stlouisfed.org",
+        "degraded": bool(data.get("degraded")),
+        "data_freshness": freshness.model_dump() if freshness else None,
+    }
+
+
 @router.get("/macro/flow/sankey")
 async def macro_flow_sankey(interval: str = Query("1w")):
     from ..macro_flow.store import latest_rrg_payload, latest_edge_flows

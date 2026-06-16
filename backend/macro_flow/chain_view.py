@@ -102,14 +102,110 @@ CHAIN_SPEND_GROUPS: Tuple[Tuple[str, str, Tuple[Tuple[str, str], ...]], ...] = (
 )
 
 
-def _supply_chain_edges() -> List[Dict[str, Any]]:
+def _load_supply_chain_data() -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     data_path = Path(__file__).resolve().parents[1] / "data" / "supply_chains.json"
     try:
         with data_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception:
-        return []
-    return [e for e in data.get("edges") or [] if isinstance(e, dict)]
+        return [], {}
+    nodes = {
+        str(n.get("node_id") or ""): n
+        for n in (data.get("nodes") or [])
+        if isinstance(n, dict) and n.get("node_id")
+    }
+    edges = [e for e in data.get("edges") or [] if isinstance(e, dict)]
+    return edges, nodes
+
+
+def _supply_chain_edges() -> List[Dict[str, Any]]:
+    edges, _ = _load_supply_chain_data()
+    return edges
+
+
+def _node_label(node_id: str, nodes: Dict[str, Dict[str, Any]]) -> str:
+    row = nodes.get(node_id) or {}
+    return str(row.get("name") or node_id)
+
+
+def build_spend_flow_groups() -> List[Dict[str, Any]]:
+    """
+    Ranked top spenders and beneficiaries per value-chain edge.
+
+    Uses curated supply-chain relationship estimates (supply_chains.json).
+    Each group covers one downstream link, e.g. retail → hyperscaler or
+    hyperscaler → semiconductor (NVDA → TSM, TSM → ASML, etc.).
+    """
+    edges, nodes = _load_supply_chain_data()
+    edge_by_pair = {(e.get("source"), e.get("target")): e for e in edges}
+    years = _year_keys(edges)
+    latest_year = years[-1] if years else None
+    stage_names = {sid: name for sid, name, _, _ in VALUE_CHAIN_STAGES}
+    desc_by_edge = { (a, b): d for a, b, d in CHAIN_EDGES }
+
+    groups: List[Dict[str, Any]] = []
+    for src_stage, tgt_stage, pairs in CHAIN_SPEND_GROUPS:
+        pair_rows: List[Dict[str, Any]] = []
+        spender_totals: Dict[str, float] = {}
+        beneficiary_totals: Dict[str, float] = {}
+
+        for source, target in pairs:
+            edge = edge_by_pair.get((source, target))
+            if not edge or latest_year is None:
+                continue
+            years_map = edge.get("years") or {}
+            latest_usd = float(
+                years_map.get(latest_year)
+                or years_map.get(str(latest_year))
+                or 0.0
+            )
+            if latest_usd <= 0:
+                continue
+            pair_rows.append(
+                {
+                    "spender_id": source,
+                    "spender_name": _node_label(source, nodes),
+                    "beneficiary_id": target,
+                    "beneficiary_name": _node_label(target, nodes),
+                    "spend_usd": round(latest_usd, 2),
+                    "relationship_type": edge.get("relationship_type") or "spend",
+                    "confidence": edge.get("confidence"),
+                    "citation": edge.get("citation"),
+                }
+            )
+            spender_totals[source] = spender_totals.get(source, 0.0) + latest_usd
+            beneficiary_totals[target] = beneficiary_totals.get(target, 0.0) + latest_usd
+
+        if not pair_rows:
+            continue
+
+        def _rank_totals(totals: Dict[str, float]) -> List[Dict[str, Any]]:
+            ranked = sorted(totals.items(), key=lambda x: -x[1])
+            return [
+                {
+                    "entity_id": eid,
+                    "entity_name": _node_label(eid, nodes),
+                    "spend_usd": round(usd, 2),
+                }
+                for eid, usd in ranked
+            ]
+
+        pair_rows.sort(key=lambda r: -r["spend_usd"])
+        groups.append(
+            {
+                "from_stage_id": src_stage,
+                "to_stage_id": tgt_stage,
+                "from_stage_name": stage_names.get(src_stage, src_stage),
+                "to_stage_name": stage_names.get(tgt_stage, tgt_stage),
+                "description": desc_by_edge.get((src_stage, tgt_stage), ""),
+                "latest_year": latest_year,
+                "top_spenders": _rank_totals(spender_totals),
+                "top_beneficiaries": _rank_totals(beneficiary_totals),
+                "pairs": pair_rows[:12],
+            }
+        )
+
+    return groups
 
 
 def _year_keys(edges: List[Dict[str, Any]]) -> List[str]:
@@ -319,6 +415,7 @@ async def build_value_chain_payload(interval: str) -> Dict[str, Any]:
         f["pct_of_peak"] = round(f["value"] / max_flow * 100.0, 1)
 
     spend = await _build_spend_payload(stages, flows)
+    spend_flow_groups = build_spend_flow_groups()
 
     return {
         "interval": interval,
@@ -326,6 +423,7 @@ async def build_value_chain_payload(interval: str) -> Dict[str, Any]:
         "stages": stages,
         "flows": flows,
         "spend": spend,
+        "spend_flow_groups": spend_flow_groups,
         "note": (
             "CapEx totals are trailing-twelve-month reported capital expenditure from yfinance "
             "for a representative public ticker basket per stage (USD-normalized). "

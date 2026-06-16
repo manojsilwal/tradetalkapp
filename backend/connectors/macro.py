@@ -1,8 +1,12 @@
 import asyncio
+import logging
 import yfinance as yf
 from typing import Dict, Any
 from ..data_errors import InsufficientDataError
 from .base import DataConnector
+from .fred import fetch_macro_snapshot
+
+logger = logging.getLogger(__name__)
 
 # Dual-read of the tier-1 macro_vix_to_credit_stress tool. If the registry
 # is off or the resource is missing, production falls back to this exact
@@ -22,6 +26,8 @@ class MacroHealthConnector(DataConnector):
         self.force_bearish = force_bearish
 
     async def fetch_data(self, **kwargs) -> Dict[str, Any]:
+        fred_task = asyncio.create_task(fetch_macro_snapshot(include_extended=False))
+
         # Fetch the VIX index. Truthful-data contract: no placeholder value —
         # if every probe fails, the whole macro snapshot is unavailable.
         def get_vix():
@@ -308,13 +314,32 @@ class MacroHealthConnector(DataConnector):
         # previous simulated charts — never fabricated data.
         consumer_spending = []
         cash_reserves = []
+
+        indicators: Dict[str, Any] = {
+            "credit_stress_index": credit_stress_index,
+            "vix_level": round(float(vix_level), 2),
+        }
+
+        try:
+            fred_data = await fred_task
+            if fred_data:
+                for key in (
+                    "fed_funds_rate",
+                    "cpi_yoy",
+                    "treasury_10y",
+                    "unemployment",
+                    "m2_supply",
+                ):
+                    if fred_data.get(key) is not None:
+                        indicators[key] = fred_data[key]
+                if fred_data.get("fetched_at"):
+                    indicators["fred_fetched_at"] = fred_data["fetched_at"]
+        except Exception as exc:
+            logger.warning("[MacroConnector] FRED merge failed: %s", exc)
         
         return {
             "source": "yfinance ^VIX Volatility & Sector ETFs (Live)",
-            "indicators": {
-                "credit_stress_index": credit_stress_index, # Ground truth for Macro Engine
-                "vix_level": round(float(vix_level), 2),
-            },
+            "indicators": indicators,
             "sectors": sector_data,
             "consumer_spending": consumer_spending,
             "capital_flows": capital_flows,

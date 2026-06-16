@@ -5,8 +5,9 @@ import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Responsive
 import { API_BASE_URL } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
-import ActionableCompaniesPanel, { ActionableCompaniesButton, useActionableCompanies } from './components/ActionableCompaniesPanel';
 import { StaleValue, FreshnessBadge } from './components/Freshness';
+import DashboardScorecardPanel from './components/DashboardScorecardPanel';
+import DebateThreadPanel from './components/debate/DebateThreadPanel';
 import './DecisionTerminalUI.css';
 import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
 
@@ -260,10 +261,7 @@ export default function UnifiedDashboardUI() {
     contextAnalyzeTicker(sym, forceRefresh);
   }, [ticker, setSearchParams, contextAnalyzeTicker]);
 
-  // Async S&P 500 batch screener
-  const actionableState = useActionableCompanies();
-
-  // Deep-link: /?ticker=NVDA from Daily Brief or bookmarks
+  // Deep-link: /dashboard?ticker=NVDA from Daily Brief or bookmarks
   useEffect(() => {
     const fromUrl = searchParams.get('ticker')?.trim().toUpperCase();
     if (!fromUrl || fromUrl === lastAutoTicker.current) return;
@@ -402,31 +400,41 @@ export default function UnifiedDashboardUI() {
   ];
 
   return (
-    <div className="dt-wrap fade-in" style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div className="dt-wrap fade-in">
 
-      {/* Search Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-         <div className="title-group">
-            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, margin: '0 0 5px 0' }}>Stock Analysis</h2>
-            <p style={{ color: 'var(--text-muted)', margin: 0 }}>Real-time Swarm Analysis &amp; Valuation Hub</p>
-         </div>
+      <header className="dt-search-header">
+        <div className="dt-search-title">
+          <h2>Stock Analysis</h2>
+          <p>Real-time Swarm Analysis &amp; Valuation Hub</p>
+        </div>
 
-         <div style={{ position: 'relative' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className="dt-search-actions">
+          <div className="dt-search-input-wrap">
             <input
               type="text"
               value={ticker}
               onChange={(e) => setTicker(e.target.value)}
               placeholder="e.g. AAPL"
               className="dt-search-input"
-              style={{ width: '160px', padding: '10px 14px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)', color: 'white' }}
               onKeyDown={(e) => { if (e.key === 'Enter') analyzeTicker(ticker); }}
             />
+            {!isInSp500 && searchUpper && suggestions.length > 0 && (
+              <div className="dt-suggestions">
+                <div className="dt-suggestions-label">Suggestions (S&amp;P 500)</div>
+                {suggestions.map((s) => (
+                  <button key={s} type="button" className="dt-suggestion-item" onClick={() => analyzeTicker(s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="dt-search-buttons">
             <button
               type="button"
+              className="dt-analyze-btn"
               onClick={() => analyzeTicker(ticker)}
               disabled={isAnalyzing}
-              style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'var(--accent-blue)', color: 'white', fontWeight: 600, cursor: isAnalyzing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: isAnalyzing ? 0.55 : 1 }}
             >
               {isAnalyzing ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
               Analyze
@@ -434,42 +442,18 @@ export default function UnifiedDashboardUI() {
             {hasDecisionData && (
               <button
                 type="button"
+                className="dt-refresh-btn"
                 onClick={() => analyzeTicker(ticker, true)}
                 disabled={isAnalyzing}
-                style={{
-                  padding: '10px 14px',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  color: 'white',
-                  fontWeight: 600,
-                  cursor: isAnalyzing ? 'not-allowed' : 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  opacity: isAnalyzing ? 0.55 : 1,
-                  transition: 'background 0.2s',
-                }}
                 title="Force refresh data"
               >
                 {isAnalyzing ? <Loader2 className="spinner" size={16} /> : <Zap size={16} />}
                 Refresh
               </button>
             )}
-            <ActionableCompaniesButton busy={actionableState.busy} onClick={actionableState.startScan} />
           </div>
-          {!isInSp500 && searchUpper && suggestions.length > 0 && (
-            <div className="dt-suggestions" style={{ position: 'absolute', top: '100%', left: 0, width: '160px', background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', marginTop: '4px', zIndex: 10 }}>
-              <div style={{ padding: '8px', fontSize: '11px', color: '#94a3b8' }}>Suggestions (S&P 500)</div>
-              {suggestions.map((s) => (
-                <div key={s} onClick={() => analyzeTicker(s)} style={{ padding: '8px', cursor: 'pointer', fontSize: '14px' }}>
-                  {s}
-                </div>
-              ))}
-            </div>
-          )}
-         </div>
-      </div>
+        </div>
+      </header>
 
       {error && (
         <div className="glass-panel" style={{ borderColor: 'var(--accent-red)', padding: '16px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)' }}>
@@ -488,13 +472,32 @@ export default function UnifiedDashboardUI() {
       )}
 
       {!isAnalyzing && !error && !hasDecisionData && !traceData && (
-        <div className="dt-prompt-banner glass-panel" style={{ padding: '16px', marginBottom: 4, color: '#94a3b8', fontSize: '0.9rem' }}>
+        <div className="dt-prompt-banner glass-panel">
           Enter a ticker and click Analyze. First load can take up to a minute (swarm, debate, and decision terminal).
         </div>
       )}
 
-      {/* Actionable Companies batch screener results */}
-      <ActionableCompaniesPanel state={actionableState} onSelectTicker={(sym) => analyzeTicker(sym)} />
+      {isAnalyzing && (
+        <section className="dt-panel dt-analysis-progress" data-testid="dashboard-analysis-progress">
+          <div className="dt-analysis-progress-head">
+            <span className="dt-analysis-progress-title">
+              {loadingStep || 'Running analysis…'}
+            </span>
+            <span className="dt-analysis-progress-pct">{progressPct}%</span>
+          </div>
+          <div className="dt-analysis-progress-bar">
+            <div className="dt-analysis-progress-fill" style={{ width: `${progressPct}%` }} />
+          </div>
+          <ul className="dt-analysis-steps">
+            {steps.map((step) => (
+              <li key={step.label} className={step.done ? 'done' : 'pending'}>
+                {step.done ? <CheckCircle2 size={14} /> : <Loader2 size={14} className="spinner" />}
+                <span>{step.label}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Main Redesigned Layout Grid */}
       <div className="dt-dashboard-grid">
@@ -642,6 +645,16 @@ export default function UnifiedDashboardUI() {
           <h2 className="dt-panel-title">Verdict &amp; Sentiment Hub</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
             <div className="dt-verdict-row">
+              <span className="dt-verdict-row-label">Prediction Markets</span>
+              {decisionLoading || predMarketsLoading ? (
+                <Loader2 className="spinner" size={16} />
+              ) : (
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#94a3b8', textAlign: 'right', maxWidth: '58%' }}>
+                  {getBriefText()}
+                </span>
+              )}
+            </div>
+            <div className="dt-verdict-row">
               <span className="dt-verdict-row-label">Social Sentiment</span>
               {traceLoading ? (
                 <Loader2 className="spinner" size={16} />
@@ -722,19 +735,16 @@ export default function UnifiedDashboardUI() {
         {/* 4. CONSOLIDATED METRICS & FINANCIAL PERFORMANCE */}
         <section className="dt-panel dt-area-metrics-perf">
           <h2 className="dt-panel-title">Financial Health &amp; Performance</h2>
-            <div style={{ display: 'flex', gap: '40px', flexWrap: 'wrap', marginTop: '20px', alignItems: 'flex-start' }}>
-              {/* Left Column: Consolidated Metrics (approx 38% width) */}
-              <div style={{ flex: '1.2 1 360px', minWidth: '320px' }}>
-                <h3 className="dt-metrics-section-title" style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.05em', marginBottom: 16 }}>
-                  Consolidated Metrics
-                </h3>
+            <div className="dt-metrics-split">
+              <div className="dt-metrics-col">
+                <h3 className="dt-metrics-block-title">Consolidated Metrics</h3>
                 {showFundamentalsMetricsLoader ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 0', gap: 12 }}>
+                  <div className="dt-metrics-loading">
                     <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
-                    <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Loading metrics...</span>
+                    <span>Loading metrics...</span>
                   </div>
                 ) : (
-                  <div className="dt-consolidated" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 28px' }}>
+                  <div className="dt-consolidated">
                     {/* Left Column: Valuation & Margins */}
                     <div>
                       <h4 className="dt-metrics-section-title">Valuation</h4>
@@ -814,12 +824,9 @@ export default function UnifiedDashboardUI() {
                 )}
               </div>
 
-              {/* Right Column: Financial Performance Graph (approx 62% width) */}
-              <div style={{ flex: '2 1 500px', minWidth: '400px', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                  <h3 className="dt-metrics-section-title" style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.05em', margin: 0 }}>
-                    Financial Performance
-                  </h3>
+              <div className="dt-metrics-col dt-metrics-col-chart">
+                <div className="dt-metrics-chart-head">
+                  <h3 className="dt-metrics-block-title">Financial Performance</h3>
                   <div className="dt-perf-toggle">
                     <button
                       type="button"
@@ -838,8 +845,8 @@ export default function UnifiedDashboardUI() {
                   </div>
                 </div>
 
-                <div className="dt-perf-chart-box" style={{ padding: '20px 24px', margin: 0 }}>
-                  <div className="dt-perf-chart-inner" style={{ height: '310px' }}>
+                <div className="dt-perf-chart-box">
+                  <div className="dt-perf-chart-inner dt-perf-chart-inner-lg">
                     {showFundamentalsChartLoader ? (
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12 }}>
                         <Loader2 className="spinner" size={24} color="var(--accent-blue)" />
@@ -875,6 +882,82 @@ export default function UnifiedDashboardUI() {
         </section>
 
       </div>
+
+      <section className="dt-panel dt-area-valuation">
+        <h2 className="dt-panel-title">Consensus Valuation Signal</h2>
+        <div className="dt-valuation-split">
+          <div className="dt-valuation-gauge">
+            {decisionLoading ? (
+              <div className="dt-metrics-loading" style={{ minHeight: 120 }}>
+                <Loader2 className="spinner" size={22} />
+              </div>
+            ) : (
+              <>
+                <SemiGauge fillRatio={hasDecisionData ? valFill : 0.38} size="large" />
+                <div className="dt-gauge-caption">{hasDecisionData ? v?.gauge_label || '—' : '—'}</div>
+                {hasDecisionData && spot != null && (
+                  <div className="dt-gauge-sub">
+                    Spot ${Number(spot).toFixed(2)}
+                    {v?.average_fair_value_usd != null && (
+                      <> · Avg fair ${Number(v.average_fair_value_usd).toFixed(0)}</>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <div className="dt-valuation-models">
+            <div className="dt-models-heading">Valuation models</div>
+            <ul className="dt-models-list">
+              {(v?.models || []).map((m) => (
+                <li key={m.name} className="dt-models-li">
+                  <span className="dt-models-name">
+                    <ProvenanceTip provenance={m.provenance} label={`${m.name}:`} />
+                  </span>
+                  <span className={m.available && m.fair_value_usd != null ? 'dt-models-val' : 'dt-models-na'}>
+                    {m.available && m.fair_value_usd != null
+                      ? `$${Number(m.fair_value_usd).toFixed(0)}`
+                      : '—'}
+                  </span>
+                </li>
+              ))}
+              {hasDecisionData && (
+                <li className="dt-models-li dt-models-average">
+                  <span className="dt-models-name">Average:</span>
+                  <span className="dt-models-val">
+                    {v?.average_fair_value_usd != null
+                      ? `$${Number(v.average_fair_value_usd).toFixed(0)}`
+                      : '—'}
+                  </span>
+                </li>
+              )}
+              {!hasDecisionData && !decisionLoading && (
+                <li className="dt-models-li dt-models-placeholder"><span>Average:</span><span>—</span></li>
+              )}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <DashboardScorecardPanel
+        data={scorecardData}
+        ticker={searchUpper}
+        loading={scorecardLoading || (isAnalyzing && !scorecardData)}
+        error={scorecardError}
+      />
+
+      {(debateLoading || debateData || isAnalyzing) && (
+        <section className="dt-panel dt-area-debate" data-testid="dashboard-debate-panel">
+          <h2 className="dt-panel-title">Investment Committee Debate</h2>
+          {debateError && (
+            <p style={{ color: 'var(--accent-red)', fontSize: '0.85rem', marginTop: 12 }}>{debateError}</p>
+          )}
+          <div style={{ marginTop: 14 }}>
+            <DebateThreadPanel result={debateData} loading={debateLoading || (isAnalyzing && !debateData)} />
+          </div>
+        </section>
+      )}
+
     </div>
   );
 }
