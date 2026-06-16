@@ -56,6 +56,7 @@ VECTOR_BACKEND=supabase,\
 SUPABASE_URL=https://bvhdrwyxzjcoyqzmtean.supabase.co,\
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001,\
 CORS_ORIGINS=${CORS_ORIGINS},\
+PORTFOLIO_STORAGE=postgres,\
 SP500_INGEST_ON_STARTUP=0,\
 FINCRAWLER_URL=http://34.71.218.179:10000,\
 YF_DISABLED_CATEGORIES=info;news,\

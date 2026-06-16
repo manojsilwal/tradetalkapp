@@ -45,6 +45,15 @@ DB_PATH = resolve_progress_db_path()
 _local  = threading.local()
 
 
+def _use_postgres() -> bool:
+    try:
+        from .postgres_config import postgres_enabled
+
+        return postgres_enabled()
+    except Exception:
+        return False
+
+
 def _get_conn():
     if not hasattr(_local, "conn"):
         _local.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -82,6 +91,12 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def init_users_db():
+    if _use_postgres():
+        from . import auth_pg
+
+        auth_pg.init_schema()
+        auth_pg.migrate_from_sqlite_if_needed()
+        return
     conn = _get_conn()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -176,6 +191,11 @@ def _decode_jwt(token: str) -> str:
 # ── User persistence ──────────────────────────────────────────────────────────
 
 def upsert_user(google_id: str, email: str, name: str, avatar: str) -> UserInfo:
+    if _use_postgres():
+        from . import auth_pg
+
+        row = auth_pg.upsert_user(google_id, email, name, avatar)
+        return UserInfo(id=row["id"], email=row["email"], name=row["name"], avatar=row["avatar"])
     conn = _get_conn()
     conn.execute("""
         INSERT INTO users (id, email, name, avatar, created_at)
@@ -190,6 +210,15 @@ def upsert_user(google_id: str, email: str, name: str, avatar: str) -> UserInfo:
 
 
 def get_user(user_id: str) -> Optional[UserInfo]:
+    if _use_postgres():
+        from . import auth_pg
+
+        row = auth_pg.get_user(user_id)
+        if not row:
+            return None
+        return UserInfo(
+            id=row["id"], email=row["email"], name=row["name"], avatar=row["avatar"]
+        )
     conn  = _get_conn()
     row   = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     if not row:
@@ -242,20 +271,28 @@ def create_manual_user(email: str, password: str, name: str = "") -> dict:
         raise HTTPException(status_code=400, detail="Email and password are required")
     if len(password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters long")
-    conn = _get_conn()
-    existing = conn.execute("SELECT id FROM users WHERE LOWER(email) = ?", (email_clean,)).fetchone()
-    if existing:
-        raise HTTPException(status_code=400, detail="A user with this email is already registered")
-
     user_id = f"manual_user_{int(time.time())}_{secrets.token_hex(4)}"
     pw_hash = hash_password(password)
     user_name = name.strip() or email_clean.split('@')[0]
-    
-    conn.execute("""
-        INSERT INTO users (id, email, name, avatar, password_hash, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (user_id, email_clean, user_name, "", pw_hash, time.time()))
-    conn.commit()
+
+    if _use_postgres():
+        from . import auth_pg
+
+        if auth_pg.email_exists(email_clean):
+            raise HTTPException(status_code=400, detail="A user with this email is already registered")
+        auth_pg.create_manual_user(user_id, email_clean, user_name, pw_hash)
+    else:
+        conn = _get_conn()
+        existing = conn.execute(
+            "SELECT id FROM users WHERE LOWER(email) = ?", (email_clean,)
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=400, detail="A user with this email is already registered")
+        conn.execute("""
+            INSERT INTO users (id, email, name, avatar, password_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, email_clean, user_name, "", pw_hash, time.time()))
+        conn.commit()
     
     jwt_token = _issue_jwt(user_id)
     return {
@@ -272,11 +309,27 @@ def login_with_password(email: str, password: str) -> dict:
     email_clean = email.strip().lower()
     if not email_clean or not password:
         raise HTTPException(status_code=400, detail="Email and password are required")
+    if _use_postgres():
+        from . import auth_pg
+
+        row = auth_pg.get_user_by_email(email_clean)
+        if not row or not row.get("password_hash") or not verify_password(password, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        jwt_token = _issue_jwt(row["id"])
+        return {
+            "token":   jwt_token,
+            "user_id": row["id"],
+            "email":   row["email"],
+            "name":    row["name"],
+            "avatar":  row["avatar"] or "",
+            "dev_mode": DEV_MODE,
+        }
+
     conn = _get_conn()
     row = conn.execute("SELECT * FROM users WHERE LOWER(email) = ?", (email_clean,)).fetchone()
     if not row or not row["password_hash"] or not verify_password(password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    
+
     jwt_token = _issue_jwt(row["id"])
     return {
         "token":   jwt_token,

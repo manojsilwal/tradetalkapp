@@ -118,7 +118,7 @@ export function AuthProvider({ children }) {
 
     const logout = useCallback(() => {
         clearToken();
-        setUser(null);
+        setUser(AUTH_REQUIRED ? null : GUEST_USER);
     }, []);
 
     useEffect(() => {

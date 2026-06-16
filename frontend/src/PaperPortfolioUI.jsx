@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { useAuth } from "./AuthContext";
 import { useLocation } from "react-router-dom";
 import { Plus, Target, ImageUp, X, Newspaper, ExternalLink, Loader2, Star } from "lucide-react";
 import { API_BASE_URL, apiFetch, apiPostMultipart, fetchJsonWithMeta, getToken } from "./api";
@@ -242,6 +243,7 @@ function rowStatus(ticker, rec) {
 }
 
 export default function PaperPortfolioUI({ onXpGained }) {
+  const { user } = useAuth();
   const location = useLocation();
   const [perf, setPerf] = useState(null);
   const [perfLoading, setPerfLoading] = useState(true);
@@ -331,7 +333,7 @@ export default function PaperPortfolioUI({ onXpGained }) {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [user?.user_id]);
 
   useEffect(() => {
     if (!watchlist.length) {

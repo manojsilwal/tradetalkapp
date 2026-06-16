@@ -27,7 +27,17 @@ from .progress_db import resolve_progress_db_path
 DB_PATH = resolve_progress_db_path()
 _local = threading.local()
 
-# ── Default preference values ─────────────────────────────────────────────────
+
+def _use_postgres() -> bool:
+    try:
+        from .postgres_config import postgres_enabled
+
+        return postgres_enabled()
+    except Exception:
+        return False
+
+
+# ── SQLite helpers ────────────────────────────────────────────────────────────
 DEFAULT_PREFERENCES: Dict[str, Any] = {
     "favorite_tickers": [],          # auto-populated from usage
     "preferred_sectors": [],         # auto-populated from usage
@@ -92,6 +102,8 @@ def _get_conn() -> sqlite3.Connection:
 
 def init_preferences_db() -> None:
     """Create the preferences table if it doesn't exist (idempotent)."""
+    if _use_postgres():
+        return
     conn = _get_conn()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS user_preferences (
@@ -106,6 +118,11 @@ def init_preferences_db() -> None:
 
 
 def _ensure_row(user_id: str) -> None:
+    if _use_postgres():
+        from . import user_preferences_pg as pg
+
+        pg.ensure_row(user_id, DEFAULT_PREFERENCES)
+        return
     conn = _get_conn()
     conn.execute(
         "INSERT OR IGNORE INTO user_preferences (user_id, preferences, signals, updated_at) "
@@ -120,6 +137,12 @@ def _ensure_row(user_id: str) -> None:
 def get_preferences(user_id: str) -> Dict[str, Any]:
     """Return merged preferences (defaults + user overrides)."""
     _ensure_row(user_id)
+    if _use_postgres():
+        from . import user_preferences_pg as pg
+
+        row = pg.get_preferences_row(user_id)
+        stored = json.loads(row.get("preferences") or "{}")
+        return {**DEFAULT_PREFERENCES, **stored}
     conn = _get_conn()
     row = conn.execute(
         "SELECT preferences FROM user_preferences WHERE user_id = ?", (user_id,)
@@ -199,12 +222,17 @@ def update_preferences(user_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         if k in valid_keys:
             current[k] = v
 
-    conn = _get_conn()
-    conn.execute(
-        "UPDATE user_preferences SET preferences = ?, updated_at = ? WHERE user_id = ?",
-        (json.dumps(current), time.time(), user_id),
-    )
-    conn.commit()
+    if _use_postgres():
+        from . import user_preferences_pg as pg
+
+        pg.update_preferences_row(user_id, json.dumps(current))
+    else:
+        conn = _get_conn()
+        conn.execute(
+            "UPDATE user_preferences SET preferences = ?, updated_at = ? WHERE user_id = ?",
+            (json.dumps(current), time.time(), user_id),
+        )
+        conn.commit()
     logger.info("[UserPreferences] explicit update for %s: %s", user_id, list(updates.keys()))
     return current
 
@@ -212,6 +240,11 @@ def update_preferences(user_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
 def get_signals(user_id: str) -> Dict[str, Any]:
     """Return raw behavioural signal counters."""
     _ensure_row(user_id)
+    if _use_postgres():
+        from . import user_preferences_pg as pg
+
+        row = pg.get_preferences_row(user_id)
+        return json.loads(row.get("signals") or "{}")
     conn = _get_conn()
     row = conn.execute(
         "SELECT signals FROM user_preferences WHERE user_id = ?", (user_id,)
@@ -241,13 +274,20 @@ def learn_from_action(
     ctx = context or {}
     _ensure_row(user_id)
 
-    conn = _get_conn()
-    row = conn.execute(
-        "SELECT signals, preferences FROM user_preferences WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()
-    signals: Dict[str, Any] = json.loads(row["signals"]) if row else {}
-    prefs: Dict[str, Any] = json.loads(row["preferences"]) if row else dict(DEFAULT_PREFERENCES)
+    if _use_postgres():
+        from . import user_preferences_pg as pg
+
+        row = pg.get_signals_and_preferences(user_id)
+        signals: Dict[str, Any] = json.loads(row.get("signals") or "{}")
+        prefs: Dict[str, Any] = json.loads(row.get("preferences") or "{}") or dict(DEFAULT_PREFERENCES)
+    else:
+        conn = _get_conn()
+        row = conn.execute(
+            "SELECT signals, preferences FROM user_preferences WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        signals: Dict[str, Any] = json.loads(row["signals"]) if row else {}
+        prefs: Dict[str, Any] = json.loads(row["preferences"]) if row else dict(DEFAULT_PREFERENCES)
 
     # ── Accumulate signals ────────────────────────────────────────────────
     # Ticker interactions
@@ -288,12 +328,22 @@ def learn_from_action(
         prefs["preferred_tools"] = top_tools
 
     # ── Persist ───────────────────────────────────────────────────────────
-    conn.execute(
-        "UPDATE user_preferences SET preferences = ?, signals = ?, updated_at = ? "
-        "WHERE user_id = ?",
-        (json.dumps(prefs), json.dumps(signals), time.time(), user_id),
-    )
-    conn.commit()
+    if _use_postgres():
+        from . import user_preferences_pg as pg
+
+        pg.update_preferences_row(
+            user_id,
+            json.dumps(prefs),
+            signals_json=json.dumps(signals),
+        )
+    else:
+        conn = _get_conn()
+        conn.execute(
+            "UPDATE user_preferences SET preferences = ?, signals = ?, updated_at = ? "
+            "WHERE user_id = ?",
+            (json.dumps(prefs), json.dumps(signals), time.time(), user_id),
+        )
+        conn.commit()
 
 
 def format_for_system_prompt(user_id: str) -> str:

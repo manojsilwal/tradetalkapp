@@ -30,6 +30,15 @@ _PAYLOAD_KEYS = (
 )
 
 
+def _use_postgres() -> bool:
+    try:
+        from .postgres_config import postgres_enabled
+
+        return postgres_enabled()
+    except Exception:
+        return False
+
+
 def _get_conn() -> sqlite3.Connection:
     if not hasattr(_local, "chat_sess_conn"):
         _local.chat_sess_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -38,6 +47,8 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def init_chat_sessions_db() -> None:
+    if _use_postgres():
+        return
     conn = _get_conn()
     conn.executescript(
         """
@@ -95,6 +106,11 @@ def save_session_row(
     sess: Any,
 ) -> None:
     """Upsert session row (sync)."""
+    if _use_postgres():
+        from . import chat_store_pg as pg
+
+        pg.save_session_row(session_id, user_id, assembled_at, expires_at, sess)
+        return
     try:
         payload = _serialize_payload(sess)
         conn = _get_conn()
@@ -117,6 +133,10 @@ def save_session_row(
 
 def load_session_row(session_id: str) -> Optional[Dict[str, Any]]:
     """Return row dict or None. Keys: session_id, user_id, assembled_at, expires_at, payload (parsed)."""
+    if _use_postgres():
+        from . import chat_store_pg as pg
+
+        return pg.load_session_row(session_id)
     try:
         conn = _get_conn()
         row = conn.execute(
@@ -139,6 +159,11 @@ def load_session_row(session_id: str) -> Optional[Dict[str, Any]]:
 
 
 def delete_session_row(session_id: str) -> None:
+    if _use_postgres():
+        from . import chat_store_pg as pg
+
+        pg.delete_session_row(session_id)
+        return
     try:
         conn = _get_conn()
         conn.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
@@ -149,6 +174,10 @@ def delete_session_row(session_id: str) -> None:
 
 def prune_expired_rows(now: Optional[float] = None) -> int:
     """Delete expired session rows. Returns count deleted."""
+    if _use_postgres():
+        from . import chat_store_pg as pg
+
+        return pg.prune_expired_rows(now)
     t = now if now is not None else time.time()
     try:
         conn = _get_conn()

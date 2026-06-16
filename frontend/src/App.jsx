@@ -83,14 +83,15 @@ function App() {
     }, []);
 
     React.useEffect(() => {
-        const headers = { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) }
+        const token = getToken()
+        const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
         Promise.all([
             fetch(`${API_BASE_URL}/chat/bootstrap`).then((r) => r.json()),
             fetch(`${API_BASE_URL}/chat/user-context`, { headers }).then((r) => r.json()),
         ])
-            .then(([boot, user]) => setChatPrefetch({ boot, user }))
+            .then(([boot, userCtx]) => setChatPrefetch({ boot, user: userCtx }))
             .catch(() => {})
-    }, [])
+    }, [user?.user_id])
 
     const activeTab = ROUTE_TO_KEY[location.pathname] || 'consumer'
 

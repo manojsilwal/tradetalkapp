@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { API_BASE_URL, getToken, apiFetch } from './api'
+import { useAuth } from './AuthContext'
 import { FreshnessBadge } from './components/Freshness'
 
 /** Persisted chat session id — survives refresh; server must still have the row (TTL). */
@@ -149,6 +150,8 @@ const cleanText = (text) => text
  * TradeTalk Assistant — session bootstrap, parallel prefetch from App, SSE token stream.
  */
 export default function ChatUI({ prefetch = null }) {
+  const { user } = useAuth()
+  const isSignedIn = Boolean(user && !user.guest)
   const [bootstrap, setBootstrap] = useState(prefetch?.boot ?? null)
   const [userCtx, setUserCtx] = useState(prefetch?.user ?? null)
   const [sessionId, setSessionId] = useState(null)
@@ -162,6 +165,10 @@ export default function ChatUI({ prefetch = null }) {
   const [evidenceContract, setEvidenceContract] = useState(null)
   const [lastMeta, setLastMeta] = useState(null)
   const [exportBusy, setExportBusy] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historySessions, setHistorySessions] = useState([])
+  const [historyErr, setHistoryErr] = useState('')
   const bottomRef = useRef(null)
   const refreshTimer = useRef(null)
   const sessionIdRef = useRef(null)
@@ -184,21 +191,66 @@ export default function ChatUI({ prefetch = null }) {
   }, [prefetch])
 
   useEffect(() => {
+    if (!isSignedIn) {
+      setHistorySessions([])
+      setHistoryOpen(false)
+      return
+    }
+    let cancelled = false
+    setHistoryLoading(true)
+    setHistoryErr('')
+    apiFetch(`${API_BASE_URL}/chat/sessions?limit=40`)
+      .then((data) => {
+        if (!cancelled) setHistorySessions(Array.isArray(data.sessions) ? data.sessions : [])
+      })
+      .catch((e) => {
+        if (!cancelled) setHistoryErr(e.message || 'Could not load chat history')
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [isSignedIn, user?.user_id])
+
+  const loadSessionTranscript = useCallback(async (sid) => {
+    if (!sid || !isSignedIn) return
+    setBusy(true)
+    setErr('')
+    try {
+      const data = await apiFetch(`${API_BASE_URL}/chat/sessions/${encodeURIComponent(sid)}`)
+      const transcript = Array.isArray(data.messages) ? data.messages : []
+      setMessages(transcript)
+      setSessionId(sid)
+      rememberChatSessionId(sid)
+      setStreaming('')
+      setQuoteCards([])
+      setEvidenceContract(null)
+      setLastMeta(null)
+      setHistoryOpen(false)
+    } catch (e) {
+      setErr(e.message || 'Could not load session')
+    } finally {
+      setBusy(false)
+    }
+  }, [isSignedIn])
+
+  useEffect(() => {
     if (!bootstrap) {
       fetch(`${API_BASE_URL}/chat/bootstrap`, { credentials: 'omit' })
         .then((r) => r.json())
         .then(setBootstrap)
         .catch(() => setBootstrap({}))
     }
+  }, [bootstrap])
+
+  useEffect(() => {
     const token = getToken()
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
-    if (!userCtx) {
-      fetch(`${API_BASE_URL}/chat/user-context`, { headers })
-        .then((r) => r.json())
-        .then(setUserCtx)
-        .catch(() => setUserCtx({ authenticated: false }))
-    }
-  }, [bootstrap, userCtx])
+    fetch(`${API_BASE_URL}/chat/user-context`, { headers })
+      .then((r) => r.json())
+      .then(setUserCtx)
+      .catch(() => setUserCtx({ authenticated: false }))
+  }, [isSignedIn, user?.user_id])
 
   useEffect(() => {
     let cancelled = false
@@ -261,6 +313,25 @@ export default function ChatUI({ prefetch = null }) {
     if (data.session_id) rememberChatSessionId(data.session_id)
     return data.session_id
   }, [])
+
+  const startNewSession = useCallback(async () => {
+    setBusy(true)
+    setErr('')
+    try {
+      const fresh = await createChatSession(true)
+      setSessionId(fresh)
+      setMessages([])
+      setStreaming('')
+      setQuoteCards([])
+      setEvidenceContract(null)
+      setLastMeta(null)
+      setHistoryOpen(false)
+    } catch (e) {
+      setErr(e.message || 'Could not start new session')
+    } finally {
+      setBusy(false)
+    }
+  }, [createChatSession])
 
   const exportEvidenceMemo = useCallback(async () => {
     const sid = sessionIdRef.current
@@ -467,7 +538,7 @@ export default function ChatUI({ prefetch = null }) {
       <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 16 }}>
         Context is prefetched on app load; session opens with market + portfolio snapshot. Responses stream token-by-token.
       </p>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12, alignItems: 'center' }}>
         {[
           { to: '/backtest', label: 'Backtest' },
           { to: '/decision-terminal', label: 'Decision' },
@@ -490,7 +561,91 @@ export default function ChatUI({ prefetch = null }) {
             {a.label}
           </Link>
         ))}
+        {isSignedIn && (
+          <>
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((v) => !v)}
+              style={{
+                fontSize: 12,
+                padding: '6px 12px',
+                borderRadius: 8,
+                border: '1px solid rgba(167,139,250,0.35)',
+                color: '#c4b5fd',
+                background: historyOpen ? 'rgba(139,92,246,0.2)' : 'rgba(30,41,59,0.5)',
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              {historyOpen ? 'Hide history' : 'History'}
+            </button>
+            <button
+              type="button"
+              onClick={startNewSession}
+              disabled={busy || sessionLoading}
+              style={{
+                fontSize: 12,
+                padding: '6px 12px',
+                borderRadius: 8,
+                border: '1px solid rgba(148,163,184,0.25)',
+                color: '#cbd5e1',
+                background: 'rgba(30,41,59,0.5)',
+                cursor: busy ? 'wait' : 'pointer',
+              }}
+            >
+              New chat
+            </button>
+          </>
+        )}
       </div>
+      {historyOpen && isSignedIn && (
+        <div
+          data-testid="chat-history-panel"
+          style={{
+            marginBottom: 12,
+            padding: 12,
+            borderRadius: 12,
+            border: '1px solid rgba(167,139,250,0.25)',
+            background: 'rgba(15,23,42,0.75)',
+            maxHeight: 220,
+            overflowY: 'auto',
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8', marginBottom: 8 }}>
+            Saved conversations
+          </div>
+          {historyLoading && <div style={{ fontSize: 12, color: '#64748b' }}>Loading…</div>}
+          {historyErr && <div style={{ fontSize: 12, color: '#f87171' }}>{historyErr}</div>}
+          {!historyLoading && !historyErr && historySessions.length === 0 && (
+            <div style={{ fontSize: 12, color: '#64748b' }}>No saved chats yet — start a conversation.</div>
+          )}
+          {historySessions.map((s) => (
+            <button
+              key={s.session_id}
+              type="button"
+              onClick={() => loadSessionTranscript(s.session_id)}
+              disabled={busy}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                marginBottom: 6,
+                padding: '8px 10px',
+                borderRadius: 8,
+                border: '1px solid rgba(148,163,184,0.15)',
+                background: sessionId === s.session_id ? 'rgba(139,92,246,0.15)' : 'rgba(30,41,59,0.5)',
+                color: '#e2e8f0',
+                cursor: busy ? 'wait' : 'pointer',
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{s.title || 'Chat session'}</div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                {s.message_count} messages · {new Date((s.last_activity || 0) * 1000).toLocaleString()}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
       {staleBanner}
       {sessionLoading && (
         <div style={{ color: '#94a3b8', fontSize: 13 }}>Preparing session…</div>

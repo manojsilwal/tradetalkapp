@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..auth import UserInfo, get_optional_user
+from ..auth import UserInfo, get_current_user, get_optional_user
 from ..deps import knowledge_store, llm_client, macro_connector
 from .. import agent_memory
 from .. import paper_portfolio as pp
@@ -172,6 +172,36 @@ async def chat_user_context(_user: Optional[UserInfo] = Depends(get_optional_use
         return {"authenticated": False, "context": {}}
     ctx = await chat_service.get_user_context_block(_user.id)
     return {"authenticated": True, "user_id": _user.id, "context": ctx}
+
+
+@router.get("/sessions")
+def chat_list_sessions(
+    limit: int = 50,
+    user: UserInfo = Depends(get_current_user),
+):
+    """List past chat sessions with summary metadata for the signed-in user."""
+    capped = max(1, min(int(limit), 100))
+    sessions = agent_memory.list_sessions(user.id, limit=capped)
+    return {"sessions": sessions, "user_id": user.id}
+
+
+@router.get("/sessions/{session_id}")
+def chat_get_session_transcript(
+    session_id: str,
+    limit: int = 200,
+    user: UserInfo = Depends(get_current_user),
+):
+    """Return full transcript for a session owned by the signed-in user."""
+    if not agent_memory.session_belongs_to_user(user.id, session_id):
+        raise HTTPException(status_code=404, detail="session_not_found")
+    capped = max(1, min(int(limit), 500))
+    messages = agent_memory.load_memory(user.id, session_id, limit=capped)
+    return {
+        "session_id": session_id,
+        "user_id": user.id,
+        "messages": messages,
+        "message_count": len(messages),
+    }
 
 
 @router.post("/session")

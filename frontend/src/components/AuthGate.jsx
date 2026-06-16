@@ -47,16 +47,30 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
 
     const handleManualSubmit = async (e) => {
         e.preventDefault();
-        setLoading(true);
         setError('');
+        const emailTrim = email.trim().toLowerCase();
+        if (!emailTrim || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
+            setError('Enter a valid email address.');
+            return;
+        }
+        if (password.length < 6) {
+            setError('Password must be at least 6 characters.');
+            return;
+        }
+        if (isSignUp && !name.trim()) {
+            setError('Enter your name to sign up.');
+            return;
+        }
+        setLoading(true);
         try {
             if (isSignUp) {
-                await signup(email, password, name);
+                await signup(emailTrim, password, name.trim());
             } else {
-                await loginManual(email, password);
+                await loginManual(emailTrim, password);
             }
         } catch (err) {
-            setError(err.message || 'Authentication failed');
+            const msg = err.message || 'Authentication failed';
+            setError(msg.includes('HTTP') ? 'Could not reach the server. Try again.' : msg);
         } finally {
             setLoading(false);
         }
@@ -160,7 +174,8 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
                                 placeholder="Your Name"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
-                                required
+                                disabled={loading}
+                                aria-label="Your name"
                                 style={{
                                     padding: '10px 14px', borderRadius: 8,
                                     border: '1px solid rgba(255,255,255,0.12)',
@@ -174,7 +189,9 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
                             placeholder="Email address"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
-                            required
+                            disabled={loading}
+                            autoComplete="email"
+                            aria-label="Email address"
                             style={{
                                 padding: '10px 14px', borderRadius: 8,
                                 border: '1px solid rgba(255,255,255,0.12)',
@@ -187,8 +204,10 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
                             placeholder="Password (min 6 chars)"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            required
+                            disabled={loading}
                             minLength={6}
+                            autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                            aria-label="Password"
                             style={{
                                 padding: '10px 14px', borderRadius: 8,
                                 border: '1px solid rgba(255,255,255,0.12)',

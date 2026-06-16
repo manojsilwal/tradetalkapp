@@ -29,6 +29,15 @@ _local = threading.local()
 _DEFAULT_MESSAGE_LIMIT = 16
 
 
+def _use_postgres() -> bool:
+    try:
+        from .postgres_config import postgres_enabled
+
+        return postgres_enabled()
+    except Exception:
+        return False
+
+
 def extract_tickers_from_text(text: str) -> List[str]:
     """Extract stock ticker symbols like $AAPL or known finance terms from text."""
     # Find words with $ prefix e.g. $AAPL, $MSFT
@@ -57,6 +66,8 @@ def _get_conn() -> sqlite3.Connection:
 
 def init_agent_memory_db() -> None:
     """Create chat_message_history if missing (idempotent)."""
+    if _use_postgres():
+        return
     conn = _get_conn()
     conn.executescript(
         """
@@ -99,15 +110,20 @@ def save_memory(
         safe_content = redact_secrets_in_text(content.strip())[:12000]
         if not safe_content:
             return
-        conn = _get_conn()
-        conn.execute(
-            """
-            INSERT INTO chat_message_history (user_id, session_id, role, content, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (user_id, session_id, role, safe_content, time.time()),
-        )
-        conn.commit()
+        if _use_postgres():
+            from . import chat_store_pg as pg
+
+            pg.save_message(user_id, session_id, role, safe_content, time.time())
+        else:
+            conn = _get_conn()
+            conn.execute(
+                """
+                INSERT INTO chat_message_history (user_id, session_id, role, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, session_id, role, safe_content, time.time()),
+            )
+            conn.commit()
     except Exception as e:
         logger.warning("[AgentMemory] save_memory SQL failed: %s", e)
         return
@@ -163,6 +179,10 @@ def load_memory(
     if not user_id or not session_id:
         return []
     try:
+        if _use_postgres():
+            from . import chat_store_pg as pg
+
+            return pg.load_messages(user_id, session_id, limit)
         conn = _get_conn()
         rows = conn.execute(
             """
@@ -200,6 +220,88 @@ def search_memory(
     except Exception as e:
         logger.warning("[AgentMemory] search_memory failed: %s", e)
         return []
+
+
+def list_sessions(user_id: str, limit: int = 50) -> List[dict]:
+    """Return session summaries for chat history UI (authenticated users only)."""
+    if not user_id:
+        return []
+    try:
+        if _use_postgres():
+            from . import chat_store_pg as pg
+
+            return pg.list_sessions(user_id, limit=limit)
+        conn = _get_conn()
+        rows = conn.execute(
+            """
+            SELECT
+                h.session_id,
+                MIN(h.created_at) AS started_at,
+                MAX(h.created_at) AS last_activity,
+                COUNT(*) AS message_count,
+                (
+                    SELECT h2.content
+                    FROM chat_message_history h2
+                    WHERE h2.user_id = h.user_id
+                      AND h2.session_id = h.session_id
+                      AND h2.role = 'user'
+                    ORDER BY h2.created_at ASC, h2.id ASC
+                    LIMIT 1
+                ) AS title
+            FROM chat_message_history h
+            WHERE h.user_id = ?
+            GROUP BY h.session_id
+            ORDER BY last_activity DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        out: List[dict] = []
+        for r in rows:
+            title = (r["title"] or "").strip()
+            if len(title) > 120:
+                title = title[:117] + "..."
+            out.append({
+                "session_id": r["session_id"],
+                "started_at": float(r["started_at"]),
+                "last_activity": float(r["last_activity"]),
+                "message_count": int(r["message_count"]),
+                "title": title or "Chat session",
+            })
+        return out
+    except Exception as e:
+        logger.warning("[AgentMemory] list_sessions failed: %s", e)
+        return []
+
+
+def session_belongs_to_user(user_id: str, session_id: str) -> bool:
+    """True when the session has messages or a session row for this user."""
+    if not user_id or not session_id:
+        return False
+    try:
+        if _use_postgres():
+            from . import chat_store_pg as pg
+
+            return pg.session_belongs_to_user(user_id, session_id)
+        conn = _get_conn()
+        row = conn.execute(
+            """
+            SELECT 1 FROM chat_message_history
+            WHERE user_id = ? AND session_id = ?
+            LIMIT 1
+            """,
+            (user_id, session_id),
+        ).fetchone()
+        if row:
+            return True
+        row = conn.execute(
+            "SELECT 1 FROM chat_sessions WHERE session_id = ? AND user_id = ? LIMIT 1",
+            (session_id, user_id),
+        ).fetchone()
+        return row is not None
+    except Exception as e:
+        logger.warning("[AgentMemory] session_belongs_to_user failed: %s", e)
+        return False
 
 
 def format_memory_context_block(memories: List[str], max_chars: int = 2400) -> str:
