@@ -276,16 +276,13 @@ export default function DailyBriefUI() {
       const limit = isMoversExpanded ? 15 : 3
       return data.losers.slice(0, limit).map(r => {
         const meta = getTickerMetadata(r.symbol, r)
-        const newsHeadline = r.fincrawler_news?.[0]?.title || r.primary_cause_headline
         return {
           symbol: r.symbol,
           move: r.daily_return_pct,
-          insider: r.insider_sentiment || 'N/A',
           marketCap: meta.marketCap,
           pe: meta.pe,
           industry: meta.industry,
           enrichmentSource: meta.enrichmentSource,
-          rationale: r.one_line_reason || newsHeadline || 'Movers analysis from session EOD.'
         }
       })
     }
@@ -297,16 +294,13 @@ export default function DailyBriefUI() {
       const limit = isMoversExpanded ? 15 : 3
       return data.gainers.slice(0, limit).map(r => {
         const meta = getTickerMetadata(r.symbol, r)
-        const newsHeadline = r.fincrawler_news?.[0]?.title || r.primary_cause_headline
         return {
           symbol: r.symbol,
           move: r.daily_return_pct,
-          insider: r.insider_sentiment || 'N/A',
           marketCap: meta.marketCap,
           pe: meta.pe,
           industry: meta.industry,
           enrichmentSource: meta.enrichmentSource,
-          rationale: r.one_line_reason || newsHeadline || 'Movers analysis from session EOD.'
         }
       })
     }
@@ -320,11 +314,9 @@ export default function DailyBriefUI() {
         return {
           symbol: r.symbol,
           move: r.daily_return_pct,
-          insider: r.insider_sentiment || 'N/A',
           marketCap: meta.marketCap,
           pe: meta.pe,
           industry: meta.industry,
-          rationale: r.one_line_reason || `No rationale available for ${r.symbol}.`
         }
       })
     }
@@ -623,8 +615,6 @@ export default function DailyBriefUI() {
                         <th>Market Cap</th>
                         <th>P/E</th>
                         <th>Move %</th>
-                        <th>Insider / Smart Money</th>
-                        <th>AI Rationale</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -655,10 +645,6 @@ export default function DailyBriefUI() {
                           <td style={{ color: row.move > 0 ? '#34d399' : (row.move < 0 ? '#f87171' : '#94a3b8'), fontWeight: 600 }}>
                             {row.move > 0 ? '+' : ''}{row.move.toFixed(1)}%
                           </td>
-                          <td>
-                            <span className="brief-pill-neutral">{row.insider}</span>
-                          </td>
-                          <td style={{ color: '#cbd5e1' }}>{row.rationale}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -746,8 +732,6 @@ export default function DailyBriefUI() {
                           <th>Market Cap</th>
                           <th>P/E</th>
                           <th>Move %</th>
-                          <th>Insider / Smart Money</th>
-                          <th>AI Rationale</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -773,10 +757,6 @@ export default function DailyBriefUI() {
                             <td style={{ color: row.move > 0 ? '#34d399' : (row.move < 0 ? '#f87171' : '#94a3b8'), fontWeight: 600 }}>
                               {row.move > 0 ? '+' : ''}{row.move.toFixed(1)}%
                             </td>
-                            <td>
-                              <span className="brief-pill-neutral">{row.insider}</span>
-                            </td>
-                            <td style={{ color: '#cbd5e1' }}>{row.rationale}</td>
                           </tr>
                         ))}
                       </tbody>
