@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 _cache: Dict[str, tuple[float, Any, float]] = {}
 _CACHE_TTL = 86_400  # 24 hours
 _QUOTE_CACHE_TTL = 60  # spot quotes — short TTL for parity / live UI
+_HTML_CACHE_TTL = 90  # slickcharts tables — short TTL, refreshed on page load
 
 
 def _cache_set(key: str, val: Any, *, ttl: Optional[float] = None) -> None:
@@ -349,6 +350,63 @@ class FinCrawlerClient:
         if price is not None:
             _cache_set(cache_key, price, ttl=_QUOTE_CACHE_TTL)
         return price
+
+    async def fetch_html(self, url: str, *, force_refresh: bool = False) -> str:
+        """Fetch raw HTML via FinCrawler GET /fetch/html (Tier-1 compliant fetch)."""
+        if not self.enabled:
+            return ""
+        target = (url or "").strip()
+        if not target:
+            return ""
+        cache_key = f"html:{target}"
+        if not force_refresh:
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                return cached
+        try:
+            data = await self._get(
+                "/fetch/html",
+                params={"url": target, "force_refresh": str(force_refresh).lower()},
+            )
+            html = ""
+            if isinstance(data, dict) and data.get("ok"):
+                html = str(data.get("html") or "")
+        except Exception as e:
+            logger.warning("[FinCrawler] fetch_html failed for %s: %s", target, e)
+            return ""
+        if html and not force_refresh:
+            _cache_set(cache_key, html, ttl=_HTML_CACHE_TTL)
+        return html
+
+    def fetch_html_sync(self, url: str, *, force_refresh: bool = False) -> str:
+        """Sync HTML fetch for daily-brief / slickcharts paths."""
+        if not self.enabled:
+            return ""
+        target = (url or "").strip()
+        if not target:
+            return ""
+        cache_key = f"html_sync:{target}"
+        if not force_refresh:
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                return cached
+        timeout = max(self._quote_timeout_s(), 15.0)
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                r = client.get(
+                    f"{self.base_url}/fetch/html",
+                    headers=self._headers(),
+                    params={"url": target, "force_refresh": str(force_refresh).lower()},
+                )
+                r.raise_for_status()
+                data = r.json()
+            html = str(data.get("html") or "") if isinstance(data, dict) and data.get("ok") else ""
+        except Exception as e:
+            logger.warning("[FinCrawler] fetch_html_sync failed for %s: %s", target, e)
+            return ""
+        if html and not force_refresh:
+            _cache_set(cache_key, html, ttl=_HTML_CACHE_TTL)
+        return html
 
     async def get_quote_price(self, ticker: str) -> Optional[float]:
         """

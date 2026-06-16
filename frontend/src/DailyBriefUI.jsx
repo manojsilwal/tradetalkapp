@@ -203,7 +203,7 @@ export default function DailyBriefUI() {
   useEffect(() => {
     if (initialLoadDone.current) return;
     initialLoadDone.current = true;
-    loadDailyBrief(false);
+    loadDailyBrief(true);
     loadExtraData();
   }, [loadDailyBrief, loadExtraData]);
 
@@ -247,13 +247,23 @@ export default function DailyBriefUI() {
     ? portfolioBrief.summary.daily_return_pct
     : null
 
-  const spyChange = portfolioBrief?.summary?.benchmark_context?.spy_daily_return_pct != null
-    ? portfolioBrief.summary.benchmark_context.spy_daily_return_pct
-    : null
+  const spyChange = (() => {
+    const etf = data?.benchmark_etfs?.find((e) => e.symbol === 'SPY')
+    if (etf?.daily_return_pct != null) return etf.daily_return_pct
+    return portfolioBrief?.summary?.benchmark_context?.spy_daily_return_pct ?? null
+  })()
 
-  const qqqChange = portfolioBrief?.summary?.benchmark_context?.qqq_daily_return_pct != null
-    ? portfolioBrief.summary.benchmark_context.qqq_daily_return_pct
-    : null
+  const qqqChange = (() => {
+    const etf = data?.benchmark_etfs?.find((e) => e.symbol === 'QQQ')
+    if (etf?.daily_return_pct != null) return etf.daily_return_pct
+    return portfolioBrief?.summary?.benchmark_context?.qqq_daily_return_pct ?? null
+  })()
+
+  const diaChange = (() => {
+    const etf = data?.benchmark_etfs?.find((e) => e.symbol === 'DIA')
+    if (etf?.daily_return_pct != null) return etf.daily_return_pct
+    return null
+  })()
 
   const ijrChange = portfolioBrief?.summary?.benchmark_context?.ijr_daily_return_pct != null
     ? portfolioBrief.summary.benchmark_context.ijr_daily_return_pct
@@ -512,6 +522,16 @@ export default function DailyBriefUI() {
                   </div>
                   <div className="brief-benchmark-row">
                     <div className="brief-benchmark-item">
+                      <span className={diaChange == null ? 'brief-bullet-neutral' : (diaChange > 0 ? 'brief-bullet-green' : (diaChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
+                      <span>Dow Jones ETF (DIA)</span>
+                    </div>
+                    <span style={{ color: diaChange == null ? '#94a3b8' : (diaChange > 0 ? '#34d399' : (diaChange < 0 ? '#f87171' : '#94a3b8')), fontWeight: 700 }}>
+                      {diaChange != null ? `${diaChange > 0 ? '+' : ''}${diaChange.toFixed(1)}%` : '—'}
+                    </span>
+                  </div>
+                  {!data?.benchmark_etfs?.length && (
+                  <div className="brief-benchmark-row">
+                    <div className="brief-benchmark-item">
                       <span className={ijrChange == null ? 'brief-bullet-neutral' : (ijrChange > 0 ? 'brief-bullet-green' : (ijrChange < 0 ? 'brief-bullet-red' : 'brief-bullet-neutral'))} />
                       <span>iShares S&P Small-Cap ETF (IJR)</span>
                     </div>
@@ -519,6 +539,7 @@ export default function DailyBriefUI() {
                       {ijrChange != null ? `${ijrChange > 0 ? '+' : ''}${ijrChange.toFixed(1)}%` : '—'}
                     </span>
                   </div>
+                  )}
                 </div>
               )}
             </div>

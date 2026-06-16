@@ -402,6 +402,32 @@ def _fetch_movers_from_bq(trade_date: date, n_losers: int, n_gainers: int) -> Li
     return rows
 
 
+def _fetch_movers_from_slickcharts(
+    n_losers: int,
+    n_gainers: int,
+    *,
+    force_refresh: bool = False,
+) -> Optional[tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
+    """Live S&P 500 movers from slickcharts.com (via FinCrawler HTML fetch)."""
+    from backend.connectors.slickcharts import (
+        fetch_slickcharts_movers,
+        slickcharts_rows_to_brief_rows,
+    )
+
+    fetched = fetch_slickcharts_movers(
+        n_losers=n_losers,
+        n_gainers=n_gainers,
+        force_refresh=force_refresh,
+    )
+    if not fetched:
+        return None
+    gainers_raw, losers_raw, etfs = fetched
+    rows: List[Dict[str, Any]] = []
+    for bucket, rank, raw in slickcharts_rows_to_brief_rows(gainers_raw, losers_raw):
+        rows.append(_normalize_row(raw, bucket, rank))
+    return rows, etfs
+
+
 def _fetch_movers_from_intel(n_losers: int, n_gainers: int) -> List[Dict[str, Any]]:
     from backend import market_intel
 
@@ -686,6 +712,8 @@ def overlay_realtime_quotes(payload: Dict[str, Any], *, force: bool = False) -> 
         payload["realtime_overlay"] = False
         return payload
 
+    preserve_quotes = payload.get("source") == "slickcharts_live"
+
     focus = symbols[0]
     try:
         bundle = fetch_live_bundle_sync(
@@ -706,21 +734,22 @@ def overlay_realtime_quotes(payload: Dict[str, Any], *, force: bool = False) -> 
 
     overlaid = 0
     for row in rows:
-        if apply_quotes_to_row(row, quotes):
+        if not preserve_quotes and apply_quotes_to_row(row, quotes):
             overlaid += 1
         apply_bundle_enrichment(row, bundle)
 
     for key in ("losers", "gainers", "compelling"):
         for r in payload.get(key) or []:
-            apply_quotes_to_row(r, quotes)
+            if not preserve_quotes:
+                apply_quotes_to_row(r, quotes)
             apply_bundle_enrichment(r, bundle)
 
-    # Re-rank by the freshly overlaid live return so the displayed order matches
-    # the live percentages (the snapshot ranking can drift after the overlay).
-    _resort_movers_by_live_return(payload)
+    # Slickcharts already ranks by live % — do not re-sort from yfinance overlay.
+    if not preserve_quotes:
+        _resort_movers_by_live_return(payload)
 
     merge_bundle_meta(payload, bundle)
-    payload["realtime_overlay"] = overlaid > 0
+    payload["realtime_overlay"] = overlaid > 0 or (preserve_quotes and bool(quotes))
     payload["rt_overlay_count"] = overlaid
     if overlaid > 0:
         payload["trade_date"] = expected_last_session().isoformat()
@@ -1228,6 +1257,33 @@ def build_daily_brief(
     td = trade_date or db_latest
     if td:
         td = _adjust_weekend_to_friday(td)
+
+    # Live refresh: prefer Slickcharts (same source as slickcharts.com UI).
+    if not use_snapshot:
+        sc = _fetch_movers_from_slickcharts(n_losers, n_gainers, force_refresh=True)
+        if sc:
+            sc_rows, sc_etfs = sc
+            live_td = date.today()
+            payload = _payload_from_rows(
+                sc_rows, live_td, "slickcharts_live", verdict_tier="heuristic"
+            )
+            payload["from_snapshot"] = False
+            payload["benchmark_etfs"] = sc_etfs
+            enrich_daily_brief_rows(payload.get("rows", []))
+            payload["losers"] = [r for r in payload["rows"] if r["bucket"] == "loser"]
+            payload["gainers"] = [r for r in payload["rows"] if r["bucket"] == "gainer"]
+            payload["compelling"] = [r for r in payload["rows"] if r.get("is_compelling")]
+            from datetime import datetime, timezone
+
+            from backend.freshness import assess_home_live
+
+            payload["data_freshness"] = assess_home_live(
+                source="slickcharts_live",
+                as_of=live_td.isoformat(),
+                captured_at=datetime.now(timezone.utc),
+            ).model_dump(mode="json")
+            return payload
+
     if use_snapshot and td:
         cached = load_snapshot(td)
         if cached:
