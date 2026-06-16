@@ -108,3 +108,18 @@ CREATE INDEX IF NOT EXISTS idx_contract_viol_resource ON contract_violations(res
 CREATE INDEX IF NOT EXISTS idx_contract_viol_model    ON contract_violations(model);
 CREATE INDEX IF NOT EXISTS idx_contract_viol_code     ON contract_violations(code);
 CREATE INDEX IF NOT EXISTS idx_contract_viol_decision ON contract_violations(decision_id);
+
+
+-- ── llm_api_calls ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS llm_api_calls (
+    id           BIGSERIAL PRIMARY KEY,
+    timestamp    DOUBLE PRECISION NOT NULL,
+    query_brief  TEXT NOT NULL,
+    llm_used     TEXT NOT NULL,
+    cost         DOUBLE PRECISION NOT NULL,
+    time_taken   DOUBLE PRECISION NOT NULL,
+    api_url      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_api_calls_timestamp ON llm_api_calls(timestamp DESC);
+
