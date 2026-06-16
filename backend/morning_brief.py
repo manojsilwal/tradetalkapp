@@ -1007,12 +1007,16 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
 
     positions_raw = pp.get_positions(user_id, include_closed=False)
     if not positions_raw:
+        # No portfolio yet: market-wide benchmarks (SPY/QQQ/IJR) are not
+        # portfolio-specific, so still overlay live quotes for them.
+        _apply_home_live_overlay(base, enriched=[], total_value=0.0)
         return base
 
     base["has_portfolio"] = True
     perf = pp.get_portfolio_performance(user_id)
     enriched = perf.get("positions") or []
     if not enriched:
+        _apply_home_live_overlay(base, enriched=[], total_value=0.0)
         return base
 
     total_value = float(perf.get("total_value") or 0)

@@ -620,6 +620,32 @@ def _compute_movers(
     return td, source, rows
 
 
+def _resort_movers_by_live_return(payload: Dict[str, Any]) -> None:
+    """Re-sort gainers (desc) and losers (asc) by their current daily_return_pct.
+
+    Rows without a value sink to the bottom. Ranks are renumbered so the UI shows
+    the largest movers first after the realtime overlay updates each row's return.
+    """
+    def _ret(row: Dict[str, Any]) -> Optional[float]:
+        val = row.get("daily_return_pct")
+        try:
+            return float(val) if val is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    gainers = payload.get("gainers")
+    if isinstance(gainers, list):
+        gainers.sort(key=lambda r: (_ret(r) is None, -(_ret(r) or 0.0)))
+        for i, r in enumerate(gainers, start=1):
+            r["rank"] = i
+
+    losers = payload.get("losers")
+    if isinstance(losers, list):
+        losers.sort(key=lambda r: (_ret(r) is None, _ret(r) or 0.0))
+        for i, r in enumerate(losers, start=1):
+            r["rank"] = i
+
+
 def overlay_realtime_quotes(payload: Dict[str, Any], *, force: bool = False) -> Dict[str, Any]:
     """
     Overlay live quotes + parallel FinCrawler enrichment on daily brief rows.
@@ -674,6 +700,10 @@ def overlay_realtime_quotes(payload: Dict[str, Any], *, force: bool = False) -> 
         for r in payload.get(key) or []:
             apply_quotes_to_row(r, quotes)
             apply_bundle_enrichment(r, bundle)
+
+    # Re-rank by the freshly overlaid live return so the displayed order matches
+    # the live percentages (the snapshot ranking can drift after the overlay).
+    _resort_movers_by_live_return(payload)
 
     merge_bundle_meta(payload, bundle)
     payload["realtime_overlay"] = overlaid > 0

@@ -128,6 +128,53 @@ class TestOverlayRealtimeQuotesForce(unittest.TestCase):
         self.assertFalse(out["realtime_overlay"])
 
 
+class TestResortMoversByLiveReturn(unittest.TestCase):
+    def test_gainers_resorted_desc_with_ranks(self):
+        payload = {
+            "gainers": [
+                {"symbol": "META", "daily_return_pct": 4.25, "rank": 1},
+                {"symbol": "MRNA", "daily_return_pct": 4.28, "rank": 2},
+                {"symbol": "ETSY", "daily_return_pct": 4.62, "rank": 3},
+                {"symbol": "NONE", "daily_return_pct": None, "rank": 4},
+            ],
+            "losers": [
+                {"symbol": "AAA", "daily_return_pct": -1.0, "rank": 1},
+                {"symbol": "BBB", "daily_return_pct": -5.0, "rank": 2},
+            ],
+        }
+        daily_brief._resort_movers_by_live_return(payload)
+        self.assertEqual(
+            [r["symbol"] for r in payload["gainers"]],
+            ["ETSY", "MRNA", "META", "NONE"],
+        )
+        self.assertEqual([r["rank"] for r in payload["gainers"]], [1, 2, 3, 4])
+        self.assertEqual(
+            [r["symbol"] for r in payload["losers"]],
+            ["BBB", "AAA"],
+        )
+
+    def test_overlay_resorts_gainers(self):
+        payload = {
+            "rows": [
+                {"symbol": "META", "daily_return_pct": 4.25, "bucket": "gainer"},
+                {"symbol": "ETSY", "daily_return_pct": 4.62, "bucket": "gainer"},
+            ],
+            "gainers": [
+                {"symbol": "META", "daily_return_pct": 4.25, "rank": 1},
+                {"symbol": "ETSY", "daily_return_pct": 4.62, "rank": 2},
+            ],
+            "losers": [],
+        }
+        quotes = {
+            "META": {"price": 700.0, "pct": 4.25, "previous_close": 671.0},
+            "ETSY": {"price": 80.0, "pct": 6.5, "previous_close": 75.1},
+        }
+        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value=quotes):
+            out = daily_brief.overlay_realtime_quotes(payload, force=True)
+        self.assertEqual(out["gainers"][0]["symbol"], "ETSY")
+        self.assertEqual(out["gainers"][0]["rank"], 1)
+
+
 class TestMorningBriefHomeLive(unittest.TestCase):
     def test_apply_overlay_stamps_home_live(self):
         from backend.morning_brief import _apply_home_live_overlay
