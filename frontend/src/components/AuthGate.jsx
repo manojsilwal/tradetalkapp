@@ -66,8 +66,9 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
         <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 16, border: '1px solid rgba(255,255,255,0.08)' }}>
             {/* Blurred preview */}
             <div style={{
+                position: 'absolute', inset: 0,
                 filter: 'blur(6px)', opacity: 0.4, pointerEvents: 'none',
-                padding: 24, minHeight: 300,
+                padding: 24, overflow: 'hidden',
             }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
                     {[1,2,3].map(i => (
@@ -81,9 +82,13 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
 
             {/* Overlay CTA */}
             <div style={{
-                position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                position: 'relative', display: 'flex', flexDirection: 'column',
                 alignItems: 'center', justifyContent: 'center',
                 background: 'linear-gradient(180deg, rgba(15,17,26,0.3), rgba(15,17,26,0.9))',
+                padding: '40px 20px',
+                width: '100%',
+                boxSizing: 'border-box',
+                zIndex: 1,
             }}>
                 <div style={{ fontSize: 40, marginBottom: 16 }}>{featureIcon}</div>
                 <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8, color: '#f8fafc' }}>
@@ -94,9 +99,10 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
                 </p>
 
                 <div style={{
-                    background: 'rgba(255,255,255,0.04)',
+                    background: 'transparent',
                     border: '1px solid rgba(255,255,255,0.08)',
                     borderRadius: 16, padding: 24, width: '100%', maxWidth: 320,
+                    boxSizing: 'border-box',
                 }}>
                     {!isDevMode && (
                         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
