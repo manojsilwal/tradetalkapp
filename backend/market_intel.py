@@ -293,7 +293,36 @@ def _compute_live_movers_parallel() -> Dict[str, Any]:
     except Exception as e:
         logger.warning("[MarketIntel] live movers batch download failed: %s", e)
 
-    # Fallback to individual fast_info only for a very small set of priority tickers if batch fails
+    # Fallback when the bulk batch download returns nothing (common on cloud
+    # hosts where Yahoo throttles `yf.download` of the full universe). Reuse the
+    # proven parallel fast_info path (`fetch_realtime_quotes`) — the same one the
+    # benchmark/home overlay relies on — across the whole universe. force=True so
+    # it runs regardless of the current session window.
+    if not movers:
+        logger.info(
+            "[MarketIntel] batch empty; scanning %d-name universe via parallel fast_info...",
+            len(syms),
+        )
+        try:
+            quotes = fetch_realtime_quotes(syms, force=True)
+        except Exception as e:
+            logger.warning("[MarketIntel] fast_info universe scan failed: %s", e)
+            quotes = {}
+        for sym, q in quotes.items():
+            price = q.get("price")
+            pct = q.get("pct")
+            if price is None or pct is None or float(price) <= 0:
+                continue
+            movers.append({
+                "sym": sym,
+                "price": round(float(price), 2),
+                "pct": round(float(pct), 2),
+                "volume": 0,
+                "relative_volume": 1.0,
+                "return_zscore_60d": 0.0,
+            })
+
+    # Last resort: a tiny priority set so the surface is never fully empty.
     if not movers:
         logger.info("[MarketIntel] falling back to priority tickers fast_info...")
         priority_syms = [
