@@ -620,16 +620,23 @@ def _compute_movers(
     return td, source, rows
 
 
-def overlay_realtime_quotes(payload: Dict[str, Any]) -> Dict[str, Any]:
+def overlay_realtime_quotes(payload: Dict[str, Any], *, force: bool = False) -> Dict[str, Any]:
     """
-    On trading days, overlay live Yahoo Finance quotes on top of
-    EOD-based daily brief data.  Mutates payload in-place and adds a
-    ``realtime_overlay`` flag so the frontend can show a "Live" badge.
-    Active from 4 AM to midnight ET on weekdays; off on weekends.
-    """
-    from backend.market_intel import needs_realtime_overlay, fetch_realtime_quotes
+    Overlay live quotes + parallel FinCrawler enrichment on daily brief rows.
+    Mutates payload in-place and adds a ``realtime_overlay`` flag.
 
-    if not needs_realtime_overlay():
+    When ``force`` is False, active from 4 AM to midnight ET on trading days.
+    When ``force`` is True, fetches off-hours too (last close counts as fetched).
+    """
+    from backend.market_intel import needs_realtime_overlay
+    from backend.connectors.live_data_orchestrator import (
+        apply_bundle_enrichment,
+        apply_quotes_to_row,
+        fetch_live_bundle_sync,
+        merge_bundle_meta,
+    )
+
+    if not force and not needs_realtime_overlay():
         payload["realtime_overlay"] = False
         return payload
 
@@ -639,10 +646,17 @@ def overlay_realtime_quotes(payload: Dict[str, Any]) -> Dict[str, Any]:
         payload["realtime_overlay"] = False
         return payload
 
+    focus = symbols[0]
     try:
-        quotes = fetch_realtime_quotes(symbols)
+        bundle = fetch_live_bundle_sync(
+            symbols,
+            want=("price", "fundamentals", "news", "sec"),
+            focus_ticker=focus,
+            force=force,
+        )
+        quotes = bundle.quotes
     except Exception as e:
-        logger.warning("[DailyBrief] RT quote overlay failed: %s", e)
+        logger.warning("[DailyBrief] live data orchestrator failed: %s", e)
         payload["realtime_overlay"] = False
         return payload
 
@@ -652,39 +666,26 @@ def overlay_realtime_quotes(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     overlaid = 0
     for row in rows:
-        sym = row.get("symbol", "").upper()
-        q = quotes.get(sym)
-        if q:
-            row["close"] = q["price"]
-            row["daily_return_pct"] = q["pct"]
-            row["_rt_previous_close"] = q["previous_close"]
+        if apply_quotes_to_row(row, quotes):
             overlaid += 1
+        apply_bundle_enrichment(row, bundle)
 
-    # Also update losers / gainers / compelling sub-lists (they share row refs)
-    if payload.get("losers"):
-        for r in payload["losers"]:
-            q = quotes.get((r.get("symbol") or "").upper())
-            if q:
-                r["close"] = q["price"]
-                r["daily_return_pct"] = q["pct"]
-    if payload.get("gainers"):
-        for r in payload["gainers"]:
-            q = quotes.get((r.get("symbol") or "").upper())
-            if q:
-                r["close"] = q["price"]
-                r["daily_return_pct"] = q["pct"]
-    if payload.get("compelling"):
-        for r in payload["compelling"]:
-            q = quotes.get((r.get("symbol") or "").upper())
-            if q:
-                r["close"] = q["price"]
-                r["daily_return_pct"] = q["pct"]
+    for key in ("losers", "gainers", "compelling"):
+        for r in payload.get(key) or []:
+            apply_quotes_to_row(r, quotes)
+            apply_bundle_enrichment(r, bundle)
 
+    merge_bundle_meta(payload, bundle)
     payload["realtime_overlay"] = overlaid > 0
     payload["rt_overlay_count"] = overlaid
     if overlaid > 0:
         payload["trade_date"] = expected_last_session().isoformat()
-    logger.info("[DailyBrief] RT overlay: %d/%d symbols updated", overlaid, len(symbols))
+    logger.info(
+        "[DailyBrief] live bundle: %d/%d symbols updated, sources=%s",
+        overlaid,
+        len(symbols),
+        bundle.sources,
+    )
     return payload
 
 
@@ -954,7 +955,14 @@ def _fetch_ticker_enrichment(sym: str) -> Optional[Dict[str, Any]]:
     Layered metadata fetch for daily brief / morning brief tables.
     GICS reference + chart names work when yfinance is rate-limited; live
     fundamentals overlay market cap / P/E / insider when Yahoo responds.
+    FinCrawler /quote/smart used when yfinance info breaker is open.
     """
+    from backend.connectors.yfinance_capability import (
+        record_failure,
+        record_success,
+        should_attempt,
+    )
+
     sym = (sym or "").upper().strip()
     if not sym:
         return None
@@ -963,20 +971,54 @@ def _fetch_ticker_enrichment(sym: str) -> Optional[Dict[str, Any]]:
 
     fi: Dict[str, Any] = {}
     info: Dict[str, Any] = {}
-    try:
-        import yfinance as yf
+    yf_ok = False
+    if should_attempt("info"):
+        try:
+            import yfinance as yf
 
-        t = yf.Ticker(sym)
+            t = yf.Ticker(sym)
+            try:
+                fi = dict(t.fast_info)
+            except Exception:
+                fi = {}
+            try:
+                info = t.info or {}
+            except Exception:
+                info = {}
+            yf_ok = bool(info or fi)
+        except Exception as e:
+            logger.debug("[DailyBriefEnrich] yfinance open failed %s: %s", sym, e)
+            record_failure("info")
+        else:
+            if yf_ok:
+                record_success("info")
+            else:
+                record_failure("info")
+    else:
         try:
-            fi = dict(t.fast_info)
-        except Exception:
-            fi = {}
-        try:
-            info = t.info or {}
-        except Exception:
-            info = {}
-    except Exception as e:
-        logger.debug("[DailyBriefEnrich] yfinance open failed %s: %s", sym, e)
+            from backend.fincrawler_client import fc
+
+            if fc.enabled:
+                fund_fc = fc.get_fundamentals_sync(sym)
+                if fund_fc:
+                    meta = _merge_enrichment(
+                        meta,
+                        {
+                            "company_name": fund_fc.get("company_name") or sym,
+                            "sector": (meta or {}).get("sector") or "Unknown",
+                            "industry": fund_fc.get("industry") or (meta or {}).get("industry") or "Unknown",
+                            "market_cap": fund_fc.get("market_cap"),
+                            "pe_ratio": fund_fc.get("pe_ratio"),
+                            "forward_pe": fund_fc.get("forward_pe"),
+                            "insider_sentiment": (meta or {}).get("insider_sentiment") or "N/A",
+                            "source": "fincrawler",
+                            "enrichment_source": "fincrawler",
+                        },
+                    )
+                    if meta and _enrichment_is_usable(meta):
+                        return meta
+        except Exception as e:
+            logger.debug("[DailyBriefEnrich] fincrawler fundamentals failed %s: %s", sym, e)
 
     held = info.get("heldPercentInsiders")
     insider = f"{held * 100:.1f}% Insiders" if held is not None else None

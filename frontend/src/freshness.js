@@ -27,6 +27,40 @@ export const FRESHNESS_STATES = Object.freeze({
 
 const _LIVE_SOURCES = ['realtime_overlay', 'market_intel_live', 'market_intel'];
 
+/** Default max age for home_live clock-age envelopes (matches FRESHNESS_HOME_MAX_S). */
+export const HOME_LIVE_MAX_AGE_S = 3600;
+
+function isClockAgeEnvelope(envelope) {
+  if (!envelope || typeof envelope !== 'object') return false;
+  return Boolean(
+    envelope.captured_at
+    && !envelope.expected_last_session
+    && envelope.data_class === 'home_live',
+  );
+}
+
+/**
+ * True when a freshness envelope is stale (session-day or clock-age).
+ */
+export function envelopeIsStale(envelope) {
+  if (!envelope || typeof envelope !== 'object') return true;
+  if (isClockAgeEnvelope(envelope)) {
+    if (envelope.is_stale) return true;
+    if (envelope.captured_at) {
+      const cap = new Date(envelope.captured_at);
+      if (!Number.isNaN(cap.getTime())) {
+        const ageS = (Date.now() - cap.getTime()) / 1000;
+        const maxS = typeof envelope.policy_max_age_s === 'number'
+          ? envelope.policy_max_age_s
+          : HOME_LIVE_MAX_AGE_S;
+        if (ageS > maxS) return true;
+      }
+    }
+    return false;
+  }
+  return !!envelope.is_stale;
+}
+
 /**
  * Kill switch: set VITE_DATA_TRUST_STRICT=0 to fall back to badge-only mode
  * (never hide a value), e.g. if strict hiding causes a production issue.
@@ -151,6 +185,9 @@ export function shouldHideValue(parsed, { priceSensitive = true } = {}) {
  * True when trade_date is materially behind expected_last_session (legacy block or envelope).
  */
 export function isSessionDateStale(tradeDateIso, envelope, toleranceDays = 2) {
+  if (envelope && isClockAgeEnvelope(envelope)) {
+    return envelopeIsStale(envelope);
+  }
   if (!tradeDateIso) return true;
   const expected =
     envelope?.expected_last_session ||
@@ -173,6 +210,10 @@ export function isSessionDateStale(tradeDateIso, envelope, toleranceDays = 2) {
 export function isBriefSessionTrustworthy(briefPayload) {
   if (!briefPayload) return false;
   const env = briefPayload.data_freshness;
+  if (!env) return false;
+  if (isClockAgeEnvelope(env)) {
+    return !envelopeIsStale(env);
+  }
   if (env?.is_stale) return false;
   if (isSessionDateStale(briefPayload.trade_date, env)) return false;
   if (!env && briefPayload.trade_date) return false;

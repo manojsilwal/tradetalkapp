@@ -71,5 +71,23 @@ class TestSpecialPolicies(unittest.TestCase):
         self.assertTrue(f.degraded)
 
 
+class TestHomeLivePolicy(unittest.TestCase):
+    def test_fresh_within_one_hour(self):
+        now = datetime.now(timezone.utc)
+        f = fr.assess_home_live(captured_at=now, now=now)
+        self.assertFalse(f.is_stale)
+        self.assertEqual(f.data_class, "home_live")
+        self.assertEqual(f.source, "realtime_overlay")
+        self.assertEqual(f.policy_max_age_s, 3600.0)
+
+    def test_stale_after_one_hour(self):
+        now = datetime.now(timezone.utc)
+        f = fr.assess_home_live(
+            captured_at=now - timedelta(seconds=3700),
+            now=now,
+        )
+        self.assertTrue(f.is_stale)
+
+
 if __name__ == "__main__":
     unittest.main()

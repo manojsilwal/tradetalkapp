@@ -319,53 +319,91 @@ def _compute_live_movers_parallel() -> Dict[str, Any]:
     
     news_map = {}
     if extreme_syms:
-        def _get_ticker_news(sym: str) -> tuple[str, Dict[str, Any]]:
-            try:
-                import yfinance as yf
-                ticker = yf.Ticker(sym)
-                news = ticker.news or []
-                if news:
-                    first_article = news[0]
-                    title = first_article.get("title", "")
-                    title_lower = title.lower()
-                    catalyst_keywords = (
-                        "earnings", "dividend", "acquisition", "merger", "fda", "buyback",
-                        "downgrade", "upgrade", "probe", "fraud", "miss", "beat", "ceo", "lawsuit", "guidance",
-                        "regulatory", "investigation", "layoff", "restructur", "bankrupt"
-                    )
-                    has_cat = any(kw in title_lower for kw in catalyst_keywords)
-                    category = "none"
-                    if "earnings" in title_lower or "eps" in title_lower or "beat" in title_lower or "miss" in title_lower:
-                        category = "earnings"
-                    elif "dividend" in title_lower or "buyback" in title_lower:
-                        category = "corporate_action"
-                    elif has_cat:
-                        category = "news"
-                    
-                    return sym, {
-                        "catalyst_status": "symbol_specific" if has_cat else "no_catalyst",
-                        "primary_cause_category": category,
-                        "primary_cause_headline": title,
-                        "primary_cause_weight": 0.8 if has_cat else 0.0
-                    }
-            except Exception:
-                pass
-            return sym, {
-                "catalyst_status": "no_catalyst",
-                "primary_cause_category": "none",
-                "primary_cause_headline": "",
-                "primary_cause_weight": 0.0
-            }
-            
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_sym = {executor.submit(_get_ticker_news, sym): sym for sym in extreme_syms}
-            for future in as_completed(future_to_sym):
+        from backend.connectors.yfinance_capability import should_attempt
+
+        if should_attempt("news"):
+            def _get_ticker_news(sym: str) -> tuple[str, Dict[str, Any]]:
                 try:
-                    sym, cat_info = future.result()
-                    news_map[sym] = cat_info
+                    import yfinance as yf
+                    from backend.connectors.yfinance_capability import record_failure, record_success
+
+                    ticker = yf.Ticker(sym)
+                    news = ticker.news or []
+                    if news:
+                        record_success("news")
+                        first_article = news[0]
+                        title = first_article.get("title", "")
+                        title_lower = title.lower()
+                        catalyst_keywords = (
+                            "earnings", "dividend", "acquisition", "merger", "fda", "buyback",
+                            "downgrade", "upgrade", "probe", "fraud", "miss", "beat", "ceo", "lawsuit", "guidance",
+                            "regulatory", "investigation", "layoff", "restructur", "bankrupt"
+                        )
+                        has_cat = any(kw in title_lower for kw in catalyst_keywords)
+                        category = "none"
+                        if "earnings" in title_lower or "eps" in title_lower or "beat" in title_lower or "miss" in title_lower:
+                            category = "earnings"
+                        elif "dividend" in title_lower or "buyback" in title_lower:
+                            category = "corporate_action"
+                        elif has_cat:
+                            category = "news"
+
+                        return sym, {
+                            "catalyst_status": "symbol_specific" if has_cat else "no_catalyst",
+                            "primary_cause_category": category,
+                            "primary_cause_headline": title,
+                            "primary_cause_weight": 0.8 if has_cat else 0.0
+                        }
+                    record_failure("news")
                 except Exception:
-                    pass
+                    from backend.connectors.yfinance_capability import record_failure
+                    record_failure("news")
+                return sym, {
+                    "catalyst_status": "no_catalyst",
+                    "primary_cause_category": "none",
+                    "primary_cause_headline": "",
+                    "primary_cause_weight": 0.0
+                }
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_sym = {executor.submit(_get_ticker_news, sym): sym for sym in extreme_syms}
+                for future in as_completed(future_to_sym):
+                    try:
+                        sym, cat_info = future.result()
+                        news_map[sym] = cat_info
+                    except Exception:
+                        pass
+        else:
+            try:
+                import asyncio
+                from backend.fincrawler_client import fc
+
+                if fc.enabled:
+                    async def _fc_news() -> Dict[str, Dict[str, Any]]:
+                        out: Dict[str, Dict[str, Any]] = {}
+                        for sym in extreme_syms:
+                            articles = await fc.get_stock_news_articles(sym, limit=1)
+                            if articles:
+                                title = articles[0].get("title", "")
+                                out[sym] = {
+                                    "catalyst_status": "symbol_specific",
+                                    "primary_cause_category": "news",
+                                    "primary_cause_headline": title,
+                                    "primary_cause_weight": 0.7,
+                                }
+                        return out
+
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        news_map = asyncio.run(_fc_news())
+                    else:
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            news_map = pool.submit(asyncio.run, _fc_news()).result()
+            except Exception as e:
+                logger.debug("[MarketIntel] FinCrawler news fallback failed: %s", e)
 
     # Update movers with catalyst info and default regime/other fields
     for m in movers:

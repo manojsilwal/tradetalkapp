@@ -1837,6 +1837,9 @@ class LLMClient:
                 "scorecard_ratio": r.get("scorecard_ratio"),
                 "valuation_pct_vs_fair": r.get("valuation_pct_vs_fair"),
                 "heuristic_verdict": r.get("verdict"),
+                "pe_ratio": r.get("pe_ratio"),
+                "market_cap": r.get("market_cap"),
+                "enrichment_source": r.get("enrichment_source"),
             })
         ctx = json.dumps({"rows": slim}, indent=2, default=str)
         if len(ctx) > 14000:

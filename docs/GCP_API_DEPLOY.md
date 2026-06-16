@@ -46,4 +46,4 @@ CORS_ORIGINS=https://your-app.vercel.app bash scripts/deploy_api_cloudrun.sh
 
 ## Render
 
-`render.yaml` no longer defines `tradetalkapp-backend`. FinCrawler may still run on Render as a separate service; only the TradeTalk API moved to GCP.
+`render.yaml` no longer defines `tradetalkapp-backend`. FinCrawler runs on GCP VM `dreamrise-gcp` (`FINCRAWLER_URL=http://34.71.218.179:10000`); Cloud Run picks this up via `scripts/deploy_api_cloudrun.sh`.

@@ -58,6 +58,16 @@ class FinCrawlerClient:
         self.api_key = os.environ.get("FINCRAWLER_KEY", "")
         self.timeout = 20.0
         self._enabled: Optional[bool] = None
+        self._sem: Optional[asyncio.Semaphore] = None
+
+    def _concurrency_sem(self) -> asyncio.Semaphore:
+        if self._sem is None:
+            try:
+                n = max(1, min(int(os.environ.get("FINCRAWLER_MAX_CONCURRENCY", "6")), 20))
+            except (TypeError, ValueError):
+                n = 6
+            self._sem = asyncio.Semaphore(n)
+        return self._sem
 
     @property
     def enabled(self) -> bool:
@@ -363,6 +373,96 @@ class FinCrawlerClient:
         if price is not None:
             _cache_set(cache_key, price, ttl=_QUOTE_CACHE_TTL)
         return price
+
+    def _parse_fundamentals_payload(self, data: Any, ticker: str) -> Dict[str, Any]:
+        if not isinstance(data, dict) or not data.get("ok"):
+            return {}
+        raw = data.get("data")
+        if not isinstance(raw, dict):
+            raw = {}
+        market_cap = raw.get("marketCap")
+        pe = raw.get("trailingPE")
+        change_pct = raw.get("regularMarketChangePercent")
+        return {
+            "ticker": ticker.upper(),
+            "company_name": raw.get("shortName") or ticker.upper(),
+            "market_cap": market_cap,
+            "pe_ratio": pe,
+            "forward_pe": pe,
+            "regular_market_price": raw.get("regularMarketPrice"),
+            "change_pct": change_pct,
+            "volume": raw.get("regularMarketVolume"),
+            "source": "fincrawler",
+        }
+
+    async def get_fundamentals(self, ticker: str, *, force_refresh: bool = False) -> Dict[str, Any]:
+        """Structured fundamentals via FinCrawler GET /quote/smart."""
+        if not self.enabled:
+            return {}
+        ticker = ticker.upper().strip()
+        if not ticker:
+            return {}
+        cache_key = f"fundamentals:{ticker}"
+        if not force_refresh:
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                return cached
+        try:
+            data = await self._get(
+                "/quote/smart",
+                params={"ticker": ticker, "force_refresh": str(force_refresh).lower()},
+            )
+            parsed = self._parse_fundamentals_payload(data, ticker)
+            if parsed:
+                _cache_set(cache_key, parsed, ttl=300.0)
+            return parsed
+        except Exception as e:
+            logger.warning("[FinCrawler] get_fundamentals failed for %s: %s", ticker, e)
+            return {}
+
+    def get_fundamentals_sync(self, ticker: str) -> Dict[str, Any]:
+        if not self.enabled:
+            return {}
+        ticker = ticker.upper().strip()
+        if not ticker:
+            return {}
+        cache_key = f"fundamentals_sync:{ticker}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+        url = f"{self.base_url}/quote/smart"
+        timeout = self._quote_timeout_s()
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                r = client.get(
+                    url,
+                    headers=self._headers(),
+                    params={"ticker": ticker},
+                )
+                r.raise_for_status()
+                parsed = self._parse_fundamentals_payload(r.json(), ticker)
+        except Exception as e:
+            logger.warning("[FinCrawler] get_fundamentals_sync failed for %s: %s", ticker, e)
+            return {}
+        if parsed:
+            _cache_set(cache_key, parsed, ttl=300.0)
+        return parsed
+
+    async def get_fundamentals_many(self, tickers: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Batch fundamentals with concurrency cap."""
+        if not self.enabled or not tickers:
+            return {}
+        sem = self._concurrency_sem()
+        out: Dict[str, Dict[str, Any]] = {}
+
+        async def _one(sym: str) -> None:
+            async with sem:
+                row = await self.get_fundamentals(sym)
+                if row:
+                    out[sym.upper()] = row
+
+        await asyncio.gather(*[_one(t) for t in tickers], return_exceptions=True)
+        return out
 
 
 # Module-level singleton — import and use everywhere

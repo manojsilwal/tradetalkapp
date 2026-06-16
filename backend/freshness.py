@@ -66,6 +66,7 @@ def _policies() -> dict[str, FreshnessPolicy]:
         # what matters is *when it was computed*, anchored on captured_at=now.
         "backtest": FreshnessPolicy("backtest", FreshnessTier.HISTORICAL, "age", _env_float("FRESHNESS_BACKTEST_MAX_S", 24 * 3600.0)),
         "scorecard": FreshnessPolicy("scorecard", FreshnessTier.HISTORICAL, "age", _env_float("FRESHNESS_SCORECARD_MAX_S", 24 * 3600.0)),
+        "home_live": FreshnessPolicy("home_live", FreshnessTier.LIVE, "age", _env_float("FRESHNESS_HOME_MAX_S", 3600.0)),
         # Session-anchored classes
         "session_pct": FreshnessPolicy("session_pct", FreshnessTier.EOD, "session", tolerance_days=0),
         "eod_movers": FreshnessPolicy("eod_movers", FreshnessTier.EOD, "session", tolerance_days=daily_tol),
@@ -144,6 +145,34 @@ def assess_spot(
     cap = captured_at if captured_at is not None else (now or datetime.now(timezone.utc))
     return assess(data_class=klass, source=source, as_of=as_of,
                   captured_at=cap, degraded=degraded, now=now)
+
+
+def assess_home_live(
+    source: str = "realtime_overlay",
+    *,
+    as_of: _TimeLike = None,
+    captured_at: _TimeLike = None,
+    now: Optional[datetime] = None,
+) -> DataFreshness:
+    """Clock-age freshness for the home page (Daily Brief / morning brief).
+
+    Fresh when fetched within ``FRESHNESS_HOME_MAX_S`` (default 1h). Off regular
+    session, marks ``degraded`` so the UI shows Delayed (last close) not Live.
+    """
+    from .market_calendar import SESSION_REGULAR, session_status
+
+    off_session = session_status() != SESSION_REGULAR
+    cap = captured_at if captured_at is not None else (now or datetime.now(timezone.utc))
+    tier = FreshnessTier.DELAYED if off_session else FreshnessTier.LIVE
+    return assess(
+        data_class="home_live",
+        source=source,
+        as_of=as_of,
+        captured_at=cap,
+        degraded=off_session,
+        tier=tier,
+        now=now,
+    )
 
 
 def assess(

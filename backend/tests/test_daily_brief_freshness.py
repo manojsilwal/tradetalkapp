@@ -103,5 +103,67 @@ class TestBuildDailyBriefBoth(unittest.TestCase):
         self.assertEqual(payload.get("gainers"), [])
 
 
+class TestOverlayRealtimeQuotesForce(unittest.TestCase):
+    def test_force_overlays_quotes(self):
+        payload = {
+            "rows": [{"symbol": "AAPL", "daily_return_pct": 0.0}],
+            "losers": [],
+            "gainers": [],
+            "compelling": [],
+        }
+        quotes = {"AAPL": {"price": 200.0, "pct": 1.5, "previous_close": 197.0}}
+        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value=quotes):
+            out = daily_brief.overlay_realtime_quotes(payload, force=True)
+        self.assertTrue(out["realtime_overlay"])
+        self.assertEqual(out["rows"][0]["daily_return_pct"], 1.5)
+
+    def test_force_empty_quotes_no_overlay(self):
+        payload = {
+            "rows": [{"symbol": "AAPL", "daily_return_pct": 0.0}],
+            "losers": [],
+            "gainers": [],
+        }
+        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value={}):
+            out = daily_brief.overlay_realtime_quotes(payload, force=True)
+        self.assertFalse(out["realtime_overlay"])
+
+
+class TestMorningBriefHomeLive(unittest.TestCase):
+    def test_apply_overlay_stamps_home_live(self):
+        from backend.morning_brief import _apply_home_live_overlay
+
+        payload = {
+            "summary": {"benchmark_context": {}, "daily_return_pct": 0.0},
+            "impact_movers": [{"symbol": "AAPL", "daily_return_pct": 0.0}],
+        }
+        enriched = [{"ticker": "AAPL", "current_value": 1000.0}]
+        quotes = {
+            "AAPL": {"price": 200.0, "pct": 1.2, "previous_close": 197.6},
+            "SPY": {"price": 500.0, "pct": 0.5, "previous_close": 497.5},
+        }
+        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value=quotes):
+            out = _apply_home_live_overlay(
+                payload, enriched=enriched, total_value=1000.0
+            )
+        self.assertTrue(out["realtime_overlay"])
+        self.assertEqual(out["data_freshness"]["data_class"], "home_live")
+        self.assertFalse(out["data_freshness"]["is_stale"])
+        self.assertEqual(out["impact_movers"][0]["daily_return_pct"], 1.2)
+        self.assertEqual(out["summary"]["daily_return_pct"], 1.2)
+
+    def test_apply_overlay_failure_falls_back_session_stale(self):
+        from backend.morning_brief import _apply_home_live_overlay
+
+        payload = {"summary": {}, "impact_movers": []}
+        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value={}), \
+                mock.patch("backend.daily_brief.get_latest_trade_date", return_value=date(2024, 1, 2)), \
+                mock.patch("backend.daily_brief.expected_last_session", return_value=date(2026, 6, 12)):
+            out = _apply_home_live_overlay(
+                payload, enriched=[{"ticker": "AAPL", "current_value": 100}], total_value=100
+            )
+        self.assertFalse(out["realtime_overlay"])
+        self.assertTrue(out["data_freshness"]["is_stale"])
+
+
 if __name__ == "__main__":
     unittest.main()

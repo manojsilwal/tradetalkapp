@@ -66,13 +66,18 @@ async def get_daily_brief(
         use_snapshot=not refresh,
         persist=False,
     )
-    payload = overlay_realtime_quotes(payload)
-    # A successful realtime overlay means prices were refreshed live, so the
-    # surface is fresh regardless of the underlying snapshot date.
+    payload = overlay_realtime_quotes(payload, force=True)
+    # A successful realtime overlay means prices were refreshed live.
     if payload.get("realtime_overlay"):
-        payload["data_freshness"] = compute_data_freshness(
-            expected_last_session(), source="realtime_overlay"
-        )
+        from datetime import datetime, timezone
+        from ..freshness import assess_home_live
+
+        now = datetime.now(timezone.utc)
+        payload["data_freshness"] = assess_home_live(
+            source="realtime_overlay",
+            as_of=expected_last_session().isoformat(),
+            captured_at=now,
+        ).model_dump(mode="json")
     elif not payload.get("data_freshness"):
         payload["data_freshness"] = compute_data_freshness(
             get_latest_trade_date(), source="snapshot"

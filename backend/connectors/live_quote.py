@@ -179,10 +179,30 @@ def _fetch_fincrawler(sym: str) -> Optional[Dict[str, Any]]:
 
 
 def _provider_fetch(name: str, sym: str) -> Optional[Dict[str, Any]]:
+    from .yfinance_capability import should_attempt
+
     if name == _PRIMARY:
-        return _fetch_yahoo_fast_info(sym)
+        if not should_attempt("price"):
+            return None
+        row = _fetch_yahoo_fast_info(sym)
+        if row:
+            from .yfinance_capability import record_success
+            record_success("price")
+        else:
+            from .yfinance_capability import record_failure
+            record_failure("price")
+        return row
     if name == "yahoo_chart":
-        return _fetch_yahoo_chart(sym)
+        if not should_attempt("chart"):
+            return None
+        row = _fetch_yahoo_chart(sym)
+        if row:
+            from .yfinance_capability import record_success
+            record_success("chart")
+        else:
+            from .yfinance_capability import record_failure
+            record_failure("chart")
+        return row
     if name == "stooq":
         return _fetch_stooq(sym)
     if name == "fincrawler":
@@ -215,10 +235,18 @@ async def _fetch_one_provider(name: str, sym: str) -> Optional[Dict[str, Any]]:
 
 async def _hedged_live_fetch(sym: str) -> Optional[Dict[str, Any]]:
     """Primary first; fan out fallbacks only after hedge delay."""
-    primary_task = asyncio.create_task(_fetch_one_provider(_PRIMARY, sym))
-    done, pending = await asyncio.wait({primary_task}, timeout=_hedge_delay_sec())
+    from .yfinance_capability import should_attempt
 
-    if primary_task in done:
+    primary_task = None
+    if should_attempt("price"):
+        primary_task = asyncio.create_task(_fetch_one_provider(_PRIMARY, sym))
+    done, pending = (
+        await asyncio.wait({primary_task}, timeout=_hedge_delay_sec())
+        if primary_task
+        else (set(), set())
+    )
+
+    if primary_task and primary_task in done:
         try:
             row = primary_task.result()
             if row:
@@ -231,7 +259,7 @@ async def _hedged_live_fetch(sym: str) -> Optional[Dict[str, Any]]:
 
     fallbacks = _parallel_fallbacks()
     fb_tasks = [asyncio.create_task(_fetch_one_provider(n, sym)) for n in fallbacks]
-    wait_set = {primary_task, *fb_tasks}
+    wait_set = {t for t in ([primary_task] if primary_task else []) + fb_tasks if t is not None}
     deadline = _hard_deadline_sec() - _hedge_delay_sec()
     deadline = max(0.25, deadline)
 
@@ -264,20 +292,21 @@ async def _hedged_live_fetch(sym: str) -> Optional[Dict[str, Any]]:
             return fc_row
 
     # Last chance: primary may have finished after fan-out loop.
-    if not primary_task.done():
-        try:
-            row = await asyncio.wait_for(primary_task, timeout=0.05)
-            if row:
-                return row
-        except Exception:
-            pass
-    elif primary_task.done():
-        try:
-            row = primary_task.result()
-            if row:
-                return row
-        except Exception:
-            pass
+    if primary_task is not None:
+        if not primary_task.done():
+            try:
+                row = await asyncio.wait_for(primary_task, timeout=0.05)
+                if row:
+                    return row
+            except Exception:
+                pass
+        else:
+            try:
+                row = primary_task.result()
+                if row:
+                    return row
+            except Exception:
+                pass
 
     return None
 

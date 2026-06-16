@@ -762,6 +762,117 @@ def _build_impact_movers(
     return movers
 
 
+def _apply_home_live_overlay(
+    payload: Dict[str, Any],
+    *,
+    enriched: List[Dict[str, Any]],
+    total_value: float,
+) -> Dict[str, Any]:
+    """Overlay live quotes + parallel FinCrawler enrichment; stamp clock-age freshness."""
+    from .daily_brief import compute_data_freshness, expected_last_session, get_latest_trade_date
+    from .freshness import assess_home_live
+    from .connectors.live_data_orchestrator import (
+        apply_bundle_enrichment,
+        apply_quotes_to_row,
+        fetch_live_bundle_sync,
+        merge_bundle_meta,
+    )
+
+    symbols_set: set[str] = set()
+    for p in enriched:
+        sym = (p.get("ticker") or "").upper()
+        if sym:
+            symbols_set.add(sym)
+    symbols_set.update({"SPY", "QQQ", "IJR"})
+    for mover in payload.get("impact_movers") or []:
+        sym = (mover.get("symbol") or "").upper()
+        if sym:
+            symbols_set.add(sym)
+    symbols = sorted(symbols_set)
+    if not symbols:
+        try:
+            payload["data_freshness"] = compute_data_freshness(
+                get_latest_trade_date(), source="portfolio"
+            )
+        except Exception:
+            pass
+        payload["realtime_overlay"] = False
+        return payload
+
+    focus = symbols[0] if symbols else None
+    try:
+        bundle = fetch_live_bundle_sync(
+            symbols,
+            want=("price", "fundamentals", "news", "sec"),
+            focus_ticker=focus,
+            force=True,
+        )
+        quotes = bundle.quotes
+    except Exception as exc:
+        logger.warning("[MorningBrief] live data orchestrator failed: %s", exc)
+        quotes = {}
+
+    if not quotes:
+        payload["realtime_overlay"] = False
+        try:
+            payload["data_freshness"] = compute_data_freshness(
+                get_latest_trade_date(), source="portfolio"
+            )
+        except Exception:
+            pass
+        return payload
+
+    overlaid = 0
+    for mover in payload.get("impact_movers") or []:
+        if apply_quotes_to_row(mover, quotes):
+            overlaid += 1
+        apply_bundle_enrichment(mover, bundle)
+
+    if total_value > 0 and enriched:
+        impact_sum = 0.0
+        total_w = 0.0
+        for p in enriched:
+            sym = (p.get("ticker") or "").upper()
+            w = float(p.get("current_value") or 0) / total_value
+            q = quotes.get(sym)
+            if q and q.get("pct") is not None:
+                impact_sum += w * float(q["pct"])
+                total_w += w
+        if total_w > 0:
+            summary = payload.setdefault("summary", {})
+            summary["daily_return_pct"] = round(impact_sum, 4)
+
+    bench = payload.setdefault("summary", {}).setdefault("benchmark_context", {})
+    for sym, key in (
+        ("SPY", "spy_daily_return_pct"),
+        ("QQQ", "qqq_daily_return_pct"),
+        ("IJR", "ijr_daily_return_pct"),
+    ):
+        q = quotes.get(sym)
+        if q and q.get("pct") is not None:
+            bench[key] = q["pct"]
+
+    merge_bundle_meta(payload, bundle)
+
+    session_date = expected_last_session()
+    now = datetime.now(timezone.utc)
+    payload["realtime_overlay"] = True
+    payload["rt_overlay_count"] = max(overlaid, len(quotes))
+    payload["trade_date"] = session_date.isoformat()
+    payload["data_freshness"] = assess_home_live(
+        source="realtime_overlay",
+        as_of=session_date.isoformat(),
+        captured_at=now,
+    ).model_dump(mode="json")
+    logger.info(
+        "[MorningBrief] live bundle: %d movers overlaid, %d quotes, sources=%s",
+        overlaid,
+        len(quotes),
+        bundle.sources,
+    )
+    return payload
+
+
 def _portfolio_sentiment(
     port_daily: Optional[float],
     spy_daily: Optional[float],
@@ -853,19 +964,6 @@ def _sector_swings(
 
 def build_morning_brief(user_id: str) -> Dict[str, Any]:
     """Build personalized morning brief for one user."""
-    # Fetch real-time benchmark info
-    from .market_intel import fetch_realtime_quotes
-    spy_daily_rt = None
-    qqq_daily_rt = None
-    ijr_daily_rt = None
-    try:
-        bench_quotes = fetch_realtime_quotes(["SPY", "QQQ", "IJR"], force=True)
-        spy_daily_rt = bench_quotes.get("SPY", {}).get("pct")
-        qqq_daily_rt = bench_quotes.get("QQQ", {}).get("pct")
-        ijr_daily_rt = bench_quotes.get("IJR", {}).get("pct")
-    except Exception as e:
-        logger.warning("[MorningBrief] failed to fetch realtime quotes for benchmarks: %s", e)
-
     now = datetime.now(timezone.utc).isoformat()
     try:
         from .daily_brief import compute_data_freshness, get_latest_trade_date
@@ -887,9 +985,9 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
             "top_positive_contributor": None,
             "top_negative_contributor": None,
             "benchmark_context": {
-                "spy_daily_return_pct": spy_daily_rt,
-                "qqq_daily_return_pct": qqq_daily_rt,
-                "ijr_daily_return_pct": ijr_daily_rt,
+                "spy_daily_return_pct": None,
+                "qqq_daily_return_pct": None,
+                "ijr_daily_return_pct": None,
             },
         },
         "cards": [],
@@ -1044,15 +1142,15 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
         "top_positive_contributor": (top_pos or {}).get("symbol"),
         "top_negative_contributor": (top_neg or {}).get("symbol"),
         "benchmark_context": {
-            "spy_daily_return_pct": spy_daily_rt if spy_daily_rt is not None else spy_daily,
-            "qqq_daily_return_pct": qqq_daily_rt if qqq_daily_rt is not None else qqq_daily,
-            "ijr_daily_return_pct": ijr_daily_rt if ijr_daily_rt is not None else None,
+            "spy_daily_return_pct": spy_daily,
+            "qqq_daily_return_pct": qqq_daily,
+            "ijr_daily_return_pct": None,
         },
     }
     impact_movers = _build_impact_movers(ranked, movement, enriched)
     base["impact_movers"] = impact_movers
     base["portfolio_sentiment"] = _portfolio_sentiment(
-        port_daily, spy_daily_rt if spy_daily_rt is not None else spy_daily, enriched, daily_returns, total_value
+        port_daily, spy_daily, enriched, daily_returns, total_value
     )
     base["sector_swings"] = sector_swings_list
     base["cards"] = cards[:_MAX_CARDS]
@@ -1065,5 +1163,6 @@ def build_morning_brief(user_id: str) -> Dict[str, Any]:
         today_daily_return_pct=float(daily_return_pct) if daily_return_pct is not None else None,
         top_movers=selected,
     )
+    _apply_home_live_overlay(base, enriched=enriched, total_value=total_value)
     _emit_morning_brief_decision(user_id, base)
     return base

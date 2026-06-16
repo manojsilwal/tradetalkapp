@@ -5,7 +5,7 @@ import { API_BASE_URL, apiFetch } from './api'
 import { useAnalysisHistory } from './AnalysisContext'
 import { DataTrustBanner } from './components/Freshness'
 import ActionableCompaniesPanel, { ActionableCompaniesButton, useActionableCompanies } from './components/ActionableCompaniesPanel'
-import { isBriefSessionTrustworthy, isSessionDateStale } from './freshness'
+import { envelopeIsStale, FRESHNESS_STATES, isBriefSessionTrustworthy, isSessionDateStale, parseFreshness } from './freshness'
 
 function formatTradeDateLabel(isoDateStr) {
   if (!isoDateStr) return ''
@@ -24,11 +24,32 @@ function formatTradeDateLabel(isoDateStr) {
 // small, unobtrusive badge.
 function DataFreshnessBadge({ freshness, variant = 'inline' }) {
   if (!freshness) return null
-  const isStale = !!freshness.is_stale
-  const lastDate = freshness.db_latest_date
+  const parsed = parseFreshness(freshness)
+  const stale = envelopeIsStale(freshness)
+  const lastDate = freshness.db_latest_date || freshness.as_of
   const days = freshness.staleness_days
 
-  if (!isStale) {
+  if (!stale && (parsed.state === FRESHNESS_STATES.LIVE || parsed.state === FRESHNESS_STATES.DELAYED)) {
+    const isDelayed = parsed.state === FRESHNESS_STATES.DELAYED
+    const label = isDelayed ? 'Delayed' : 'Live'
+    const colors = isDelayed
+      ? { color: '#60a5fa', bg: 'rgba(96,165,250,0.12)', border: 'rgba(96,165,250,0.35)' }
+      : { color: '#34d399', bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.35)' }
+    return (
+      <span
+        title={parsed.ageText || undefined}
+        style={{
+          fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4,
+          color: colors.color, background: colors.bg, border: `1px solid ${colors.border}`,
+          borderRadius: 6, padding: '2px 6px',
+        }}
+      >
+        {label}{parsed.ageText ? ` · ${parsed.ageText}` : ''}
+      </span>
+    )
+  }
+
+  if (!stale) {
     const isLive = freshness.source === 'realtime_overlay' || freshness.source === 'market_intel_live' || freshness.source === 'market_intel'
     if (!isLive) return null
     return (
@@ -108,6 +129,7 @@ function getTickerMetadata(symbol, rowData) {
     marketCap: formatMarketCap(rowData?.market_cap || rowData?.marketCap) || 'N/A',
     pe: formatPE(rowData?.pe_ratio || rowData?.pe || rowData?.forward_pe) || 'N/A',
     industry: rowData?.industry || 'N/A',
+    enrichmentSource: rowData?.enrichment_source || null,
   };
 }
 
@@ -131,8 +153,11 @@ export default function DailyBriefUI() {
   const portfolioFreshness = portfolioBrief?.data_freshness;
   const freshness = briefFreshness || portfolioFreshness;
   const isBriefStale = !isBriefSessionTrustworthy(data);
-  const isPortfolioStale = portfolioFreshness?.is_stale
-    || isSessionDateStale(portfolioBrief?.trade_date, portfolioFreshness);
+  const isPortfolioStale = portfolioFreshness
+    ? envelopeIsStale(portfolioFreshness)
+      || (!portfolioFreshness.captured_at && isSessionDateStale(portfolioBrief?.trade_date, portfolioFreshness))
+    : isSessionDateStale(portfolioBrief?.trade_date, portfolioFreshness);
+  const portfolioFresh = portfolioFreshness && !envelopeIsStale(portfolioFreshness);
   const isStaleData = !!freshness?.is_stale || isBriefStale;
   const showMoversLoader = loading;
 
@@ -182,6 +207,25 @@ export default function DailyBriefUI() {
     loadExtraData();
   }, [loadDailyBrief, loadExtraData]);
 
+  useEffect(() => {
+    const REFRESH_MS = 5 * 60 * 1000;
+    const tick = () => {
+      if (document.visibilityState === 'visible') {
+        loadDailyBrief(true);
+        loadExtraData();
+      }
+    };
+    const id = setInterval(tick, REFRESH_MS);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [loadDailyBrief, loadExtraData]);
+
   const load = (refresh = false) => {
     loadDailyBrief(refresh)
     loadExtraData()
@@ -222,6 +266,7 @@ export default function DailyBriefUI() {
       const limit = isMoversExpanded ? 15 : 3
       return data.losers.slice(0, limit).map(r => {
         const meta = getTickerMetadata(r.symbol, r)
+        const newsHeadline = r.fincrawler_news?.[0]?.title || r.primary_cause_headline
         return {
           symbol: r.symbol,
           move: r.daily_return_pct,
@@ -229,7 +274,8 @@ export default function DailyBriefUI() {
           marketCap: meta.marketCap,
           pe: meta.pe,
           industry: meta.industry,
-          rationale: r.one_line_reason || 'Movers analysis from session EOD.'
+          enrichmentSource: meta.enrichmentSource,
+          rationale: r.one_line_reason || newsHeadline || 'Movers analysis from session EOD.'
         }
       })
     }
@@ -241,6 +287,7 @@ export default function DailyBriefUI() {
       const limit = isMoversExpanded ? 15 : 3
       return data.gainers.slice(0, limit).map(r => {
         const meta = getTickerMetadata(r.symbol, r)
+        const newsHeadline = r.fincrawler_news?.[0]?.title || r.primary_cause_headline
         return {
           symbol: r.symbol,
           move: r.daily_return_pct,
@@ -248,7 +295,8 @@ export default function DailyBriefUI() {
           marketCap: meta.marketCap,
           pe: meta.pe,
           industry: meta.industry,
-          rationale: r.one_line_reason || 'Movers analysis from session EOD.'
+          enrichmentSource: meta.enrichmentSource,
+          rationale: r.one_line_reason || newsHeadline || 'Movers analysis from session EOD.'
         }
       })
     }
@@ -567,6 +615,11 @@ export default function DailyBriefUI() {
                                 {row.symbol}
                               </span>
                               <span className="brief-table-ticker-name">{row.symbol}</span>
+                              {row.enrichmentSource === 'fincrawler' && (
+                                <span className="brief-pill-neutral" style={{ marginLeft: 6, fontSize: '0.65rem' }}>
+                                  FC
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td>
@@ -601,7 +654,9 @@ export default function DailyBriefUI() {
                     <h2 className="brief-card-title">Portfolio Exposure: Key Holdings</h2>
                     {isPortfolioStale ? (
                       <DataFreshnessBadge freshness={portfolioFreshness || freshness} />
-                    ) : portfolioBrief?.trade_date && !isPortfolioStale && (
+                    ) : portfolioFresh ? (
+                      <DataFreshnessBadge freshness={portfolioFreshness} />
+                    ) : portfolioBrief?.trade_date && (
                       <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
                         ({isWeekendOrAfterHours ? 'As of ' : ''}{formatTradeDate(portfolioBrief.trade_date)})
                       </span>
