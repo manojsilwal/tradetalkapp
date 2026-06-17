@@ -570,6 +570,7 @@ function App() {
 }
 
 function GlobalLoadingBar() {
+    const location = useLocation()
     const { analyses } = useAnalysisHistory()
     const pageTicker = (window.__tt_page_context__?.ticker || '').trim().toUpperCase()
     const loadingTicker = (pageTicker && analysisStillRunning(analyses[pageTicker]))
@@ -593,6 +594,10 @@ function GlobalLoadingBar() {
             setPrevTicker(loadingTicker)
         }
     }, [loadingTicker, prevTicker])
+
+    if (location.pathname === '/dashboard' || location.pathname === '/decision-terminal') {
+        return null
+    }
 
     if (!activeAnalysis) return null
 
