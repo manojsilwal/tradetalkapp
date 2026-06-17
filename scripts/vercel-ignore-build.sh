@@ -19,6 +19,7 @@ fi
 # still produce a fresh frontend bundle when needed.
 if git diff HEAD^ HEAD --quiet -- \
   frontend/ \
+  vercel.json \
   .github/workflows/vercel-production-deploy.yml \
   scripts/vercel-ignore-build.sh \
   scripts/deploy_vercel.sh

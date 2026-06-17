@@ -5,8 +5,10 @@ on:
     branches: [main]
     paths:
       - "frontend/**"
+      - "vercel.json"
       - ".github/workflows/vercel-production-deploy.yml"
       - "scripts/deploy_vercel.sh"
+      - "scripts/vercel-ignore-build.sh"
   workflow_dispatch:
 
 concurrency:
