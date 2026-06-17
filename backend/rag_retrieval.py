@@ -37,7 +37,12 @@ def _extract_tickers_from_message(user_message: str) -> List[str]:
     from .chat_service import _STICKY_TICKER_RE, _TICKER_STOP
 
     raw = _STICKY_TICKER_RE.findall(user_message or "")
-    return [t for t in raw if t not in _TICKER_STOP]
+    extracted = []
+    for t in raw:
+        clean = t[1:].upper() if t.startswith("$") else t
+        if clean not in _TICKER_STOP:
+            extracted.append(clean)
+    return extracted
 
 
 def resolve_active_ticker(user_message: str, sticky_state: Optional[dict]) -> Optional[str]:

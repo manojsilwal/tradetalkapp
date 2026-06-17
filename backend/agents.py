@@ -381,13 +381,25 @@ class PolymarketAgentPair(AgentPair):
                 "rationale": f"No active prediction markets found on Polymarket related to {ticker}. This is normal for most stocks — prediction markets primarily cover high-profile events and crypto.",
                 "trading_signal": 0
             }
-            
-        top_event = events[0]
-        title = top_event["title"]
-        prob = top_event["probability"]
+
+        from .connectors.polymarket_gating import company_tokens_from_name, select_gated_polymarket_event
+
+        company_name = ""
+        if market_state and getattr(market_state, "company_name", None):
+            company_name = market_state.company_name
+        tokens = company_tokens_from_name(company_name)
+        gated = select_gated_polymarket_event(events, ticker, tokens + [ticker.upper()])
+        if gated is None:
+            return {
+                "rationale": f"Found {len(events)} prediction market(s) for {ticker}, but none passed relevance gating for equity analysis.",
+                "trading_signal": 0
+            }
+
+        title = gated.title
+        prob = gated.probability_pct / 100.0
         
         signal = 1 if prob > 0.50 else 0
-        rationale = f"Found {len(events)} relevant prediction market(s) for {ticker}. Top market: '{title}' — highest outcome probability is {int(prob * 100)}%. "
+        rationale = f"Found gated prediction market for {ticker}: '{title}' — highest outcome probability is {int(prob * 100)}%. "
         if signal == 1:
             rationale += "Traders are confidently pricing this in."
         else:

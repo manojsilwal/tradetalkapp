@@ -470,8 +470,15 @@ class TerminalVerdictPanel(BaseModel):
     debate_verdict: str
     swarm_verdict: str
     fusion_note: str = ""
+    debate_stance_bull_pct: Optional[float] = Field(
+        default=None, description="0-100, bull_score / total stances only"
+    )
+    debate_confidence_pct: Optional[float] = Field(
+        default=None, description="0-100, moderator consensus_confidence only"
+    )
     expert_bullish_pct: Optional[float] = Field(
-        default=None, description="0-100, from debate stance mix + confidence"
+        default=None,
+        description="DEPRECATED: 0.5*stance + 0.5*confidence. Use split fields.",
     )
     prediction_market_bullish_pct: Optional[float] = None
     prediction_market_event_title: Optional[str] = None
@@ -479,6 +486,49 @@ class TerminalVerdictPanel(BaseModel):
         default=None, description="0-1 internal gate; None if no event"
     )
     polymarket_gated_out: bool = False
+
+
+class SpotEnvelope(BaseModel):
+    price_usd: float
+    source: str
+    captured_at_utc: str
+    degraded: bool
+    momentum_anchor_usd: Optional[float] = None
+
+
+class ReconciliationSignal(BaseModel):
+    source: str
+    label: str
+    tone: str
+    detail: str = ""
+
+
+class TerminalReconciliationPanel(BaseModel):
+    primary_headline: str
+    supporting_signals: List[ReconciliationSignal] = Field(default_factory=list)
+    conflicting_signals: List[ReconciliationSignal] = Field(default_factory=list)
+    reconciliation_note: str = ""
+
+
+class TerminalScorecardSummary(BaseModel):
+    """Slim scorecard row for reconciliation + dashboard; not a comparative rating."""
+
+    ticker: str
+    preset: str = "balanced"
+    is_comparative: bool = False
+    ratio: float
+    signal: str
+    action: str
+    verdict: str
+    quadrant: str
+    return_score_weighted: float
+    risk_score_weighted: float
+    framing_note: str = (
+        "Single-name preview (balanced preset). Not a buy/sell rating — "
+        "compare multiple tickers on /scorecard for relative rankings."
+    )
+    one_line_reason: str = ""
+    data_freshness: Optional["DataFreshness"] = None
 
 
 class HorizonQuantileBand(BaseModel):
@@ -555,3 +605,9 @@ class DecisionTerminalPayload(BaseModel):
         default=None,
         description="Freshness/provenance envelope for the spot price (folds market_data_degraded + spot_price_source).",
     )
+    spot: Optional[SpotEnvelope] = Field(
+        default=None,
+        description="Canonical spot price envelope; valuation.current_price_usd mirrors spot.price_usd.",
+    )
+    scorecard_summary: Optional[TerminalScorecardSummary] = None
+    reconciliation: Optional[TerminalReconciliationPanel] = None

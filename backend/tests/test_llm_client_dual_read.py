@@ -27,6 +27,21 @@ class _DualReadBase(unittest.TestCase):
         self.reg = rr.get_resource_registry()
         seed_resources_if_empty(self.reg)
         self.client = LLMClient()
+        self.client._provider = "openrouter"
+
+        def _fake_provider_generate(role, prompt, **kwargs):
+            _, version = self.client._resolve_system_prompt(role)
+            return {
+                "headline": "Bullish signals detected in available market data.",
+                "key_points": [
+                    "Short interest and squeeze potential identified.",
+                    "Positive revenue growth trend supports upside thesis.",
+                    "Sentiment indicators lean constructive."
+                ],
+                "confidence": 0.55
+            }, version
+
+        self.client._provider_generate = _fake_provider_generate
 
     def tearDown(self):
         rr._reset_singleton_for_tests()

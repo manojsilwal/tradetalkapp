@@ -632,6 +632,22 @@ async def prediction_markets(ticker: str = Query("AAPL")):
 
     all_events = direct_events[:12] + sector_events[:6]
 
+    gated_probability = None
+    gated_event_title = None
+    gated_out = True
+    try:
+        from ..connectors.polymarket_gating import company_tokens_from_name, select_gated_polymarket_event
+
+        ctx_name = (poly_result.get("context") or {}).get("company_name") or ""
+        tokens = company_tokens_from_name(ctx_name)
+        gated = select_gated_polymarket_event(poly_events, t, tokens + [t])
+        if gated is not None:
+            gated_probability = gated.probability_pct
+            gated_event_title = gated.title
+            gated_out = False
+    except Exception:
+        pass
+
     # Aggregate context (sector / indices) from either connector
     ctx = poly_result.get("context") or kalshi_result.get("context") or {}
 
@@ -653,6 +669,9 @@ async def prediction_markets(ticker: str = Query("AAPL")):
         "has_relevant_data": bool(all_events),
         "event_count": len(all_events),
         "events": all_events,
+        "gated_probability": gated_probability,
+        "gated_event_title": gated_event_title,
+        "gated_out": gated_out,
         "context": {
             "sector": ctx.get("sector"),
             "indices": ctx.get("indices") or [],

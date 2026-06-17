@@ -27,7 +27,7 @@ class TestFinCrawlerScrape(unittest.TestCase):
         with patch.dict(os.environ, self.env, clear=False):
             c = FinCrawlerClient()
             c._enabled = None
-            _cache["scrape:http://test.com"] = (time.time(), "cached content")
+            _cache["scrape:http://test.com"] = (time.time(), "cached content", 86400)
 
             async def go():
                 with patch.object(c, "_post") as mock_post:

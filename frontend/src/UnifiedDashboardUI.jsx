@@ -7,6 +7,7 @@ import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
 import { StaleValue, FreshnessBadge } from './components/Freshness';
 import DashboardScorecardPanel from './components/DashboardScorecardPanel';
+import VerdictToneLegend from './components/VerdictToneLegend';
 import DebateThreadPanel from './components/debate/DebateThreadPanel';
 import './DecisionTerminalUI.css';
 import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
@@ -278,38 +279,19 @@ export default function UnifiedDashboardUI() {
 
   const getBriefText = () => {
     if (predMarketsLoading) return 'Loading...';
+    if (z?.prediction_market_bullish_pct != null && !z?.polymarket_gated_out) {
+      const pct = Math.round(z.prediction_market_bullish_pct);
+      if (pct >= 55) return `Positive Prediction (${pct}% Yes)`;
+      if (pct <= 45) return `Negative Prediction (${pct}% Yes)`;
+      return `Neutral Prediction (${pct}% Yes)`;
+    }
+    if (predMarketsData?.gated_out === false && predMarketsData?.gated_probability != null) {
+      const pct = Math.round(predMarketsData.gated_probability);
+      if (pct >= 55) return `Positive Prediction (${pct}% Yes)`;
+      if (pct <= 45) return `Negative Prediction (${pct}% Yes)`;
+      return `Neutral Prediction (${pct}% Yes)`;
+    }
     if (!predMarketsData || !predMarketsData.has_relevant_data) return 'No Active Markets';
-    
-    const directEvts = (predMarketsData.events || []).filter(e => e.relevance_type !== 'sector');
-    const directWithProb = directEvts.filter(e => e.probability != null);
-    
-    let prob = null;
-    
-    if (directWithProb.length > 0) {
-      const sum = directWithProb.reduce((acc, e) => acc + e.probability, 0);
-      prob = sum / directWithProb.length;
-    } else if (z?.prediction_market_bullish_pct != null && !z?.polymarket_gated_out) {
-      prob = z.prediction_market_bullish_pct / 100;
-    } else {
-      const sectorEvts = (predMarketsData.events || []).filter(e => e.relevance_type === 'sector');
-      const sectorWithProb = sectorEvts.filter(e => e.probability != null);
-      if (sectorWithProb.length > 0) {
-        const sum = sectorWithProb.reduce((acc, e) => acc + e.probability, 0);
-        prob = sum / sectorWithProb.length;
-      }
-    }
-    
-    if (prob !== null) {
-      const pct = Math.round(prob * 100);
-      if (pct >= 55) {
-        return `Positive Prediction (${pct}% Yes avg)`;
-      } else if (pct <= 45) {
-        return `Negative Prediction (${pct}% Yes avg)`;
-      } else {
-        return `Neutral Prediction (${pct}% Yes avg)`;
-      }
-    }
-    
     return 'Active Markets Scan';
   };
 
@@ -324,10 +306,14 @@ export default function UnifiedDashboardUI() {
     ? polymarketArcRatio(socialBullish ? socialConfPct : 100 - socialConfPct)
     : 0.5;
 
-  const expertPct = z?.expert_bullish_pct;
-  const expertBullish = expertPct != null && expertPct >= 55;
+  const stancePct = z?.debate_stance_bull_pct;
+  const moderatorConfPct = z?.debate_confidence_pct;
+  const expertBullish = stancePct != null && stancePct >= 55;
 
-  const spot = v?.current_price_usd || fundamentalsData?.company_info?.current_price;
+  const spot = decisionData?.spot?.price_usd ?? v?.current_price_usd ?? fundamentalsData?.company_info?.current_price;
+  const spotSource = decisionData?.spot?.source;
+  const reconciliation = decisionData?.reconciliation;
+  const embeddedScorecard = decisionData?.scorecard_summary;
   const scenarioPrices = useMemo(() => roadmapScenarioPrices(r, spot), [r, spot]);
 
   const roadmapChartData = useMemo(
@@ -548,22 +534,29 @@ export default function UnifiedDashboardUI() {
             <h1 className="dt-company-name">
               {fundamentalsLoading ? 'Loading...' : (fundamentalsData?.company_info?.company_name || searchUpper || 'AAPL')}
             </h1>
-            {!fundamentalsLoading && fundamentalsData?.company_info && (
+            {!fundamentalsLoading && (fundamentalsData?.company_info || spot != null) && (
               <div className="dt-price-display">
-                <StaleValue freshness={fundamentalsData.data_freshness} priceSensitive>
-                  <span className="dt-price-value" data-testid="dashboard-current-price" data-symbol={searchUpper}>${fundamentalsData.company_info.current_price?.toFixed(2) || '—'}</span>
-                  {fundamentalsData.company_info.price_change_pct != null && (
+                <StaleValue freshness={decisionData?.data_freshness || fundamentalsData?.data_freshness} priceSensitive>
+                  <span className="dt-price-value" data-testid="dashboard-current-price" data-symbol={searchUpper}>${spot != null ? Number(spot).toFixed(2) : '—'}</span>
+                  {fundamentalsData?.company_info?.price_change_pct != null && (
                     <span className={`dt-price-badge ${isPricePositive ? 'positive' : 'negative'}`}>
                       {isPricePositive ? '▲' : '▼'} {Math.abs(fundamentalsData.company_info.price_change_pct).toFixed(2)}%
                     </span>
                   )}
-                  {fundamentalsData.company_info.price_change != null && (
+                  {fundamentalsData?.company_info?.price_change != null && (
                     <span className="dt-price-change-abs">
                       {isPricePositive ? '+' : ''}{fundamentalsData.company_info.price_change.toFixed(2)} Today
                     </span>
                   )}
                 </StaleValue>
-                {fundamentalsData.data_freshness && <FreshnessBadge freshness={fundamentalsData.data_freshness} />}
+                {(decisionData?.data_freshness || fundamentalsData?.data_freshness) && (
+                  <FreshnessBadge freshness={decisionData?.data_freshness || fundamentalsData?.data_freshness} />
+                )}
+                {spotSource && (
+                  <span style={{ fontSize: '0.7rem', color: 'var(--dt-muted)', marginLeft: 8 }}>
+                    {decisionData?.spot?.degraded ? `Delayed (${spotSource})` : `Live (${spotSource})`}
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -659,8 +652,15 @@ export default function UnifiedDashboardUI() {
               {traceLoading ? (
                 <Loader2 className="spinner" size={16} />
               ) : (
-                <div className="dt-verdict-mini-gauge">
-                  <SemiGauge fillRatio={socialFill} size="small" />
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                  <div className="dt-verdict-mini-gauge">
+                    <SemiGauge fillRatio={socialFill} size="small" />
+                  </div>
+                  {socialConfPct != null && (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--dt-muted)' }}>
+                      Social factor confidence: {socialConfPct}%
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -669,9 +669,20 @@ export default function UnifiedDashboardUI() {
               {decisionLoading ? (
                 <Loader2 className="spinner" size={16} />
               ) : (
-                <span style={{ fontSize: '0.82rem', fontWeight: 700, color: expertBullish ? '#00ff88' : '#94a3b8' }}>
-                  {hasDecisionData && expertPct != null ? `${expertBullish ? 'Bullish' : 'Mixed'} (${expertPct.toFixed(0)}%)` : '—'}
-                </span>
+                <div style={{ fontSize: '0.78rem', textAlign: 'right', lineHeight: 1.45 }}>
+                  {stancePct != null ? (
+                    <div style={{ fontWeight: 700, color: expertBullish ? '#00ff88' : '#94a3b8' }}>
+                      Stance: {stancePct.toFixed(0)}% bull · {(100 - stancePct).toFixed(0)}% bear/neutral
+                    </div>
+                  ) : (
+                    <div>—</div>
+                  )}
+                  {moderatorConfPct != null && (
+                    <div style={{ color: 'var(--dt-muted)', marginTop: 2 }}>
+                      Moderator confidence: {moderatorConfPct.toFixed(0)}%
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             
@@ -688,6 +699,25 @@ export default function UnifiedDashboardUI() {
                 </div>
               )}
             </div>
+
+            {reconciliation?.conflicting_signals?.length > 0 && reconciliation.reconciliation_note && (
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'rgba(245, 158, 11, 0.08)',
+                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                  borderRadius: 8,
+                  fontSize: '0.8rem',
+                  lineHeight: 1.5,
+                  color: '#e2e8f0',
+                }}
+                data-testid="reconciliation-banner"
+              >
+                {reconciliation.reconciliation_note}
+              </div>
+            )}
+
+            <VerdictToneLegend />
 
             <div className="dt-roadmap-compact">
               <h2 className="dt-panel-title">Future Price Roadmap</h2>
@@ -755,6 +785,10 @@ export default function UnifiedDashboardUI() {
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">PE Ratio (TTM)</span>
                         <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.trailing_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                      </div>
+                      <div className="dt-metric-row">
+                        <span className="dt-metric-label">PE Ratio (Forward)</span>
+                        <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.forward_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">Price to Sales</span>
@@ -941,8 +975,9 @@ export default function UnifiedDashboardUI() {
 
       <DashboardScorecardPanel
         data={scorecardData}
+        embeddedSummary={embeddedScorecard}
         ticker={searchUpper}
-        loading={scorecardLoading || (isAnalyzing && !scorecardData)}
+        loading={scorecardLoading || (isAnalyzing && !scorecardData && !embeddedScorecard)}
         error={scorecardError}
       />
 

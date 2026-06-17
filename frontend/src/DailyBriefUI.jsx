@@ -124,6 +124,18 @@ function formatPE(val) {
   return num.toFixed(1);
 }
 
+/** Relative sync label for background refresh (no full-page loader). */
+function formatRelativeSync(lastSyncedAt, isUpdating, nowMs = Date.now()) {
+  if (isUpdating) return 'Updating…';
+  if (!lastSyncedAt) return '';
+  const sec = Math.floor((nowMs - lastSyncedAt) / 1000);
+  if (sec < 60) return 'Just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `Updated ${min}m ago`;
+  const hr = Math.floor(min / 60);
+  return `Updated ${hr}h ago`;
+}
+
 function getTickerMetadata(symbol, rowData) {
   return {
     marketCap: formatMarketCap(rowData?.market_cap || rowData?.marketCap) || 'N/A',
@@ -136,14 +148,26 @@ function getTickerMetadata(symbol, rowData) {
 export default function DailyBriefUI() {
   const navigate = useNavigate()
   const { dailyBriefState, loadDailyBrief } = useAnalysisHistory()
-  const { data, loading, error } = dailyBriefState
+  const { data, loading, refreshing, lastSyncedAt, error } = dailyBriefState
   const actionableState = useActionableCompanies()
 
   const [portfolioBrief, setPortfolioBrief] = useState(null)
+  const portfolioBriefRef = useRef(null)
   const [portfolioNews, setPortfolioNews] = useState([])
   const [extraLoading, setExtraLoading] = useState(false)
+  const [extraRefreshing, setExtraRefreshing] = useState(false)
   const [showMoversTab, setShowMoversTab] = useState('losers')
   const [isMoversExpanded, setIsMoversExpanded] = useState(false)
+  const [, setSyncTick] = useState(0)
+
+  useEffect(() => {
+    portfolioBriefRef.current = portfolioBrief
+  }, [portfolioBrief])
+
+  useEffect(() => {
+    const id = setInterval(() => setSyncTick((t) => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   const sessionStatus = data?.market_session?.status || portfolioBrief?.market_session?.status;
   const isWeekendOrAfterHours = sessionStatus === 'weekend' || sessionStatus === 'after_hours';
@@ -159,7 +183,8 @@ export default function DailyBriefUI() {
     : isSessionDateStale(portfolioBrief?.trade_date, portfolioFreshness);
   const portfolioFresh = portfolioFreshness && !envelopeIsStale(portfolioFreshness);
   const isStaleData = !!freshness?.is_stale || isBriefStale;
-  const showMoversLoader = loading;
+  const isAnyRefreshing = refreshing || extraRefreshing;
+  const syncStatusText = formatRelativeSync(lastSyncedAt, isAnyRefreshing);
 
   const formatTradeDate = (isoDateStr) => {
     if (!isoDateStr) return '';
@@ -176,7 +201,9 @@ export default function DailyBriefUI() {
   };
 
   const loadExtraData = useCallback(async () => {
-    setExtraLoading(true)
+    const isInitial = portfolioBriefRef.current == null
+    if (isInitial) setExtraLoading(true)
+    else setExtraRefreshing(true)
     try {
       const briefData = await apiFetch(`${API_BASE_URL}/portfolio/morning-brief`).catch(() => null)
       if (briefData) {
@@ -195,6 +222,7 @@ export default function DailyBriefUI() {
       console.warn('Failed to load portfolio news', err)
     } finally {
       setExtraLoading(false)
+      setExtraRefreshing(false)
     }
   }, [])
 
@@ -269,7 +297,10 @@ export default function DailyBriefUI() {
     ? portfolioBrief.summary.benchmark_context.ijr_daily_return_pct
     : null
 
-  const insightsText = portfolioBrief?.headline || (loading || extraLoading ? "Loading market insights..." : "Add a paper portfolio to unlock morning insights.")
+  const insightsText = portfolioBrief?.headline
+    || (portfolioBrief == null && (loading || extraLoading)
+      ? 'Loading market insights...'
+      : 'Add a paper portfolio to unlock morning insights.')
 
   const mapRealLosers = () => {
     if (data?.losers && data.losers.length > 0) {
@@ -351,6 +382,7 @@ export default function DailyBriefUI() {
   const tableHoldings = mapRealHoldings()
   const timelineNews = mapRealNews()
   const currentTableMovers = showMoversTab === 'losers' ? tableLosers : tableGainers
+  const showMoversLoader = loading && (!data || currentTableMovers.length === 0)
 
   // Page-level loading is now handled at the component level to render the shell immediately
 
@@ -358,27 +390,39 @@ export default function DailyBriefUI() {
     <div className="dt-wrap fade-in" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
       {/* Header section */}
       <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'flex-end' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start' }}>
-          <button
-            type="button"
-            onClick={() => load(true)}
-            disabled={loading || extraLoading}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: '1px solid rgba(148,163,184,0.25)',
-              background: 'rgba(255,255,255,0.04)',
-              color: '#e2e8f0',
-              cursor: loading || extraLoading ? 'wait' : 'pointer',
-            }}
-          >
-            {loading || extraLoading ? <Loader2 size={16} className="spinner" /> : <RefreshCw size={16} />}
-            Refresh
-          </button>
-          <ActionableCompaniesButton busy={actionableState.busy} onClick={actionableState.startScan} />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => load(true)}
+              disabled={loading || extraLoading}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '10px 16px',
+                borderRadius: 10,
+                border: '1px solid rgba(148,163,184,0.25)',
+                background: 'rgba(255,255,255,0.04)',
+                color: '#e2e8f0',
+                cursor: loading || extraLoading ? 'wait' : 'pointer',
+              }}
+            >
+              {loading || extraLoading || refreshing || extraRefreshing
+                ? <Loader2 size={16} className="spinner" />
+                : <RefreshCw size={16} />}
+              Refresh
+            </button>
+            <ActionableCompaniesButton busy={actionableState.busy} onClick={actionableState.startScan} />
+          </div>
+          {syncStatusText ? (
+            <span
+              style={{ fontSize: '0.75rem', color: '#64748b', paddingLeft: 2 }}
+              data-testid="brief-sync-status"
+            >
+              {syncStatusText}
+            </span>
+          ) : null}
         </div>
       </header>
 

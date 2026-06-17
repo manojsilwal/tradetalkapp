@@ -105,6 +105,7 @@ class TestBuildDailyBriefBoth(unittest.TestCase):
 
 class TestOverlayRealtimeQuotesForce(unittest.TestCase):
     def test_force_overlays_quotes(self):
+        from backend.connectors.live_data_orchestrator import LiveDataBundle
         payload = {
             "rows": [{"symbol": "AAPL", "daily_return_pct": 0.0}],
             "losers": [],
@@ -112,18 +113,19 @@ class TestOverlayRealtimeQuotesForce(unittest.TestCase):
             "compelling": [],
         }
         quotes = {"AAPL": {"price": 200.0, "pct": 1.5, "previous_close": 197.0}}
-        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value=quotes):
+        with mock.patch("backend.connectors.live_data_orchestrator.fetch_live_bundle_sync", return_value=LiveDataBundle(quotes=quotes)):
             out = daily_brief.overlay_realtime_quotes(payload, force=True)
         self.assertTrue(out["realtime_overlay"])
         self.assertEqual(out["rows"][0]["daily_return_pct"], 1.5)
 
     def test_force_empty_quotes_no_overlay(self):
+        from backend.connectors.live_data_orchestrator import LiveDataBundle
         payload = {
             "rows": [{"symbol": "AAPL", "daily_return_pct": 0.0}],
             "losers": [],
             "gainers": [],
         }
-        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value={}):
+        with mock.patch("backend.connectors.live_data_orchestrator.fetch_live_bundle_sync", return_value=LiveDataBundle(quotes={})):
             out = daily_brief.overlay_realtime_quotes(payload, force=True)
         self.assertFalse(out["realtime_overlay"])
 
@@ -154,6 +156,7 @@ class TestResortMoversByLiveReturn(unittest.TestCase):
         )
 
     def test_overlay_resorts_gainers(self):
+        from backend.connectors.live_data_orchestrator import LiveDataBundle
         payload = {
             "rows": [
                 {"symbol": "META", "daily_return_pct": 4.25, "bucket": "gainer"},
@@ -169,7 +172,7 @@ class TestResortMoversByLiveReturn(unittest.TestCase):
             "META": {"price": 700.0, "pct": 4.25, "previous_close": 671.0},
             "ETSY": {"price": 80.0, "pct": 6.5, "previous_close": 75.1},
         }
-        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value=quotes):
+        with mock.patch("backend.connectors.live_data_orchestrator.fetch_live_bundle_sync", return_value=LiveDataBundle(quotes=quotes)):
             out = daily_brief.overlay_realtime_quotes(payload, force=True)
         self.assertEqual(out["gainers"][0]["symbol"], "ETSY")
         self.assertEqual(out["gainers"][0]["rank"], 1)
@@ -178,6 +181,7 @@ class TestResortMoversByLiveReturn(unittest.TestCase):
 class TestMorningBriefHomeLive(unittest.TestCase):
     def test_apply_overlay_stamps_home_live(self):
         from backend.morning_brief import _apply_home_live_overlay
+        from backend.connectors.live_data_orchestrator import LiveDataBundle
 
         payload = {
             "summary": {"benchmark_context": {}, "daily_return_pct": 0.0},
@@ -188,7 +192,7 @@ class TestMorningBriefHomeLive(unittest.TestCase):
             "AAPL": {"price": 200.0, "pct": 1.2, "previous_close": 197.6},
             "SPY": {"price": 500.0, "pct": 0.5, "previous_close": 497.5},
         }
-        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value=quotes):
+        with mock.patch("backend.connectors.live_data_orchestrator.fetch_live_bundle_sync", return_value=LiveDataBundle(quotes=quotes)):
             out = _apply_home_live_overlay(
                 payload, enriched=enriched, total_value=1000.0
             )
@@ -200,9 +204,10 @@ class TestMorningBriefHomeLive(unittest.TestCase):
 
     def test_apply_overlay_failure_falls_back_session_stale(self):
         from backend.morning_brief import _apply_home_live_overlay
+        from backend.connectors.live_data_orchestrator import LiveDataBundle
 
         payload = {"summary": {}, "impact_movers": []}
-        with mock.patch("backend.market_intel.fetch_realtime_quotes", return_value={}), \
+        with mock.patch("backend.connectors.live_data_orchestrator.fetch_live_bundle_sync", return_value=LiveDataBundle(quotes={})), \
                 mock.patch("backend.daily_brief.get_latest_trade_date", return_value=date(2024, 1, 2)), \
                 mock.patch("backend.daily_brief.expected_last_session", return_value=date(2026, 6, 12)):
             out = _apply_home_live_overlay(

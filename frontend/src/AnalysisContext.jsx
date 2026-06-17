@@ -49,6 +49,8 @@ export function AnalysisProvider({ children }) {
         data: null,
         screenerData: null,
         loading: true,
+        refreshing: false,
+        lastSyncedAt: null,
         error: null,
         deepStatus: null,
         deepBusy: false,
@@ -460,10 +462,11 @@ export function AnalysisProvider({ children }) {
             return;
         }
 
+        const isInitial = !dailyBriefDataRef.current;
         setDailyBriefState(prev => ({
             ...prev,
-            loading: true,
-            error: null
+            ...(isInitial ? { loading: true } : { refreshing: true }),
+            error: null,
         }));
 
         try {
@@ -496,16 +499,20 @@ export function AnalysisProvider({ children }) {
                 activeTab: activeTab === 'growth' ? 'growth' : prev.activeTab,
                 deepStatus: briefJson.deep_refresh || prev.deepStatus,
                 loading: false,
+                refreshing: false,
+                lastSyncedAt: Date.now(),
                 error: null,
             }));
         } catch (e) {
             dailyBriefFetchedAtRef.current = Date.now();
+            const errMsg = e.status === 429
+                ? (e.message || 'Too many requests — wait a minute and try Refresh.')
+                : (e.message || 'Failed to load daily brief');
             setDailyBriefState(prev => ({
                 ...prev,
-                error: e.status === 429
-                    ? (e.message || 'Too many requests — wait a minute and try Refresh.')
-                    : (e.message || 'Failed to load daily brief'),
-                loading: false
+                loading: false,
+                refreshing: false,
+                ...(isInitial ? { error: errMsg } : {}),
             }));
         }
     }, []);

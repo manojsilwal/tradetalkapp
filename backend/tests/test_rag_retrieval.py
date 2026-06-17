@@ -37,6 +37,19 @@ class TestPlanChatRag(unittest.TestCase):
         plan = plan_chat_rag("AAPL earnings beat last quarter", {"active_ticker": "AAPL"})
         self.assertEqual(plan.earnings_ticker, "AAPL")
 
+    def test_cashtag_ticker_extraction(self):
+        t1 = resolve_active_ticker("What about $aapl?", None)
+        self.assertEqual(t1, "AAPL")
+
+        t2 = resolve_active_ticker("Comparing $TSLA with $nvda", None)
+        self.assertEqual(t2, "NVDA")
+
+        plan = plan_chat_rag("Check out $aapl fundamentals", None)
+        names = {q.collection for q in plan.queries}
+        self.assertIn("stock_profiles", names)
+        sp = next(q for q in plan.queries if q.collection == "stock_profiles")
+        self.assertEqual(sp.where, {"ticker": "AAPL"})
+
 
 if __name__ == "__main__":
     unittest.main()

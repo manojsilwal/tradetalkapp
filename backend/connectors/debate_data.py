@@ -126,12 +126,21 @@ def _sync_fetch(ticker: str) -> dict:
             except (TypeError, ValueError):
                 last = 0.0
             if not math.isnan(last) and last > 0:
-                return _build_record_from_history(
+                record = _build_record_from_history(
                     t_up,
                     info,
                     prices,
                     spot_source="yfinance_history",
                 )
+                from .spot import resolve_spot
+
+                spot_q = resolve_spot(t_up, momentum_anchor_usd=last)
+                if spot_q is not None:
+                    record["current_price"] = round(spot_q.price, 2)
+                    record["spot_price_source"] = spot_q.source
+                    record["market_data_degraded"] = spot_q.degraded
+                    record["momentum_anchor_price"] = round(last, 2)
+                return record
     except InsufficientDataError:
         raise
     except Exception as e:

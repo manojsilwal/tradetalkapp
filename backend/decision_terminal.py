@@ -7,19 +7,34 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from .metric_primitives import (
+    format_usd_compact,
+    graham_fair_value,
+    normalize_gross_margin,
+    roic_proxy,
+)
+from .connectors.polymarket_gating import (
+    company_tokens_from_name,
+    score_polymarket_relevance,
+    select_gated_polymarket_event,
+)
+from .metric_reconciliation import build_reconciliation
 from .schemas import (
     DebateResult,
     DecisionTerminalPayload,
     HorizonQuantileBand,
+    SpotEnvelope,
     SwarmConsensus,
     TerminalFieldProvenance,
     TerminalQualityPanel,
     TerminalQualityRow,
     TerminalRoadmapPanel,
+    TerminalScorecardSummary,
     TerminalValuationModel,
     TerminalValuationPanel,
     TerminalVerdictPanel,
@@ -74,77 +89,8 @@ def _terminal_data_freshness(spot_price_source, market_data_degraded, generated_
     except Exception:
         return None
 
-_EQUITY_CONTEXT_TERMS = (
-    "stock",
-    "stocks",
-    "share",
-    "shares",
-    "equity",
-    "earnings",
-    "eps",
-    "revenue",
-    "guidance",
-    "market cap",
-    "ipo",
-    "split",
-    "dividend",
-    "nasdaq",
-    "nyse",
-    "s&p",
-    "buyout",
-    "merger",
-    "acquisition",
-    "takeover",
-    "valuation",
-    "price target",
-)
-
-_NOISE_TERMS = (
-    "election",
-    "president",
-    "senate",
-    "house of representatives",
-    "governor",
-    "poll",
-    "presidential",
-    "oscar",
-    "super bowl",
-    "world cup",
-)
-
-
-def score_polymarket_relevance(
-    title: str,
-    description: str,
-    ticker: str,
-    company_tokens: List[str],
-) -> float:
-    """
-    0–1 score: require company/ticker anchor plus equity-ish language; penalize political/sports noise.
-    """
-    blob = f"{title} {description}".lower()
-    t = ticker.upper()
-    score = 0.0
-    toks = [x for x in company_tokens if x and len(x) >= 2]
-    for tok in toks:
-        if tok.lower() in blob:
-            score += 0.34
-            break
-    if t.lower() in blob:
-        score += 0.22
-    for term in _EQUITY_CONTEXT_TERMS:
-        if term in blob:
-            score += 0.06
-    for term in _NOISE_TERMS:
-        if term in blob:
-            score -= 0.2
-    return max(0.0, min(1.0, score))
-
-
 def _company_tokens_from_debate_data(dd: dict) -> List[str]:
-    name = str(dd.get("company_name") or "")
-    parts = re.split(r"[^\w]+", name)
-    return [p for p in parts if len(p) >= 2][:4]
+    return company_tokens_from_name(str(dd.get("company_name") or ""))
 
 
 def _sync_extended_snapshot(ticker: str) -> dict:
@@ -245,9 +191,11 @@ def _get_historical_quality_metrics(ticker: str) -> dict:
 
 
 def _graham_fair_value(eps: float, book_per_share: float) -> Optional[float]:
-    if eps and eps > 0 and book_per_share and book_per_share > 0:
-        return float(math.sqrt(22.5 * eps * book_per_share))
-    return None
+    return graham_fair_value(eps, book_per_share)
+
+
+def _format_usd_compact(n: Optional[float]) -> str:
+    return format_usd_compact(n)
 
 
 def _multiples_heuristic_fair_price(
@@ -270,20 +218,6 @@ def _multiples_heuristic_fair_price(
     return round(trailing_eps * target_pe, 2)
 
 
-def _format_usd_compact(n: Optional[float]) -> str:
-    if n is None:
-        return "N/A"
-    x = float(n)
-    ax = abs(x)
-    if ax >= 1e9:
-        return f"${x/1e9:.2f}B"
-    if ax >= 1e6:
-        return f"${x/1e6:.2f}M"
-    if ax >= 1e3:
-        return f"${x/1e3:.2f}K"
-    return f"${x:.2f}"
-
-
 def _moat_heuristic(roe_pct: float, gross_margin_pct: float) -> Tuple[str, str]:
     if roe_pct >= 18 and gross_margin_pct >= 0.22:
         return "Wide (heuristic)", "Strong"
@@ -292,11 +226,17 @@ def _moat_heuristic(roe_pct: float, gross_margin_pct: float) -> Tuple[str, str]:
     return "Limited (heuristic)", "Weak"
 
 
-def _expert_bullish_pct(debate: DebateResult) -> float:
+def _debate_stance_bull_pct(debate: DebateResult) -> float:
     s = debate.bull_score + debate.bear_score + debate.neutral_score
-    stance_pct = 100.0 * debate.bull_score / s if s else 50.0
-    conf_pct = float(debate.consensus_confidence) * 100.0
-    return round(0.5 * stance_pct + 0.5 * conf_pct, 1)
+    return round(100.0 * debate.bull_score / s, 1) if s else 50.0
+
+
+def _debate_confidence_pct(debate: DebateResult) -> float:
+    return round(float(debate.consensus_confidence) * 100.0, 1)
+
+
+def _expert_bullish_pct(debate: DebateResult) -> float:
+    return round(0.5 * _debate_stance_bull_pct(debate) + 0.5 * _debate_confidence_pct(debate), 1)
 
 
 def _fuse_headline_verdict(swarm: SwarmConsensus, debate: DebateResult) -> Tuple[str, str]:
@@ -488,40 +428,53 @@ async def build_decision_terminal_payload(
     *,
     include_provider_audit: bool = False,
     tool_registry: Any = None,
+    spot_quote: Any = None,
+    scorecard_summary: Optional[TerminalScorecardSummary] = None,
 ) -> DecisionTerminalPayload:
     t = ticker.upper()
     now = datetime.now(timezone.utc).isoformat()
     debate_spot_price_source = debate_data.get("spot_price_source")
     filled_spot_from_ext = False
-    price = debate_data.get("current_price")
-    try:
-        price_f = float(price) if price is not None else None
-    except (TypeError, ValueError):
-        price_f = None
-    if price_f is not None and price_f <= 0:
-        price_f = None
-
+    price_f: Optional[float] = None
     market_data_degraded = bool(debate_data.get("market_data_degraded"))
     spot_price_source = debate_spot_price_source
+    spot_envelope: Optional[SpotEnvelope] = None
 
-    if price_f is None:
-        for key in ("regularMarketPrice", "currentPrice", "previousClose"):
-            raw = ext.get(key)
-            if raw is None:
-                continue
-            try:
-                pf = float(raw)
-                if pf > 0:
-                    price_f = pf
-                    filled_spot_from_ext = True
-                    market_data_degraded = True
-                    if not spot_price_source:
-                        spot_price_source = "yfinance_info"
-                    break
-            except (TypeError, ValueError):
-                continue
-
-    hist_quality = _get_historical_quality_metrics(t)
+    if spot_quote is not None and getattr(spot_quote, "price", None):
+        price_f = float(spot_quote.price)
+        spot_price_source = spot_quote.source
+        market_data_degraded = bool(spot_quote.degraded)
+        spot_envelope = SpotEnvelope(
+            price_usd=price_f,
+            source=spot_quote.source,
+            captured_at_utc=spot_quote.captured_at_utc,
+            degraded=spot_quote.degraded,
+            momentum_anchor_usd=getattr(spot_quote, "momentum_anchor_usd", None),
+        )
+    else:
+        price = debate_data.get("current_price")
+        try:
+            price_f = float(price) if price is not None else None
+        except (TypeError, ValueError):
+            price_f = None
+        if price_f is not None and price_f <= 0:
+            price_f = None
+        if price_f is None:
+            for key in ("regularMarketPrice", "currentPrice", "previousClose"):
+                raw = ext.get(key)
+                if raw is None:
+                    continue
+                try:
+                    pf = float(raw)
+                    if pf > 0:
+                        price_f = pf
+                        filled_spot_from_ext = True
+                        market_data_degraded = True
+                        if not spot_price_source:
+                            spot_price_source = "yfinance_info"
+                        break
+                except (TypeError, ValueError):
+                    continue
     hist_cagr = _get_historical_cagr_3y(t)
 
     roe_val = debate_data.get("roe")
@@ -532,7 +485,8 @@ async def build_decision_terminal_payload(
     gross_m_val = debate_data.get("gross_margins")
     if gross_m_val is None and hist_quality.get("gross_margin") is not None:
         gross_m_val = hist_quality.get("gross_margin") * 100.0
-    gross_m = float(gross_m_val or 0.0)
+    gm = normalize_gross_margin(gross_m_val)
+    gross_m = gm.percent if gm else 0.0
 
     trailing_eps = ext.get("trailingEps") or None
     if trailing_eps is not None:
@@ -622,19 +576,19 @@ async def build_decision_terminal_payload(
     else:
         de_prov.missing_reason = "Debt and/or EBITDA not available from provider."
 
-    gm_ratio = (gross_m / 100.0) if gross_m and gross_m > 1.0 else float(gross_m or 0.0)
+    gm_ratio = gm.ratio if gm else 0.0
     moat_lab, moat_st = _moat_heuristic(roe_pct, gm_ratio)
 
-    roic_proxy = round(roe_pct * 0.8, 1)
+    roic_proxy_val = roic_proxy(roe_pct)
     quality = TerminalQualityPanel(
         rows=[
             TerminalQualityRow(
                 id="roic",
                 label="ROIC (proxy)",
-                value_label=f"{roic_proxy}%",
+                value_label=f"{roic_proxy_val}%",
                 status_label="See note" if roe_pct else "N/A",
                 provenance=TerminalFieldProvenance(
-                    source="heuristic",
+                    source="metric_primitives",
                     formula_or_note="Approximated as 0.8 × ROE from yfinance — not reported ROIC.",
                 ),
             ),
@@ -689,25 +643,16 @@ async def build_decision_terminal_payload(
 
     tokens = _company_tokens_from_debate_data(debate_data)
     events = poly_raw.get("events") or []
-    best_ev = None
-    best_score = 0.0
-    for ev in events:
-        title = ev.get("title") or ""
-        desc = ev.get("description") or ""
-        sc = score_polymarket_relevance(title, desc, t, tokens + [t])
-        if sc > best_score:
-            best_score = sc
-            best_ev = ev
+    gated = select_gated_polymarket_event(events, t, tokens + [t])
+    best_score = gated.relevance_score if gated else 0.0
 
     pm_pct = None
     pm_title = None
     gated_out = True
-    if best_ev and best_score >= 0.45:
-        prob = best_ev.get("probability")
-        if prob is not None:
-            pm_pct = round(float(prob) * 100.0, 1)
-            pm_title = best_ev.get("title")
-            gated_out = False
+    if gated is not None:
+        pm_pct = gated.probability_pct
+        pm_title = gated.title
+        gated_out = False
 
     headline, fusion_note = _fuse_headline_verdict(swarm, debate)
     if _swarm_rejection_present(swarm) and "capped" not in fusion_note.lower():
@@ -718,6 +663,8 @@ async def build_decision_terminal_payload(
         debate_verdict=debate.verdict,
         swarm_verdict=swarm.global_verdict,
         fusion_note=fusion_note,
+        debate_stance_bull_pct=_debate_stance_bull_pct(debate),
+        debate_confidence_pct=_debate_confidence_pct(debate),
         expert_bullish_pct=_expert_bullish_pct(debate),
         prediction_market_bullish_pct=pm_pct,
         prediction_market_event_title=pm_title,
@@ -873,6 +820,18 @@ async def build_decision_terminal_payload(
             roadmap=roadmap,
         )
 
+    reconciliation = None
+    if os.environ.get("RECONCILIATION_ENABLE", "1").strip().lower() not in ("0", "false", "no"):
+        reconciliation = build_reconciliation(
+            headline_verdict=headline,
+            fusion_note=fusion_note,
+            pct_vs_average=pct_vs,
+            gauge_label=gauge_label,
+            predicted_cagr_base_pct=cagr_b,
+            swarm_rejected=_swarm_rejection_present(swarm),
+            scorecard_summary=scorecard_summary,
+        )
+
     return _decision_terminal_payload_json_safe(
         DecisionTerminalPayload(
             ticker=t,
@@ -889,8 +848,29 @@ async def build_decision_terminal_payload(
             swarm=swarm,
             debate=debate,
             data_freshness=_terminal_data_freshness(spot_price_source, market_data_degraded, now),
+            spot=spot_envelope,
+            scorecard_summary=scorecard_summary,
+            reconciliation=reconciliation,
         )
     )
+
+
+def _resolve_spot_for_terminal(ticker: str):
+    from .connectors.spot import resolve_spot
+
+    return resolve_spot(ticker)
+
+
+async def _build_scorecard_for_terminal(ticker: str) -> Optional[TerminalScorecardSummary]:
+    try:
+        from .scorecard_service import build_terminal_scorecard_summary
+
+        return await build_terminal_scorecard_summary(
+            ticker, preset="balanced", skip_llm_scores=True
+        )
+    except Exception as e:
+        logger.warning("[decision_terminal] scorecard embed failed %s: %s", ticker, e)
+        return None
 
 
 async def run_decision_terminal_request(
@@ -939,13 +919,15 @@ async def run_decision_terminal_request(
     )
 
     try:
-        analysis, poly_raw, ext = await asyncio.gather(
+        analysis, poly_raw, ext, spot_quote, scorecard_summary = await asyncio.gather(
             execute_analyze(
                 t, credit_stress, auth_user,
                 award_deep_analysis_xp=False, debate_data_task=debate_data_task,
             ),
             _safe_poly(),
             asyncio.to_thread(_sync_extended_snapshot, t),
+            asyncio.to_thread(_resolve_spot_for_terminal, t),
+            _build_scorecard_for_terminal(t),
         )
     except BaseException:
         # Avoid a "Task was destroyed but it is pending" warning if a sibling
@@ -975,6 +957,8 @@ async def run_decision_terminal_request(
         llm_client,
         include_provider_audit=provider_audit,
         tool_registry=tool_registry,
+        spot_quote=spot_quote,
+        scorecard_summary=scorecard_summary,
     )
 
     try:
@@ -997,6 +981,11 @@ async def run_decision_terminal_request(
                 "debate_verdict": getattr(verdict_panel, "debate_verdict", ""),
                 "swarm_verdict": getattr(verdict_panel, "swarm_verdict", ""),
                 "market_data_degraded": payload.market_data_degraded,
+                "reconciliation_note": (
+                    payload.reconciliation.reconciliation_note
+                    if payload.reconciliation
+                    else ""
+                ),
                 "generated_at_utc": payload.generated_at_utc,
             },
             source_route="backend/decision_terminal.py::run_decision_terminal_request",

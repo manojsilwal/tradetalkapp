@@ -35,9 +35,12 @@ class TestDebateDataTruthfulness(unittest.TestCase):
         self.assertEqual(payload["error"], "insufficient_data")
         self.assertEqual(payload["source"], "yfinance")
 
+    @patch("backend.connectors.spot.resolve_spot")
     @patch("backend.connectors.debate_data.time.sleep")
     @patch("yfinance.Ticker")
-    def test_history_used_when_present(self, mock_ticker_cls, _sleep):
+    def test_history_used_when_present(self, mock_ticker_cls, _sleep, mock_resolve_spot):
+        from backend.connectors.spot import SpotQuote
+
         hist = pd.DataFrame({"Close": [100.0, 110.0, 120.0]})
         hist.attrs = {}
 
@@ -51,13 +54,22 @@ class TestDebateDataTruthfulness(unittest.TestCase):
         }
         inst.fast_info = {}
         mock_ticker_cls.return_value = inst
+        mock_resolve_spot.return_value = SpotQuote(
+            price=125.0,
+            source="yahoo_chart",
+            captured_at_utc="2026-01-01T00:00:00+00:00",
+            degraded=False,
+            momentum_anchor_usd=120.0,
+        )
 
         from backend.connectors.debate_data import fetch_debate_data
 
         data = asyncio.run(fetch_debate_data("AAPL"))
-        self.assertEqual(data["current_price"], 120.0)
-        self.assertEqual(data["spot_price_source"], "yfinance_history")
+        self.assertEqual(data["current_price"], 125.0)
+        self.assertEqual(data["momentum_anchor_price"], 120.0)
+        self.assertEqual(data["spot_price_source"], "yahoo_chart")
         self.assertFalse(data["market_data_degraded"])
+        self.assertAlmostEqual(data["price_return_6m"], 20.0, places=1)
 
     @patch("backend.connectors.debate_data.time.sleep")
     @patch("yfinance.Ticker")

@@ -73,6 +73,15 @@ class TestFetchChain(unittest.TestCase):
     @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=200.0)
     @patch.object(quote_fallbacks, "_yahoo_chart_spot", return_value=201.0)
     @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=199.5)
+    def test_prefers_yahoo_chart_first(self, _mock_fc, _mock_yahoo, _mock_stooq):
+        r = quote_fallbacks.fetch_us_equity_spot("MSFT")
+        self.assertEqual(r, (201.0, "yahoo_chart"))
+        _mock_stooq.assert_not_called()
+        _mock_fc.assert_not_called()
+
+    @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=200.0)
+    @patch.object(quote_fallbacks, "_yahoo_chart_spot", return_value=None)
+    @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=199.5)
     def test_prefers_stooq_over_fincrawler(self, _mock_fc, _mock_yahoo, _mock_stooq):
         r = quote_fallbacks.fetch_us_equity_spot("MSFT")
         self.assertEqual(r, (200.0, "stooq"))
@@ -81,18 +90,10 @@ class TestFetchChain(unittest.TestCase):
     @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=200.0)
     @patch.object(quote_fallbacks, "_yahoo_chart_spot", return_value=201.0)
     @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=None)
-    def test_prefers_stooq_before_yahoo_chart_by_default(self, _mock_fc, _mock_yahoo, _mock_stooq):
-        r = quote_fallbacks.fetch_us_equity_spot("MSFT")
-        self.assertEqual(r, (200.0, "stooq"))
-        _mock_yahoo.assert_not_called()
-
-    @patch.dict(os.environ, {"QUOTE_FALLBACK_ALLOW_YAHOO_CHART": "1"}, clear=False)
-    @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=None)
-    @patch.object(quote_fallbacks, "_yahoo_chart_spot", return_value=201.0)
-    @patch.object(quote_fallbacks, "_fincrawler_quote_sync", return_value=None)
-    def test_yahoo_chart_when_explicitly_enabled(self, _mock_fc, _mock_yahoo, _mock_stooq):
+    def test_yahoo_chart_before_stooq(self, _mock_fc, _mock_yahoo, _mock_stooq):
         r = quote_fallbacks.fetch_us_equity_spot("MSFT")
         self.assertEqual(r, (201.0, "yahoo_chart"))
+        _mock_stooq.assert_not_called()
 
     @patch.object(quote_fallbacks, "_stooq_us_spot", return_value=200.0)
     @patch.object(quote_fallbacks, "_yahoo_chart_spot", return_value=None)

@@ -36,9 +36,24 @@ class TestWatchlistPreferences(unittest.TestCase):
         self._tmpdir = tempfile.mkdtemp()
         self._db_path = os.path.join(self._tmpdir, "prefs.db")
         user_preferences.DB_PATH = self._db_path
+
+        # Clear cached thread-local connection
+        if hasattr(user_preferences._local, "pref_conn"):
+            try:
+                user_preferences._local.pref_conn.close()
+            except Exception:
+                pass
+            delattr(user_preferences._local, "pref_conn")
+
         user_preferences.init_preferences_db()
 
     def tearDown(self):
+        if hasattr(user_preferences._local, "pref_conn"):
+            try:
+                user_preferences._local.pref_conn.close()
+            except Exception:
+                pass
+            delattr(user_preferences._local, "pref_conn")
         user_preferences.DB_PATH = self._orig_db
 
     def test_thirteen_ticker_basket_within_cap(self):

@@ -170,23 +170,22 @@ def fetch_us_equity_spot(ticker: str) -> Optional[Tuple[float, str]]:
     Sync entry point for use inside asyncio.to_thread(debate sync fetch).
 
     Returns (price, provider_label) or None.
-    US symbols only for Stooq (.us suffix); FinCrawler accepts broader tickers.
+    Precedence (locked for analysis parity): Yahoo chart → Stooq → FinCrawler.
     """
     sym = (ticker or "").upper().strip()
     if not sym:
         return None
+
+    yahoo = _yahoo_chart_spot(sym)
+    if yahoo is not None:
+        logger.info("[QuoteFallbacks] spot from yahoo_chart ticker=%s price=%s", sym, yahoo)
+        return (yahoo, "yahoo_chart")
 
     if re.match(r"^[A-Z]{1,6}(\.[A-Z])?$", sym):
         stooq = _stooq_us_spot(sym)
         if stooq is not None:
             logger.info("[QuoteFallbacks] spot from stooq ticker=%s price=%s", sym, stooq)
             return (stooq, "stooq")
-
-    if _allow_yahoo_chart_fallback():
-        yahoo = _yahoo_chart_spot(sym)
-        if yahoo is not None:
-            logger.info("[QuoteFallbacks] spot from yahoo_chart ticker=%s price=%s", sym, yahoo)
-            return (yahoo, "yahoo_chart")
 
     fc_spot = _fincrawler_quote_sync(sym)
     if fc_spot is not None:

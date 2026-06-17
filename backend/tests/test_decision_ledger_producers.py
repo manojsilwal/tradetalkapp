@@ -163,27 +163,23 @@ class TestDebateEmitsDecision(_LedgerTestBase):
             # the symbol-level functions to return our canned arguments instead.
             return arguments.pop(0)
 
-        # Monkey-patch the 5 agent runners on the debate_agents module.
-        async def _bull(*_a, **_kw): return _arg("bull", AgentStance.BULLISH)
-        async def _bear(*_a, **_kw): return _arg("bear", AgentStance.BEARISH)
-        async def _macro(*_a, **_kw): return _arg("macro", AgentStance.NEUTRAL)
-        async def _value(*_a, **_kw): return _arg("value", AgentStance.NEUTRAL)
-        async def _momentum(*_a, **_kw): return _arg("momentum", AgentStance.NEUTRAL)
+        # Monkey-patch _resilient_run_agent on the debate_agents module.
+        async def _fake_resilient_run_agent(role, ticker, live_data, ks, llm, swarm_context="", out_refs=None):
+            stance_map = {
+                "bull": AgentStance.BULLISH,
+                "bear": AgentStance.BEARISH,
+                "macro": AgentStance.NEUTRAL,
+                "value": AgentStance.NEUTRAL,
+                "momentum": AgentStance.NEUTRAL,
+            }
+            return _arg(role, stance_map[role])
 
         original = {
-            "run_bull_agent": da.run_bull_agent,
-            "run_bear_agent": da.run_bear_agent,
-            "run_macro_agent": da.run_macro_agent,
-            "run_value_agent": da.run_value_agent,
-            "run_momentum_agent": da.run_momentum_agent,
+            "_resilient_run_agent": da._resilient_run_agent,
             "run_moderator": da.run_moderator,
             "_store_agent_snapshot": da._store_agent_snapshot,
         }
-        da.run_bull_agent = _bull          # type: ignore[assignment]
-        da.run_bear_agent = _bear          # type: ignore[assignment]
-        da.run_macro_agent = _macro        # type: ignore[assignment]
-        da.run_value_agent = _value        # type: ignore[assignment]
-        da.run_momentum_agent = _momentum  # type: ignore[assignment]
+        da._resilient_run_agent = _fake_resilient_run_agent  # type: ignore[assignment]
 
         async def _fake_moderator(ticker, args, ks, llm, **_kw):
             return "BUY", 0.74, "synth", None
@@ -203,11 +199,7 @@ class TestDebateEmitsDecision(_LedgerTestBase):
                 )
             )
         finally:
-            da.run_bull_agent = original["run_bull_agent"]          # type: ignore[assignment]
-            da.run_bear_agent = original["run_bear_agent"]          # type: ignore[assignment]
-            da.run_macro_agent = original["run_macro_agent"]        # type: ignore[assignment]
-            da.run_value_agent = original["run_value_agent"]        # type: ignore[assignment]
-            da.run_momentum_agent = original["run_momentum_agent"]  # type: ignore[assignment]
+            da._resilient_run_agent = original["_resilient_run_agent"]  # type: ignore[assignment]
             da.run_moderator = original["run_moderator"]            # type: ignore[assignment]
             da._store_agent_snapshot = original["_store_agent_snapshot"]  # type: ignore[assignment]
 

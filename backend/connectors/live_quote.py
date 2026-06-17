@@ -48,7 +48,11 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _ttl_sec() -> float:
-    return max(1.0, _env_float("LIVE_QUOTE_TTL_SEC", 45.0))
+    try:
+        from .spot import SPOT_CACHE_TTL_S
+        return max(1.0, float(SPOT_CACHE_TTL_S))
+    except Exception:
+        return max(1.0, _env_float("LIVE_QUOTE_TTL_SEC", 60.0))
 
 
 def _hedge_delay_sec() -> float:

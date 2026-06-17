@@ -76,7 +76,11 @@ class TestDurableKnowledgeLayer(unittest.TestCase):
         loop.close()
 
     @patch("backend.ingestion_agent.logger")
-    def test_raw_payload_local_archiving(self, mock_logger):
+    @patch("google.cloud.storage.Client", create=True)
+    def test_raw_payload_local_archiving(self, mock_gcs_client, mock_logger):
+        # Force GCS client creation or upload to fail to guarantee local path fallback
+        mock_gcs_client.side_effect = Exception("force GCS fallback for test")
+        
         # Verify local file archiving works correctly
         from backend.ingestion_agent import _archive_raw_payload
         

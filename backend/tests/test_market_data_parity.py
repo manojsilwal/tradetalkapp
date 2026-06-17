@@ -60,6 +60,12 @@ def _macro_tol(expected: float) -> float:
 class TestMarketDataParity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        import urllib.request
+        try:
+            urllib.request.urlopen("https://query1.finance.yahoo.com", timeout=1.5)
+        except Exception:
+            raise unittest.SkipTest("Offline or Yahoo Finance unreachable")
+
         import backend.rate_limiter as rl
 
         rl.RATE_LIMIT_ENABLED = False

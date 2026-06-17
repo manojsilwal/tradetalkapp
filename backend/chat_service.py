@@ -690,8 +690,8 @@ async def gather_message_context(
         return attribution, meta
 
 
-# ── Ticker regex (case-sensitive, uppercase only) ─────────────────────────────
-_STICKY_TICKER_RE = re.compile(r"(?<![A-Za-z])[A-Z]{2,5}(?![A-Za-z])")
+# ── Ticker regex (uppercase only, or cashtag with $ prefix) ────────────────────
+_STICKY_TICKER_RE = re.compile(r"(?:\$[a-zA-Z]{2,5}|(?<![A-Za-z])[A-Z]{2,5}(?![A-Za-z]))")
 
 # Common words that look like tickers but aren't
 _TICKER_STOP = frozenset({
@@ -726,7 +726,11 @@ def update_sticky_state(
 
     # ── Ticker extraction ─────────────────────────────────────────────────
     raw_tickers = _STICKY_TICKER_RE.findall(user_msg)
-    valid_tickers = [t for t in raw_tickers if t not in _TICKER_STOP]
+    valid_tickers = []
+    for t in raw_tickers:
+        clean = t[1:].upper() if t.startswith("$") else t
+        if clean not in _TICKER_STOP:
+            valid_tickers.append(clean)
     if valid_tickers:
         state["active_ticker"] = valid_tickers[-1]
         # Rolling deduped list, most recent first, max 10

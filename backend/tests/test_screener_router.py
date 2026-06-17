@@ -17,8 +17,9 @@ class TestScreenerRouter(unittest.TestCase):
     def setUpClass(cls):
         cls.client = TestClient(app)
 
+    @patch("backend.routers.daily_brief.overlay_realtime_quotes", side_effect=lambda x, *args, **kwargs: x)
     @patch("backend.daily_brief.load_snapshot")
-    def test_screener_returns_actionable_signals(self, mock_load):
+    def test_screener_returns_actionable_signals(self, mock_load, mock_overlay):
         # Setup mock return value of load_snapshot
         mock_load.return_value = {
             "trade_date": "2026-06-02",
@@ -37,6 +38,7 @@ class TestScreenerRouter(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         body = r.json()
 
+        self.assertTrue(mock_load.called)
         self.assertEqual(body["trade_date"], "2026-06-02")
         self.assertEqual(body["source"], "sp500_screener")
         
@@ -50,8 +52,9 @@ class TestScreenerRouter(unittest.TestCase):
         for row in body["rows"]:
             self.assertIn("preset", row)
 
+    @patch("backend.routers.daily_brief.overlay_realtime_quotes", side_effect=lambda x, *args, **kwargs: x)
     @patch("backend.daily_brief.load_snapshot")
-    def test_screener_handles_empty_snapshot(self, mock_load):
+    def test_screener_handles_empty_snapshot(self, mock_load, mock_overlay):
         mock_load.return_value = None
 
         r = self.client.get("/daily-brief/screener?trade_date=2026-06-02")

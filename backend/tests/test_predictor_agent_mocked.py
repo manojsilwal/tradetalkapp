@@ -1,6 +1,7 @@
 import asyncio
 import os
 import unittest
+from unittest.mock import patch
 
 
 class TestPredictorGoldenPath(unittest.TestCase):
@@ -13,8 +14,38 @@ class TestPredictorGoldenPath(unittest.TestCase):
         else:
             os.environ["PREDICTOR_ENABLE"] = self._pe
 
-    def test_ok_path_monotonic_quantiles(self) -> None:
+    @patch("backend.predictor.agent._load_price_series_from_data_lake")
+    @patch("backend.predictor.agent.fetch_timesfm_forecast_http")
+    def test_ok_path_monotonic_quantiles(self, mock_fetch, mock_load_lake) -> None:
+        import numpy as np
+        import math
+        
+        # 1. Mock the price series from data lake
+        mock_load_lake.return_value = np.arange(100.0, 164.0, 1.0) # size 64
+
+        # 2. Mock the TimesFM API service response
+        mock_quantiles = []
+        for i in range(64):
+            mock_quantiles.append([
+                math.log(170), # mean
+                math.log(150), # Q10
+                math.log(150),
+                math.log(150),
+                math.log(150),
+                math.log(170), # Q50
+                math.log(170),
+                math.log(170),
+                math.log(170),
+                math.log(200), # Q90
+            ])
+        mock_fetch.return_value = {
+            "quantiles": mock_quantiles,
+            "model_version": "timesfm-2.5-mock",
+        }
+
         os.environ["PREDICTOR_ENABLE"] = "1"
+        os.environ["TIMESFM_SERVICE_URL"] = "http://localhost:5000"
+        
         from backend.predictor.agent import run_predictor_forecast
 
         async def _run():

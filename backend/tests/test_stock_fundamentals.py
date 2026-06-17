@@ -70,8 +70,9 @@ class TestStockFundamentals(unittest.IsolatedAsyncioTestCase):
             columns=fin_dates,
         )
 
+    @patch("backend.connectors.spot.resolve_spot", return_value=None)
     @patch("yfinance.Ticker")
-    def test_connector_fetches_and_structures_data(self, mock_ticker_class):
+    def test_connector_fetches_and_structures_data(self, mock_ticker_class, _mock_resolve_spot):
         # Set up mock ticker instance
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = self.mock_info

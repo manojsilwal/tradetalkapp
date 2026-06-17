@@ -86,16 +86,17 @@ class InvestorMetricsConnector(DataConnector):
                 closes = [float(v) for v in hist_3mo["Close"].dropna().tolist()]
             
             # --- 1. ROIC & ROE ---
+            from backend.metric_primitives import fcf_yield_percent, roic_proxy
+
             roe = _num(info.get("returnOnEquity")) * 100
             roa = _num(info.get("returnOnAssets")) * 100
-            # Proxy ROIC with ROA + some premium if not directly available
-            roic = roe * 0.8 if roe > 0 else roa
+            roic_proxy_pct = roic_proxy(roe) if roe > 0 else roa
             
             # --- 2. Free Cash Flow Yield ---
             fcf = _num(info.get("freeCashflow"))
             market_cap = _num(info.get("marketCap"), 1.0) # Avoid div by zero
             raw_market_cap = _num(info.get("marketCap"))
-            fcf_yield = (fcf / market_cap) * 100 if fcf else 0
+            fcf_yield = fcf_yield_percent(fcf, raw_market_cap) or 0
             
             # --- 3. EV/EBIT ---
             ev = _num(info.get("enterpriseValue"))
@@ -146,15 +147,20 @@ class InvestorMetricsConnector(DataConnector):
             # --- 10. Margin of Safety ---
             # Calculated intrinsic value discount. 
             # We'll calculate a crude Graham Number as an intrinsic value proxy
+            from backend.metric_primitives import graham_fair_value as _graham
+            from backend.connectors.spot import resolve_spot
+
             eps = _num(info.get("trailingEps"))
             bps = _num(info.get("bookValue"))
-            current_price = _num(info.get("currentPrice"))
+            spot_q = resolve_spot(ticker_sym)
+            current_price = spot_q.price if spot_q else _num(info.get("currentPrice"))
             
             graham_number = 0
             margin_of_safety = 0
             if eps > 0 and bps > 0:
-                graham_number = (22.5 * eps * bps) ** 0.5
-                if current_price > 0:
+                g_num = _graham(eps, bps)
+                graham_number = g_num or 0
+                if current_price and current_price > 0 and graham_number:
                     discount = (graham_number - current_price) / graham_number
                     margin_of_safety = discount * 100
                     
@@ -185,6 +191,8 @@ class InvestorMetricsConnector(DataConnector):
 
             return {
                 "roic_roe": metric_entry(format_val(roe, "%")),
+                "roe": metric_entry(format_val(roe, "%")),
+                "roic_proxy_pct": metric_entry(format_val(roic_proxy_pct, "%")),
                 "fcf_yield": metric_entry(format_val(fcf_yield, "%")),
                 "ev_ebit": metric_entry(format_val(ev_ebit, "x")),
                 "owner_earnings": metric_entry(format_val(owner_earnings, "", True)),

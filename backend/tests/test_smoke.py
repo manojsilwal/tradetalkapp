@@ -10,6 +10,8 @@ import unittest
 
 os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
 
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 from backend.main import app
 
@@ -52,8 +54,31 @@ class TestSmoke(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers.get("X-Request-ID"), "smoke-test-uuid")
 
-    def test_decision_terminal_returns_200_and_json(self):
+    @patch("backend.decision_terminal.run_decision_terminal_request")
+    def test_decision_terminal_returns_200_and_json(self, mock_run):
         """Guards against HTTP 500 / non-JSON floats (e.g. NaN) on the decision terminal path."""
+        mock_run.return_value = {
+            "ticker": "AAPL",
+            "disclaimer": "Not investment advice.",
+            "generated_at_utc": "2026-06-16T12:00:00Z",
+            "valuation": {
+                "current_price_usd": 150.0,
+                "average_fair_value_usd": 160.0,
+                "gauge_label": "Fair",
+                "models": [],
+            },
+            "quality": {
+                "rows": [],
+            },
+            "verdict": {
+                "headline_verdict": "BUY",
+                "debate_verdict": "BULLISH",
+                "swarm_verdict": "CONSTRUCTIVE",
+            },
+            "roadmap": {
+                "confidence_0_1": 0.8,
+            },
+        }
         r = self.client.get("/decision-terminal", params={"ticker": "AAPL"})
         self.assertEqual(r.status_code, 200, r.text[:500])
         data = r.json()

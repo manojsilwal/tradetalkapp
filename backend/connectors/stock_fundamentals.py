@@ -114,6 +114,7 @@ def _build_metrics(info: Dict[str, Any]) -> Dict[str, Any]:
         "valuation": {
             "market_cap": market_cap,
             "trailing_pe": _num(info.get("trailingPE")),
+            "forward_pe": _num(info.get("forwardPE")),
             "price_to_sales": _num(info.get("priceToSalesTrailing12Months")),
             "ev_to_ebitda": _num(info.get("enterpriseToEbitda")),
         },
@@ -121,6 +122,7 @@ def _build_metrics(info: Dict[str, Any]) -> Dict[str, Any]:
             "free_cash_flow": fcf,
             "fcf_yield": round(fcf_yield, 4) if fcf_yield is not None else None,
             "fcf_per_share": round(fcf_per_share, 2) if fcf_per_share is not None else None,
+            "period_label": "TTM",
         },
         "margins_and_growth": {
             "profit_margins": _num(info.get("profitMargins")),
@@ -233,6 +235,18 @@ def fetch_stock_fundamentals(ticker: str) -> dict:
 
         # ---- Company info ----
         company_info = _build_company_info(info)
+        from .spot import resolve_spot
+
+        spot_q = resolve_spot(t_up)
+        if spot_q is not None:
+            company_info["current_price"] = round(spot_q.price, 4)
+            company_info["spot_source"] = spot_q.source
+            prev = company_info.get("previous_close")
+            if prev is not None and prev != 0:
+                company_info["price_change"] = round(spot_q.price - prev, 4)
+                company_info["price_change_pct"] = round(
+                    (spot_q.price - prev) / prev * 100, 4
+                )
 
         # ---- Price history for every supported period ----
         price_history: Dict[str, List[Dict[str, Any]]] = {}
