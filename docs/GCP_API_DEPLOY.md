@@ -19,7 +19,9 @@ Requires `gcloud` auth and IAM to build to `gcr.io/tradetalkapp-492904/tradetalk
 ## After deploy
 
 1. Copy the service URL from the script output (e.g. `https://tradetalk-api-xxxxx-uc.a.run.app`).
-2. **Vercel** → Project → Environment → `VITE_API_BASE_URL` = that URL (Production).
+2. **Vercel** → project **`frontend`** (only) → Environment → `VITE_API_BASE_URL` = that URL (Production).  
+   Canonical frontend URL: `https://frontend-manojsilwals-projects.vercel.app`  
+   Deploy: `bash scripts/deploy_vercel.sh` (do not use a second Vercel project).
 3. **GitHub** → Secrets → `TRADETALK_API_BASE` = same URL (for cron / wake workflows).
 4. **Cloud Run** → `tradetalk-api` → Variables & secrets — add secrets that were on Render:
    - `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `FINCRAWLER_KEY`, `PIPELINE_CRON_SECRET`, `POSTGRES_PASSWORD`, etc.

@@ -1,6 +1,6 @@
 # TradeTalk
 
-AI-assisted market analysis application: FastAPI backend (Render), React frontend (Vercel).
+AI-assisted market analysis application: FastAPI backend (GCP Cloud Run), React frontend (Vercel).
 
 ## Documentation
 
@@ -74,5 +74,7 @@ External evaluator repo runs daily probes against the public API; reports are Ma
 
 ## Production URLs
 
-- Frontend: `https://frontend-manojsilwals-projects.vercel.app`
-- Backend: **GCP Cloud Run** — deploy with `bash scripts/deploy_api_cloudrun.sh` ([docs/GCP_API_DEPLOY.md](docs/GCP_API_DEPLOY.md))
+- **Frontend (single Vercel project `frontend`):** `https://frontend-manojsilwals-projects.vercel.app` — deploy with `bash scripts/deploy_vercel.sh`
+- **Backend:** **GCP Cloud Run** — deploy with `bash scripts/deploy_api_cloudrun.sh` ([docs/GCP_API_DEPLOY.md](docs/GCP_API_DEPLOY.md))
+
+Set `VITE_API_BASE_URL` on the **`frontend`** Vercel project to the Cloud Run URL. Retire any duplicate Vercel project (e.g. `tradetalkapp`) in the Vercel dashboard.
