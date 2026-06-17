@@ -380,19 +380,21 @@ Render’s filesystem is **ephemeral** unless you attach a disk; durable vectors
 
 ## 10. Deployment
 
-### 10.1 Backend (Render)
+### 10.1 Backend (GCP Cloud Run)
 
-[`render.yaml`](../render.yaml) defines a **Python** web service:
+The **FastAPI backend is deployed to GCP Cloud Run** (not Render — `render.yaml` is retained only as a legacy/fallback spec). See [`docs/GCP_API_DEPLOY.md`](./GCP_API_DEPLOY.md) and [`scripts/deploy_api_cloudrun.sh`](../scripts/deploy_api_cloudrun.sh).
 
-- **Build:** `pip install -r backend/requirements.txt`
-- **Start:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
-- **Env (examples):** `VECTOR_BACKEND=supabase`, `SUPABASE_URL`, secrets for `SUPABASE_SERVICE_ROLE_KEY`, `CORS_ORIGINS` (your Vercel origin), `SP500_INGEST_ON_STARTUP=0` to avoid heavy Yahoo ingest on small instances / datacenter IP limits
+- **Build:** `gcloud builds submit --config cloudbuild.api.yaml .` (container image `gcr.io/tradetalkapp-492904/tradetalk-api:latest`)
+- **Start:** `uvicorn backend.main:app --host 0.0.0.0 --port 8080`
+- **Scaling:** 0–10 managed instances, 2 vCPU / 2 GiB, 300s timeout, `--allow-unauthenticated` (public API; CORS gates browser origins)
+- **Env (core):** `VECTOR_BACKEND=supabase`, `DECISION_BACKEND=supabase`, `MCP_DATA_BACKEND=bigquery`, `LLM_HTTP_PROVIDER=openrouter`, `CORS_ORIGINS=https://frontend-manojsilwals-projects.vercel.app`, `SP500_INGEST_ON_STARTUP=0`, `SEPL_TOOL_ENABLE=1`. Secrets (Supabase service key, OpenRouter key, etc.) are loaded from Cloud Run secrets, with local `.env.gcp` / `backend/.env` merged at deploy time by the script.
+- **Freshness/cache env:** `VERDICT_CACHE_ENABLE` (default on; `=0` to disable the demand-only verdict cache), connector-cache TTLs are session-aware (60s open / 300s closed) and need no env var.
 
-**How the deployed app is “fed”:** There is no continuous bulk sync from Git into the vector DB. **Deploys** push new code; **configuration** comes from Render env vars; **optional** scheduled HTTP calls (GitHub Actions or external cron) hit secured endpoints such as `POST /knowledge/pipeline-run` and wake `GET /docs` — see [CRON.md](./CRON.md).
+**How the deployed app is “fed”:** There is no continuous bulk sync from Git into the vector DB. **Deploys** push new code; **configuration** comes from Cloud Run env vars / secrets; **optional** scheduled HTTP calls (GitHub Actions or external cron) hit secured endpoints such as `POST /knowledge/pipeline-run` — see [CRON.md](./CRON.md).
 
 ### 10.2 Frontend (Vercel)
 
-Static build of the Vite app (`frontend/vercel.json` for SPA routing). Set `VITE_API_BASE_URL` to the Render service URL.
+Static build of the Vite app (`frontend/vercel.json` for SPA routing, deployed via `scripts/deploy_vercel.sh` or the `vercel-production-deploy` GitHub Action). Set `VITE_API_BASE_URL` to the Cloud Run service URL and `VITE_DASHBOARD_LIVE_POLL` (default `1`) to enable the dashboard background poller.
 
 ### 10.3 CORS
 
@@ -406,11 +408,12 @@ Inside the **running** process:
 
 - **News scan loop** — ~60s cycle, updates alerts and can write to the knowledge store.
 - **Daily pipeline** — APScheduler (`backend/daily_pipeline.py`) — ingests movers, FRED, YouTube, etc., into KnowledgeStore.
-- **Market intel** — additional scheduled refresh jobs from `main.py`.
+- **Market intel** — additional scheduled refresh jobs from `main.py` (fast=10min, slow=30min).
+- **Verdict cache** — **demand-only**, not cron. First user `/decision-terminal?ticker=` hit per trading session computes and caches the verdict; subsequent hits overlay fresh spot and reuse the verdict. New trading session = automatic miss. No pre-warming cron.
 
-**Render free tier:** The web service sleeps without incoming traffic; while asleep, **no** in-process schedulers run. External **wake** requests and **cron-triggered** pipeline posts are documented in [CRON.md](./CRON.md).
+**Cloud Run scale-to-zero:** the service can scale to 0 instances; while at 0, no in-process schedulers run. External **wake** requests and **cron-triggered** pipeline posts are documented in [CRON.md](./CRON.md).
 
-`keep_alive.py` is for keeping a **Hugging Face Space** awake; on Render it exits early — do not rely on it for Render uptime.
+`keep_alive.py` is for keeping a **Hugging Face Space** awake; on Cloud Run it exits early — do not rely on it for uptime.
 
 ---
 
@@ -441,15 +444,22 @@ flowchart LR
   subgraph cdn [Static hosting]
     V[Vercel SPA]
   end
-  subgraph api [API]
-    R[Render FastAPI]
+  subgraph frontend [Frontend freshness loop]
+    POLL[AnalysisContext poller<br/>30s metrics/quote · 5m pred-markets]
+    LU[LastUpdated + FreshnessBadge]
+  end
+  subgraph api [GCP Cloud Run API]
+    R[FastAPI app]
+    DT[decision_terminal<br/>+ verdict_cache]
+    VC[(Verdict cache<br/>per ticker/session)]
+    CC[(Connector cache<br/>60s open · 300s closed)]
     MCP["/mcp/sp500 MCP router"]
     LQ[live_quote hedged engine]
   end
   subgraph stores [Durable services]
-    SB[(Supabase pgvector)]
-    SQL[(SQLite on Render disk)]
-    DL[(Data lake Parquet / HF Hub)]
+    SB[(Supabase pgvector + decisions)]
+    BQ[(BigQuery MCP data)]
+    DL[(Data lake Parquet / GCS)]
   end
   subgraph ingest [Scheduled ingestion]
     DP[Daily pipeline]
@@ -465,15 +475,23 @@ flowchart LR
     YT[YouTube playlistItems]
     PM[Polymarket Gamma keyset]
     KA[Kalshi cursor API]
-    HF[Hugging Face Hub optional]
   end
   U --> V
   V -->|API calls| R
+  V -.->|30s/5m background| POLL
+  POLL --> LU
+  POLL -->|metrics/quote| R
+  R --> DT
+  DT -->|first hit per session| VC
+  DT -->|spot overlay on cache hit| LQ
+  DT --> CC
   R --> MCP
   MCP --> LQ
+  LQ --> CC
   LQ --> YF
   LQ -.->|EOD fallback| DL
   MCP -.->|historical tools| DL
+  MCP -.->|MCP_DATA_BACKEND| BQ
   R --> OR
   R --> YB
   YB --> YF
@@ -487,9 +505,7 @@ flowchart LR
   SP500 --> DL
   R -->|POST /knowledge/sp500-ingest| SP500
   R --> SB
-  R --> SQL
   R --> DL
-  DL -.->|optional snapshot| HF
   YF -.->|historical ETL| DL
 ```
 
@@ -502,6 +518,10 @@ flowchart TB
     MACRO["macro sectors and flows"]
     PMEP["prediction-markets"]
   end
+  subgraph cache [Session-aware caches]
+    CC[connector_cache<br/>60s open · 300s closed]
+    VC[verdict_cache<br/>per ticker/session_date]
+  end
   subgraph batch [yfinance_batch]
     CHUNK[Chunk tickers ≤50]
     DL[yf.download one call per chunk]
@@ -510,14 +530,16 @@ flowchart TB
   subgraph truth [Truthful-data contract §5.9]
     ERR[503 insufficient_data]
   end
-  MACRO --> CHUNK --> DL --> BACK
+  MACRO --> CC --> CHUNK --> DL --> BACK
   DL -->|missing symbol| FB[quote_fallbacks chart]
   FB -->|still missing| ERR
   PMEP --> POLY[Polymarket keyset pages]
   PMEP --> KAL[Kalshi cursor pages]
   POLY -->|tag fetch failed| ERR
   KAL -->|all probes failed| ERR
-  DT --> batch
+  DT -->|miss| VC
+  VC -->|hit + spot overlay| DT
+  DT -->|force=true or miss| CC
 ```
 
 ### 13.2 MCP live quote path (hedged providers + data-lake fallback)
@@ -525,13 +547,13 @@ flowchart TB
 ```mermaid
 flowchart LR
   subgraph client [Client]
-    W[LiveQuoteWidget]
+    W[LiveQuoteWidget / dashboard poller]
   end
   subgraph mcp [MCP /mcp/sp500]
     RQ[live-quote route]
     ENG[live_quote.py]
   end
-  subgraph live [Keyless live providers]
+  subgraph live [Keyless live providers · unified LIVE_SPOT_PROVIDERS]
     YFI[yahoo fast_info primary]
     YCH[yahoo chart]
     ST[Stooq CSV]
@@ -541,8 +563,9 @@ flowchart LR
     LAKE[daily_prices data lake]
   end
   subgraph trust [Data Trust Layer]
-    FRESH[freshness assess_spot or session_pct]
-    UI[StaleValue FreshnessBadge]
+    FRESH[freshness assess_spot · session_pct · home_live]
+    DEG[spot_provider_degraded flag]
+    UI[StaleValue FreshnessBadge · LastUpdated]
   end
   W --> RQ --> ENG
   ENG --> YFI
@@ -550,7 +573,47 @@ flowchart LR
   ENG --> ST
   ENG --> FC
   ENG -.->|all live fail| LAKE
-  ENG --> FRESH --> UI
+  ENG --> FRESH
+  FRESH --> DEG
+  FRESH --> UI
+```
+
+### 13.3 Dashboard realtime freshness loop
+
+```mermaid
+sequenceDiagram
+  participant U as User browser
+  participant AC as AnalysisContext poller
+  participant API as Cloud Run API
+  participant VC as Verdict cache
+  participant CC as Connector cache
+  participant YF as Yahoo / live providers
+  U->>AC: mount ticker
+  loop every 30s (visibilitychange-aware)
+    AC->>API: GET /metrics/{ticker}
+    API->>CC: get/set (60s open / 300s closed)
+    CC->>YF: yfinance
+    API-->>AC: metrics + data_freshness envelope
+    AC->>API: GET /mcp/sp500/live-quote
+    API->>CC: get/set
+    API-->>AC: spot + assess_spot envelope
+    AC->>U: update liveSpotData + LastUpdated
+  end
+  loop every 5m
+    AC->>API: GET /prediction-markets
+    API-->>AC: polymarket/kalshi
+  end
+  Note over U,API: /decision-terminal is NOT auto-polled.<br/>Re-run uses ?force=true to bypass verdict cache.
+  U->>API: GET /decision-terminal?ticker=
+  alt cache miss (new session or force)
+    API->>YF: full swarm + debate
+    API->>VC: store verdict (ticker, session_date)
+    API-->>U: fresh verdict + macro_fetched_at_utc
+  else cache hit
+    API->>VC: load verdict
+    API->>YF: resolve_spot (60s TTL) overlay
+    API-->>U: cached verdict + fresh spot
+  end
 ```
 
 This architecture document is the intended **stable narrative** for onboarding and refactors; update it when behavior changes.
