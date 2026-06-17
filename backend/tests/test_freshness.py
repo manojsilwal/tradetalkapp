@@ -70,6 +70,11 @@ class TestSpecialPolicies(unittest.TestCase):
                       captured_at=now, degraded=True, now=now)
         self.assertTrue(f.degraded)
 
+    def test_spot_provider_degraded(self):
+        self.assertFalse(fr.spot_provider_degraded("yahoo_chart"))
+        self.assertTrue(fr.spot_provider_degraded("stooq"))
+        self.assertTrue(fr.spot_provider_degraded(None))
+
 
 class TestHomeLivePolicy(unittest.TestCase):
     def test_fresh_within_one_hour(self):

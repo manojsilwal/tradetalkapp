@@ -166,7 +166,7 @@ export default function DecisionTerminalUI() {
     setPayload(null);
     try {
       const data = await apiFetch(
-        `${API_BASE_URL}/decision-terminal?ticker=${encodeURIComponent(ticker.trim())}`,
+        `${API_BASE_URL}/decision-terminal?ticker=${encodeURIComponent(ticker.trim())}${payload ? '&force=true' : ''}`,
       );
       setPayload(data);
     } catch (e) {

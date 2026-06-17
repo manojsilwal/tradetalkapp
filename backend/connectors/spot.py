@@ -22,7 +22,9 @@ from typing import Dict, Optional, Tuple
 from ..schemas import DataFreshness
 
 # Providers we treat as a genuine live read (not a degraded fallback).
-_LIVE_PROVIDERS = frozenset({"yahoo_chart", "yfinance", "yfinance_history", "yfinance_info"})
+from ..freshness import LIVE_SPOT_PROVIDERS, spot_provider_degraded
+
+_LIVE_PROVIDERS = LIVE_SPOT_PROVIDERS
 
 SPOT_CACHE_TTL_S = float(os.environ.get("SPOT_CACHE_TTL_S", "60"))
 
@@ -114,7 +116,7 @@ def get_spot_with_freshness(
         return None, fresh
 
     price, provider = res
-    degraded = provider not in _LIVE_PROVIDERS
+    degraded = spot_provider_degraded(provider)
     fresh = assess_spot(source=provider, degraded=degraded)
     return float(price), fresh
 

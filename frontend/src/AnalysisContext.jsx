@@ -4,10 +4,21 @@ import { isBriefSessionTrustworthy, shouldSkipDailyBriefRefetch } from './freshn
 
 const FAST_TIMEOUT_MS = 30000;
 const LLM_TIMEOUT_MS = 120000;
+const LIVE_POLL_FAST_MS = 30000;
+const LIVE_POLL_SLOW_MS = 5 * 60 * 1000;
+const LIVE_POLL_ENABLED = (() => {
+    try {
+        const v = import.meta?.env?.VITE_DASHBOARD_LIVE_POLL;
+        return v !== '0' && v !== 'false';
+    } catch {
+        return true;
+    }
+})();
 
 function metricsKeyActivityMissing(metrics) {
-    if (!metrics || Object.keys(metrics).length === 0) return true;
-    const cur = metrics?.momentum_rsi?.current;
+    const block = metrics?.metrics ?? metrics;
+    if (!block || Object.keys(block).length === 0) return true;
+    const cur = block?.momentum_rsi?.current;
     return !cur || cur === 'N/A';
 }
 
@@ -43,6 +54,160 @@ export function AnalysisProvider({ children }) {
     useEffect(() => {
         analysesRef.current = analyses;
     }, [analyses]);
+
+    const dashboardPollerRef = useRef({
+        sym: null,
+        fastId: null,
+        slowId: null,
+        visHandler: null,
+        lastFastMs: 0,
+    });
+
+    const stopDashboardPoller = useCallback(() => {
+        const p = dashboardPollerRef.current;
+        if (p.fastId) clearInterval(p.fastId);
+        if (p.slowId) clearInterval(p.slowId);
+        if (p.visHandler) {
+            document.removeEventListener('visibilitychange', p.visHandler);
+        }
+        dashboardPollerRef.current = {
+            sym: null,
+            fastId: null,
+            slowId: null,
+            visHandler: null,
+            lastFastMs: 0,
+        };
+    }, []);
+
+    const refreshDashboardLiveData = useCallback(async (sym) => {
+        const ticker = sym.trim().toUpperCase();
+        if (!ticker) return;
+
+        const update = (patch) => {
+            setAnalyses((prev) => {
+                const cur = prev[ticker];
+                if (!cur || cur.status !== 'success') return prev;
+                return { ...prev, [ticker]: { ...cur, ...patch } };
+            });
+        };
+
+        try {
+            const [metricsRes, quoteRes] = await Promise.allSettled([
+                apiFetchTimed(`${API_BASE_URL}/metrics/${ticker}`, {}, FAST_TIMEOUT_MS),
+                apiFetchTimed(
+                    `${API_BASE_URL}/mcp/sp500/live-quote?symbol=${encodeURIComponent(ticker)}`,
+                    {},
+                    FAST_TIMEOUT_MS,
+                ).catch(() =>
+                    apiFetchTimed(`${API_BASE_URL}/stock-fundamentals/${ticker}`, {}, FAST_TIMEOUT_MS),
+                ),
+            ]);
+
+            const patch = {};
+            if (metricsRes.status === 'fulfilled' && metricsRes.value?.metrics) {
+                patch.metricsData = metricsRes.value.metrics;
+                patch.metricsFreshness = metricsRes.value.data_freshness ?? null;
+            }
+
+            if (quoteRes.status === 'fulfilled' && quoteRes.value) {
+                const q = quoteRes.value;
+                if (q.price != null) {
+                    patch.liveSpotData = q;
+                    setAnalyses((prev) => {
+                        const cur = prev[ticker];
+                        if (!cur || cur.status !== 'success') return prev;
+                        const fd = cur.fundamentalsData;
+                        const nextFund = fd
+                            ? {
+                                ...fd,
+                                company_info: {
+                                    ...(fd.company_info || {}),
+                                    current_price: q.price,
+                                    price_change: q.change ?? fd.company_info?.price_change,
+                                    price_change_pct: q.change_pct ?? fd.company_info?.price_change_pct,
+                                },
+                                spot_freshness: q.data_freshness ?? fd.spot_freshness,
+                            }
+                            : fd;
+                        const nextDecision = cur.decisionData
+                            ? {
+                                ...cur.decisionData,
+                                spot: {
+                                    price_usd: q.price,
+                                    source: q.source,
+                                    captured_at_utc: q.captured_at ?? q.data_freshness?.captured_at,
+                                    degraded: q.degraded ?? q.data_freshness?.degraded,
+                                },
+                                data_freshness: q.data_freshness ?? cur.decisionData.data_freshness,
+                            }
+                            : cur.decisionData;
+                        return {
+                            ...prev,
+                            [ticker]: {
+                                ...cur,
+                                ...patch,
+                                fundamentalsData: nextFund,
+                                decisionData: nextDecision,
+                            },
+                        };
+                    });
+                    dashboardPollerRef.current.lastFastMs = Date.now();
+                    return;
+                }
+                if (q.company_info || q.metrics) {
+                    patch.fundamentalsData = q;
+                }
+            }
+
+            if (Object.keys(patch).length) {
+                update(patch);
+            }
+            dashboardPollerRef.current.lastFastMs = Date.now();
+        } catch {
+            /* best-effort background refresh */
+        }
+    }, []);
+
+    const startDashboardPoller = useCallback((sym) => {
+        if (!LIVE_POLL_ENABLED) return;
+        const ticker = sym.trim().toUpperCase();
+        if (!ticker) return;
+        stopDashboardPoller();
+
+        const runFast = () => {
+            if (document.visibilityState === 'hidden') return;
+            refreshDashboardLiveData(ticker);
+        };
+        const runSlow = () => {
+            if (document.visibilityState === 'hidden') return;
+            apiFetchTimed(`${API_BASE_URL}/prediction-markets?ticker=${ticker}`, {}, FAST_TIMEOUT_MS)
+                .then((res) => {
+                    setAnalyses((prev) => {
+                        const cur = prev[ticker];
+                        if (!cur || cur.status !== 'success') return prev;
+                        return { ...prev, [ticker]: { ...cur, predMarketsData: res } };
+                    });
+                })
+                .catch(() => {});
+        };
+
+        const onVis = () => {
+            if (document.visibilityState !== 'visible') return;
+            const last = dashboardPollerRef.current.lastFastMs || 0;
+            if (Date.now() - last > 60_000) runFast();
+        };
+
+        document.addEventListener('visibilitychange', onVis);
+        dashboardPollerRef.current = {
+            sym: ticker,
+            fastId: setInterval(runFast, LIVE_POLL_FAST_MS),
+            slowId: setInterval(runSlow, LIVE_POLL_SLOW_MS),
+            visHandler: onVis,
+            lastFastMs: Date.now(),
+        };
+    }, [stopDashboardPoller, refreshDashboardLiveData]);
+
+    useEffect(() => () => stopDashboardPoller(), [stopDashboardPoller]);
 
     // 2. Daily Brief States
     const [dailyBriefState, setDailyBriefState] = useState({
@@ -153,8 +318,11 @@ export function AnalysisProvider({ children }) {
                     [sym]: existing
                 }));
             }
+            startDashboardPoller(sym);
             return;
         }
+
+        stopDashboardPoller();
 
         // Initialize state
         const initialTickerState = {
@@ -166,6 +334,8 @@ export function AnalysisProvider({ children }) {
             traceLoading: true,
             metricsData: null,
             metricsLoading: true,
+            metricsFreshness: null,
+            liveSpotData: null,
             capBucket: null,
             smallCapData: null,
             smallCapLoading: false,
@@ -299,6 +469,7 @@ export function AnalysisProvider({ children }) {
                     onSuccess();
                     updateTickerState({
                         metricsData: metrics,
+                        metricsFreshness: res?.data_freshness ?? null,
                         capBucket: bucket,
                         metricsLoading: false
                     });
@@ -340,7 +511,11 @@ export function AnalysisProvider({ children }) {
             // Consolidated: /decision-terminal runs swarm + debate ONCE and now
             // returns them embedded, so the Trace and Debate tabs are derived from
             // the same payload instead of re-running those pipelines via /trace + /debate.
-            apiFetchTimed(`${API_BASE_URL}/decision-terminal?ticker=${sym}`, {}, LLM_TIMEOUT_MS)
+            apiFetchTimed(
+                `${API_BASE_URL}/decision-terminal?ticker=${encodeURIComponent(sym)}${forceRefresh ? '&force=true' : ''}`,
+                {},
+                LLM_TIMEOUT_MS,
+            )
                 .then((res) => {
                     onSuccess();
                     updateTickerState({
@@ -440,6 +615,7 @@ export function AnalysisProvider({ children }) {
                             capBucket: updated.capBucket,
                             fundamentals: updated.fundamentalsData,
                         });
+                        startDashboardPoller(sym);
                     }, 0);
                 }
 
@@ -450,7 +626,7 @@ export function AnalysisProvider({ children }) {
             });
         });
 
-    }, [addAnalysis]);
+    }, [addAnalysis, getAnalysisState, startDashboardPoller, stopDashboardPoller]);
 
     // Daily Brief Action
     const loadDailyBrief = useCallback(async (forceRefresh = false) => {

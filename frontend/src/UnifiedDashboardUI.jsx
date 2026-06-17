@@ -5,7 +5,8 @@ import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Responsive
 import { API_BASE_URL } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
-import { StaleValue, FreshnessBadge } from './components/Freshness';
+import { StaleValue, FreshnessBadge, LastUpdated } from './components/Freshness';
+import { formatFreshnessDateTime } from './freshness';
 import DashboardScorecardPanel from './components/DashboardScorecardPanel';
 import VerdictToneLegend from './components/VerdictToneLegend';
 import DebateThreadPanel from './components/debate/DebateThreadPanel';
@@ -226,6 +227,8 @@ export default function UnifiedDashboardUI() {
     traceData,
     traceLoading,
     metricsData,
+    metricsFreshness,
+    liveSpotData,
     metricsLoading,
     capBucket,
     smallCapData,
@@ -310,8 +313,18 @@ export default function UnifiedDashboardUI() {
   const moderatorConfPct = z?.debate_confidence_pct;
   const expertBullish = stancePct != null && stancePct >= 55;
 
-  const spot = decisionData?.spot?.price_usd ?? v?.current_price_usd ?? fundamentalsData?.company_info?.current_price;
-  const spotSource = decisionData?.spot?.source;
+  const spot = liveSpotData?.price
+    ?? decisionData?.spot?.price_usd
+    ?? v?.current_price_usd
+    ?? fundamentalsData?.company_info?.current_price;
+  const spotSource = liveSpotData?.source ?? decisionData?.spot?.source;
+  const spotFreshness = liveSpotData?.data_freshness
+    ?? decisionData?.data_freshness
+    ?? fundamentalsData?.spot_freshness
+    ?? fundamentalsData?.data_freshness;
+  const spotCapturedLabel = formatFreshnessDateTime(
+    spotFreshness?.captured_at ?? decisionData?.spot?.captured_at_utc ?? liveSpotData?.captured_at,
+  );
   const reconciliation = decisionData?.reconciliation;
   const embeddedScorecard = decisionData?.scorecard_summary;
   const scenarioPrices = useMemo(() => roadmapScenarioPrices(r, spot), [r, spot]);
@@ -536,7 +549,7 @@ export default function UnifiedDashboardUI() {
             </h1>
             {!fundamentalsLoading && (fundamentalsData?.company_info || spot != null) && (
               <div className="dt-price-display">
-                <StaleValue freshness={decisionData?.data_freshness || fundamentalsData?.data_freshness} priceSensitive>
+                <StaleValue freshness={spotFreshness} priceSensitive>
                   <span className="dt-price-value" data-testid="dashboard-current-price" data-symbol={searchUpper}>${spot != null ? Number(spot).toFixed(2) : '—'}</span>
                   {fundamentalsData?.company_info?.price_change_pct != null && (
                     <span className={`dt-price-badge ${isPricePositive ? 'positive' : 'negative'}`}>
@@ -545,13 +558,15 @@ export default function UnifiedDashboardUI() {
                   )}
                   {fundamentalsData?.company_info?.price_change != null && (
                     <span className="dt-price-change-abs">
-                      {isPricePositive ? '+' : ''}{fundamentalsData.company_info.price_change.toFixed(2)} Today
+                      {isPricePositive ? '+' : ''}{fundamentalsData.company_info.price_change.toFixed(2)}
+                      {spotCapturedLabel ? ` · ${spotCapturedLabel}` : ''}
                     </span>
                   )}
                 </StaleValue>
-                {(decisionData?.data_freshness || fundamentalsData?.data_freshness) && (
-                  <FreshnessBadge freshness={decisionData?.data_freshness || fundamentalsData?.data_freshness} />
+                {spotFreshness && (
+                  <FreshnessBadge freshness={spotFreshness} />
                 )}
+                <LastUpdated freshness={spotFreshness} label="Spot" />
                 {spotSource && (
                   <span style={{ fontSize: '0.7rem', color: 'var(--dt-muted)', marginLeft: 8 }}>
                     {decisionData?.spot?.degraded ? `Delayed (${spotSource})` : `Live (${spotSource})`}
@@ -637,7 +652,10 @@ export default function UnifiedDashboardUI() {
 
         {/* 4. CONSOLIDATED METRICS & FINANCIAL PERFORMANCE */}
         <section className="dt-panel dt-area-metrics-perf">
-          <h2 className="dt-panel-title">Financial Health &amp; Performance</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <h2 className="dt-panel-title" style={{ margin: 0 }}>Financial Health &amp; Performance</h2>
+            <LastUpdated freshness={fundamentalsData?.data_freshness} label="Fundamentals" />
+          </div>
             <div className="dt-metrics-split">
               <div className="dt-metrics-col">
                 <h3 className="dt-metrics-block-title">Consolidated Metrics</h3>
@@ -793,7 +811,18 @@ export default function UnifiedDashboardUI() {
       <div className="dt-valuation-verdict-grid">
         {/* 3. VERDICT & SENTIMENT + FUTURE PRICE ROADMAP */}
         <section className="dt-panel dt-area-verdict" style={{ margin: 0 }}>
-          <h2 className="dt-panel-title">Verdict &amp; Sentiment Hub</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <h2 className="dt-panel-title" style={{ margin: 0 }}>Verdict &amp; Sentiment Hub</h2>
+            <LastUpdated
+              freshness={
+                decisionData?.verdict_captured_at_utc
+                  ? { captured_at: decisionData.verdict_captured_at_utc, policy_max_age_s: 86400 }
+                  : decisionData?.data_freshness
+              }
+              label={decisionData?.verdict_from_cache ? 'Verdict (cached)' : 'Verdict'}
+            />
+          </div>
+          <LastUpdated freshness={predMarketsData?.data_freshness} label="Prediction markets" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
             <div className="dt-verdict-row">
               <span className="dt-verdict-row-label">Prediction Markets</span>

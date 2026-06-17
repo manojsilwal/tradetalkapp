@@ -19,6 +19,9 @@ import {
   freshnessColors,
   isStrictMode,
   FRESHNESS_STATES,
+  formatFreshnessDateTime,
+  relativeAgeFromCapturedAt,
+  envelopeIsStale,
 } from '../freshness';
 
 function _resolve(envelopeOrParsed) {
@@ -140,3 +143,37 @@ export function DataTrustBanner({ envelopes, envelope, message }) {
 }
 
 export default FreshnessBadge;
+
+/**
+ * Panel-level "Last updated" with full local date+time and relative age.
+ */
+export function LastUpdated({ freshness, envelope, label = 'Last updated', className = '' }) {
+  const p = _resolve(freshness ?? envelope);
+  if (!p.present) return null;
+  const captured = freshness?.captured_at ?? envelope?.captured_at ?? p.asOf;
+  if (!captured) return null;
+  const rel = relativeAgeFromCapturedAt(captured);
+  const full = formatFreshnessDateTime(captured);
+  const maxS = typeof (freshness ?? envelope)?.policy_max_age_s === 'number'
+    ? (freshness ?? envelope).policy_max_age_s
+    : null;
+  let color = '#64748b';
+  if (captured && maxS) {
+    const ageS = (Date.now() - new Date(captured).getTime()) / 1000;
+    if (ageS > maxS) color = '#f87171';
+    else if (ageS > maxS / 2) color = '#fbbf24';
+  } else if (envelopeIsStale(freshness ?? envelope)) {
+    color = '#fbbf24';
+  }
+  return (
+    <span
+      className={className}
+      data-testid="last-updated"
+      title={full}
+      style={{ fontSize: '0.72rem', color, display: 'inline-flex', gap: 6, alignItems: 'center' }}
+    >
+      <span>{label}: {full}</span>
+      {rel ? <span style={{ opacity: 0.85 }}>({rel})</span> : null}
+    </span>
+  );
+}

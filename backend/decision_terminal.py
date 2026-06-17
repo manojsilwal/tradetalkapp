@@ -430,6 +430,9 @@ async def build_decision_terminal_payload(
     tool_registry: Any = None,
     spot_quote: Any = None,
     scorecard_summary: Optional[TerminalScorecardSummary] = None,
+    macro_fetched_at_utc: Optional[str] = None,
+    verdict_captured_at_utc: Optional[str] = None,
+    verdict_from_cache: bool = False,
 ) -> DecisionTerminalPayload:
     t = ticker.upper()
     now = datetime.now(timezone.utc).isoformat()
@@ -838,6 +841,9 @@ async def build_decision_terminal_payload(
             disclaimer=DISCLAIMER,
             generated_at_utc=now,
             cache_ttl_seconds=300,
+            verdict_captured_at_utc=verdict_captured_at_utc or now,
+            verdict_from_cache=verdict_from_cache,
+            macro_fetched_at_utc=macro_fetched_at_utc,
             valuation=valuation,
             quality=quality,
             verdict=verdict,
@@ -883,13 +889,21 @@ async def run_decision_terminal_request(
     poly_connector: Any,
     llm_client: Any,
     provider_audit: bool = False,
+    force: bool = False,
 ) -> DecisionTerminalPayload:
     """
     Run full analyze (swarm + debate) in parallel with extra market fetches, then assemble payload.
 
     ``execute_analyze`` must be ``_execute_analyze`` from main (injected to avoid cycles).
     """
+    from .verdict_cache import get_cached_verdict, store_verdict_cache, verdict_cache_enabled
+
     t = ticker.upper()
+
+    if not force and verdict_cache_enabled():
+        cached = get_cached_verdict(t)
+        if cached is not None:
+            return cached
 
     async def _safe_poly():
         # Truthful-data contract: a failed Polymarket fetch must not be
@@ -959,7 +973,11 @@ async def run_decision_terminal_request(
         tool_registry=tool_registry,
         spot_quote=spot_quote,
         scorecard_summary=scorecard_summary,
+        macro_fetched_at_utc=analysis.macro_fetched_at_utc,
     )
+
+    if verdict_cache_enabled():
+        store_verdict_cache(t, payload)
 
     try:
         from . import decision_ledger as _dl

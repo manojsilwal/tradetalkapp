@@ -1,7 +1,9 @@
 import asyncio
+from datetime import datetime, timezone
 import yfinance as yf
 from typing import Dict, Any, List, Tuple, Optional
 from ..data_errors import InsufficientDataError
+from ..freshness import assess
 from .base import DataConnector, clean_dividend_yield
 from .debate_data import fetch_debate_data
 from ..paper_portfolio import _classify_market_cap
@@ -77,13 +79,18 @@ class InvestorMetricsConnector(DataConnector):
                     short["current"] = f"{float(spf):.1f}%"
                     short["trend"] = "Fallback"
 
-        def get_all_metrics() -> Tuple[Dict[str, Any], Optional[float]]:
+        def get_all_metrics() -> Tuple[Dict[str, Any], Optional[float], Optional[str]]:
             ticker = yf.Ticker(ticker_sym)
             info = ticker.info or {}
             hist_3mo = ticker.history(period="3mo")
+            as_of_date: Optional[str] = None
             closes: List[float] = []
             if hist_3mo is not None and not hist_3mo.empty and "Close" in hist_3mo:
                 closes = [float(v) for v in hist_3mo["Close"].dropna().tolist()]
+                try:
+                    as_of_date = hist_3mo.index[-1].date().isoformat()
+                except Exception:
+                    as_of_date = None
             
             # --- 1. ROIC & ROE ---
             from backend.metric_primitives import fcf_yield_percent, roic_proxy
@@ -220,8 +227,8 @@ class InvestorMetricsConnector(DataConnector):
                     "historical": "N/A",
                     "trend": "N/A",
                 },
-            }, raw_market_cap if raw_market_cap and raw_market_cap > 0 else None
-            
+            }, raw_market_cap if raw_market_cap and raw_market_cap > 0 else None, as_of_date
+
         try:
             # Parallel acquisition: primary yfinance metrics + fallback debate_data
             yf_task = asyncio.to_thread(get_all_metrics)
@@ -230,11 +237,15 @@ class InvestorMetricsConnector(DataConnector):
 
             market_cap: Optional[float] = None
             metrics_dict: Dict[str, Any] = {}
+            as_of_date: Optional[str] = None
 
             if isinstance(metrics, Exception):
                 metrics_dict = {}
-            elif isinstance(metrics, tuple) and len(metrics) == 2:
-                metrics_dict, market_cap = metrics
+            elif isinstance(metrics, tuple) and len(metrics) >= 2:
+                metrics_dict = metrics[0]
+                market_cap = metrics[1]
+                if len(metrics) >= 3:
+                    as_of_date = metrics[2]
             elif isinstance(metrics, dict):
                 metrics_dict = metrics
 
@@ -258,11 +269,20 @@ class InvestorMetricsConnector(DataConnector):
 
             _hydrate_key_activity(metrics_dict, fallback)
 
+            captured = datetime.now(timezone.utc)
+            freshness = assess(
+                data_class="fundamentals",
+                source="yfinance",
+                as_of=as_of_date,
+                captured_at=captured,
+            )
+
             return {
                 "ticker": ticker_sym,
                 "metrics": metrics_dict,
                 "market_cap": market_cap,
                 "cap_bucket": _classify_market_cap(market_cap),
+                "data_freshness": freshness.model_dump(),
             }
         except InsufficientDataError:
             raise
@@ -275,11 +295,19 @@ class InvestorMetricsConnector(DataConnector):
                 metrics_dict = _blank_key_activity()
                 _hydrate_key_activity(metrics_dict, fallback)
                 mc = fallback.get("market_cap")
+                captured = datetime.now(timezone.utc)
+                freshness = assess(
+                    data_class="fundamentals",
+                    source="yfinance",
+                    captured_at=captured,
+                    degraded=True,
+                )
                 return {
                     "ticker": ticker_sym,
                     "metrics": metrics_dict,
                     "market_cap": mc,
                     "cap_bucket": _classify_market_cap(mc),
+                    "data_freshness": freshness.model_dump(),
                 }
             raise InsufficientDataError(
                 "yfinance",

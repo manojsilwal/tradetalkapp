@@ -306,6 +306,20 @@ For storage layout and cron population of the data-lake, see [ARCHITECTURE.md](.
 
 ---
 
+## 8. Realtime freshness additions (dashboard / decision-terminal)
+
+| Layer | Mechanism | TTL / invalidation |
+|-------|-----------|-------------------|
+| **Verdict cache** | `backend/verdict_cache.py` — demand-only, keyed by `(ticker, session_date)` | Valid for current trading session; new session = miss. `VERDICT_CACHE_ENABLE=0` off-switch. `?force=true` bypasses. |
+| **Spot overlay on cache hit** | `overlay_fresh_spot()` re-reads `resolve_spot()` (60s TTL) | Spot refreshed; LLM verdict reused |
+| **Connector cache** | `connector_cache.connector_cache_ttl()` | 60s during `SESSION_REGULAR`, 300s off-hours |
+| **Dashboard poller** | `AnalysisContext` — `VITE_DASHBOARD_LIVE_POLL` (default on) | 30s: `/metrics`, `/mcp/sp500/live-quote`; 5m: `/prediction-markets`. No background `/decision-terminal`. |
+| **Per-panel timestamps** | `<LastUpdated>` in `Freshness.jsx` | Shows full local `captured_at` + relative age |
+
+`GET /metrics/{ticker}` now returns `data_freshness` (`fundamentals` data class). `GET /stock-fundamentals` uses `fundamentals` + `spot_freshness` envelopes.
+
+---
+
 ## Appendix A — Endpoints grouped by path
 
 Alphabetical reference: **endpoint → UI surfaces → fetch mechanism → backend source**. Router file in `backend/routers/` unless noted.

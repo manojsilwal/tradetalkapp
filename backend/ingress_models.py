@@ -68,6 +68,10 @@ class AnalyzeIngressRequest(BaseModel):
         None,
         description="Alias for provider_audit: set to 1 to include provider_audit on decision-terminal.",
     )
+    force: bool = Field(
+        False,
+        description="Bypass per-trading-day verdict cache on decision-terminal.",
+    )
 
     @field_validator("ticker", mode="before")
     @classmethod

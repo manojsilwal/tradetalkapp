@@ -32,10 +32,15 @@ export const HOME_LIVE_MAX_AGE_S = 3600;
 
 function isClockAgeEnvelope(envelope) {
   if (!envelope || typeof envelope !== 'object') return false;
+  if (envelope.data_class === 'home_live') {
+    return Boolean(envelope.captured_at && !envelope.expected_last_session);
+  }
+  // Any age-mode envelope with captured_at + policy_max_age_s gets client clock check.
   return Boolean(
     envelope.captured_at
-    && !envelope.expected_last_session
-    && envelope.data_class === 'home_live',
+    && typeof envelope.policy_max_age_s === 'number'
+    && envelope.policy_max_age_s > 0
+    && !envelope.expected_last_session,
   );
 }
 
@@ -82,6 +87,44 @@ export function formatFreshnessDate(iso) {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   } catch {
     return String(iso);
+  }
+}
+
+/** Full local date+time for panel "Last updated" labels. */
+export function formatFreshnessDateTime(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(String(iso).length <= 10 ? `${iso}T00:00:00` : iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  } catch {
+    return String(iso);
+  }
+}
+
+export function relativeAgeFromCapturedAt(capturedAtIso, nowMs = Date.now()) {
+  if (!capturedAtIso) return '';
+  try {
+    const cap = new Date(capturedAtIso);
+    if (Number.isNaN(cap.getTime())) return '';
+    const sec = Math.floor((nowMs - cap.getTime()) / 1000);
+    if (sec < 5) return 'just now';
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    const days = Math.floor(hr / 24);
+    return `${days}d ago`;
+  } catch {
+    return '';
   }
 }
 

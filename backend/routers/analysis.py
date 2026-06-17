@@ -7,7 +7,7 @@ from datetime import datetime as _dt2, timezone as _tz2
 from typing import Optional
 
 from fastapi import APIRouter, Query, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..connectors.stock_fundamentals import fetch_stock_fundamentals
 
@@ -106,7 +106,7 @@ async def _execute_swarm_trace(
     ticker: str,
     credit_stress: Optional[float],
     _auth_user,
-) -> SwarmConsensus:
+) -> tuple[SwarmConsensus, dict]:
     tracer = get_tracer()
     with tracer.start_as_current_span("swarm.trace"):
         cycle_id = f"trace-{ticker.upper()}-{int(_time.time())}"
@@ -304,7 +304,7 @@ async def _execute_swarm_trace(
         except Exception as e:
             print(f"[KnowledgeHook] factor snapshot failed: {e}")
 
-        return consensus
+        return consensus, macro_data
 
 
 async def _execute_debate(
@@ -315,6 +315,7 @@ async def _execute_debate(
     award_debate_xp: bool = True,
     debate_data: Optional[dict] = None,
     debate_data_task: Optional["asyncio.Future"] = None,
+    macro_data: Optional[dict] = None,
 ) -> DebateResult:
     from ..debate_agents import run_full_debate
 
@@ -329,10 +330,11 @@ async def _execute_debate(
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail={"error": "timeout", "tool": "fetch_debate_data", "message": "Debate market data fetch timed out"}) from None
 
-    try:
-        macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=45.0)
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail={"error": "timeout", "tool": "macro_fetch", "message": "Macro data fetch timed out"}) from None
+    if macro_data is None:
+        try:
+            macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=45.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail={"error": "timeout", "tool": "macro_fetch", "message": "Macro data fetch timed out"}) from None
 
     ind = macro_data["indicators"]
     macro_state = _macro_state_from_indicators(ind)
@@ -386,6 +388,10 @@ async def _execute_debate(
 class AnalyzeResponse(BaseModel):
     swarm: SwarmConsensus
     debate: DebateResult
+    macro_fetched_at_utc: Optional[str] = Field(
+        default=None,
+        description="ISO timestamp when macro inputs (FRED/VIX) were captured for this analysis.",
+    )
 
 
 async def _execute_analyze(
@@ -397,20 +403,39 @@ async def _execute_analyze(
     debate_data: Optional[dict] = None,
     debate_data_task: Optional["asyncio.Future"] = None,
 ) -> AnalyzeResponse:
-    swarm_result = await _execute_swarm_trace(ticker, credit_stress, _auth_user)
+    swarm_result, macro_data = await _execute_swarm_trace(ticker, credit_stress, _auth_user)
     factor_summary = "; ".join(f"{name}: signal={fr.trading_signal}, conf={fr.confidence:.2f}" for name, fr in swarm_result.factors.items())
     swarm_context = (
         f"[Swarm pre-analysis for {ticker.upper()}] "
         f"Verdict: {swarm_result.global_verdict}, confidence: {swarm_result.confidence:.2f}. "
         f"Factors: {factor_summary}. {swarm_result.consensus_rationale}"
     )
-    debate_result = await _execute_debate(ticker, _auth_user, swarm_context=swarm_context, award_debate_xp=False, debate_data=debate_data, debate_data_task=debate_data_task)
+    debate_result = await _execute_debate(
+        ticker,
+        _auth_user,
+        swarm_context=swarm_context,
+        award_debate_xp=False,
+        debate_data=debate_data,
+        debate_data_task=debate_data_task,
+        macro_data=macro_data,
+    )
     if _auth_user and award_deep_analysis_xp:
         try:
             up.award_xp(_auth_user.id, "deep_analysis", note=ticker)
         except Exception:
             pass
-    return AnalyzeResponse(swarm=swarm_result, debate=debate_result)
+    ind = macro_data.get("indicators") or {}
+    macro_as_of = (
+        ind.get("fred_fetched_at")
+        or ind.get("as_of")
+        or macro_data.get("as_of")
+        or macro_data.get("fetched_at")
+    )
+    return AnalyzeResponse(
+        swarm=swarm_result,
+        debate=debate_result,
+        macro_fetched_at_utc=str(macro_as_of) if macro_as_of else None,
+    )
 
 
 @router.get("/trace", response_model=SwarmConsensus, dependencies=[Depends(_rl_expensive)])
@@ -421,13 +446,15 @@ async def get_agent_trace(
 ):
     """Live Swarm execution across Short Interest, Social, and Macro dimensions."""
     t = validate_ticker_query(ticker)
-    return await _execute_swarm_trace(t, credit_stress, _auth_user)
+    consensus, _ = await _execute_swarm_trace(t, credit_stress, _auth_user)
+    return consensus
 
 
 @router.post("/trace", response_model=SwarmConsensus, dependencies=[Depends(_rl_expensive)])
 async def post_agent_trace(body: TraceIngressRequest, _auth_user=Depends(get_optional_user)):
     """Schema-first swarm trace."""
-    return await _execute_swarm_trace(body.ticker, body.credit_stress, _auth_user)
+    consensus, _ = await _execute_swarm_trace(body.ticker, body.credit_stress, _auth_user)
+    return consensus
 
 
 @router.get("/debate", response_model=DebateResult, dependencies=[Depends(_rl_expensive)])
@@ -475,6 +502,10 @@ async def decision_terminal_get(
         None,
         description="Alias: set to 1 to include provider_audit.",
     ),
+    force: bool = Query(
+        False,
+        description="Bypass per-trading-day verdict cache and re-run the full LLM pipeline.",
+    ),
     _auth_user=Depends(get_optional_user),
 ):
     """
@@ -494,6 +525,7 @@ async def decision_terminal_get(
         poly_connector=poly_connector,
         llm_client=llm_client,
         provider_audit=want_audit,
+        force=force,
     )
 
 
@@ -513,6 +545,7 @@ async def decision_terminal_post(body: AnalyzeIngressRequest, _auth_user=Depends
         poly_connector=poly_connector,
         llm_client=llm_client,
         provider_audit=want_audit,
+        force=bool(body.force),
     )
 
 
@@ -727,14 +760,19 @@ async def get_stock_fundamentals(ticker: str):
 
     try:
         result = await asyncio.to_thread(fetch_stock_fundamentals, t)
-        # Additive freshness envelope: anchor on the latest price bar date so a
-        # stale upstream (bars older than the last session) is surfaced, not hidden.
         try:
-            from ..freshness import assess
+            from ..freshness import assess, assess_spot
+
+            price_as_of = _latest_price_date(result)
             result["data_freshness"] = assess(
-                data_class="session_pct",
+                data_class="fundamentals",
                 source="yfinance",
-                as_of=_latest_price_date(result),
+                as_of=price_as_of,
+            ).model_dump()
+            spot_src = (result.get("company_info") or {}).get("spot_source") or "yfinance"
+            result["spot_freshness"] = assess_spot(
+                source=spot_src,
+                as_of=price_as_of,
             ).model_dump()
         except Exception:
             pass

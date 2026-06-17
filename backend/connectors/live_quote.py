@@ -27,10 +27,12 @@ logger = logging.getLogger(__name__)
 _CACHE: Dict[str, Tuple[float, Dict[str, Any], DataFreshness]] = {}
 _CACHE_LOCK = threading.Lock()
 
+from ..freshness import LIVE_SPOT_PROVIDERS, spot_provider_degraded
+
 _PRIMARY = "yahoo_fast_info"
 _PARALLEL_FALLBACKS = ("yahoo_chart", "stooq")
 _LAST_RESORT = "fincrawler"
-_LIVE_PROVIDERS = frozenset({"yahoo_fast_info", "yahoo_chart"})
+_LIVE_PROVIDERS = LIVE_SPOT_PROVIDERS
 
 
 def _env_float(name: str, default: float) -> float:
@@ -112,7 +114,7 @@ def _row(
 def _stamp_live(source: str) -> DataFreshness:
     from ..freshness import assess_spot
 
-    degraded = source not in _LIVE_PROVIDERS
+    degraded = spot_provider_degraded(source)
     return assess_spot(source=source, captured_at=datetime.now(timezone.utc), degraded=degraded)
 
 

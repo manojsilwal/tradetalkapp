@@ -121,6 +121,7 @@ async def get_investor_metrics(ticker: str):
         metrics=data["metrics"],
         market_cap=data.get("market_cap"),
         cap_bucket=data.get("cap_bucket"),
+        data_freshness=data.get("data_freshness"),
     )
 
 

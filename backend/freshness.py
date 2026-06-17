@@ -28,6 +28,22 @@ from .schemas import DataFreshness, FreshnessTier
 
 _TimeLike = Union[datetime, date, str, None]
 
+# Providers treated as genuine live reads (not degraded fallbacks).
+LIVE_SPOT_PROVIDERS = frozenset({
+    "yahoo_fast_info",
+    "yahoo_chart",
+    "yfinance",
+    "yfinance_history",
+    "yfinance_info",
+})
+
+
+def spot_provider_degraded(source: Optional[str]) -> bool:
+    """True when the spot/quote source is a fallback rather than a primary live read."""
+    if not source:
+        return True
+    return source not in LIVE_SPOT_PROVIDERS
+
 
 def _env_float(name: str, default: float) -> float:
     try:

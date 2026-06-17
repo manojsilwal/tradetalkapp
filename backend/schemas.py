@@ -208,6 +208,10 @@ class InvestorMetricsResponse(BaseModel):
         default=None,
         description="Mega/Large/Mid/Small/Micro cap classification for dashboard routing.",
     )
+    data_freshness: Optional["DataFreshness"] = Field(
+        default=None,
+        description="Freshness envelope for yfinance fundamental metrics (slow-moving fields).",
+    )
 
 
 class SmallCapSignal(BaseModel):
@@ -574,6 +578,18 @@ class DecisionTerminalPayload(BaseModel):
     disclaimer: str
     generated_at_utc: str
     cache_ttl_seconds: int = 300
+    verdict_captured_at_utc: Optional[str] = Field(
+        default=None,
+        description="When the LLM verdict pipeline last ran (may differ from spot overlay on cache hits).",
+    )
+    verdict_from_cache: bool = Field(
+        default=False,
+        description="True when swarm/debate/verdict were served from the per-trading-day cache.",
+    )
+    macro_fetched_at_utc: Optional[str] = Field(
+        default=None,
+        description="When macro inputs (FRED/VIX) were captured for this verdict.",
+    )
     valuation: TerminalValuationPanel
     quality: TerminalQualityPanel
     verdict: TerminalVerdictPanel
