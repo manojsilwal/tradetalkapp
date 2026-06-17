@@ -4,6 +4,7 @@ This document describes how the TradeTalk platform is structured end to end: the
 
 **Related docs**
 
+- [DATA_FETCH_MAP.md](./DATA_FETCH_MAP.md) — page-by-page frontend fetches and live vs DB vs RAG backend sources.
 - [RAG_POLICY.md](./RAG_POLICY.md) — operational policy for ingestion, TTL, and PII around the knowledge store.
 - [CRON.md](./CRON.md) — wake pings, secured pipeline triggers, GitHub Actions, and Render free-tier behavior.
 - [DECISION_LEDGER.md](./DECISION_LEDGER.md) — SQL-queryable substrate of agent decisions + multi-horizon outcomes (Harness Engineering Phase 2).
