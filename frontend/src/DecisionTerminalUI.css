@@ -196,7 +196,7 @@
 /* Main dashboard grid */
 .dt-dashboard-grid {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 410px 1fr;
   grid-template-rows: auto auto;
   grid-template-areas:
     "scorecard chart"
@@ -204,9 +204,9 @@
   gap: 16px;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1250px) {
   .dt-dashboard-grid {
-    grid-template-columns: 260px 1fr;
+    grid-template-columns: 390px 1fr;
   }
 }
 
@@ -712,10 +712,10 @@ h4.dt-metrics-section-title {
   opacity: 0.5;
 }
 
-/* Quality 3×2 → 2×3 for left column */
+/* Quality scorecard grid - 3 columns */
 .dt-quality-3x2 {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
 

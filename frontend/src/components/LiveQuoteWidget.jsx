@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { Loader2, Search } from 'lucide-react';
 import { API_BASE_URL, apiFetch } from '../api';
 import { FreshnessBadge, StaleValue } from './Freshness';
+import { cleanSource } from '../freshness';
 
 /**
  * Live S&P 500 quote lookup via GET /mcp/sp500/live-quote.
@@ -127,9 +128,9 @@ export default function LiveQuoteWidget({ defaultSymbol = 'AAPL' }) {
               </span>
             )}
           </StaleValue>
-          {quote.source && (
+          {quote.source && cleanSource(quote.source) && (
             <div style={{ marginTop: 6, fontSize: '0.72rem', color: '#64748b' }}>
-              Source: {quote.source}
+              Source: {cleanSource(quote.source)}
             </div>
           )}
         </div>

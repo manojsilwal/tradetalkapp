@@ -22,6 +22,7 @@ import {
   formatFreshnessDateTime,
   relativeAgeFromCapturedAt,
   envelopeIsStale,
+  cleanSource,
 } from '../freshness';
 
 function _resolve(envelopeOrParsed) {
@@ -46,7 +47,12 @@ export function FreshnessBadge({ envelope, freshness, showEod = false, showUnver
   }
 
   const c = freshnessColors(p.state);
-  const hint = title || [p.label, p.ageText].filter(Boolean).join(' · ');
+  const cleanedSrc = cleanSource(p.source);
+  const info = [p.label, p.ageText, cleanedSrc ? `Source: ${cleanedSrc}` : ''].filter(Boolean).join(' · ');
+  let hint = title || info;
+  if (p.state === FRESHNESS_STATES.DELAYED) {
+    hint += ' — Quotes are retrieved via standard public exchange feeds (lagged by 15-20 min as per exchange requirements). Valuation models and portfolio exposure metrics automatically adjust for latency.';
+  }
   const isStale = p.state === FRESHNESS_STATES.STALE;
 
   return (
@@ -59,6 +65,7 @@ export function FreshnessBadge({ envelope, freshness, showEod = false, showUnver
         fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4,
         color: c.fg, background: c.bg, border: `1px solid ${c.border}`,
         borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+        cursor: 'help',
       }}
     >
       {isStale && <AlertTriangle size={11} style={{ flexShrink: 0 }} />}

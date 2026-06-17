@@ -293,3 +293,31 @@ export function freshnessColors(state) {
       return { fg: '#94a3b8', bg: 'rgba(148,163,184,0.10)', border: 'rgba(148,163,184,0.25)' };
   }
 }
+
+/**
+ * Maps internal raw source adapter names to friendly user-facing labels.
+ * If the source is an internal technical identifier with no user value,
+ * it returns an empty string to avoid exposing developer details.
+ */
+export function cleanSource(src) {
+  if (!src || typeof src !== 'string') return '';
+  const lower = src.toLowerCase().trim();
+  if (lower === 'yahoo_fast_info' || lower === 'yfinance' || lower === 'yahoo_chart' || lower === 'yfinance_history' || lower === 'yfinance_info' || lower === 'yfinance_movers') {
+    return 'Yahoo Finance';
+  }
+  if (lower === 'fred') return 'FRED';
+  if (lower === 'data_lake' || lower === 'datalake') return 'Internal Data Lake';
+  if (lower === 'market_intel' || lower === 'market_intel_live') return 'Market Intelligence';
+  if (lower === 'realtime_overlay') return 'Real-time Feed';
+  if (lower === 'slickcharts_live') return 'Slickcharts';
+  if (lower === 'sp500_screener') return 'S&P 500 Screener';
+  if (lower === 'yfinance/fred') return 'Yahoo Finance & FRED';
+  if (lower === 'stooq') return 'Stooq';
+  if (lower === 'fincrawler') return 'Financial Crawler';
+  if (lower === 'yfinance_or_datalake') return 'Yahoo Finance / Data Lake';
+  if (lower === 'metric_primitives') return 'Market Metrics';
+  if (['heuristic', 'none', 'unknown', 'not_implemented', 'snapshot'].includes(lower)) return '';
+  // Clean underscores/hyphens from other custom sources
+  return src.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+

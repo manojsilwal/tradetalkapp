@@ -6,7 +6,7 @@ import { API_BASE_URL } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
 import { SP500_TICKERS } from './sp500';
 import { StaleValue, FreshnessBadge, LastUpdated } from './components/Freshness';
-import { formatFreshnessDateTime } from './freshness';
+import { formatFreshnessDateTime, cleanSource } from './freshness';
 import DashboardScorecardPanel from './components/DashboardScorecardPanel';
 import VerdictToneLegend from './components/VerdictToneLegend';
 import DebateThreadPanel from './components/debate/DebateThreadPanel';
@@ -92,8 +92,9 @@ function polymarketArcRatio(pct) {
 
 function ProvenanceTip({ provenance, label }) {
   if (!provenance) return label;
+  const cleanedSrc = cleanSource(provenance.source);
   const parts = [
-    provenance.source && `Source: ${provenance.source}`,
+    cleanedSrc && `Source: ${cleanedSrc}`,
     provenance.formula_or_note,
     provenance.missing_reason,
     provenance.confidence != null && `Confidence: ${Math.round(provenance.confidence * 100)}%`,
@@ -567,11 +568,6 @@ export default function UnifiedDashboardUI() {
                   <FreshnessBadge freshness={spotFreshness} />
                 )}
                 <LastUpdated freshness={spotFreshness} label="Spot" />
-                {spotSource && (
-                  <span style={{ fontSize: '0.7rem', color: 'var(--dt-muted)', marginLeft: 8 }}>
-                    {decisionData?.spot?.degraded ? `Delayed (${spotSource})` : `Live (${spotSource})`}
-                  </span>
-                )}
               </div>
             )}
           </div>

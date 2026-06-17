@@ -26,6 +26,7 @@ import {
 import { API_BASE_URL, apiFetch } from './api';
 import { SP500_TICKERS } from './sp500';
 import { DataTrustBanner } from './components/Freshness';
+import { cleanSource } from './freshness';
 import './DecisionTerminalUI.css';
 import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
 
@@ -109,8 +110,9 @@ function polymarketArcRatio(pct) {
 
 function ProvenanceTip({ provenance, label }) {
   if (!provenance) return label;
+  const cleanedSrc = cleanSource(provenance.source);
   const parts = [
-    provenance.source && `Source: ${provenance.source}`,
+    cleanedSrc && `Source: ${cleanedSrc}`,
     provenance.formula_or_note,
     provenance.missing_reason,
     provenance.confidence != null && `Confidence: ${Math.round(provenance.confidence * 100)}%`,
