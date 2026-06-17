@@ -633,134 +633,7 @@ export default function UnifiedDashboardUI() {
           </div>
         </section>
 
-        {/* 3. VERDICT & SENTIMENT + FUTURE PRICE ROADMAP */}
-        <section className="dt-panel dt-area-verdict">
-          <h2 className="dt-panel-title">Verdict &amp; Sentiment Hub</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
-            <div className="dt-verdict-row">
-              <span className="dt-verdict-row-label">Prediction Markets</span>
-              {decisionLoading || predMarketsLoading ? (
-                <Loader2 className="spinner" size={16} />
-              ) : (
-                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#94a3b8', textAlign: 'right', maxWidth: '58%' }}>
-                  {getBriefText()}
-                </span>
-              )}
-            </div>
-            <div className="dt-verdict-row">
-              <span className="dt-verdict-row-label">Social Sentiment</span>
-              {traceLoading ? (
-                <Loader2 className="spinner" size={16} />
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                  <div className="dt-verdict-mini-gauge">
-                    <SemiGauge fillRatio={socialFill} size="small" />
-                  </div>
-                  {socialConfPct != null && (
-                    <span style={{ fontSize: '0.72rem', color: 'var(--dt-muted)' }}>
-                      Social factor confidence: {socialConfPct}%
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="dt-verdict-row">
-              <span className="dt-verdict-row-label">Expert Consensus</span>
-              {decisionLoading ? (
-                <Loader2 className="spinner" size={16} />
-              ) : (
-                <div style={{ fontSize: '0.78rem', textAlign: 'right', lineHeight: 1.45 }}>
-                  {stancePct != null ? (
-                    <div style={{ fontWeight: 700, color: expertBullish ? '#00ff88' : '#94a3b8' }}>
-                      Stance: {stancePct.toFixed(0)}% bull · {(100 - stancePct).toFixed(0)}% bear/neutral
-                    </div>
-                  ) : (
-                    <div>—</div>
-                  )}
-                  {moderatorConfPct != null && (
-                    <div style={{ color: 'var(--dt-muted)', marginTop: 2 }}>
-                      Moderator confidence: {moderatorConfPct.toFixed(0)}%
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            
-            <div className="dt-aggregate-card">
-              <div className="dt-aggregate-card-title">Aggregate Verdict</div>
-              {decisionLoading ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--dt-muted)', fontSize: '0.82rem' }}>
-                  <Loader2 className="spinner" size={14} /> Synthesizing...
-                </div>
-              ) : (
-                <div className={`dt-aggregate-badge ${verdictTone(z?.headline_verdict || verdict)}`}>
-                  <CheckCircle2 size={16} />
-                  <span>{hasDecisionData ? (z?.headline_verdict || verdict).toUpperCase() : 'AWAITING ANALYSIS'}</span>
-                </div>
-              )}
-            </div>
 
-            {reconciliation?.conflicting_signals?.length > 0 && reconciliation.reconciliation_note && (
-              <div
-                style={{
-                  padding: '12px 14px',
-                  background: 'rgba(245, 158, 11, 0.08)',
-                  border: '1px solid rgba(245, 158, 11, 0.25)',
-                  borderRadius: 8,
-                  fontSize: '0.8rem',
-                  lineHeight: 1.5,
-                  color: '#e2e8f0',
-                }}
-                data-testid="reconciliation-banner"
-              >
-                {reconciliation.reconciliation_note}
-              </div>
-            )}
-
-            <VerdictToneLegend />
-
-            <div className="dt-roadmap-compact">
-              <h2 className="dt-panel-title">Future Price Roadmap</h2>
-              <div className="dt-roadmap-legend-row" style={{ marginTop: 6 }}>
-                <span className="dt-roadmap-legend-item">
-                  <span className="dt-roadmap-dot bull" />
-                  Bull {scenarioPrices?.bull != null && `($${Number(scenarioPrices.bull).toFixed(0)})`}
-                </span>
-                <span className="dt-roadmap-legend-item">
-                  <span className="dt-roadmap-dot base" />
-                  Base {scenarioPrices?.base != null && `($${Number(scenarioPrices.base).toFixed(0)})`}
-                </span>
-                <span className="dt-roadmap-legend-item">
-                  <span className="dt-roadmap-dot bear" />
-                  Bear {scenarioPrices?.bear != null && `($${Number(scenarioPrices.bear).toFixed(0)})`}
-                </span>
-              </div>
-              <div className="dt-roadmap-chart-sm" style={{ marginTop: 6 }}>
-                {decisionLoading ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)' }}>
-                    <Loader2 className="spinner" size={18} /> Generating paths…
-                  </div>
-                ) : roadmapChartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ReLineChart data={roadmapChartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                      <XAxis dataKey="t" tick={{ fill: '#94a3b8', fontSize: 9 }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fill: '#94a3b8', fontSize: 8 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
-                      <RechartsTooltip content={chartTooltip} />
-                      <Line type="monotone" dataKey="bull" name="Bull case" stroke="#00ff88" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
-                      <Line type="monotone" dataKey="base" name="Base case" stroke="#8b5cf6" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
-                      <Line type="monotone" dataKey="bear" name="Bear case" stroke="#f87171" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
-                    </ReLineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', fontSize: '11px' }}>
-                    Run analysis to load paths
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </section>
 
         {/* 4. CONSOLIDATED METRICS & FINANCIAL PERFORMANCE */}
         <section className="dt-panel dt-area-metrics-perf">
@@ -917,61 +790,193 @@ export default function UnifiedDashboardUI() {
 
       </div>
 
-      <section className="dt-panel dt-area-valuation">
-        <h2 className="dt-panel-title">Consensus Valuation Signal</h2>
-        <div className="dt-valuation-split">
-          <div className="dt-valuation-gauge">
-            {decisionLoading ? (
-              <div className="dt-metrics-loading" style={{ minHeight: 120 }}>
-                <Loader2 className="spinner" size={22} />
+      <div className="dt-valuation-verdict-grid">
+        {/* 3. VERDICT & SENTIMENT + FUTURE PRICE ROADMAP */}
+        <section className="dt-panel dt-area-verdict" style={{ margin: 0 }}>
+          <h2 className="dt-panel-title">Verdict &amp; Sentiment Hub</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
+            <div className="dt-verdict-row">
+              <span className="dt-verdict-row-label">Prediction Markets</span>
+              {decisionLoading || predMarketsLoading ? (
+                <Loader2 className="spinner" size={16} />
+              ) : (
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#94a3b8', textAlign: 'right', maxWidth: '58%' }}>
+                  {getBriefText()}
+                </span>
+              )}
+            </div>
+            <div className="dt-verdict-row">
+              <span className="dt-verdict-row-label">Social Sentiment</span>
+              {traceLoading ? (
+                <Loader2 className="spinner" size={16} />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                  <div className="dt-verdict-mini-gauge">
+                    <SemiGauge fillRatio={socialFill} size="small" />
+                  </div>
+                  {socialConfPct != null && (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--dt-muted)' }}>
+                      Social factor confidence: {socialConfPct}%
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="dt-verdict-row">
+              <span className="dt-verdict-row-label">Expert Consensus</span>
+              {decisionLoading ? (
+                <Loader2 className="spinner" size={16} />
+              ) : (
+                <div style={{ fontSize: '0.78rem', textAlign: 'right', lineHeight: 1.45 }}>
+                  {stancePct != null ? (
+                    <div style={{ fontWeight: 700, color: expertBullish ? '#00ff88' : '#94a3b8' }}>
+                      Stance: {stancePct.toFixed(0)}% bull · {(100 - stancePct).toFixed(0)}% bear/neutral
+                    </div>
+                  ) : (
+                    <div>—</div>
+                  )}
+                  {moderatorConfPct != null && (
+                    <div style={{ color: 'var(--dt-muted)', marginTop: 2 }}>
+                      Moderator confidence: {moderatorConfPct.toFixed(0)}%
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            <div className="dt-aggregate-card">
+              <div className="dt-aggregate-card-title">Aggregate Verdict</div>
+              {decisionLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--dt-muted)', fontSize: '0.82rem' }}>
+                  <Loader2 className="spinner" size={14} /> Synthesizing...
+                </div>
+              ) : (
+                <div className={`dt-aggregate-badge ${verdictTone(z?.headline_verdict || verdict)}`}>
+                  <CheckCircle2 size={16} />
+                  <span>{hasDecisionData ? (z?.headline_verdict || verdict).toUpperCase() : 'AWAITING ANALYSIS'}</span>
+                </div>
+              )}
+            </div>
+
+            {reconciliation?.conflicting_signals?.length > 0 && reconciliation.reconciliation_note && (
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'rgba(245, 158, 11, 0.08)',
+                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                  borderRadius: 8,
+                  fontSize: '0.8rem',
+                  lineHeight: 1.5,
+                  color: '#e2e8f0',
+                }}
+                data-testid="reconciliation-banner"
+              >
+                {reconciliation.reconciliation_note}
               </div>
-            ) : (
-              <>
-                <SemiGauge fillRatio={hasDecisionData ? valFill : 0.38} size="large" />
-                <div className="dt-gauge-caption">{hasDecisionData ? v?.gauge_label || '—' : '—'}</div>
-                {hasDecisionData && spot != null && (
-                  <div className="dt-gauge-sub">
-                    Spot ${Number(spot).toFixed(2)}
-                    {v?.average_fair_value_usd != null && (
-                      <> · Avg fair ${Number(v.average_fair_value_usd).toFixed(0)}</>
-                    )}
+            )}
+
+            <VerdictToneLegend />
+
+            <div className="dt-roadmap-compact">
+              <h2 className="dt-panel-title">Future Price Roadmap</h2>
+              <div className="dt-roadmap-legend-row" style={{ marginTop: 6 }}>
+                <span className="dt-roadmap-legend-item">
+                  <span className="dt-roadmap-dot bull" />
+                  Bull {scenarioPrices?.bull != null && `($${Number(scenarioPrices.bull).toFixed(0)})`}
+                </span>
+                <span className="dt-roadmap-legend-item">
+                  <span className="dt-roadmap-dot base" />
+                  Base {scenarioPrices?.base != null && `($${Number(scenarioPrices.base).toFixed(0)})`}
+                </span>
+                <span className="dt-roadmap-legend-item">
+                  <span className="dt-roadmap-dot bear" />
+                  Bear {scenarioPrices?.bear != null && `($${Number(scenarioPrices.bear).toFixed(0)})`}
+                </span>
+              </div>
+              <div className="dt-roadmap-chart-sm" style={{ marginTop: 6 }}>
+                {decisionLoading ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)' }}>
+                    <Loader2 className="spinner" size={18} /> Generating paths…
+                  </div>
+                ) : roadmapChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ReLineChart data={roadmapChartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                      <XAxis dataKey="t" tick={{ fill: '#94a3b8', fontSize: 9 }} tickLine={false} axisLine={false} />
+                      <YAxis tick={{ fill: '#94a3b8', fontSize: 8 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
+                      <RechartsTooltip content={chartTooltip} />
+                      <Line type="monotone" dataKey="bull" name="Bull case" stroke="#00ff88" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
+                      <Line type="monotone" dataKey="base" name="Base case" stroke="#8b5cf6" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
+                      <Line type="monotone" dataKey="bear" name="Bear case" stroke="#f87171" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
+                    </ReLineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', fontSize: '11px' }}>
+                    Run analysis to load paths
                   </div>
                 )}
-              </>
-            )}
+              </div>
+            </div>
           </div>
-          <div className="dt-valuation-models">
-            <div className="dt-models-heading">Valuation models</div>
-            <ul className="dt-models-list">
-              {(v?.models || []).map((m) => (
-                <li key={m.name} className="dt-models-li">
-                  <span className="dt-models-name">
-                    <ProvenanceTip provenance={m.provenance} label={`${m.name}:`} />
-                  </span>
-                  <span className={m.available && m.fair_value_usd != null ? 'dt-models-val' : 'dt-models-na'}>
-                    {m.available && m.fair_value_usd != null
-                      ? `$${Number(m.fair_value_usd).toFixed(0)}`
-                      : '—'}
-                  </span>
-                </li>
-              ))}
-              {hasDecisionData && (
-                <li className="dt-models-li dt-models-average">
-                  <span className="dt-models-name">Average:</span>
-                  <span className="dt-models-val">
-                    {v?.average_fair_value_usd != null
-                      ? `$${Number(v.average_fair_value_usd).toFixed(0)}`
-                      : '—'}
-                  </span>
-                </li>
+        </section>
+
+        {/* 5. CONSENSUS VALUATION SIGNAL */}
+        <section className="dt-panel dt-area-valuation" style={{ margin: 0 }}>
+          <h2 className="dt-panel-title">Consensus Valuation Signal</h2>
+          <div className="dt-valuation-split">
+            <div className="dt-valuation-gauge">
+              {decisionLoading ? (
+                <div className="dt-metrics-loading" style={{ minHeight: 120 }}>
+                  <Loader2 className="spinner" size={22} />
+                </div>
+              ) : (
+                <>
+                  <SemiGauge fillRatio={hasDecisionData ? valFill : 0.38} size="large" />
+                  <div className="dt-gauge-caption">{hasDecisionData ? v?.gauge_label || '—' : '—'}</div>
+                  {hasDecisionData && spot != null && (
+                    <div className="dt-gauge-sub">
+                      Spot ${Number(spot).toFixed(2)}
+                      {v?.average_fair_value_usd != null && (
+                        <> · Avg fair ${Number(v.average_fair_value_usd).toFixed(0)}</>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
-              {!hasDecisionData && !decisionLoading && (
-                <li className="dt-models-li dt-models-placeholder"><span>Average:</span><span>—</span></li>
-              )}
-            </ul>
+            </div>
+            <div className="dt-valuation-models">
+              <div className="dt-models-heading">Valuation models</div>
+              <ul className="dt-models-list">
+                {(v?.models || []).map((m) => (
+                  <li key={m.name} className="dt-models-li">
+                    <span className="dt-models-name">
+                      <ProvenanceTip provenance={m.provenance} label={`${m.name}:`} />
+                    </span>
+                    <span className={m.available && m.fair_value_usd != null ? 'dt-models-val' : 'dt-models-na'}>
+                      {m.available && m.fair_value_usd != null
+                        ? `$${Number(m.fair_value_usd).toFixed(0)}`
+                        : '—'}
+                    </span>
+                  </li>
+                ))}
+                {hasDecisionData && (
+                  <li className="dt-models-li dt-models-average">
+                    <span className="dt-models-name">Average:</span>
+                    <span className="dt-models-val">
+                      {v?.average_fair_value_usd != null
+                        ? `$${Number(v.average_fair_value_usd).toFixed(0)}`
+                        : '—'}
+                    </span>
+                  </li>
+                )}
+                {!hasDecisionData && !decisionLoading && (
+                  <li className="dt-models-li dt-models-placeholder"><span>Average:</span><span>—</span></li>
+                )}
+              </ul>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
 
       <DashboardScorecardPanel
         data={scorecardData}
