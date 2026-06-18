@@ -155,32 +155,32 @@ class SocialSentimentConnector(DataConnector):
         if cached is not None:
             return cached
 
-        def get_all_social():
-            # Blogs: always via Google News RSS
-            blogs = SocialSentimentConnector._fetch_rss_titles(
-                f"{ticker} stock blog", limit=20,
+        async def get_blogs():
+            return await asyncio.to_thread(
+                SocialSentimentConnector._fetch_rss_titles,
+                f"{ticker} stock blog", 20
             )
 
-            # YouTube: prefer Data API v3, fall back to RSS
-            yt_source = "youtube_api_v3"
-            yt = SocialSentimentConnector._fetch_youtube_api_titles(ticker, limit=_YT_API_MAX_RESULTS)
-            if not yt and _get_youtube_api_key():
-                # API key set but fetch failed — try RSS fallback
-                logger.info("[SocialSentimentConnector] YouTube API returned empty, falling back to RSS for %s", ticker)
-                yt = SocialSentimentConnector._fetch_rss_titles(
-                    f"{ticker} stock site:youtube.com", limit=20,
-                )
-                yt_source = "rss_fallback"
-            elif not yt:
-                # No API key — use RSS
-                yt = SocialSentimentConnector._fetch_rss_titles(
-                    f"{ticker} stock site:youtube.com", limit=20,
-                )
-                yt_source = "rss"
+        async def get_yt():
+            def _fetch():
+                yt_source = "youtube_api_v3"
+                yt = SocialSentimentConnector._fetch_youtube_api_titles(ticker, limit=_YT_API_MAX_RESULTS)
+                if not yt and _get_youtube_api_key():
+                    logger.info("[SocialSentimentConnector] YouTube API returned empty, falling back to RSS for %s", ticker)
+                    yt = SocialSentimentConnector._fetch_rss_titles(
+                        f"{ticker} stock site:youtube.com", limit=20,
+                    )
+                    yt_source = "rss_fallback"
+                elif not yt:
+                    yt = SocialSentimentConnector._fetch_rss_titles(
+                        f"{ticker} stock site:youtube.com", limit=20,
+                    )
+                    yt_source = "rss"
+                return {"youtube": yt, "yt_source": yt_source}
+            return await asyncio.to_thread(_fetch)
 
-            return {"blogs": blogs, "youtube": yt, "yt_source": yt_source}
-
-        results = await asyncio.to_thread(get_all_social)
+        blogs, yt_res = await asyncio.gather(get_blogs(), get_yt())
+        results = {"blogs": blogs, **yt_res}
 
         combined_titles = results["blogs"] + results["youtube"]
         degraded = len(combined_titles) == 0
