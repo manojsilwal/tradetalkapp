@@ -167,13 +167,6 @@ export default function SessionsTray({ onCancelAction }) {
     const { actions, runningCount, hydrated } = useSession();
     const [expanded, setExpanded] = useState(false);
 
-    // Hide on certain pages
-    if (HIDDEN_PATHS.has(location.pathname)) return null;
-
-    // Only show when there's at least one action
-    const visible = actions.length > 0;
-    if (!visible || !hydrated) return null;
-
     const handleCancel = useCallback(async (id) => {
         // Abort in-flight HTTP requests
         const ctrl = _abortControllers.get(id);
@@ -196,6 +189,10 @@ export default function SessionsTray({ onCancelAction }) {
             navigate(`/dashboard?ticker=${action.meta.ticker}`);
         }
     }, [navigate]);
+
+    // Hide on certain pages or when there are no actions yet
+    const visible = actions.length > 0;
+    if (HIDDEN_PATHS.has(location.pathname) || !visible || !hydrated) return null;
 
     // Sort: running first, then by updatedAt desc
     const sorted = [...actions].sort((a, b) => {
