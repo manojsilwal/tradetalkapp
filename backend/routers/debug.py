@@ -13,7 +13,11 @@ router = APIRouter(tags=["debug"])
 @router.get("/llm/status")
 async def llm_status():
     """Show which LLM backend, model tiers, and routing all agents use."""
-    from ..gemini_llm import GEMINI_FALLBACK_MODEL, gemini_llm_fallback_enabled
+    from ..gemini_llm import (
+        GEMINI_FALLBACK_MODEL,
+        gemini_llm_fallback_enabled,
+        resolve_gemini_api_key,
+    )
     from ..llm_client import RAG_TOP_K_DEFAULT, MODEL_TIER, OPENROUTER_MODEL_LIGHT, _model_for_role
     backend = llm_client.backend
     ks_stats = knowledge_store.stats()
@@ -29,9 +33,18 @@ async def llm_status():
         "rag_top_k_default": RAG_TOP_K_DEFAULT,
         "role_model_mapping": role_models,
         "note": "Roles use heavy or light model tier based on reasoning complexity.",
+        "gemini_key_configured": bool(resolve_gemini_api_key()),
         "gemini_fallback_enabled": gemini_llm_fallback_enabled(),
         "gemini_fallback_model": GEMINI_FALLBACK_MODEL if gemini_llm_fallback_enabled() else None,
     }
+
+
+@router.get("/youtube/probe")
+async def youtube_probe(ticker: str = Query("AAPL", min_length=1, max_length=12)):
+    """Test YouTube API key + RSS fallback path for a ticker."""
+    from ..connectors.youtube_keys import probe_youtube_api_keys
+
+    return probe_youtube_api_keys(ticker)
 
 
 @router.get("/runtime/policy-check")

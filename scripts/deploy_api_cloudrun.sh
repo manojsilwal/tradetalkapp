@@ -69,32 +69,55 @@ SEPL_TOOL_DRY_RUN=0,\
 SEPL_TOOL_AUTOCOMMIT=1,\
 LLM_HTTP_PROVIDER=openrouter,\
 GEMINI_PRIMARY=0,\
+GEMINI_LLM_FALLBACK=1,\
+GEMINI_MODEL=gemini-3.5-flash,\
+GEMINI_MODEL_LIGHT=gemini-3.5-flash,\
 LLM_MAX_TOKENS=1500,\
 OPENROUTER_MODEL=minimax/minimax-m3,\
 OPENROUTER_MODEL_LIGHT=minimax/minimax-m3"
 
-# Load secret keys dynamically from local environment configuration files if present
+# Strip one KEY=VALUE pair from the comma-separated ENV_VARS string.
+_strip_env_key() {
+  local key="$1"
+  ENV_VARS="$(printf '%s' "$ENV_VARS" | sed -E "s/(^|,)$key=[^,]*//" | sed -E 's/^,//; s/,,*/,/g; s/,$//')"
+}
+
+# Keys set in the core ENV_VARS block above must not be overridden by local .env files
+# (backend/.env often pins dev models; production defaults stay on Cloud Run).
+_CORE_ENV_KEYS="MCP_DATA_BACKEND GCP_PROJECT_ID BQ_DATASET_ID GCS_BUCKET GUARDRAILS_ENABLE GUARDRAILS_STRICT_STARTUP VECTOR_BACKEND SUPABASE_URL DECISION_BACKEND GEMINI_EMBEDDING_MODEL CORS_ORIGINS PORTFOLIO_STORAGE SP500_INGEST_ON_STARTUP FINCRAWLER_URL YF_DISABLED_CATEGORIES FINCRAWLER_MAX_CONCURRENCY YF_BREAKER_THRESHOLD YF_BREAKER_COOLDOWN_S SEPL_TOOL_ENABLE SEPL_TOOL_DRY_RUN SEPL_TOOL_AUTOCOMMIT LLM_HTTP_PROVIDER GEMINI_PRIMARY GEMINI_LLM_FALLBACK GEMINI_MODEL GEMINI_MODEL_LIGHT LLM_MAX_TOKENS OPENROUTER_MODEL OPENROUTER_MODEL_LIGHT"
+
+_is_core_env_key() {
+  case " $_CORE_ENV_KEYS " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Load keys from local env files (.env.gcp → backend/.env → .env).
+# Later files override earlier ones. Empty values are never deployed — an empty
+# GEMINI_API_KEY= line in .env.gcp must not block a real key in backend/.env.
 for env_file in .env.gcp backend/.env .env; do
   if [[ -f "$env_file" ]]; then
-    echo "Found local config $env_file, appending keys..."
+    echo "Found local config $env_file, merging keys..."
     while IFS= read -r line || [[ -n "$line" ]]; do
-      # Skip comments and empty lines
       if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "${line// }" ]]; then
         continue
       fi
-      # Trim whitespace
       line=$(echo "$line" | xargs)
       if [[ "$line" == *"="* ]]; then
         key="${line%%=*}"
         val="${line#*=}"
-        # Skip variables that are already in the core list or handled via Secret Manager
         if [[ "$key" == "SUPABASE_URL" || "$key" == "FINCRAWLER_URL" || "$key" == "YOUTUBE_API_KEY" ]]; then
           continue
         fi
-        # Only append keys that are not already present in ENV_VARS to prevent duplicates
-        if ! [[ "$ENV_VARS" =~ (^|,)"$key"= ]]; then
-          ENV_VARS="${ENV_VARS},${key}=${val}"
+        if _is_core_env_key "$key"; then
+          continue
         fi
+        if [[ -z "${val// }" ]]; then
+          continue
+        fi
+        _strip_env_key "$key"
+        ENV_VARS="${ENV_VARS},${key}=${val}"
       fi
     done < "$env_file"
   fi

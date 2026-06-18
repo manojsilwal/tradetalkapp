@@ -1,21 +1,21 @@
 """
 YouTube Finance Connector — fetches latest videos from top finance channels.
 
-Requires YOUTUBE_API_KEY (YouTube Data API v3, free: 10,000 units/day).
+Requires ``YOUTUBE_API_KEY`` for YouTube Data API v3 (free tier: 10,000 units/day).
+When the key fails, social sentiment falls back to Google News RSS — not ``GEMINI_API_KEY``.
 
 Quota strategy: use each channel's **uploads playlist** via ``playlistItems.list``
 (1 unit/call) instead of ``search.list`` (100 units/call). For six channels that
 is ~12 units per ingestion run vs ~600 previously — see §5.10 in ARCHITECTURE.md.
 """
-import os
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+from .youtube_keys import youtube_api_key_candidates
 
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+logger = logging.getLogger(__name__)
 
 # Top finance / investing channels
 FINANCE_CHANNELS = [
@@ -48,10 +48,10 @@ async def fetch_finance_videos(hours_back: int = 24) -> list[dict]:
     """
     Fetch videos published in the last `hours_back` hours from all FINANCE_CHANNELS.
     Returns list of dicts: {channel, title, description, published, tags, video_id}.
-    Returns empty list if YOUTUBE_API_KEY is not set.
+    Returns empty list if no YouTube-capable API key is set.
     """
-    if not YOUTUBE_API_KEY:
-        logger.info("[YouTubeConnector] YOUTUBE_API_KEY not set — skipping YouTube ingestion.")
+    if not youtube_api_key_candidates():
+        logger.info("[YouTubeConnector] No YouTube API key — skipping YouTube ingestion.")
         return []
     return await asyncio.to_thread(_sync_fetch_all, hours_back)
 
@@ -61,45 +61,67 @@ def _sync_fetch_all(hours_back: int) -> list[dict]:
 
     since_dt = datetime.now(timezone.utc) - timedelta(hours=hours_back)
     since_iso = since_dt.isoformat().replace("+00:00", "Z")
-    all_videos: List[dict] = []
-    failed_channels: List[str] = []
+    keys = youtube_api_key_candidates()
 
-    for channel in FINANCE_CHANNELS:
-        try:
-            videos = _fetch_channel_videos_playlist(
-                request_with_backoff,
-                channel,
-                since_dt,
+    for key_idx, api_key in enumerate(keys):
+        all_videos: List[dict] = []
+        failed_channels: List[str] = []
+
+        for channel in FINANCE_CHANNELS:
+            try:
+                videos = _fetch_channel_videos_playlist(
+                    request_with_backoff,
+                    channel,
+                    since_dt,
+                    api_key=api_key,
+                )
+                all_videos.extend(videos)
+            except Exception as e:
+                failed_channels.append(channel["name"])
+                logger.warning(
+                    "[YouTubeConnector] Failed for channel %s (key_idx=%d): %s",
+                    channel["name"],
+                    key_idx,
+                    e,
+                )
+
+        if all_videos:
+            logger.info(
+                "[YouTubeConnector] Ingested %d videos (key_idx=%d, since=%s).",
+                len(all_videos),
+                key_idx,
+                since_iso,
             )
-            all_videos.extend(videos)
-        except Exception as e:
-            failed_channels.append(channel["name"])
-            logger.warning("[YouTubeConnector] Failed for channel %s: %s", channel["name"], e)
+            return all_videos
 
-    if failed_channels and len(failed_channels) == len(FINANCE_CHANNELS):
-        logger.error(
-            "[YouTubeConnector] All %d finance channels failed — no videos ingested.",
-            len(FINANCE_CHANNELS),
-        )
-    elif failed_channels:
-        logger.warning(
-            "[YouTubeConnector] Partial channel failures (%s); ingested %d videos.",
-            ", ".join(failed_channels),
-            len(all_videos),
-        )
-    else:
-        logger.info(
-            "[YouTubeConnector] Ingested %d videos (playlistItems, since=%s).",
-            len(all_videos),
-            since_iso,
-        )
-    return all_videos
+        if failed_channels and len(failed_channels) == len(FINANCE_CHANNELS):
+            if key_idx < len(keys) - 1:
+                logger.warning(
+                    "[YouTubeConnector] All channels failed with key_idx=%d — trying fallback key.",
+                    key_idx,
+                )
+                continue
+            logger.error(
+                "[YouTubeConnector] All %d finance channels failed on every API key.",
+                len(FINANCE_CHANNELS),
+            )
+        elif failed_channels:
+            logger.warning(
+                "[YouTubeConnector] Partial channel failures (%s); ingested %d videos.",
+                ", ".join(failed_channels),
+                len(all_videos),
+            )
+            return all_videos
+
+    return []
 
 
 def _fetch_channel_videos_playlist(
     http_get,
     channel: dict,
     since_dt: datetime,
+    *,
+    api_key: str,
 ) -> list[dict]:
     """Walk the channel uploads playlist (1 quota unit per page)."""
     playlist_id = channel_uploads_playlist_id(channel["id"])
@@ -113,7 +135,7 @@ def _fetch_channel_videos_playlist(
             "part": "snippet,contentDetails",
             "playlistId": playlist_id,
             "maxResults": _PLAYLIST_PAGE_SIZE,
-            "key": YOUTUBE_API_KEY,
+            "key": api_key,
         }
         if page_token:
             params["pageToken"] = page_token

@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import time
@@ -9,21 +8,14 @@ import defusedxml.ElementTree as ET
 from typing import Dict, Any, List
 from .base import DataConnector
 from ..connector_cache import get_cached, set_cached
+from .youtube_keys import fetch_youtube_titles_with_fallback
 
 logger = logging.getLogger(__name__)
 
-# Configurable via env: timeout per request, max retries, initial backoff.
 _RSS_TIMEOUT_S: int = int(os.environ.get("SOCIAL_RSS_TIMEOUT_S", "10"))
 _RSS_MAX_RETRIES: int = int(os.environ.get("SOCIAL_RSS_MAX_RETRIES", "2"))
 _RSS_BACKOFF_BASE_S: float = float(os.environ.get("SOCIAL_RSS_BACKOFF_BASE_S", "1.0"))
-
-_YT_API_TIMEOUT_S: int = int(os.environ.get("YOUTUBE_API_TIMEOUT_S", "10"))
 _YT_API_MAX_RESULTS: int = int(os.environ.get("YOUTUBE_API_MAX_RESULTS", "20"))
-
-
-def _get_youtube_api_key() -> str | None:
-    """Return the YouTube Data API v3 key, or None if not configured."""
-    return os.environ.get("youtube_api_key") or os.environ.get("YOUTUBE_API_KEY") or None
 
 
 class SocialSentimentConnector(DataConnector):
@@ -32,8 +24,11 @@ class SocialSentimentConnector(DataConnector):
     and blog headlines via the Google News RSS feed.
 
     YouTube source priority:
-      1. YouTube Data API v3 (if ``youtube_api_key`` env var is set)
-      2. Google News RSS ``site:youtube.com`` (legacy fallback)
+      1. YouTube Data API v3 (``YOUTUBE_API_KEY``)
+      2. Google News RSS ``site:youtube.com`` when the API key fails or is unset
+
+    ``GEMINI_API_KEY`` is reserved for LLM inference — AI Studio keys cannot call
+    YouTube Data API v3, so social sentiment does not use them here.
 
     Graceful degradation: if both sources are unreachable the connector
     returns an empty-titles result (with ``degraded=True``) rather than
@@ -42,64 +37,14 @@ class SocialSentimentConnector(DataConnector):
     pipeline.
     """
 
-    # ── YouTube Data API v3 ──────────────────────────────────────────
-
     @staticmethod
-    def _fetch_youtube_api_titles(ticker: str, limit: int = 20) -> List[str]:
-        """Fetch recent video titles from YouTube Data API v3.
-
-        Returns an empty list on any failure (logged, never raises).
-        """
-        api_key = _get_youtube_api_key()
-        if not api_key:
-            return []  # caller will fall back to RSS
-
-        params = urllib.parse.urlencode({
-            "part": "snippet",
-            "q": f"{ticker} stock",
-            "type": "video",
-            "maxResults": min(limit, 50),
-            "order": "date",
-            "relevanceLanguage": "en",
-            "key": api_key,
-        })
-        url = f"https://www.googleapis.com/youtube/v3/search?{params}"
-        req = urllib.request.Request(url)
-
-        for attempt in range(_RSS_MAX_RETRIES + 1):
-            try:
-                raw = urllib.request.urlopen(req, timeout=_YT_API_TIMEOUT_S).read()
-                data = json.loads(raw)
-
-                if "error" in data:
-                    err_msg = data["error"].get("message", str(data["error"]))
-                    logger.warning("[YouTubeAPI] API error for %s: %s", ticker, err_msg)
-                    return []  # bad key / quota — don't retry
-
-                titles: list[str] = []
-                for item in data.get("items", [])[:limit]:
-                    title = item.get("snippet", {}).get("title")
-                    if title:
-                        titles.append(title)
-                logger.info(
-                    "[YouTubeAPI] fetched %d titles for %s via Data API v3",
-                    len(titles), ticker,
-                )
-                return titles
-            except Exception as exc:
-                if attempt < _RSS_MAX_RETRIES:
-                    backoff = _RSS_BACKOFF_BASE_S * (2 ** attempt)
-                    logger.warning(
-                        "[YouTubeAPI] attempt %d/%d for %s failed (%s), retrying in %.1fs…",
-                        attempt + 1, _RSS_MAX_RETRIES + 1, ticker, exc, backoff,
-                    )
-                    time.sleep(backoff)
-                else:
-                    logger.warning(
-                        "[YouTubeAPI] all %d attempts exhausted for %s: %s",
-                        _RSS_MAX_RETRIES + 1, ticker, exc,
-                    )
-        return []
+    def _fetch_youtube_api_titles(ticker: str, limit: int = 20) -> tuple[List[str], str]:
+        """Fetch recent video titles via YouTube Data API v3 (with key fallback)."""
+        titles, source = fetch_youtube_titles_with_fallback(
+            f"{ticker} stock",
+            limit=limit,
+        )
+        return titles, source
 
     # ── Google News RSS (blogs + YouTube fallback) ───────────────────
 
@@ -163,10 +108,14 @@ class SocialSentimentConnector(DataConnector):
 
         async def get_yt():
             def _fetch():
-                yt_source = "youtube_api_v3"
-                yt = SocialSentimentConnector._fetch_youtube_api_titles(ticker, limit=_YT_API_MAX_RESULTS)
-                if not yt and _get_youtube_api_key():
-                    logger.info("[SocialSentimentConnector] YouTube API returned empty, falling back to RSS for %s", ticker)
+                yt, yt_source = SocialSentimentConnector._fetch_youtube_api_titles(
+                    ticker, limit=_YT_API_MAX_RESULTS,
+                )
+                if not yt and yt_source != "none":
+                    logger.info(
+                        "[SocialSentimentConnector] YouTube API keys exhausted, falling back to RSS for %s",
+                        ticker,
+                    )
                     yt = SocialSentimentConnector._fetch_rss_titles(
                         f"{ticker} stock site:youtube.com", limit=20,
                     )
@@ -193,7 +142,7 @@ class SocialSentimentConnector(DataConnector):
 
         source_label = (
             "YouTube Data API v3 + Google News RSS"
-            if results.get("yt_source") == "youtube_api_v3"
+            if results.get("yt_source", "").startswith("youtube_api_v3")
             else "Google News RSS (Blogs & YouTube)"
         )
 

@@ -954,6 +954,13 @@ class LLMClient:
                         )
 
                         parsed = self._parse_json_response(content, role)
+                        if parsed is None:
+                            logger.warning(
+                                "[LLMClient] role=%s model=%s unparseable JSON — trying fallback provider",
+                                role,
+                                model,
+                            )
+                            break
                         parsed = self._enforce_contract(
                             parsed,
                             role=role,
@@ -1007,7 +1014,7 @@ class LLMClient:
 
     # ── Shared ──────────────────────────────────────────────────────────────
 
-    def _parse_json_response(self, content: str, role: str) -> dict:
+    def _parse_json_response(self, content: str, role: str) -> Optional[dict]:
         """Strip markdown fences and parse JSON. Return fallback on failure."""
         # Remove <think>...</think> blocks if the model includes reasoning tags.
         import ast
@@ -1088,7 +1095,11 @@ class LLMClient:
             if parsed is not None:
                 return parsed
         logger.warning(f"[LLMClient] JSON parse failed for role={role}. Raw: {content[:200]}")
-        return _fallback_template_or_raise(role)
+        # Verdict roles: return None so _provider_generate can try Gemini before
+        # raising InsufficientDataError (OpenRouter may return prose/thinking tags).
+        if role in VERDICT_ROLES:
+            return None
+        return FALLBACK_TEMPLATES.get(role, {})
 
     async def generate(self, role: str, prompt: str) -> dict:
         """Async entry point — dispatches to OpenRouter in a thread.
