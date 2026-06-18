@@ -103,6 +103,11 @@ class TestSocialConnectorTruthfulness(unittest.TestCase):
         cc._store.clear()
         conn = SocialSentimentConnector()
         with patch("urllib.request.urlopen", side_effect=OSError("network down")), \
+             patch("backend.connectors.social.fetch_youtube_titles_with_fallback", return_value=([], "none")), \
+             patch("backend.connectors.social_sources.fetch_yfinance_news_titles", return_value=[]), \
+             patch("backend.connectors.social_sources.fetch_youtube_channel_rss_titles", return_value=[]), \
+             patch("backend.connectors.social_sources.fetch_reddit_titles", return_value=[]), \
+             patch("backend.connectors.social_sources.fetch_stocktwits_titles", return_value=[]), \
              patch("backend.connectors.social._RSS_MAX_RETRIES", 0), \
              patch("backend.connectors.social._RSS_BACKOFF_BASE_S", 0.0):
             result = asyncio.run(conn.fetch_data(ticker="ZZZU"))

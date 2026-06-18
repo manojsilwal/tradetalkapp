@@ -9,6 +9,7 @@ from typing import Dict, Any, List
 from .base import DataConnector
 from ..connector_cache import get_cached, set_cached
 from .youtube_keys import fetch_youtube_titles_with_fallback
+from . import social_sources
 
 logger = logging.getLogger(__name__)
 
@@ -16,47 +17,80 @@ _RSS_TIMEOUT_S: int = int(os.environ.get("SOCIAL_RSS_TIMEOUT_S", "10"))
 _RSS_MAX_RETRIES: int = int(os.environ.get("SOCIAL_RSS_MAX_RETRIES", "2"))
 _RSS_BACKOFF_BASE_S: float = float(os.environ.get("SOCIAL_RSS_BACKOFF_BASE_S", "1.0"))
 _YT_API_MAX_RESULTS: int = int(os.environ.get("YOUTUBE_API_MAX_RESULTS", "20"))
+_YFINANCE_NEWS_LIMIT: int = int(os.environ.get("SOCIAL_YFINANCE_NEWS_LIMIT", "15"))
+_SOCIAL_REDDIT_LIMIT: int = int(os.environ.get("SOCIAL_REDDIT_LIMIT", "15"))
+_SOCIAL_STOCKTWITS_LIMIT: int = int(os.environ.get("SOCIAL_STOCKTWITS_LIMIT", "20"))
+
+
+def _merge_unique_titles(*groups: List[str]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for group in groups:
+        for title in group:
+            key = (title or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(title.strip())
+    return out
 
 
 class SocialSentimentConnector(DataConnector):
     """
-    Fetches recent YouTube video titles via the **YouTube Data API v3**
-    and blog headlines via the Google News RSS feed.
+    Aggregates free headline sources for retail / media sentiment.
 
-    YouTube source priority:
-      1. YouTube Data API v3 (``YOUTUBE_API_KEY``)
-      2. Google News RSS ``site:youtube.com`` when the API key fails or is unset
+    Priority stack (per bucket):
+      **Video / YouTube**
+        1. YouTube Data API v3 (``YOUTUBE_API_KEY``)
+        2. Google News RSS ``site:youtube.com``
+        3. YouTube public channel Atom feeds (finance channels, no quota)
 
-    ``GEMINI_API_KEY`` is reserved for LLM inference — AI Studio keys cannot call
-    YouTube Data API v3, so social sentiment does not use them here.
+      **News / blogs**
+        2. Google News RSS ``{ticker} stock blog``
+        3. yfinance news headlines
 
-    Graceful degradation: if both sources are unreachable the connector
-    returns an empty-titles result (with ``degraded=True``) rather than
-    raising ``InsufficientDataError``.  Social sentiment is a supplementary
-    signal — it must never block the full swarm/debate/decision-terminal
-    pipeline.
+      **Social**
+        5. Reddit search (public JSON, no key)
+        5. Stocktwits symbol stream (public, no key)
+
+    Graceful degradation: returns ``degraded=True`` with empty titles only when
+    every source fails — never raises ``InsufficientDataError``.
     """
 
     @staticmethod
     def _fetch_youtube_api_titles(ticker: str, limit: int = 20) -> tuple[List[str], str]:
-        """Fetch recent video titles via YouTube Data API v3 (with key fallback)."""
         titles, source = fetch_youtube_titles_with_fallback(
             f"{ticker} stock",
             limit=limit,
         )
         return titles, source
 
-    # ── Google News RSS (blogs + YouTube fallback) ───────────────────
+    @staticmethod
+    def _resolve_youtube_titles(ticker: str, limit: int = 20) -> tuple[List[str], str]:
+        yt, yt_source = SocialSentimentConnector._fetch_youtube_api_titles(ticker, limit=limit)
+
+        if not yt:
+            yt = SocialSentimentConnector._fetch_rss_titles(
+                f"{ticker} stock site:youtube.com",
+                limit=limit,
+            )
+            if yt:
+                yt_source = "google_news_youtube_rss"
+
+        if not yt:
+            yt = social_sources.fetch_youtube_channel_rss_titles(ticker, limit=limit)
+            if yt:
+                yt_source = "youtube_channel_rss"
+
+        if not yt and yt_source == "none":
+            yt_source = "none"
+        elif not yt:
+            yt_source = "none"
+
+        return yt, yt_source
 
     @staticmethod
     def _fetch_rss_titles(query: str, limit: int = 15) -> List[str]:
-        """Fetch titles from Google News RSS with retry + exponential backoff.
-
-        An empty list from a *successful* fetch is a real result ("no recent
-        coverage") and is allowed through.  On total failure after retries,
-        the exception is logged and an empty list is returned so the caller
-        can degrade gracefully.
-        """
         q = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={q}"
         req = urllib.request.Request(
@@ -90,9 +124,7 @@ class SocialSentimentConnector(DataConnector):
                         "[SocialRSS] all %d attempts exhausted for query=%r: %s",
                         _RSS_MAX_RETRIES + 1, query, last_exc,
                     )
-        return []  # graceful degradation
-
-    # ── Main fetch ───────────────────────────────────────────────────
+        return []
 
     async def fetch_data(self, ticker: str = "SPY", **kwargs) -> Dict[str, Any]:
         ticker = kwargs.get("ticker", ticker).upper()
@@ -103,47 +135,76 @@ class SocialSentimentConnector(DataConnector):
         async def get_blogs():
             return await asyncio.to_thread(
                 SocialSentimentConnector._fetch_rss_titles,
-                f"{ticker} stock blog", 20
+                f"{ticker} stock blog",
+                20,
             )
 
-        async def get_yt():
-            def _fetch():
-                yt, yt_source = SocialSentimentConnector._fetch_youtube_api_titles(
-                    ticker, limit=_YT_API_MAX_RESULTS,
-                )
-                if not yt and yt_source != "none":
-                    logger.info(
-                        "[SocialSentimentConnector] YouTube API keys exhausted, falling back to RSS for %s",
-                        ticker,
-                    )
-                    yt = SocialSentimentConnector._fetch_rss_titles(
-                        f"{ticker} stock site:youtube.com", limit=20,
-                    )
-                    yt_source = "rss_fallback"
-                elif not yt:
-                    yt = SocialSentimentConnector._fetch_rss_titles(
-                        f"{ticker} stock site:youtube.com", limit=20,
-                    )
-                    yt_source = "rss"
-                return {"youtube": yt, "yt_source": yt_source}
-            return await asyncio.to_thread(_fetch)
+        async def get_youtube():
+            return await asyncio.to_thread(
+                SocialSentimentConnector._resolve_youtube_titles,
+                ticker,
+                _YT_API_MAX_RESULTS,
+            )
 
-        blogs, yt_res = await asyncio.gather(get_blogs(), get_yt())
-        results = {"blogs": blogs, **yt_res}
+        async def get_yfinance():
+            return await asyncio.to_thread(
+                social_sources.fetch_yfinance_news_titles,
+                ticker,
+                _YFINANCE_NEWS_LIMIT,
+            )
 
-        combined_titles = results["blogs"] + results["youtube"]
+        async def get_reddit():
+            return await asyncio.to_thread(
+                social_sources.fetch_reddit_titles,
+                ticker,
+                _SOCIAL_REDDIT_LIMIT,
+            )
+
+        async def get_stocktwits():
+            return await asyncio.to_thread(
+                social_sources.fetch_stocktwits_titles,
+                ticker,
+                _SOCIAL_STOCKTWITS_LIMIT,
+            )
+
+        blogs, (youtube, yt_source), yfinance_news, reddit, stocktwits = await asyncio.gather(
+            get_blogs(),
+            get_youtube(),
+            get_yfinance(),
+            get_reddit(),
+            get_stocktwits(),
+        )
+
+        combined_titles = _merge_unique_titles(
+            youtube,
+            blogs,
+            yfinance_news,
+            reddit,
+            stocktwits,
+        )
         degraded = len(combined_titles) == 0
 
         if degraded:
             logger.warning(
-                "[SocialSentimentConnector] degraded result for %s — all sources unreachable, returning empty titles",
+                "[SocialSentimentConnector] degraded result for %s — all sources empty",
                 ticker,
             )
 
+        counts = {
+            "youtube": len(youtube),
+            "blogs": len(blogs),
+            "yfinance_news": len(yfinance_news),
+            "reddit": len(reddit),
+            "stocktwits": len(stocktwits),
+        }
+
+        active_sources = [k for k, v in counts.items() if v > 0]
         source_label = (
-            "YouTube Data API v3 + Google News RSS"
-            if results.get("yt_source", "").startswith("youtube_api_v3")
-            else "Google News RSS (Blogs & YouTube)"
+            "Multi-source social sentiment ("
+            + ", ".join(active_sources)
+            + ")"
+            if active_sources
+            else "No social/news sources available"
         )
 
         result = {
@@ -151,15 +212,9 @@ class SocialSentimentConnector(DataConnector):
             "ticker": ticker,
             "recent_titles": combined_titles,
             "degraded": degraded,
-            "youtube_source": results.get("yt_source", "rss"),
-            "counts": {
-                "blogs": len(results["blogs"]),
-                "youtube": len(results["youtube"]),
-            },
+            "youtube_source": yt_source,
+            "counts": counts,
         }
-        # Only cache successful (non-degraded) results so fresh data is
-        # fetched on the next request once the RSS feed recovers.
         if not degraded:
             set_cached("social", result, ticker)
         return result
-

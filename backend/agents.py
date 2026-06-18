@@ -310,7 +310,14 @@ class SocialSentimentAgentPair(AgentPair):
         # Grab up to 2 sample titles for the rationale
         sample_titles = titles[:2]
         
-        rationale = f"Live RSS Scraping ({data['counts']['blogs']} blogs, {data['counts']['youtube']} videos) found {bull_count} bullish and {bear_count} bearish keywords. "
+        counts = data.get("counts") or {}
+        active = [k for k, v in counts.items() if v]
+        source_summary = ", ".join(f"{counts[k]} {k.replace('_', ' ')}" for k in active) or "0 sources"
+
+        rationale = (
+            f"Social/news scan ({source_summary}) found {bull_count} bullish "
+            f"and {bear_count} bearish keywords. "
+        )
         if signal == 1:
             rationale += "Retail buzz is skewed noticeably positive. "
         else:

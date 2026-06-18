@@ -1,4 +1,6 @@
 """Debug and observability endpoints — cache, query router, LLM status, policy check."""
+import asyncio
+
 from fastapi import APIRouter, Depends, Query
 
 from ..agent_policy_guardrails import (
@@ -45,6 +47,44 @@ async def youtube_probe(ticker: str = Query("AAPL", min_length=1, max_length=12)
     from ..connectors.youtube_keys import probe_youtube_api_keys
 
     return probe_youtube_api_keys(ticker)
+
+
+@router.get("/social/probe")
+async def social_probe(ticker: str = Query("AAPL", min_length=1, max_length=12)):
+    """Test all free social sentiment sources for a ticker."""
+    from ..connectors import social_sources
+    from ..connectors.social import SocialSentimentConnector
+
+    ticker = ticker.upper()
+
+    def _count(items: list) -> dict:
+        return {"count": len(items), "samples": items[:2]}
+
+    youtube, yt_source = await asyncio.to_thread(
+        SocialSentimentConnector._resolve_youtube_titles, ticker, 10
+    )
+    blogs = await asyncio.to_thread(
+        SocialSentimentConnector._fetch_rss_titles, f"{ticker} stock blog", 10
+    )
+    yfinance_news = await asyncio.to_thread(
+        social_sources.fetch_yfinance_news_titles, ticker, 10
+    )
+    reddit = await asyncio.to_thread(social_sources.fetch_reddit_titles, ticker, 10)
+    stocktwits = await asyncio.to_thread(
+        social_sources.fetch_stocktwits_titles, ticker, 10
+    )
+
+    return {
+        "ticker": ticker,
+        "youtube": {"source": yt_source, **_count(youtube)},
+        "google_news_blogs": _count(blogs),
+        "yfinance_news": _count(yfinance_news),
+        "reddit": _count(reddit),
+        "stocktwits": _count(stocktwits),
+        "total_unique": len(
+            {t.strip().lower() for t in youtube + blogs + yfinance_news + reddit + stocktwits if t}
+        ),
+    }
 
 
 @router.get("/runtime/policy-check")
