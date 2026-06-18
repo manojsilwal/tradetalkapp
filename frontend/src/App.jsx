@@ -74,15 +74,19 @@ const DEVELOPER_ROUTES = [
     { path: '/system-diagrams', key: 'systemdiagrams', label: 'System Diagrams', icon: Network },
 ]
 
-function resolveDashboardPath(analyses) {
+function resolveDashboardPath(analyses, recentAnalyses = []) {
     const sessionRunning = sessionStore.getSnapshot().find(
         (a) => a.type === 'analysis' && a.status === 'running' && a.meta?.ticker,
     );
     const loadingTicker = Object.keys(analyses || {}).find(
         (sym) => analyses[sym]?.status === 'loading',
     );
+    const successTicker = Object.keys(analyses || {}).find(
+        (sym) => analyses[sym]?.status === 'success',
+    );
     const ctxTicker = typeof window !== 'undefined' ? window.__tt_page_context__?.ticker : null;
-    const ticker = sessionRunning?.meta?.ticker || loadingTicker || ctxTicker;
+    const recentTicker = recentAnalyses[0]?.ticker;
+    const ticker = sessionRunning?.meta?.ticker || loadingTicker || successTicker || ctxTicker || recentTicker;
     return ticker ? `/dashboard?ticker=${String(ticker).trim().toUpperCase()}` : '/dashboard';
 }
 
@@ -91,7 +95,7 @@ function App() {
     const isAdmin = Boolean(user?.is_admin)
     const navigate = useNavigate()
     const location = useLocation()
-    const { analyses } = useAnalysisHistory()
+    const { analyses, recentAnalyses } = useAnalysisHistory()
     const [newBadges, setNewBadges] = useState([])
     const [xpFlash, setXpFlash]    = useState(null)
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
@@ -161,9 +165,9 @@ function App() {
     }, [])
 
     const navigateToDashboard = useCallback(() => {
-        navigate(resolveDashboardPath(analyses))
+        navigate(resolveDashboardPath(analyses, recentAnalyses))
         setSidebarCollapsed(true)
-    }, [navigate, analyses])
+    }, [navigate, analyses, recentAnalyses])
 
     return (
         <div className="app-container">
@@ -432,7 +436,7 @@ function App() {
                 </button>
                 <button
                     className={`mobile-bottom-nav-btn ${activeTab === 'consumer' && !moreMenuOpen ? 'active' : ''}`}
-                    onClick={() => { navigate(resolveDashboardPath(analyses)); setMoreMenuOpen(false); }}
+                    onClick={() => { navigate(resolveDashboardPath(analyses, recentAnalyses)); setMoreMenuOpen(false); }}
                 >
                     <BarChart2 size={22} />
                     <span>Analysis</span>

@@ -63,6 +63,7 @@ export function SessionProvider({ children, onResume, shouldResumeAnalysis }) {
         async function init() {
             // Hydrate from IndexedDB
             const all = await sessionStore.hydrate();
+            await sessionStore.purgeTerminalOnStartup();
             // Purge old entries (>6h)
             await sessionStore.purgeExpired();
 

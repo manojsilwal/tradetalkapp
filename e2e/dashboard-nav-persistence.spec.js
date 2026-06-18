@@ -44,6 +44,24 @@ test.describe('Dashboard navigation persistence', () => {
     if (await trayToggle.isVisible().catch(() => false)) {
       await trayToggle.click();
       await expect(page.getByText('AAPL Analysis')).toHaveCount(1, { timeout: 5000 });
+      await expect(page.getByText(/Completed .* ago/i)).toHaveCount(0);
+      const badge = page.getByTestId('sessions-tray-badge');
+      await expect(badge).toHaveText('1');
     }
+  });
+
+  test('sessions tray badge matches active count during analysis', async ({ page }) => {
+    await page.goto('/dashboard?ticker=AAPL');
+    await dismissOnboarding(page);
+    await page.getByRole('button', { name: /^Analyze$/i }).click();
+    await expect(page.getByTestId('dashboard-analysis-progress')).toBeVisible({ timeout: 60000 });
+
+    const tray = page.getByTestId('sessions-tray');
+    await expect(tray).toBeVisible({ timeout: 15000 });
+    await expect(tray.getByText(/1 Active Session/i)).toBeVisible();
+    await expect(tray.getByTestId('sessions-tray-badge')).toHaveText('1');
+    await tray.getByText(/Active Session/i).click();
+    await expect(page.getByText('AAPL Analysis')).toHaveCount(1);
+    await expect(page.getByText(/Completed .* ago/i)).toHaveCount(0);
   });
 });

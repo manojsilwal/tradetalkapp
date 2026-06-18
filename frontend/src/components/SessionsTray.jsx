@@ -1,16 +1,15 @@
 /**
  * SessionsTray.jsx — Persistent multi-session floating widget.
  *
- * Replaces GlobalLoadingBar. Shows all active and recently completed
- * session actions regardless of which page the user is on.
+ * Shows in-flight and failed session actions regardless of which page the user is on.
+ * Completed/cancelled rows are removed from the store automatically.
  *
  * Behaviors:
  * - Shows as a collapsed pill (badge count) when minimized
- * - Expands into a panel showing each action's status, progress, step
+ * - Expands into a panel showing each running/failed action's status, progress, step
  * - Individual cancel buttons per running action
- * - Click a completed action to navigate to its result
- * - Dismiss (X) on completed/error/cancelled actions
- * - Auto-hides when there are zero actions
+ * - Dismiss (X) on failed actions; retry on errors
+ * - Auto-hides when there are zero running or failed actions
  */
 
 import React, { useState, useCallback } from 'react';
@@ -164,7 +163,7 @@ export const _abortControllers = new Map(); // actionId → AbortController
 export default function SessionsTray({ onCancelAction }) {
     const location = useLocation();
     const navigate = useNavigate();
-    const { actions, runningCount, hydrated } = useSession();
+    const { actions, hydrated } = useSession();
     const [expanded, setExpanded] = useState(false);
 
     const handleCancel = useCallback(async (id) => {
@@ -190,28 +189,34 @@ export default function SessionsTray({ onCancelAction }) {
         }
     }, [navigate]);
 
-    // Hide on certain pages or when there are no actions yet
-    const visible = actions.length > 0;
+    const trayActions = actions.filter((a) => a.status === 'running' || a.status === 'error');
+    const trayRunningCount = trayActions.filter((a) => a.status === 'running').length;
+    const trayErrorCount = trayActions.filter((a) => a.status === 'error').length;
+
+    // Hide on certain pages or when there is no in-flight / failed work
+    const visible = trayActions.length > 0;
     if (HIDDEN_PATHS.has(location.pathname) || !visible || !hydrated) return null;
 
     // Sort: running first, then by updatedAt desc
-    const sorted = [...actions].sort((a, b) => {
+    const sorted = [...trayActions].sort((a, b) => {
         if (a.status === 'running' && b.status !== 'running') return -1;
         if (b.status === 'running' && a.status !== 'running') return 1;
         return b.updatedAt - a.updatedAt;
     });
 
-    const errorCount = actions.filter((a) => a.status === 'error').length;
+    const errorCount = trayErrorCount;
 
     return (
-        <div style={{
+        <div
+            data-testid="sessions-tray"
+            style={{
             position: 'fixed',
             bottom: '24px',
             left: '264px',
             zIndex: 9998,
             width: '300px',
             background: 'linear-gradient(185deg, #0d1222 0%, #080a12 100%)',
-            border: `1px solid ${errorCount > 0 ? 'rgba(239,68,68,0.4)' : runningCount > 0 ? 'rgba(59,130,246,0.35)' : 'rgba(255,255,255,0.08)'}`,
+            border: `1px solid ${errorCount > 0 ? 'rgba(239,68,68,0.4)' : trayRunningCount > 0 ? 'rgba(59,130,246,0.35)' : 'rgba(255,255,255,0.08)'}`,
             borderRadius: '14px',
             boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
             overflow: 'hidden',
@@ -233,24 +238,26 @@ export default function SessionsTray({ onCancelAction }) {
                 }}
             >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {runningCount > 0
+                    {trayRunningCount > 0
                         ? <Loader2 size={14} style={{ animation: 'spin 1.2s linear infinite', color: '#3b82f6' }} />
                         : errorCount > 0
                             ? <AlertTriangle size={14} style={{ color: '#ef4444' }} />
                             : <CheckCircle2 size={14} style={{ color: '#10b981' }} />
                     }
                     <span style={{ color: '#f1f5f9', fontSize: '0.82rem', fontWeight: 700 }}>
-                        {runningCount > 0
-                            ? `${runningCount} Active Session${runningCount > 1 ? 's' : ''}`
+                        {trayRunningCount > 0
+                            ? `${trayRunningCount} Active Session${trayRunningCount > 1 ? 's' : ''}`
                             : errorCount > 0
                                 ? `${errorCount} Session${errorCount > 1 ? 's' : ''} Failed`
                                 : 'Sessions'
                         }
                     </span>
                     {/* Badge */}
-                    {actions.length > 0 && (
-                        <span style={{
-                            background: runningCount > 0 ? '#3b82f6' : errorCount > 0 ? '#ef4444' : '#334155',
+                    {trayActions.length > 0 && (
+                        <span
+                            data-testid="sessions-tray-badge"
+                            style={{
+                            background: trayRunningCount > 0 ? '#3b82f6' : errorCount > 0 ? '#ef4444' : '#334155',
                             color: '#fff',
                             fontSize: '0.65rem',
                             fontWeight: 700,
@@ -258,7 +265,7 @@ export default function SessionsTray({ onCancelAction }) {
                             padding: '1px 7px',
                             lineHeight: '1.6',
                         }}>
-                            {actions.length}
+                            {trayActions.length}
                         </span>
                     )}
                 </div>
@@ -281,7 +288,7 @@ export default function SessionsTray({ onCancelAction }) {
             )}
 
             {/* Running summary (collapsed state) */}
-            {!expanded && runningCount > 0 && (() => {
+            {!expanded && trayRunningCount > 0 && (() => {
                 const first = sorted.find((a) => a.status === 'running');
                 return first ? (
                     <div style={{ padding: '0 14px 10px' }}>

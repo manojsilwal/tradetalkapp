@@ -170,30 +170,22 @@ export function updateProgress(id, { progress, activeStep, stepCompleted, stepFa
 }
 
 /**
- * Mark an action as complete and optionally store its result.
+ * Mark an action as complete, store its result, then remove from the tray.
  */
 export async function completeAction(id, result = null) {
     const existing = _actions.get(id);
     if (!existing) return;
-
-    const updated = {
-        ...existing,
-        status: 'done',
-        progress: 100,
-        activeStep: 'Complete',
-        completedAt: Date.now(),
-        updatedAt: Date.now(),
-    };
-    _actions.set(id, updated);
-    _notify();
-    await _persist(updated);
-    _broadcast('ACTION_UPDATE', updated);
 
     if (result !== null) {
         try {
             await set(id, result, resultsDB);
         } catch (_) { /* ignore storage errors */ }
     }
+
+    _actions.delete(id);
+    _notify();
+    await _remove(id);
+    _broadcast('ACTION_DELETE', { id });
 }
 
 /**
@@ -217,23 +209,16 @@ export async function failAction(id, errorMessage = 'Unknown error') {
 }
 
 /**
- * Cancel a running action.
+ * Cancel a running action and remove it from the tray.
  */
 export async function cancelAction(id) {
     const existing = _actions.get(id);
     if (!existing) return;
 
-    const updated = {
-        ...existing,
-        status: 'cancelled',
-        completedAt: Date.now(),
-        updatedAt: Date.now(),
-        activeStep: 'Cancelled',
-    };
-    _actions.set(id, updated);
+    _actions.delete(id);
     _notify();
-    await _persist(updated);
-    _broadcast('ACTION_UPDATE', updated);
+    await _remove(id);
+    _broadcast('ACTION_DELETE', { id });
 }
 
 /**
@@ -275,6 +260,21 @@ export async function hydrate() {
     } catch (_) {
         return [];
     }
+}
+
+/**
+ * Remove completed/cancelled actions from memory and storage on startup.
+ * Keeps running and error rows (errors may need retry).
+ */
+export async function purgeTerminalOnStartup() {
+    const terminal = Array.from(_actions.values()).filter(
+        (a) => a.status === 'done' || a.status === 'cancelled',
+    );
+    for (const action of terminal) {
+        _actions.delete(action.id);
+        await _remove(action.id);
+    }
+    if (terminal.length > 0) _notify();
 }
 
 /**

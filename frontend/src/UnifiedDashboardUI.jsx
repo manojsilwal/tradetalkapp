@@ -132,8 +132,8 @@ function fmtPct(value) {
   return `${Number(value).toFixed(1)}%`;
 }
 
-/** Pick ticker: URL param → running session → in-flight analysis in context. */
-function resolveDashboardTicker({ urlTicker, sessionActions, analyses }) {
+/** Pick ticker: URL → running session → loading → recent success → recentAnalyses. */
+function resolveDashboardTicker({ urlTicker, sessionActions, analyses, recentAnalyses = [] }) {
   const fromUrl = urlTicker?.trim().toUpperCase();
   if (fromUrl) return fromUrl;
 
@@ -147,7 +147,18 @@ function resolveDashboardTicker({ urlTicker, sessionActions, analyses }) {
   const loadingTicker = Object.keys(analyses).find(
     (sym) => analyses[sym]?.status === 'loading',
   );
-  return loadingTicker || '';
+  if (loadingTicker) return loadingTicker;
+
+  const successTicker = Object.keys(analyses).find(
+    (sym) => analyses[sym]?.status === 'success'
+      && (analyses[sym]?.decisionData || analyses[sym]?.fundamentalsData || analyses[sym]?.traceData),
+  );
+  if (successTicker) return successTicker;
+
+  const recent = recentAnalyses[0]?.ticker?.trim().toUpperCase();
+  if (recent) return recent;
+
+  return '';
 }
 
 export default function UnifiedDashboardUI() {
@@ -292,7 +303,7 @@ export default function UnifiedDashboardUI() {
     if (!hydrated) return;
     let cancelled = false;
     const fromUrl = searchParams.get('ticker')?.trim().toUpperCase() || '';
-    const resolved = resolveDashboardTicker({ urlTicker: fromUrl, sessionActions, analyses });
+    const resolved = resolveDashboardTicker({ urlTicker: fromUrl, sessionActions, analyses, recentAnalyses });
     if (!resolved || cancelled) return;
 
     if (resolved !== ticker.trim().toUpperCase()) {
@@ -311,20 +322,30 @@ export default function UnifiedDashboardUI() {
     if (!fromUrl || fromUrl === lastAutoTicker.current) return;
 
     const alreadyLoading = analyses[fromUrl]?.status === 'loading';
+    const alreadySuccess = analyses[fromUrl]?.status === 'success'
+      || recentAnalyses.some((a) => a.ticker?.trim().toUpperCase() === fromUrl);
     const runningSession = sessionStore.findAction('analysis', 'ticker', fromUrl);
     const sessionRunning = runningSession?.status === 'running';
 
     lastAutoTicker.current = fromUrl;
 
+    if (ticker.trim().toUpperCase() !== fromUrl) {
+      setTicker(fromUrl);
+    }
+
     if (alreadyLoading || sessionRunning) {
-      if (ticker.trim().toUpperCase() !== fromUrl) {
-        setTicker(fromUrl);
+      return;
+    }
+
+    if (alreadySuccess) {
+      if (!analyses[fromUrl]) {
+        contextAnalyzeTicker(fromUrl, false);
       }
       return;
     }
 
     analyzeTicker(fromUrl);
-  }, [searchParams, analyzeTicker, hydrated, analyses, ticker]);
+  }, [searchParams, analyzeTicker, hydrated, analyses, recentAnalyses, ticker, contextAnalyzeTicker]);
 
   // Decision Terminal Extracted Variables
   const hasDecisionData = decisionData != null;
