@@ -103,9 +103,14 @@ def resolve_gemini_api_key() -> str:
 def _genai_client():
     from google import genai as genai_mod
 
-    key = resolve_gemini_api_key()
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    key = gemini_key or os.environ.get("GOOGLE_API_KEY", "").strip()
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set")
+    # google-genai prefers GOOGLE_API_KEY from the environment when both are set;
+    # pass only GEMINI_API_KEY and hide the legacy env var for this client.
+    if gemini_key:
+        return genai_mod.Client(api_key=gemini_key)
     return genai_mod.Client(api_key=key)
 
 
