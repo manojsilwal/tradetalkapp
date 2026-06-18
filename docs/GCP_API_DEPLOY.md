@@ -26,6 +26,7 @@ Requires `gcloud` auth and IAM to build to `gcr.io/tradetalkapp-492904/tradetalk
 4. **Cloud Run** → `tradetalk-api` → Variables & secrets — add secrets that were on Render:
    - `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `FINCRAWLER_KEY`, `PIPELINE_CRON_SECRET`, `POSTGRES_PASSWORD`, etc.
    - **Auth (required for sign-in):** `JWT_SECRET` (strong random), `GOOGLE_CLIENT_ID` (OAuth Web client). Set `PORTFOLIO_STORAGE=postgres` (deploy script default) so users, watchlists, and chat history persist on Cloud SQL.
+   - **Email 2FA:** `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (verified sender domain in Resend).
    - **Frontend (Vercel):** `VITE_GOOGLE_CLIENT_ID` = same as `GOOGLE_CLIENT_ID`; keep `VITE_AUTH_REQUIRED=false` for public browsing with optional sign-in.
 
 The runtime service account defaults to `tradetalk-etl@tradetalkapp-492904.iam.gserviceaccount.com` (BigQuery + GCS). Override with `CLOUD_RUN_API_SA=...`.

@@ -1,66 +1,80 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { API_BASE_URL, apiFetch, setToken, getToken, clearToken } from './api';
+import { API_BASE_URL, apiFetch, setToken, getToken, clearToken, GOOGLE_CLIENT_ID } from './api';
 import { AUTH_REQUIRED, GUEST_USER } from './authConfig';
 
 const AuthContext = createContext(null);
 
+const IS_DEV_AUTH =
+    !GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID === 'PLACEHOLDER_SET_AFTER_GOOGLE_SETUP';
+
+function applySession(setUser, data) {
+    setToken(data.token);
+    setUser({
+        user_id: data.user_id,
+        email: data.email,
+        name: data.name,
+        avatar: data.avatar,
+        dev_mode: data.dev_mode,
+        has_password: data.has_password,
+        is_admin: Boolean(data.is_admin),
+    });
+}
+
 export function AuthProvider({ children }) {
-    const [user, setUser]       = useState(null);
+    const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
-    /**
-     * Called after Google sign-in succeeds.
-     * `googleToken` is the credential string from @react-oauth/google.
-     */
     const login = useCallback(async (googleToken) => {
         const data = await apiFetch(`${API_BASE_URL}/auth/google`, {
             method: 'POST',
-            body:   JSON.stringify({ token: googleToken }),
+            body: JSON.stringify({ token: googleToken }),
         });
-        setToken(data.token);
-        setUser({
-            user_id:  data.user_id,
-            email:    data.email,
-            name:     data.name,
-            avatar:   data.avatar,
-            dev_mode: data.dev_mode,
+        applySession(setUser, data);
+        return data;
+    }, []);
+
+    const googleSignup = useCallback(async (googleToken) => {
+        const data = await apiFetch(`${API_BASE_URL}/auth/google/signup`, {
+            method: 'POST',
+            body: JSON.stringify({ token: googleToken }),
         });
         return data;
     }, []);
 
-    const loginManual = useCallback(async (email, password) => {
-        const data = await apiFetch(`${API_BASE_URL}/auth/login-manual`, {
+    const setPassword = useCallback(async (setupToken, password) => {
+        return apiFetch(`${API_BASE_URL}/auth/set-password`, {
             method: 'POST',
-            body:   JSON.stringify({ email, password }),
+            body: JSON.stringify({ setup_token: setupToken, password }),
         });
-        setToken(data.token);
-        setUser({
-            user_id:  data.user_id,
-            email:    data.email,
-            name:     data.name,
-            avatar:   data.avatar,
-            dev_mode: data.dev_mode,
+    }, []);
+
+    const loginManual = useCallback(async (email, password) => {
+        return apiFetch(`${API_BASE_URL}/auth/login-manual`, {
+            method: 'POST',
+            body: JSON.stringify({ email, password }),
         });
+    }, []);
+
+    const verifyOtp = useCallback(async (otpSessionId, code) => {
+        const data = await apiFetch(`${API_BASE_URL}/auth/verify-otp`, {
+            method: 'POST',
+            body: JSON.stringify({ otp_session_id: otpSessionId, code }),
+        });
+        applySession(setUser, data);
         return data;
     }, []);
 
     const signup = useCallback(async (email, password, name) => {
         const data = await apiFetch(`${API_BASE_URL}/auth/signup`, {
             method: 'POST',
-            body:   JSON.stringify({ email, password, name }),
+            body: JSON.stringify({ email, password, name }),
         });
-        setToken(data.token);
-        setUser({
-            user_id:  data.user_id,
-            email:    data.email,
-            name:     data.name,
-            avatar:   data.avatar,
-            dev_mode: data.dev_mode,
-        });
+        applySession(setUser, data);
         return data;
     }, []);
 
     const trySilentDevLogin = useCallback(async () => {
+        if (!IS_DEV_AUTH) return;
         try {
             await login('dev');
         } catch (e) {
@@ -70,13 +84,12 @@ export function AuthProvider({ children }) {
         }
     }, [login]);
 
-    // On mount, try to restore session from localStorage
     useEffect(() => {
         const restore = async () => {
             if (!AUTH_REQUIRED) {
                 setUser(GUEST_USER);
                 setLoading(false);
-                if (!getToken()) {
+                if (!getToken() && IS_DEV_AUTH) {
                     void trySilentDevLogin();
                 }
                 return;
@@ -84,15 +97,16 @@ export function AuthProvider({ children }) {
 
             const token = getToken();
             if (!token) {
-                try {
-                    await login('dev');
-                } catch (e) {
-                    if (!e.message?.includes('Failed to fetch')) {
-                        console.error('Auto dev login failed', e);
+                if (IS_DEV_AUTH) {
+                    try {
+                        await login('dev');
+                    } catch (e) {
+                        if (!e.message?.includes('Failed to fetch')) {
+                            console.error('Auto dev login failed', e);
+                        }
                     }
-                } finally {
-                    setLoading(false);
                 }
+                setLoading(false);
                 return;
             }
             try {
@@ -100,11 +114,13 @@ export function AuthProvider({ children }) {
                 setUser(data);
             } catch {
                 clearToken();
-                try {
-                    await login('dev');
-                } catch (e) {
-                    if (!e.message?.includes('Failed to fetch')) {
-                        console.error('Session restore failed', e);
+                if (IS_DEV_AUTH) {
+                    try {
+                        await login('dev');
+                    } catch (e) {
+                        if (!e.message?.includes('Failed to fetch')) {
+                            console.error('Session restore failed', e);
+                        }
                     }
                 }
             } finally {
@@ -113,8 +129,6 @@ export function AuthProvider({ children }) {
         };
         restore();
     }, [login, trySilentDevLogin]);
-
-
 
     const logout = useCallback(() => {
         clearToken();
@@ -133,7 +147,20 @@ export function AuthProvider({ children }) {
     }, [logout]);
 
     return (
-        <AuthContext.Provider value={{ user, loading, login, loginManual, signup, logout }}>
+        <AuthContext.Provider
+            value={{
+                user,
+                loading,
+                login,
+                googleSignup,
+                setPassword,
+                loginManual,
+                verifyOtp,
+                signup,
+                logout,
+                isDevAuth: IS_DEV_AUTH,
+            }}
+        >
             {children}
         </AuthContext.Provider>
     );

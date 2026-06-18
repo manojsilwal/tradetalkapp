@@ -1,9 +1,10 @@
 """Debug and observability endpoints — cache, query router, LLM status, policy check."""
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from ..agent_policy_guardrails import (
     PolicyBlockedError, ensure_capability, is_enabled as guardrails_enabled, validate_startup_secrets,
 )
+from ..auth import get_current_admin_user
 from ..deps import knowledge_store, llm_client
 
 router = APIRouter(tags=["debug"])
@@ -114,7 +115,7 @@ async def harness_status_endpoint(session_id: str = "default"):
     }
 
 
-@router.get("/learning-health")
+@router.get("/learning-health", dependencies=[Depends(get_current_admin_user)])
 async def learning_health_endpoint():
     """
     Operator snapshot: ledger volume, graded coverage, SEPL flags, reflection source.
@@ -194,7 +195,7 @@ async def learning_health_endpoint():
     }
 
 
-@router.get("/llm/calls")
+@router.get("/llm/calls", dependencies=[Depends(get_current_admin_user)])
 async def get_llm_calls(limit: int = Query(100, description="Max calls to return")):
     """Get the history of recent LLM API calls."""
     from ..decision_ledger import get_ledger

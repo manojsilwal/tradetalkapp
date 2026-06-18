@@ -38,12 +38,21 @@ def _get_conn():
 
 
 def init_schema() -> None:
-    mig = Path(__file__).resolve().parent / "migrations" / "postgres" / "004_users_and_chat.sql"
+    mig_dir = Path(__file__).resolve().parent / "migrations" / "postgres"
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute((mig_dir / "004_users_and_chat.sql").read_text(encoding="utf-8"))
+        cur.execute((mig_dir / "005_auth_otp.sql").read_text(encoding="utf-8"))
+    conn.commit()
+    logger.info("[auth_pg] schema ready on %s", postgres_connection_kwargs()["host"])
+
+
+def init_otp_schema() -> None:
+    mig = Path(__file__).resolve().parent / "migrations" / "postgres" / "005_auth_otp.sql"
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute(mig.read_text(encoding="utf-8"))
     conn.commit()
-    logger.info("[auth_pg] schema ready on %s", postgres_connection_kwargs()["host"])
 
 
 def migrate_from_sqlite_if_needed() -> None:
@@ -188,3 +197,67 @@ def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
         cur.execute("SELECT * FROM users WHERE LOWER(email) = %s LIMIT 1", (email,))
         row = cur.fetchone()
     return dict(row) if row else None
+
+
+def get_user_auth_row(user_id: str) -> Optional[Dict[str, Any]]:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def set_user_password(user_id: str, password_hash: str) -> None:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE users SET password_hash = %s WHERE id = %s",
+            (password_hash, user_id),
+        )
+    conn.commit()
+
+
+def insert_otp_session(
+    session_id: str,
+    user_id: str,
+    otp_hash: str,
+    expires_at: float,
+) -> None:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO auth_otp_sessions (session_id, user_id, otp_hash, expires_at, attempts)
+            VALUES (%s, %s, %s, %s, 0)
+            """,
+            (session_id, user_id, otp_hash, expires_at),
+        )
+    conn.commit()
+
+
+def get_otp_session(session_id: str) -> Optional[Dict[str, Any]]:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT session_id, user_id, otp_hash, expires_at, attempts FROM auth_otp_sessions WHERE session_id = %s",
+            (session_id,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def delete_otp_session(session_id: str) -> None:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM auth_otp_sessions WHERE session_id = %s", (session_id,))
+    conn.commit()
+
+
+def update_otp_attempts(session_id: str, attempts: int) -> None:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE auth_otp_sessions SET attempts = %s WHERE session_id = %s",
+            (attempts, session_id),
+        )
+    conn.commit()

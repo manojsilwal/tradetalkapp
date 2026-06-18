@@ -5,6 +5,7 @@ import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
 import AuthGate from './components/AuthGate'
+import AdminGate from './components/AdminGate'
 import { useAuth } from './AuthContext'
 import { AUTH_REQUIRED } from './authConfig'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
@@ -59,10 +60,22 @@ const ROUTE_TO_KEY = {
     '/learning': 'academy',
     '/chat': 'chat',
     '/llm-calls': 'llm_calls',
+    '/system-diagrams': 'systemdiagrams',
 }
+
+const DEVELOPER_ROUTES = [
+    { path: '/observer', key: 'observer', label: 'Developer Trace', icon: Terminal },
+    { path: '/llm-calls', key: 'llm_calls', label: 'LLM Call Log', icon: Cpu },
+    { path: '/swarm-score', key: 'swarm_score', label: 'SwarmScore Eval', icon: Sparkles },
+    { path: '/ubds', key: 'ubds', label: 'UBDS Benchmark', icon: Gauge },
+    { path: '/systemmap', key: 'systemmap', label: 'System Map', icon: Network },
+    { path: '/api-catalog', key: 'api_catalog', label: 'API Catalog', icon: FileCode2 },
+    { path: '/system-diagrams', key: 'systemdiagrams', label: 'System Diagrams', icon: Network },
+]
 
 function App() {
     const { user, login, logout } = useAuth()
+    const isAdmin = Boolean(user?.is_admin)
     const navigate = useNavigate()
     const location = useLocation()
     const [newBadges, setNewBadges] = useState([])
@@ -260,73 +273,25 @@ function App() {
                         <BookOpen size={20} />
                         <span>Investor Academy</span>
                     </button>
-                    {/* --- Developer --- */}
-                    <div style={{ fontSize: 9, color: '#475569', fontWeight: 700, letterSpacing: 1.5, padding: '12px 12px 4px' }}>
-                        DEVELOPER
-                    </div>
-
-                    <button
-                        className={`nav-btn ${activeTab === 'observer' ? 'active' : ''}`}
-                        onClick={() => { navigate('/observer'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/observer' ? 'page' : undefined}
-                    >
-                        <Terminal size={20} />
-                        <span>Developer Trace</span>
-                    </button>
-
-                    <button
-                        className={`nav-btn ${activeTab === 'llm_calls' ? 'active' : ''}`}
-                        onClick={() => { navigate('/llm-calls'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/llm-calls' ? 'page' : undefined}
-                    >
-                        <Cpu size={20} />
-                        <span>LLM Call Log</span>
-                    </button>
-
-                    <button
-                        className={`nav-btn ${activeTab === 'swarm_score' ? 'active' : ''}`}
-                        onClick={() => { navigate('/swarm-score'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/swarm-score' ? 'page' : undefined}
-                    >
-                        <Sparkles size={20} />
-                        <span>SwarmScore Eval</span>
-                    </button>
-
-                    <button
-                        className={`nav-btn ${activeTab === 'ubds' ? 'active' : ''}`}
-                        onClick={() => { navigate('/ubds'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/ubds' ? 'page' : undefined}
-                    >
-                        <Gauge size={20} />
-                        <span>UBDS Benchmark</span>
-                    </button>
-
-                    <button
-                        className={`nav-btn ${activeTab === 'systemmap' ? 'active' : ''}`}
-                        onClick={() => { navigate('/systemmap'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/systemmap' ? 'page' : undefined}
-                    >
-                        <Network size={20} />
-                        <span>System Map</span>
-                    </button>
-
-                    <button
-                        className={`nav-btn ${activeTab === 'api_catalog' ? 'active' : ''}`}
-                        onClick={() => { navigate('/api-catalog'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/api-catalog' ? 'page' : undefined}
-                    >
-                        <FileCode2 size={20} />
-                        <span>API Catalog</span>
-                    </button>
-
-                    <button
-                        className={`nav-btn ${activeTab === 'systemdiagrams' ? 'active' : ''}`}
-                        onClick={() => { navigate('/system-diagrams'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/system-diagrams' ? 'page' : undefined}
-                    >
-                        <Network size={20} />
-                        <span>System Diagrams</span>
-                    </button>
+                    {/* --- Developer (admin only) --- */}
+                    {isAdmin && (
+                        <>
+                            <div style={{ fontSize: 9, color: '#475569', fontWeight: 700, letterSpacing: 1.5, padding: '12px 12px 4px' }}>
+                                DEVELOPER
+                            </div>
+                            {DEVELOPER_ROUTES.map(({ path, key, label, icon: Icon }) => (
+                                <button
+                                    key={path}
+                                    className={`nav-btn ${activeTab === key ? 'active' : ''}`}
+                                    onClick={() => { navigate(path); setSidebarCollapsed(true); }}
+                                    aria-current={location.pathname === path ? 'page' : undefined}
+                                >
+                                    <Icon size={20} />
+                                    <span>{label}</span>
+                                </button>
+                            ))}
+                        </>
+                    )}
                 </nav>
             </aside>
 
@@ -345,12 +310,36 @@ function App() {
                             <Route path="/backtest" element={<BacktestUI />} />
 
                             <Route path="/daily-brief" element={<DailyBriefUI />} />
-                            <Route path="/observer" element={<ObserverUI />} />
-                            <Route path="/swarm-score" element={<SwarmScoreUI />} />
-                            <Route path="/ubds" element={<UbdsBenchmarkUI />} />
-                            <Route path="/systemmap" element={<SystemMapUI />} />
-                            <Route path="/api-catalog" element={<ApiCatalogUI />} />
-                            <Route path="/system-diagrams" element={<SystemDiagramsUI />} />
+                            <Route path="/observer" element={
+                                <AdminGate featureName="Developer Trace">
+                                    <ObserverUI />
+                                </AdminGate>
+                            } />
+                            <Route path="/swarm-score" element={
+                                <AdminGate featureName="SwarmScore Eval">
+                                    <SwarmScoreUI />
+                                </AdminGate>
+                            } />
+                            <Route path="/ubds" element={
+                                <AdminGate featureName="UBDS Benchmark">
+                                    <UbdsBenchmarkUI />
+                                </AdminGate>
+                            } />
+                            <Route path="/systemmap" element={
+                                <AdminGate featureName="System Map">
+                                    <SystemMapUI />
+                                </AdminGate>
+                            } />
+                            <Route path="/api-catalog" element={
+                                <AdminGate featureName="API Catalog">
+                                    <ApiCatalogUI />
+                                </AdminGate>
+                            } />
+                            <Route path="/system-diagrams" element={
+                                <AdminGate featureName="System Diagrams">
+                                    <SystemDiagramsUI />
+                                </AdminGate>
+                            } />
                             <Route path="/challenge" element={
                                 <GamificationTab user={user} featureName="Investor Academy" featureIcon="📚">
                                     <AcademyUI onXpGained={handleXpGained} />
@@ -361,7 +350,11 @@ function App() {
                                     <PaperPortfolioUI onXpGained={handleXpGained} />
                                 </GamificationTab>
                             } />
-                            <Route path="/llm-calls" element={<LlmCallsUI />} />
+                            <Route path="/llm-calls" element={
+                                <AdminGate featureName="LLM Call Log">
+                                    <LlmCallsUI />
+                                </AdminGate>
+                            } />
                             <Route path="/login" element={<AuthGate featureName="Your Account" featureIcon="👤" />} />
                             <Route path="/learning" element={
                                 <GamificationTab user={user} featureName="Investor Academy" featureIcon="📚">
@@ -497,50 +490,23 @@ function App() {
                                 <ChevronRight className="drawer-chevron-arrow" size={16} />
                             </div>
 
-                            {/* Dev Suite Section */}
-                            <div className="drawer-section-title">Developer Suite</div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/observer'); }}>
-                                <Terminal size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">Developer Trace</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/llm-calls'); }}>
-                                <Cpu size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">LLM Call Log</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/swarm-score'); }}>
-                                <Sparkles size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">SwarmScore Eval</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/ubds'); }}>
-                                <Gauge size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">UBDS Benchmark</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/systemmap'); }}>
-                                <Network size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">System Map</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/api-catalog'); }}>
-                                <FileCode2 size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">API Catalog</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/system-diagrams'); }}>
-                                <Network size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">System Diagrams</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
+                            {/* Dev Suite Section (admin only) */}
+                            {isAdmin && (
+                                <>
+                                    <div className="drawer-section-title">Developer Suite</div>
+                                    {DEVELOPER_ROUTES.map(({ path, label, icon: Icon }) => (
+                                        <div
+                                            key={path}
+                                            className="drawer-item"
+                                            onClick={() => { setMoreMenuOpen(false); navigate(path); }}
+                                        >
+                                            <Icon size={20} className="drawer-item-icon" />
+                                            <span className="drawer-item-label">{label}</span>
+                                            <ChevronRight className="drawer-chevron-arrow" size={16} />
+                                        </div>
+                                    ))}
+                                </>
+                            )}
                         </div>
                         
                         <div className="drawer-divider"></div>

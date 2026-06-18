@@ -10,9 +10,14 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from ..auth import get_current_admin_user
 from ..rate_limiter import rate_limit
 
-router = APIRouter(prefix="/admin/swarm-score", tags=["swarm-score"])
+router = APIRouter(
+    prefix="/admin/swarm-score",
+    tags=["swarm-score"],
+    dependencies=[Depends(get_current_admin_user)],
+)
 
 _rl_eval = rate_limit("export")
 

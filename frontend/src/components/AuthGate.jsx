@@ -1,53 +1,113 @@
 /**
- * AuthGate — shown inside gamification tabs when the user isn't signed in.
- * Replaces the full-screen LoginScreen; the rest of the app stays accessible.
+ * AuthGate — sign-up (Google) and sign-in (email + password + email OTP).
  */
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogIn, Zap } from 'lucide-react';
 import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../AuthContext';
-import { GOOGLE_CLIENT_ID } from '../api';
+import SetPasswordForm from './SetPasswordForm';
+
+const inputStyle = {
+    padding: '10px 14px',
+    borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(0,0,0,0.2)',
+    color: '#fff',
+    fontSize: 13,
+    outline: 'none',
+};
 
 export default function AuthGate({ featureName = 'this feature', featureIcon = '🔒' }) {
-    const { login, loginManual, signup, user } = useAuth();
+    const { googleSignup, login, loginManual, verifyOtp, user, isDevAuth } = useAuth();
     const navigate = useNavigate();
+
+    const [step, setStep] = useState('auth'); // auth | set-password | otp
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [info, setInfo] = useState('');
+
+    const [isSignUp, setIsSignUp] = useState(false);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [otpCode, setOtpCode] = useState('');
+    const [setupToken, setSetupToken] = useState('');
+    const [signupEmail, setSignupEmail] = useState('');
+    const [otpSessionId, setOtpSessionId] = useState('');
 
     useEffect(() => {
         if (user && !user.guest) {
             navigate('/portfolio');
         }
     }, [user, navigate]);
-    const [error, setError]     = useState('');
-    const [loading, setLoading] = useState(false);
-    
-    // Manual credentials states
-    const [isSignUp, setIsSignUp] = useState(false);
-    const [email, setEmail]       = useState('');
-    const [password, setPassword] = useState('');
-    const [name, setName]         = useState('');
 
-    const isDevMode = !GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID === 'PLACEHOLDER_SET_AFTER_GOOGLE_SETUP';
-
-    const handleGoogleSuccess = async (credentialResponse) => {
+    const handleGoogleSignupSuccess = async (credentialResponse) => {
         setLoading(true);
         setError('');
-        try { await login(credentialResponse.credential); }
-        catch (e) { setError(e.message || 'Login failed'); }
-        finally   { setLoading(false); }
+        setInfo('');
+        try {
+            const data = await googleSignup(credentialResponse.credential);
+            setSetupToken(data.setup_token);
+            setSignupEmail(data.email);
+            setStep('set-password');
+        } catch (e) {
+            if (e.status === 409) {
+                setError(e.message || 'Account already exists.');
+                setIsSignUp(false);
+            } else {
+                setError(e.message || 'Google signup failed.');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleDevSignup = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const data = await googleSignup('dev');
+            setSetupToken(data.setup_token);
+            setSignupEmail(data.email);
+            setStep('set-password');
+        } catch (e) {
+            if (e.status === 409) {
+                setError('Dev account already has a password. Sign in instead.');
+                setIsSignUp(false);
+            } else {
+                setError(e.message || 'Dev signup failed.');
+            }
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleDevLogin = async () => {
         setLoading(true);
         setError('');
-        try { await login('dev'); }
-        catch (e) { setError(e.message || 'Dev login failed'); }
-        finally   { setLoading(false); }
+        try {
+            await login('dev');
+        } catch (e) {
+            setError(e.message || 'Dev login failed.');
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const handleManualSubmit = async (e) => {
+    const handlePasswordSetupComplete = ({ email: completedEmail }) => {
+        setStep('auth');
+        setIsSignUp(false);
+        setEmail(completedEmail || signupEmail);
+        setPassword('');
+        setSetupToken('');
+        setInfo('Account created. Sign in with your email and password.');
+        setError('');
+    };
+
+    const handleSignInSubmit = async (e) => {
         e.preventDefault();
         setError('');
+        setInfo('');
         const emailTrim = email.trim().toLowerCase();
         if (!emailTrim || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
             setError('Enter a valid email address.');
@@ -57,17 +117,16 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
             setError('Password must be at least 6 characters.');
             return;
         }
-        if (isSignUp && !name.trim()) {
-            setError('Enter your name to sign up.');
-            return;
-        }
         setLoading(true);
         try {
-            if (isSignUp) {
-                await signup(emailTrim, password, name.trim());
-            } else {
-                await loginManual(emailTrim, password);
-            }
+            const data = await loginManual(emailTrim, password);
+            setOtpSessionId(data.otp_session_id);
+            setStep('otp');
+            setInfo(
+                data.otp_dev_bypass
+                    ? 'Dev mode: enter any 6-digit code (check server logs for the real code).'
+                    : `We sent a verification code to ${data.email}.`,
+            );
         } catch (err) {
             const msg = err.message || 'Authentication failed';
             setError(msg.includes('HTTP') ? 'Could not reach the server. Try again.' : msg);
@@ -76,16 +135,39 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
         }
     };
 
+    const handleOtpSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+        if (!/^\d{6}$/.test(otpCode.trim())) {
+            setError('Enter the 6-digit verification code.');
+            return;
+        }
+        setLoading(true);
+        try {
+            await verifyOtp(otpSessionId, otpCode.trim());
+        } catch (err) {
+            setError(err.message || 'Verification failed.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const switchTab = (signUp) => {
+        setIsSignUp(signUp);
+        setError('');
+        setInfo('');
+        setStep('auth');
+    };
+
     return (
         <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 16, border: '1px solid rgba(255,255,255,0.08)' }}>
-            {/* Blurred preview */}
             <div style={{
                 position: 'absolute', inset: 0,
                 filter: 'blur(6px)', opacity: 0.4, pointerEvents: 'none',
                 padding: 24, overflow: 'hidden',
             }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-                    {[1,2,3].map(i => (
+                    {[1, 2, 3].map((i) => (
                         <div key={i} style={{
                             background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 20, height: 100,
                         }} />
@@ -94,7 +176,6 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
                 <div style={{ marginTop: 20, height: 200, background: 'rgba(255,255,255,0.03)', borderRadius: 12 }} />
             </div>
 
-            {/* Overlay CTA */}
             <div style={{
                 position: 'relative', display: 'flex', flexDirection: 'column',
                 alignItems: 'center', justifyContent: 'center',
@@ -118,143 +199,181 @@ export default function AuthGate({ featureName = 'this feature', featureIcon = '
                     borderRadius: 16, padding: 24, width: '100%', maxWidth: 320,
                     boxSizing: 'border-box',
                 }}>
-                    {!isDevMode && (
-                        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-                            <GoogleLogin
-                                onSuccess={handleGoogleSuccess}
-                                onError={() => setError('Google login failed. Please try again.')}
-                                theme="filled_black"
-                                size="large"
-                                text="signin_with"
-                                shape="rectangular"
-                            />
-                        </div>
+                    {step === 'set-password' && (
+                        <SetPasswordForm
+                            setupToken={setupToken}
+                            email={signupEmail}
+                            onComplete={handlePasswordSetupComplete}
+                        />
                     )}
 
-                    {!isDevMode && (
-                        <div style={{ display: 'flex', alignItems: 'center', margin: '16px 0', gap: 8 }}>
-                            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
-                            <span style={{ fontSize: 11, color: '#64748b' }}>or email</span>
-                            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
-                        </div>
-                    )}
-
-                    {/* Tabs */}
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-                        <button
-                            type="button"
-                            onClick={() => { setIsSignUp(false); setError(''); }}
-                            style={{
-                                flex: 1, padding: '6px 12px', borderRadius: 8, border: 'none',
-                                background: !isSignUp ? 'rgba(124,58,237,0.15)' : 'transparent',
-                                color: !isSignUp ? '#e9d5ff' : '#94a3b8',
-                                fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                            }}
-                        >
-                            Sign In
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => { setIsSignUp(true); setError(''); }}
-                            style={{
-                                flex: 1, padding: '6px 12px', borderRadius: 8, border: 'none',
-                                background: isSignUp ? 'rgba(124,58,237,0.15)' : 'transparent',
-                                color: isSignUp ? '#e9d5ff' : '#94a3b8',
-                                fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                            }}
-                        >
-                            Sign Up
-                        </button>
-                    </div>
-
-                    <form onSubmit={handleManualSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        {isSignUp && (
+                    {step === 'otp' && (
+                        <form onSubmit={handleOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            <p style={{ color: '#94a3b8', fontSize: 13, margin: 0, textAlign: 'center' }}>
+                                Enter the 6-digit code sent to your email.
+                            </p>
                             <input
                                 type="text"
-                                placeholder="Your Name"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
+                                inputMode="numeric"
+                                placeholder="000000"
+                                value={otpCode}
+                                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                                 disabled={loading}
-                                aria-label="Your name"
-                                style={{
-                                    padding: '10px 14px', borderRadius: 8,
-                                    border: '1px solid rgba(255,255,255,0.12)',
-                                    background: 'rgba(0,0,0,0.2)',
-                                    color: '#fff', fontSize: 13, outline: 'none',
-                                }}
+                                autoComplete="one-time-code"
+                                aria-label="Verification code"
+                                style={{ ...inputStyle, textAlign: 'center', letterSpacing: 6, fontSize: 18 }}
                             />
-                        )}
-                        <input
-                            type="email"
-                            placeholder="Email address"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            disabled={loading}
-                            autoComplete="email"
-                            aria-label="Email address"
-                            style={{
-                                padding: '10px 14px', borderRadius: 8,
-                                border: '1px solid rgba(255,255,255,0.12)',
-                                background: 'rgba(0,0,0,0.2)',
-                                color: '#fff', fontSize: 13, outline: 'none',
-                            }}
-                        />
-                        <input
-                            type="password"
-                            placeholder="Password (min 6 chars)"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            disabled={loading}
-                            minLength={6}
-                            autoComplete={isSignUp ? 'new-password' : 'current-password'}
-                            aria-label="Password"
-                            style={{
-                                padding: '10px 14px', borderRadius: 8,
-                                border: '1px solid rgba(255,255,255,0.12)',
-                                background: 'rgba(0,0,0,0.2)',
-                                color: '#fff', fontSize: 13, outline: 'none',
-                            }}
-                        />
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            style={{
-                                padding: '10px 20px', borderRadius: 8, border: 'none',
-                                background: loading ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #7c3aed, #a78bfa)',
-                                color: '#fff', fontSize: 13, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
-                                transition: 'all 0.2s', marginTop: 4,
-                            }}
-                        >
-                            {loading ? (isSignUp ? 'Creating account...' : 'Signing in...') : (isSignUp ? 'Sign Up' : 'Sign In')}
-                        </button>
-                    </form>
-
-                    {isDevMode && (
-                        <>
-                            <div style={{ display: 'flex', alignItems: 'center', margin: '12px 0', gap: 8 }}>
-                                <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
-                                <span style={{ fontSize: 10, color: '#64748b' }}>or bypass</span>
-                                <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
-                            </div>
                             <button
-                                type="button"
-                                onClick={handleDevLogin}
+                                type="submit"
                                 disabled={loading}
                                 style={{
-                                    width: '100%', padding: '8px 12px', borderRadius: 8,
-                                    border: 'none',
-                                    background: 'rgba(255,255,255,0.05)',
-                                    color: '#a78bfa', fontSize: 12, fontWeight: 600,
+                                    padding: '10px 20px', borderRadius: 8, border: 'none',
+                                    background: loading ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #7c3aed, #a78bfa)',
+                                    color: '#fff', fontSize: 13, fontWeight: 700,
                                     cursor: loading ? 'not-allowed' : 'pointer',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                                 }}
                             >
-                                <LogIn size={12} />
-                                Dev Mode Bypass
+                                {loading ? 'Verifying...' : 'Verify & Sign In'}
                             </button>
+                            <button
+                                type="button"
+                                onClick={() => { setStep('auth'); setOtpCode(''); setError(''); setInfo(''); }}
+                                style={{
+                                    padding: '8px', border: 'none', background: 'transparent',
+                                    color: '#94a3b8', fontSize: 12, cursor: 'pointer',
+                                }}
+                            >
+                                Back to sign in
+                            </button>
+                        </form>
+                    )}
+
+                    {step === 'auth' && (
+                        <>
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                                <button
+                                    type="button"
+                                    onClick={() => switchTab(false)}
+                                    style={{
+                                        flex: 1, padding: '6px 12px', borderRadius: 8, border: 'none',
+                                        background: !isSignUp ? 'rgba(124,58,237,0.15)' : 'transparent',
+                                        color: !isSignUp ? '#e9d5ff' : '#94a3b8',
+                                        fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                                    }}
+                                >
+                                    Sign In
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => switchTab(true)}
+                                    style={{
+                                        flex: 1, padding: '6px 12px', borderRadius: 8, border: 'none',
+                                        background: isSignUp ? 'rgba(124,58,237,0.15)' : 'transparent',
+                                        color: isSignUp ? '#e9d5ff' : '#94a3b8',
+                                        fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                                    }}
+                                >
+                                    Sign Up
+                                </button>
+                            </div>
+
+                            {isSignUp ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                    <p style={{ color: '#94a3b8', fontSize: 13, margin: 0, textAlign: 'center' }}>
+                                        Create your account with Google, then set a password for sign-in.
+                                    </p>
+                                    {!isDevAuth ? (
+                                        <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                            <GoogleLogin
+                                                onSuccess={handleGoogleSignupSuccess}
+                                                onError={() => setError('Google signup failed. Please try again.')}
+                                                theme="filled_black"
+                                                size="large"
+                                                text="signup_with"
+                                                shape="rectangular"
+                                            />
+                                        </div>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={handleDevSignup}
+                                            disabled={loading}
+                                            style={{
+                                                width: '100%', padding: '10px 20px', borderRadius: 8, border: 'none',
+                                                background: 'linear-gradient(135deg, #7c3aed, #a78bfa)',
+                                                color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                                            }}
+                                        >
+                                            Dev Sign Up (Google bypass)
+                                        </button>
+                                    )}
+                                </div>
+                            ) : (
+                                <form onSubmit={handleSignInSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                    <input
+                                        type="email"
+                                        placeholder="Email address"
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        disabled={loading}
+                                        autoComplete="email"
+                                        aria-label="Email address"
+                                        style={inputStyle}
+                                    />
+                                    <input
+                                        type="password"
+                                        placeholder="Password (min 6 chars)"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        disabled={loading}
+                                        minLength={6}
+                                        autoComplete="current-password"
+                                        aria-label="Password"
+                                        style={inputStyle}
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={loading}
+                                        style={{
+                                            padding: '10px 20px', borderRadius: 8, border: 'none',
+                                            background: loading ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #7c3aed, #a78bfa)',
+                                            color: '#fff', fontSize: 13, fontWeight: 700,
+                                            cursor: loading ? 'not-allowed' : 'pointer',
+                                        }}
+                                    >
+                                        {loading ? 'Sending code...' : 'Continue'}
+                                    </button>
+                                </form>
+                            )}
+
+                            {isDevAuth && (
+                                <>
+                                    <div style={{ display: 'flex', alignItems: 'center', margin: '12px 0', gap: 8 }}>
+                                        <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+                                        <span style={{ fontSize: 10, color: '#64748b' }}>or bypass</span>
+                                        <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleDevLogin}
+                                        disabled={loading}
+                                        style={{
+                                            width: '100%', padding: '8px 12px', borderRadius: 8, border: 'none',
+                                            background: 'rgba(255,255,255,0.05)',
+                                            color: '#a78bfa', fontSize: 12, fontWeight: 600,
+                                            cursor: loading ? 'not-allowed' : 'pointer',
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                        }}
+                                    >
+                                        <LogIn size={12} />
+                                        Dev Mode Bypass
+                                    </button>
+                                </>
+                            )}
                         </>
                     )}
 
+                    {info && <p style={{ marginTop: 10, fontSize: 12, color: '#94a3b8' }}>{info}</p>}
                     {error && <p style={{ marginTop: 10, fontSize: 12, color: '#ef4444' }}>{error}</p>}
 
                     <div style={{
