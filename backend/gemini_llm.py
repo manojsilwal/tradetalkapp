@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 # ``GEMINI_FALLBACK_MODEL`` — legacy alias retained for backward compat; still used
 #                           when a caller does not specify a tier (= heavy default).
 #
-# Both tiers default to ``gemini-3.5-flash``.  NVIDIA Build (free) is the
-# primary provider; Gemini 3.5 Flash serves as fallback everywhere.
+# Both tiers default to ``gemini-3.5-flash``. OpenRouter (minimax m3) is the primary
+# provider; Gemini 3.5 Flash is the fallback when OpenRouter fails.
 #
 # When ``GEMINI_PRIMARY=1``, ``LLMClient._provider_generate`` routes every call
 # through ``gemini_simple_completion_sync`` with the tier-appropriate model —
@@ -67,6 +67,7 @@ def _with_llm_guard(fn):
 
 
 def resolve_gemini_api_key() -> str:
+    """Prefer ``GEMINI_API_KEY``; ``GOOGLE_API_KEY`` is legacy fallback only."""
     return os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
 
 
@@ -76,7 +77,6 @@ def _genai_client():
     key = resolve_gemini_api_key()
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set")
-    os.environ.setdefault("GEMINI_API_KEY", key)
     return genai_mod.Client(api_key=key)
 
 

@@ -21,7 +21,6 @@ LLM_HTTP_TIMEOUT_S = max(5.0, float(os.environ.get("LLM_HTTP_TIMEOUT_S", "60")))
 
 __all__ = [
     "collect_openrouter_api_keys",
-    "collect_nvidia_llm_api_keys",
     "resolve_llm_http_provider",
     "OpenRouterClientPool",
     "get_or_create_openrouter_pool",
@@ -55,46 +54,14 @@ def collect_openrouter_api_keys() -> List[str]:
     return keys
 
 
-def collect_nvidia_llm_api_keys() -> List[str]:
-    """API keys for NVIDIA Build (OpenAI-compatible `integrate.api.nvidia.com`)."""
-    keys: List[str] = []
-    k1 = os.environ.get("NVIDIA_API_KEY", "").strip()
-    k2 = os.environ.get("NVIDIA_API_KEY_2", "").strip()
-    if k1:
-        keys.append(k1)
-    if k2:
-        keys.append(k2)
-    if keys:
-        return keys
-    if os.environ.get("LLM_HTTP_PROVIDER", "").strip().lower() == "nvidia":
-        ko = os.environ.get("OPENAI_API_KEY", "").strip()
-        if ko:
-            return [ko]
-    return keys
-
-
 def resolve_llm_http_provider() -> str:
     """
-    Which OpenAI-compatible HTTP backend serves **LLM inference** (chat + JSON roles).
+    OpenAI-compatible HTTP backend for LLM inference (chat + JSON roles).
 
-    ``nvidia`` wins when ``LLM_HTTP_PROVIDER=nvidia`` or when NVIDIA keys exist
-    and provider is not forced to OpenRouter. Embeddings / batch ETL may still
-    use ``OPENROUTER_*`` via :func:`get_or_create_openrouter_pool`.
+    TradeTalk uses **OpenRouter only** for HTTP LLM calls. Gemini 3.5 Flash is
+    the fallback via ``gemini_llm`` when OpenRouter fails. NVIDIA Build is not used.
     """
-    explicit = os.environ.get("LLM_HTTP_PROVIDER", "").strip().lower()
-    has_nv = bool(collect_nvidia_llm_api_keys())
-    has_or = bool(collect_openrouter_api_keys())
-    if explicit == "nvidia":
-        if has_nv:
-            return "nvidia"
-        return "openrouter" if has_or else "none"
-    if explicit == "openrouter":
-        if has_or:
-            return "openrouter"
-        return "nvidia" if has_nv else "none"
-    if has_nv:
-        return "nvidia"
-    if has_or:
+    if collect_openrouter_api_keys():
         return "openrouter"
     return "none"
 
@@ -280,8 +247,7 @@ def get_or_create_llm_openai_compatible_pool(
     base_url: str, headers: dict, keys: List[str]
 ) -> Optional[OpenRouterClientPool]:
     """
-    Separate singleton from :func:`get_or_create_openrouter_pool` so LLM traffic
-    can target NVIDIA Build while embeddings keep using OpenRouter.
+    Separate singleton from :func:`get_or_create_openrouter_pool` for alternate base URLs.
     """
     global _llm_openai_pool, _llm_openai_sig
     if not keys:

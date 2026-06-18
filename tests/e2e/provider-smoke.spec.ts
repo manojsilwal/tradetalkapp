@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
  * Live probes against `/health/smoke/*` (requires backend env ALLOW_PROVIDER_SMOKE=1).
  *
  * Backend must have:
- * - NVIDIA_API_KEY (+ typical NVIDIA LLM env) for DeepSeek chat probes
+ * - OPENROUTER_API_KEY for chat probe
  * - GEMINI_API_KEY or GOOGLE_API_KEY for embedding probe
  *
  * Optional: PROVIDER_SMOKE_SECRET on API + E2E_PROVIDER_SMOKE_SECRET in test env.
@@ -38,35 +38,19 @@ test.describe('Provider smoke API', () => {
     expect(body).toHaveProperty('embedding_model_resolved');
   });
 
-  test('NVIDIA DeepSeek v4 Pro completion', async ({ request }) => {
-    const res = await request.post(`${API_BASE}/health/smoke/nvidia/chat`, {
+  test('OpenRouter chat completion', async ({ request }) => {
+    const res = await request.post(`${API_BASE}/health/smoke/openrouter/chat`, {
       headers: smokeHeaders(),
-      data: JSON.stringify({ phase: 'pro', prompt: 'Say exactly: OK' }),
+      data: JSON.stringify({ prompt: 'Say exactly: OK' }),
     });
     if (res.status() === 404) {
       test.skip(true, 'ALLOW_PROVIDER_SMOKE=1 not enabled on API');
     }
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
-    test.skip(!!body.skipped, body.reason || 'NVIDIA probe skipped');
+    test.skip(!!body.skipped, body.reason || 'OpenRouter probe skipped');
     expect(body.ok).toBe(true);
     expect(String(body.model || '').length).toBeGreaterThan(2);
-    expect(String(body.reply_preview || '').length).toBeGreaterThan(0);
-  });
-
-  test('NVIDIA DeepSeek v4 Flash completion', async ({ request }) => {
-    const res = await request.post(`${API_BASE}/health/smoke/nvidia/chat`, {
-      headers: smokeHeaders(),
-      data: JSON.stringify({ phase: 'flash', prompt: 'Say exactly: OK' }),
-    });
-    if (res.status() === 404) {
-      test.skip(true, 'ALLOW_PROVIDER_SMOKE=1 not enabled on API');
-    }
-    expect(res.ok()).toBeTruthy();
-    const body = await res.json();
-    test.skip(!!body.skipped, body.reason || 'NVIDIA flash skipped');
-    expect(body.ok).toBe(true);
-    expect(body.phase).toBe('flash');
     expect(String(body.reply_preview || '').length).toBeGreaterThan(0);
   });
 

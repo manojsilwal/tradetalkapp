@@ -72,7 +72,7 @@ class RefinerAgent:
             "harness_version": state.version,
         }
 
-        # Primary route: NVIDIA-backed model client if available.
+        # Primary route: OpenRouter-backed model client if available.
         if self._client is not None:
             try:
                 if hasattr(self._client, "generate"):
@@ -83,7 +83,7 @@ class RefinerAgent:
                     data = raw if isinstance(raw, dict) else json.loads(str(raw))
                     return self._parse_edits(data.get("edits") or [])
             except Exception as e:
-                logger.warning("[Harness] NVIDIA path failed, falling back to Gemini Flash-low: %s", e)
+                logger.warning("[Harness] OpenRouter path failed, falling back to Gemini Flash: %s", e)
 
         # Hard fallback route: Google Gemini 3.5 Flash (low)
         try:

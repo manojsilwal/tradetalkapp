@@ -435,13 +435,6 @@ def resolved_model_label() -> str:
         provider = resolve_llm_http_provider()
     except Exception:
         provider = ""
-    if provider == "nvidia":
-        model = (
-            os.getenv("NVIDIA_LLM_MODEL_PRO")
-            or os.getenv("NVIDIA_LLM_MODEL_FLASH")
-            or "default"
-        ).strip()
-        return f"nvidia:{model}"
     if provider == "openrouter":
         return f"openrouter:{os.getenv('OPENROUTER_MODEL', '').strip() or 'default'}"
     fallback = (os.getenv("OPENROUTER_MODEL") or os.getenv("GEMINI_MODEL") or "").strip()

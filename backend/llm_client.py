@@ -1,27 +1,12 @@
 """
-LLM Client — OpenAI-compatible HTTP inference (NVIDIA Build or OpenRouter), optional Gemini, rule-based fallback.
+LLM Client — OpenRouter primary, Gemini 3.5 Flash fallback, rule-based last resort.
 
-  1. NVIDIA Build (preferred when ``NVIDIA_API_KEY`` is set, or ``LLM_HTTP_PROVIDER=nvidia``) —
-     OpenAI-compatible ``https://integrate.api.nvidia.com/v1``.
-     Chat / JSON order: ``NVIDIA_LLM_MODEL_PRO`` (default ``moonshotai/kimi-k2.6``) →
-     ``NVIDIA_LLM_MODEL_FLASH`` (default ``deepseek-ai/deepseek-v4-pro``), up to two tries per model,
-     then ``GEMINI_MODEL`` (Gemini 3.5 Flash) when ``GEMINI_LLM_FALLBACK=1`` and a Gemini key is set.
-     Embeddings and batch ETL can still use ``OPENROUTER_*`` separately.
-
-  2. OpenRouter — when ``LLM_HTTP_PROVIDER=openrouter`` or no NVIDIA keys: ``OPENROUTER_API_KEY``,
-     ``OPENROUTER_MODEL`` / ``OPENROUTER_MODEL_LIGHT``, etc. Chat can use ``GEMINI_PRIMARY=1`` to try
-     Gemini before OpenRouter.
-
-  3. Gemini (Google AI Studio) — last step in the NVIDIA chat stack, or fallback / primary per flags.
-
-  4. Rule-based templates — if no HTTP keys are configured.
+  1. OpenRouter — ``OPENROUTER_API_KEY``, ``OPENROUTER_MODEL`` / ``OPENROUTER_MODEL_LIGHT``.
+  2. Gemini (Google AI Studio) — when ``GEMINI_LLM_FALLBACK=1`` and ``GEMINI_API_KEY`` is set.
+  3. Rule-based templates — only for non-verdict roles when all providers fail.
 
 Agent policy guardrails (defense-in-depth) are enforced via
-agent_policy_guardrails when enabled.  These are in-process checks and
-do NOT replace OS/container-level isolation.
-
-Each agent role has a locked finance-domain system prompt so agents behave as
-investment specialists rather than generic assistants.
+agent_policy_guardrails when enabled.
 """
 import asyncio
 import json
@@ -37,8 +22,6 @@ from .agent_policy_guardrails import (
     workload_scope,
 )
 from .openrouter_pool import (
-    collect_nvidia_llm_api_keys,
-    get_or_create_llm_openai_compatible_pool,
     get_or_create_openrouter_pool,
     is_openrouter_rate_limit_error,
     rate_limit_sleep_seconds,
@@ -71,32 +54,6 @@ OPENROUTER_MODEL_LIGHT = os.environ.get("OPENROUTER_MODEL_LIGHT", "minimax/minim
 OPENROUTER_HTTP_REFERER = os.environ.get("OPENROUTER_HTTP_REFERER", "")
 OPENROUTER_X_TITLE = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")
 
-# NVIDIA Build — OpenAI-compatible; used when resolve_llm_http_provider() == "nvidia".
-def _nvidia_llm_base_url() -> str:
-    u = os.environ.get("NVIDIA_LLM_BASE_URL", "").strip().rstrip("/")
-    if u:
-        return u
-    if os.environ.get("LLM_HTTP_PROVIDER", "").strip().lower() == "nvidia":
-        u2 = os.environ.get("OPENAI_BASE_URL", "").strip().rstrip("/")
-        if u2:
-            return u2
-    return "https://integrate.api.nvidia.com/v1"
-
-
-# NVIDIA free-tier cascade (primary → secondary). Override via env without code changes.
-NVIDIA_LLM_MODEL_PRO = os.environ.get("NVIDIA_LLM_MODEL_PRO", "moonshotai/kimi-k2.6").strip()
-NVIDIA_LLM_MODEL_FLASH = os.environ.get(
-    "NVIDIA_LLM_MODEL_FLASH", "deepseek-ai/deepseek-v4-pro"
-).strip()
-
-
-def nvidia_llm_model_cascade() -> List[str]:
-    """Ordered NVIDIA models: Kimi K2.6 first, DeepSeek v4 Pro second (deduped)."""
-    out: List[str] = []
-    for m in (NVIDIA_LLM_MODEL_PRO, NVIDIA_LLM_MODEL_FLASH):
-        if m and m not in out:
-            out.append(m)
-    return out
 GUARDRAILS_ENABLE = os.environ.get("GUARDRAILS_ENABLE", "1").strip() != "0"
 LLM_MAX_CONCURRENCY = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "6")))
 # OpenRouter pre-reserves credits from max_tokens; 16k × parallel debate agents
@@ -141,21 +98,15 @@ def _model_for_role(role: str) -> str:
     return OPENROUTER_MODEL_LIGHT if _tier_for_role(role) == "light" else OPENROUTER_MODEL
 
 
-def _http_openai_model_for_role(provider: str, role: str) -> str:
-    """First model in the HTTP cascade for this provider (NVIDIA tries full cascade in generate)."""
-    if provider == "nvidia":
-        cascade = nvidia_llm_model_cascade()
-        return cascade[0] if cascade else NVIDIA_LLM_MODEL_PRO
+def _http_openai_model_for_role(_provider: str, role: str) -> str:
     return _model_for_role(role)
 
 
 def _gemini_model_for_role(role: str) -> str:
     """
     Pick the Gemini model for a given role using the same heavy/light mapping as
-    OpenRouter. Both tiers default to ``gemini-3.5-flash`` — the NVIDIA Build
-    free tier is the primary provider and Gemini 3.5 Flash is the fallback.
-    Keeping the mapping source-of-truth single means tier changes only have to
-    be made in one place.
+    OpenRouter. Both tiers default to ``gemini-3.5-flash`` — OpenRouter is primary
+    and Gemini 3.5 Flash is the fallback.
     """
     return resolve_gemini_model(_tier_for_role(role))
 
@@ -570,7 +521,7 @@ def _fallback_template_or_raise(role: str) -> dict:
 
 class LLMClient:
     """
-    Async LLM wrapper — OpenAI-compatible HTTP (NVIDIA Build or OpenRouter) + optional Gemini.
+    Async LLM wrapper — OpenRouter + optional Gemini fallback.
     Policy guardrails (in-process, defense-in-depth) are enforced when enabled.
     Uses asyncio.to_thread for all blocking HTTP calls.
     """
@@ -628,31 +579,8 @@ class LLMClient:
                     )
                 else:
                     logger.warning(
-                        "[LLMClient] No NVIDIA_API_KEY or OPENROUTER_API_KEY. Using rule-based fallback."
+                        "[LLMClient] No OPENROUTER_API_KEY. Using rule-based fallback."
                     )
-                return
-
-            if provider == "nvidia":
-                keys = collect_nvidia_llm_api_keys()
-                base = _nvidia_llm_base_url()
-                pool = get_or_create_llm_openai_compatible_pool(base, headers, keys)
-                if pool is None:
-                    logger.warning("[LLMClient] NVIDIA LLM pool could not be created (missing keys).")
-                    return
-                if GUARDRAILS_ENABLE and policy_guardrails_enabled():
-                    guard_host("llm", base)
-                self._openrouter_pool = pool
-                self._llm_http_provider = "nvidia"
-                self._provider = "nvidia"
-                self._backend = "nvidia"
-                self._model = NVIDIA_LLM_MODEL_PRO
-                self._endpoint = base
-                logger.info(
-                    "[LLMClient] Backend: NVIDIA Build — cascade: %s → Gemini 3.5 Flash",
-                    " → ".join(nvidia_llm_model_cascade()) or "(none)",
-                )
-                if gemini_primary_enabled() or gemini_llm_fallback_enabled():
-                    logger.info("[LLMClient] Gemini available in chat stack — model=%s", GEMINI_MODEL)
                 return
 
             pool = get_or_create_openrouter_pool(OPENROUTER_BASE_URL, headers)
@@ -857,11 +785,7 @@ class LLMClient:
             system, prompt_version = self._resolve_system_prompt(role)
         def fallback():
             return (_fallback_template_or_raise(role), prompt_version)
-        http_models = (
-            nvidia_llm_model_cascade()
-            if self._provider == "nvidia"
-            else [_http_openai_model_for_role(self._provider, role)]
-        )
+        http_models = [_http_openai_model_for_role(self._provider, role)]
 
         # Gemini-primary path (GEMINI_PRIMARY=1): route every role through Gemini
         # 3.5 Flash. On any Gemini failure we go straight to
@@ -982,7 +906,7 @@ class LLMClient:
                     break
                 if last_err is not None:
                     logger.warning(
-                        "[LLMClient] NVIDIA/OpenAI call failed role=%s model=%s err=%s",
+                        "[LLMClient] OpenRouter call failed role=%s model=%s err=%s",
                         role,
                         model,
                         redact_secrets_in_text(str(last_err)),
@@ -1123,7 +1047,7 @@ class LLMClient:
         so post-hoc analyses can tie outcomes to the exact prompt that produced
         them (AGP §3.1.2 "auditable lineage").
         """
-        if self._provider in ("openrouter", "nvidia"):
+        if self._provider == "openrouter":
             async with self._sem_for_current_loop():
                 result, version = await asyncio.to_thread(
                     self._provider_generate, role, prompt
@@ -1157,7 +1081,7 @@ class LLMClient:
         This method is the ONLY approved way for SEPL (or anything else) to
         exercise a non-registered prompt body against real inference.
         """
-        if self._provider in ("openrouter", "nvidia"):
+        if self._provider == "openrouter":
             async with self._sem_for_current_loop():
                 result, version = await asyncio.to_thread(
                     self._provider_generate,
@@ -1345,11 +1269,7 @@ class LLMClient:
         on any Gemini failure returns the untouched ``user`` string — same local
         fallback contract as the JSON inference path. OpenRouter is never called.
         """
-        http_models = (
-            nvidia_llm_model_cascade()
-            if self._provider == "nvidia"
-            else [OPENROUTER_MODEL_LIGHT]
-        )
+        http_models = [OPENROUTER_MODEL_LIGHT]
 
         if gemini_primary_enabled():
             g = self._gemini_try_plain_text(system, user)
@@ -1484,8 +1404,8 @@ class LLMClient:
         _429_key_delay = float(os.environ.get("OPENROUTER_429_KEY_FAILOVER_DELAY_SEC", "1.0"))
         if self._openrouter_pool is None and not gemini_usable_for_chat():
             yield (
-                "Chat requires NVIDIA_API_KEY, OPENROUTER_API_KEY, or a Gemini key "
-                "(GEMINI_API_KEY / GOOGLE_API_KEY with GEMINI_PRIMARY or GEMINI_LLM_FALLBACK)."
+                "Chat requires OPENROUTER_API_KEY or a Gemini key "
+                "(GEMINI_API_KEY with GEMINI_PRIMARY or GEMINI_LLM_FALLBACK)."
             )
             return
 
@@ -1516,13 +1436,10 @@ class LLMClient:
             stream_ok = False
             gemini_error_only = False
             chat_phases: list[str] = []
-            nvidia_http = self._llm_http_provider == "nvidia"
             has_http = self._openrouter_pool is not None
             gemini_ok = gemini_usable_for_chat()
 
-            if nvidia_http and has_http:
-                chat_phases.extend(["nvidia_pro", "nvidia_flash"])
-            elif has_http:
+            if has_http:
                 if gemini_primary_enabled() and gemini_ok:
                     chat_phases.append("gemini_chat")
                 chat_phases.append("openrouter")
@@ -1530,16 +1447,14 @@ class LLMClient:
                 chat_phases.append("gemini_chat")
 
             if gemini_ok and "gemini_chat" not in chat_phases:
-                if nvidia_http and has_http:
-                    chat_phases.append("gemini_chat")
-                elif has_http and not gemini_primary_enabled():
+                if has_http and not gemini_primary_enabled():
                     chat_phases.append("gemini_chat")
                 elif not has_http and gemini_llm_fallback_enabled():
                     chat_phases.append("gemini_chat")
 
             if not chat_phases:
                 yield (
-                    "Chat requires a model provider: set NVIDIA_API_KEY, OPENROUTER_API_KEY, "
+                    "Chat requires a model provider: set OPENROUTER_API_KEY "
                     "or GEMINI_API_KEY (with GEMINI_PRIMARY or GEMINI_LLM_FALLBACK)."
                 )
                 return
@@ -1547,14 +1462,9 @@ class LLMClient:
             for phase in chat_phases:
                 if stream_ok:
                     break
-                if phase in ("openrouter", "nvidia_pro", "nvidia_flash"):
+                if phase == "openrouter":
                     gemini_error_only = False
-                    if phase == "openrouter":
-                        phase_model = OPENROUTER_MODEL_LIGHT
-                    elif phase == "nvidia_pro":
-                        phase_model = NVIDIA_LLM_MODEL_PRO
-                    else:
-                        phase_model = NVIDIA_LLM_MODEL_FLASH
+                    phase_model = OPENROUTER_MODEL_LIGHT
                     ci = 0
                     n_clients = len(async_clients)
                     abort_http_for_gemini = False
@@ -1617,8 +1527,6 @@ class LLMClient:
                                         phase_model,
                                         redact_secrets_in_text(str(e)),
                                     )
-                                    if nvidia_http and phase in ("nvidia_pro", "nvidia_flash"):
-                                        break
                                     yield f"\n\n[Chat error: {redact_secrets_in_text(str(e))[:200]}]"
                                     return
                                 if gemini_instant_openrouter_failover():
@@ -1653,10 +1561,7 @@ class LLMClient:
                                         "or try another model.]"
                                     )
                                 else:
-                                    msg = (
-                                        "[Chat error: LLM API rate limit (429) on all configured keys. "
-                                        "Wait and retry, or add NVIDIA_API_KEY_2 for failover.]"
-                                    )
+                                    msg = "[Chat error: LLM API rate limit (429) on all configured keys. Wait and retry.]"
                                 yield f"\n\n{msg}\n"
                                 return
                         if abort_http_for_gemini:
@@ -1866,7 +1771,7 @@ class LLMClient:
         Phase 5 — tighten data-lake summaries for embedding/RAG (OpenRouter chat model).
         Falls back to draft when API key missing or on error.
         """
-        if self._provider not in ("openrouter", "nvidia") or self._openrouter_pool is None:
+        if self._provider != "openrouter" or self._openrouter_pool is None:
             return draft
         system = (
             "You are a financial data editor. Rewrite notes into one dense factual paragraph "

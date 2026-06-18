@@ -1,6 +1,5 @@
-# Predictor synthesis / reviewer routing — NVIDIA Kimi K2.6 → DeepSeek v4 Pro → Gemini 3.5 Flash.
-# Temperature and max_tokens are read here; model cascade is in synthesizer.py / reviewer.py
-# via nvidia_llm_model_cascade() (NVIDIA_LLM_MODEL_PRO / NVIDIA_LLM_MODEL_FLASH / GEMINI_MODEL).
+# Predictor synthesis / reviewer routing — OpenRouter primary, Gemini 3.5 Flash fallback.
+# Temperature and max_tokens are read here; model slugs come from OPENROUTER_MODEL / GEMINI_MODEL.
 
 predictor:
   synthesis:

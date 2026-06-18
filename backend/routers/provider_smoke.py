@@ -1,5 +1,5 @@
 """
-Opt-in live probes for NVIDIA (OpenAI-compatible) LLM and Google embedding APIs.
+Opt-in live probes for OpenRouter LLM and Google embedding APIs.
 
 Security: routes return 404 unless ALLOW_PROVIDER_SMOKE=1. Optional PROVIDER_SMOKE_SECRET
 requires matching X-Provider-Smoke-Secret header (recommended in shared environments).
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -28,10 +28,7 @@ def _verify_smoke_request(request: Request) -> None:
         raise HTTPException(status_code=404, detail="Not Found")
 
 
-class SmokeNvidiaBody(BaseModel):
-    """phase=pro uses NVIDIA_LLM_MODEL_PRO (Kimi); flash uses NVIDIA_LLM_MODEL_FLASH (DeepSeek)."""
-
-    phase: str = Field(default="pro", description="pro | flash")
+class SmokeOpenRouterBody(BaseModel):
     prompt: str = Field(
         default='Reply with exactly one word: OK',
         description="Short user message to minimize tokens/cost.",
@@ -45,22 +42,22 @@ class SmokeEmbedBody(BaseModel):
 
 @router.get("/status")
 def smoke_status(request: Request) -> Dict[str, Any]:
-    """Non-secret snapshot of whether NVIDIA / Google embedding env is present."""
+    """Non-secret snapshot of whether OpenRouter / Google embedding env is present."""
     _verify_smoke_request(request)
-    from ..openrouter_pool import collect_nvidia_llm_api_keys, resolve_llm_http_provider
+    from ..openrouter_pool import collect_openrouter_api_keys, resolve_llm_http_provider
     from ..vector_backends import (
         _DEFAULT_GEMINI_EMBEDDING_MODEL,
         _gemini_embedding_api_key,
         google_embeddings_enabled,
     )
-    from ..llm_client import NVIDIA_LLM_MODEL_FLASH, NVIDIA_LLM_MODEL_PRO, _nvidia_llm_base_url
+    from ..llm_client import OPENROUTER_BASE_URL, OPENROUTER_MODEL, OPENROUTER_MODEL_LIGHT
 
     return {
         "allow_provider_smoke": True,
         "llm_http_provider": resolve_llm_http_provider(),
-        "nvidia_api_key_configured": bool(collect_nvidia_llm_api_keys()),
-        "nvidia_base_url": _nvidia_llm_base_url(),
-        "nvidia_models": {"pro": NVIDIA_LLM_MODEL_PRO, "flash": NVIDIA_LLM_MODEL_FLASH},
+        "openrouter_api_key_configured": bool(collect_openrouter_api_keys()),
+        "openrouter_base_url": OPENROUTER_BASE_URL,
+        "openrouter_models": {"heavy": OPENROUTER_MODEL, "light": OPENROUTER_MODEL_LIGHT},
         "gemini_api_key_configured": bool(_gemini_embedding_api_key()),
         "google_embeddings_enabled": google_embeddings_enabled(),
         "embedding_model_resolved": (
@@ -69,37 +66,33 @@ def smoke_status(request: Request) -> Dict[str, Any]:
     }
 
 
-@router.post("/nvidia/chat")
-def smoke_nvidia_chat(request: Request, body: SmokeNvidiaBody = SmokeNvidiaBody()) -> Dict[str, Any]:
-    """One short chat completion via the same NVIDIA OpenAI-compatible pool as LLMClient."""
+@router.post("/openrouter/chat")
+def smoke_openrouter_chat(request: Request, body: SmokeOpenRouterBody = SmokeOpenRouterBody()) -> Dict[str, Any]:
+    """One short chat completion via the same OpenRouter pool as LLMClient."""
     _verify_smoke_request(request)
     from ..llm_client import (
-        NVIDIA_LLM_MODEL_FLASH,
-        NVIDIA_LLM_MODEL_PRO,
+        OPENROUTER_BASE_URL,
         OPENROUTER_HTTP_REFERER,
+        OPENROUTER_MODEL_LIGHT,
         OPENROUTER_X_TITLE,
-        _nvidia_llm_base_url,
     )
     from ..openrouter_pool import (
-        collect_nvidia_llm_api_keys,
-        get_or_create_llm_openai_compatible_pool,
+        collect_openrouter_api_keys,
+        get_or_create_openrouter_pool,
         resolve_llm_http_provider,
     )
 
-    if resolve_llm_http_provider() != "nvidia":
+    if resolve_llm_http_provider() != "openrouter":
         return {
             "ok": False,
             "skipped": True,
-            "reason": "llm_http_provider_not_nvidia",
+            "reason": "llm_http_provider_not_openrouter",
             "current_provider": resolve_llm_http_provider(),
         }
 
-    keys = collect_nvidia_llm_api_keys()
+    keys = collect_openrouter_api_keys()
     if not keys:
-        return {"ok": False, "skipped": True, "reason": "no_nvidia_api_key"}
-
-    phase = (body.phase or "pro").strip().lower()
-    model = NVIDIA_LLM_MODEL_FLASH if phase == "flash" else NVIDIA_LLM_MODEL_PRO
+        return {"ok": False, "skipped": True, "reason": "no_openrouter_api_key"}
 
     headers: Dict[str, str] = {}
     if OPENROUTER_HTTP_REFERER:
@@ -107,10 +100,11 @@ def smoke_nvidia_chat(request: Request, body: SmokeNvidiaBody = SmokeNvidiaBody(
     if OPENROUTER_X_TITLE:
         headers["X-Title"] = OPENROUTER_X_TITLE
 
+    model = OPENROUTER_MODEL_LIGHT
     try:
-        pool = get_or_create_llm_openai_compatible_pool(_nvidia_llm_base_url(), headers, keys)
+        pool = get_or_create_openrouter_pool(OPENROUTER_BASE_URL, headers)
         if pool is None:
-            return {"ok": False, "skipped": True, "reason": "nvidia_pool_unavailable"}
+            return {"ok": False, "skipped": True, "reason": "openrouter_pool_unavailable"}
 
         client = pool.next_sync()
         t0 = time.perf_counter()
@@ -124,14 +118,13 @@ def smoke_nvidia_chat(request: Request, body: SmokeNvidiaBody = SmokeNvidiaBody(
         text = (completion.choices[0].message.content or "").strip()
         return {
             "ok": True,
-            "provider": "nvidia",
-            "phase": phase,
+            "provider": "openrouter",
             "model": model,
             "reply_preview": text[:500],
             "latency_ms": latency_ms,
         }
     except Exception as e:
-        return {"ok": False, "provider": "nvidia", "error": str(e)[:500]}
+        return {"ok": False, "provider": "openrouter", "error": str(e)[:500]}
 
 
 @router.post("/google/embedding")
