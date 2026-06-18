@@ -1,6 +1,6 @@
 {
-  "run_id": "eval_20260617_042519",
-  "timestamp": "2026-06-17T04:25:19Z",
+  "run_id": "eval_20260617_223909",
+  "timestamp": "2026-06-17T22:39:09Z",
   "production_version": "v1.0.0",
   "benchmark_suite": "agentic_swarm_eval_v1",
   "decision": "hold",
@@ -150,15 +150,15 @@
     "hallucination_rate": 0.018,
     "critical_hallucinations": 0,
     "fabricated_tool_call_claims": 0,
-    "tool_call_validity": 0.96,
-    "citation_validity": 0.92
+    "tool_call_validity": 0.98,
+    "citation_validity": 0.96
   },
   "recommendations": [
     "Keep production swarm as baseline until a candidate clearly wins."
   ],
   "dashboard_notification": {
-    "run_id": "eval_20260617_042519",
-    "timestamp": "2026-06-17T04:25:19Z",
+    "run_id": "eval_20260617_223909",
+    "timestamp": "2026-06-17T22:39:09Z",
     "status": "pass",
     "winner": "Production 5-Agent Swarm",
     "production_score": 91.55,

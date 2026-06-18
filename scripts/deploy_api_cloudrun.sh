@@ -87,8 +87,8 @@ for env_file in .env.gcp backend/.env .env; do
       if [[ "$line" == *"="* ]]; then
         key="${line%%=*}"
         val="${line#*=}"
-        # Skip variables that are already in the core list
-        if [[ "$key" == "SUPABASE_URL" || "$key" == "FINCRAWLER_URL" ]]; then
+        # Skip variables that are already in the core list or handled via Secret Manager
+        if [[ "$key" == "SUPABASE_URL" || "$key" == "FINCRAWLER_URL" || "$key" == "YOUTUBE_API_KEY" ]]; then
           continue
         fi
         # Only append keys that are not already present in ENV_VARS to prevent duplicates
@@ -114,6 +114,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --max-instances 10 \
   --port 8080 \
   --set-env-vars "$ENV_VARS" \
+  --set-secrets "YOUTUBE_API_KEY=YOUTUBE_API_KEY:latest" \
   --quiet
 
 URL="$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')"

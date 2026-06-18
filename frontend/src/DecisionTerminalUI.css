@@ -406,6 +406,12 @@
 .dt-verdict-mini-gauge {
   width: 36px;
   height: 36px;
+  flex-shrink: 0;
+}
+
+.dt-verdict-mini-gauge .dt-semi-gauge.small {
+  width: 100%;
+  height: 100%;
 }
 
 /* Aggregate verdict card */
@@ -629,6 +635,23 @@ h4.dt-metrics-section-title {
   flex-direction: column;
   align-items: center;
   text-align: center;
+}
+
+.dt-semi-gauge {
+  display: block;
+  max-width: 100%;
+}
+
+.dt-semi-gauge.small {
+  width: 130px;
+  height: 78px;
+}
+
+.dt-semi-gauge.large {
+  width: 200px;
+  height: 115px;
+  max-width: 100%;
+  height: auto;
 }
 
 .dt-semi-gauge .dt-gauge-track {

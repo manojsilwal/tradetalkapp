@@ -94,15 +94,22 @@ class TestFundamentalsConnectorTruthfulness(unittest.TestCase):
 
 
 class TestSocialConnectorTruthfulness(unittest.TestCase):
-    def test_rss_failure_raises(self):
+    def test_rss_failure_degrades_gracefully(self):
+        """After retries are exhausted the connector returns an empty-titles
+        result with ``degraded=True`` instead of raising."""
         from backend.connectors.social import SocialSentimentConnector
         import backend.connector_cache as cc
 
         cc._store.clear()
         conn = SocialSentimentConnector()
-        with patch("urllib.request.urlopen", side_effect=OSError("network down")):
-            with self.assertRaises(InsufficientDataError):
-                asyncio.run(conn.fetch_data(ticker="ZZZU"))
+        with patch("urllib.request.urlopen", side_effect=OSError("network down")), \
+             patch("backend.connectors.social._RSS_MAX_RETRIES", 0), \
+             patch("backend.connectors.social._RSS_BACKOFF_BASE_S", 0.0):
+            result = asyncio.run(conn.fetch_data(ticker="ZZZU"))
+        self.assertTrue(result["degraded"])
+        self.assertEqual(result["recent_titles"], [])
+        self.assertEqual(result["counts"]["blogs"], 0)
+        self.assertEqual(result["counts"]["youtube"], 0)
 
 
 class TestPredictorTruthfulness(unittest.TestCase):

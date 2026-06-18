@@ -289,9 +289,15 @@ class SocialSentimentAgentPair(AgentPair):
     async def _analyst_step(self, market_state: MarketState, ticker: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
         data = await self.connector.fetch_data(ticker=ticker)
         titles = data.get("recent_titles", [])
-        
+        degraded = data.get("degraded", False)
+
         if not titles:
-            return {"rationale": "No recent blog or YouTube titles found for sentiment analysis. Defaulting neutral.", "trading_signal": 0}
+            reason = (
+                "Social/news feed unavailable (RSS timeout) — defaulting neutral."
+                if degraded
+                else "No recent blog or YouTube titles found for sentiment analysis. Defaulting neutral."
+            )
+            return {"rationale": reason, "trading_signal": 0}
             
         bull_keywords = ["buy", "bull", "soar", "moon", "squeeze", "surge", "up", "rally", "breakout", "target", "high", "gem"]
         bear_keywords = ["sell", "bear", "crash", "plunge", "down", "dump", "alert", "warning", "drop", "collapse", "fake"]

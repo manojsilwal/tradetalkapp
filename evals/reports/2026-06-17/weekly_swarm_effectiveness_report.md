@@ -1,7 +1,7 @@
 # Weekly Swarm Effectiveness Report
 
 Date: 2026-06-17
-Run ID: eval_20260617_042519
+Run ID: eval_20260617_223909
 Production Version: v1.0.0
 Benchmark Suite: agentic_swarm_eval_v1
 
@@ -60,8 +60,8 @@ Overall Complexity Tax: Low
 Hallucination Rate: 0.018
 Critical Hallucinations: 0
 Fabricated Tool-Call Claims: 0
-Tool-Call Validity: 0.96
-Citation Validity: 0.92
+Tool-Call Validity: 0.98
+Citation Validity: 0.96
 
 ## 7. Dashboard Notification
 

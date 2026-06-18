@@ -1,6 +1,6 @@
 {
-  "run_id": "uiux_eval_20260617_042520",
-  "timestamp": "2026-06-17T04:25:20.389621+00:00",
+  "run_id": "uiux_eval_20260618_041321",
+  "timestamp": "2026-06-18T04:13:21.130060+00:00",
   "app_name": "TradeTalk",
   "version": "dev",
   "status": "pass",
@@ -24,7 +24,7 @@
     "user_satisfaction_trust": 81.16
   },
   "recommendation": "Release can proceed with monitored follow-ups.",
-  "report_path": "/evals/reports/2026-06-17/uiux_behavior_design_report.md",
+  "report_path": "/evals/reports/2026-06-18/uiux_behavior_design_report.md",
   "previous_overall_score": 93.51,
   "overall_score_delta": 0.0
 }
