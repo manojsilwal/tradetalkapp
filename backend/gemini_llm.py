@@ -23,24 +23,53 @@ logger = logging.getLogger(__name__)
 # ``GEMINI_FALLBACK_MODEL`` — legacy alias retained for backward compat; still used
 #                           when a caller does not specify a tier (= heavy default).
 #
-# Both tiers default to ``gemini-2.5-flash`` (stable JSON + AI Studio access).
-# OpenRouter is the primary provider; Gemini is the fallback when OpenRouter fails.
+# Both tiers default to ``gemini-3.5-flash`` (see ai.google.dev/gemini-api/docs/models/gemini-3.5-flash).
+# OpenRouter is the primary provider; Gemini 3.5 Flash is the fallback when OpenRouter fails.
 #
-# When ``GEMINI_PRIMARY=1``, ``LLMClient._provider_generate`` routes every call
-# through ``gemini_simple_completion_sync`` with the tier-appropriate model —
-# burning credits on the Gemini account and skipping OpenRouter entirely.
+# Gemini 3.x models use internal "thinking" tokens that share ``max_output_tokens``.
+# JSON agent calls set ``thinking_level=minimal`` so structured output is not truncated.
 GEMINI_MODEL = os.environ.get(
     "GEMINI_MODEL",
-    os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash"),
+    os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash"),
 ).strip()
 GEMINI_MODEL_LIGHT = os.environ.get(
-    "GEMINI_MODEL_LIGHT", "gemini-2.5-flash"
+    "GEMINI_MODEL_LIGHT", "gemini-3.5-flash"
 ).strip()
 # Kept for callers that still import the old name.
 GEMINI_FALLBACK_MODEL = GEMINI_MODEL
 
 _GUARDRAILS_ON = os.environ.get("GUARDRAILS_ENABLE", "1").strip() != "0"
 _GEMINI_GUARD_URL = "https://generativelanguage.googleapis.com/"
+
+
+def _is_gemini_3_model(model: str) -> bool:
+    m = (model or "").strip().lower()
+    return m.startswith("gemini-3") or "gemini-3." in m
+
+
+def _gemini_thinking_level(*, json_mode: bool) -> str:
+    if json_mode:
+        return "minimal"
+    level = os.environ.get("GEMINI_THINKING_LEVEL", "medium").strip().lower()
+    if level in ("minimal", "low", "medium", "high"):
+        return level
+    return "medium"
+
+
+def _effective_max_output_tokens(model: str, max_tokens: int, *, json_mode: bool) -> int:
+    """Gemini 3.x thinking shares the output budget — keep a floor for JSON roles."""
+    floor = 512 if json_mode and _is_gemini_3_model(model) else 256
+    return max(int(max_tokens), floor)
+
+
+def _apply_thinking_config(cfg: Any, model: str, *, json_mode: bool) -> None:
+    if not _is_gemini_3_model(model):
+        return
+    from google.genai import types
+
+    cfg.thinking_config = types.ThinkingConfig(
+        thinking_level=_gemini_thinking_level(json_mode=json_mode)
+    )
 
 
 def resolve_gemini_model(tier: str = "heavy") -> str:
@@ -247,13 +276,15 @@ def gemini_simple_completion_sync(
     def _call() -> str:
         nonlocal response_text
         client = _genai_client()
+        out_tokens = _effective_max_output_tokens(chosen_model, max_tokens, json_mode=json_mode)
         cfg = types.GenerateContentConfig(
             system_instruction=system or None,
             temperature=temperature,
-            max_output_tokens=max_tokens,
+            max_output_tokens=out_tokens,
         )
         if json_mode:
             cfg.response_mime_type = "application/json"
+        _apply_thinking_config(cfg, chosen_model, json_mode=json_mode)
         response = client.models.generate_content(
             model=chosen_model,
             contents=user,
@@ -312,11 +343,14 @@ def gemini_chat_turn_result_sync(
         cfg_kwargs: Dict[str, Any] = {
             "system_instruction": system or None,
             "temperature": temperature,
-            "max_output_tokens": max_tokens,
+            "max_output_tokens": _effective_max_output_tokens(
+                chosen_model, max_tokens, json_mode=False
+            ),
         }
         if gen_tools:
             cfg_kwargs["tools"] = gen_tools
         config = types.GenerateContentConfig(**cfg_kwargs)
+        _apply_thinking_config(config, chosen_model, json_mode=False)
         contents = _openai_messages_to_genai_contents(openai_messages)
         if not contents:
             return {"ok": False, "error": "empty_messages"}
@@ -436,9 +470,12 @@ def gemini_extract_holdings_from_image(
         contents = [types.Content(role="user", parts=parts)]
         cfg = types.GenerateContentConfig(
             temperature=0.1,
-            max_output_tokens=max_tokens,
+            max_output_tokens=_effective_max_output_tokens(
+                vision_model, max_tokens, json_mode=True
+            ),
             response_mime_type="application/json",
         )
+        _apply_thinking_config(cfg, vision_model, json_mode=True)
         start_time = time.time()
         response = client.models.generate_content(
             model=vision_model,
