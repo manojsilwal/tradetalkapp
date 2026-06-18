@@ -7,6 +7,16 @@ const { test, expect } = require('@playwright/test');
 const { dismissOnboarding, runUnifiedLandingAnalyze } = require('./support');
 
 test.describe('Dashboard navigation persistence', () => {
+  test('Home navigates from Stock Analysis to daily brief', async ({ page }) => {
+    await page.goto('/dashboard?ticker=AAPL');
+    await dismissOnboarding(page);
+    await expect(page.getByRole('heading', { name: 'Stock Analysis' })).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Home' }).click();
+    await expect(page).toHaveURL(/\/$/, { timeout: 10000 });
+    await expect(page.getByTestId('home-page')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('heading', { name: 'Stock Analysis' })).toHaveCount(0);
+  });
+
   test('restores loading progress after leaving and returning to Stock Analysis', async ({ page }) => {
     await page.goto('/dashboard?ticker=AAPL');
     await dismissOnboarding(page);

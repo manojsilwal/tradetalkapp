@@ -387,7 +387,7 @@ export default function DailyBriefUI() {
   // Page-level loading is now handled at the component level to render the shell immediately
 
   return (
-    <div className="dt-wrap fade-in" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
+    <div className="dt-wrap fade-in" data-testid="home-page" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
       {/* Header section */}
       <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'flex-end' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start', flexDirection: 'column' }}>

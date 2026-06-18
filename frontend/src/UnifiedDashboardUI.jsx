@@ -290,9 +290,10 @@ export default function UnifiedDashboardUI() {
   // Re-bind local ticker when returning from another route without ?ticker=
   useEffect(() => {
     if (!hydrated) return;
+    let cancelled = false;
     const fromUrl = searchParams.get('ticker')?.trim().toUpperCase() || '';
     const resolved = resolveDashboardTicker({ urlTicker: fromUrl, sessionActions, analyses });
-    if (!resolved) return;
+    if (!resolved || cancelled) return;
 
     if (resolved !== ticker.trim().toUpperCase()) {
       setTicker(resolved);
@@ -300,6 +301,7 @@ export default function UnifiedDashboardUI() {
     if (fromUrl !== resolved) {
       setSearchParams({ ticker: resolved }, { replace: true });
     }
+    return () => { cancelled = true; };
   }, [hydrated, sessionActions, analyses, searchParams, setSearchParams, ticker]);
 
   // Deep-link: /dashboard?ticker=NVDA from Daily Brief or bookmarks

@@ -14,6 +14,7 @@ import AppAssistantPanel from './AppAssistantPanel'
 import { useAnalysisHistory, analysisStillRunning } from './AnalysisContext.jsx'
 import SessionsTray from './components/SessionsTray'
 import * as sessionStore from './store/sessionStore'
+import DailyBriefUI from './DailyBriefUI'
 
 const ConsumerUI = React.lazy(() => import('./UnifiedDashboardUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
@@ -30,7 +31,6 @@ const AcademyUI = React.lazy(() => import('./AcademyUI'))
 const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
 const ChatUI = React.lazy(() => import('./ChatUI'))
 
-const DailyBriefUI = React.lazy(() => import('./DailyBriefUI'))
 const LlmCallsUI = React.lazy(() => import('./LlmCallsUI'))
 
 /**
@@ -123,10 +123,25 @@ function App() {
 
     const activeTab = ROUTE_TO_KEY[location.pathname] || 'consumer'
 
+    const navigateHome = useCallback(() => {
+        window.__tt_page_context__ = {
+            ...(window.__tt_page_context__ || {}),
+            page: 'home',
+            ticker: null,
+        }
+        navigate('/')
+        setSidebarCollapsed(true)
+        setMoreMenuOpen(false)
+        requestAnimationFrame(() => {
+            const main = document.querySelector('.main-content')
+            if (main) main.scrollTop = 0
+        })
+    }, [navigate])
+
     // Keep page context in sync so AppAssistantPanel knows which page the user is on
     React.useEffect(() => {
         const pageName = location.pathname === '/'
-            ? 'dashboard'
+            ? 'home'
             : location.pathname.replace('/', '').replace('-', ' ')
         window.__tt_page_context__ = {
             ...(window.__tt_page_context__ || {}),
@@ -175,10 +190,25 @@ function App() {
             {/* Premium Sidebar */}
             <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
                 <div className="brand" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <button
+                        type="button"
+                        className="brand-home-link"
+                        onClick={navigateHome}
+                        aria-label="Go to Home"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            cursor: 'pointer',
+                            color: 'inherit',
+                        }}
+                    >
                         <Activity className="brand-icon" size={28} />
                         <h1>TradeTalk</h1>
-                    </div>
+                    </button>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <NotificationBell />
                         <button className="mobile-menu-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label="Toggle navigation menu">
@@ -227,7 +257,7 @@ function App() {
                     </div>
                     <button
                         className={`nav-btn ${activeTab === 'daily_brief' ? 'active' : ''}`}
-                        onClick={() => { navigate('/'); setSidebarCollapsed(true); }}
+                        onClick={navigateHome}
                         aria-current={location.pathname === '/' ? 'page' : undefined}
                     >
                         <Home size={20} />
@@ -318,7 +348,7 @@ function App() {
             <main className="main-content">
                 <div className="content-wrapper fade-in">
                     <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>Loading...</div>}>
-                        <Routes>
+                        <Routes key={location.pathname}>
                             <Route path="/" element={<DailyBriefUI />} />
                             <Route path="/dashboard" element={<ConsumerUI />} />
                             <Route path="/decision-terminal" element={<DecisionTerminalUI />} />
@@ -395,7 +425,7 @@ function App() {
             <nav className="mobile-bottom-nav">
                 <button
                     className={`mobile-bottom-nav-btn ${activeTab === 'daily_brief' && !moreMenuOpen ? 'active' : ''}`}
-                    onClick={() => { navigate('/'); setMoreMenuOpen(false); }}
+                    onClick={navigateHome}
                 >
                     <Home size={22} />
                     <span>Home</span>
