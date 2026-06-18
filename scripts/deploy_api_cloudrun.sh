@@ -3,6 +3,7 @@
 #
 # Backend is NOT deployed to Render. Set Vercel VITE_API_BASE_URL to the service URL printed here.
 # Add API keys / secrets in Cloud Run → Variables & secrets (or --update-secrets on redeploy).
+# GEMINI_API_KEY and YOUTUBE_API_KEY: bash scripts/upsert_gcp_secret.sh NAME backend/.env
 #
 # Usage:
 #   bash scripts/deploy_api_cloudrun.sh
@@ -94,8 +95,8 @@ _is_core_env_key() {
 }
 
 # Load keys from local env files (.env.gcp → backend/.env → .env).
-# Later files override earlier ones. Empty values are never deployed — an empty
-# GEMINI_API_KEY= line in .env.gcp must not block a real key in backend/.env.
+# Later files override earlier ones. Empty values are never deployed.
+# GEMINI_API_KEY and YOUTUBE_API_KEY are mounted from Secret Manager (--set-secrets).
 for env_file in .env.gcp backend/.env .env; do
   if [[ -f "$env_file" ]]; then
     echo "Found local config $env_file, merging keys..."
@@ -107,7 +108,7 @@ for env_file in .env.gcp backend/.env .env; do
       if [[ "$line" == *"="* ]]; then
         key="${line%%=*}"
         val="${line#*=}"
-        if [[ "$key" == "SUPABASE_URL" || "$key" == "FINCRAWLER_URL" || "$key" == "YOUTUBE_API_KEY" ]]; then
+        if [[ "$key" == "SUPABASE_URL" || "$key" == "FINCRAWLER_URL" || "$key" == "YOUTUBE_API_KEY" || "$key" == "GEMINI_API_KEY" ]]; then
           continue
         fi
         if _is_core_env_key "$key"; then
@@ -137,7 +138,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --max-instances 10 \
   --port 8080 \
   --set-env-vars "$ENV_VARS" \
-  --set-secrets "YOUTUBE_API_KEY=YOUTUBE_API_KEY:latest" \
+  --set-secrets "YOUTUBE_API_KEY=YOUTUBE_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest" \
   --quiet
 
 URL="$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')"

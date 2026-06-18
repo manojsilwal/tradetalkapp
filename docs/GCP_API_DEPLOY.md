@@ -23,8 +23,14 @@ Requires `gcloud` auth and IAM to build to `gcr.io/tradetalkapp-492904/tradetalk
    Canonical frontend URL: `https://frontend-manojsilwals-projects.vercel.app`  
    Deploy: `bash scripts/deploy_vercel.sh` (do not use a second Vercel project).
 3. **GitHub** → Secrets → `TRADETALK_API_BASE` = same URL (for cron / wake workflows).
-4. **Cloud Run** → `tradetalk-api` → Variables & secrets — add secrets that were on Render:
-   - `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `FINCRAWLER_KEY`, `PIPELINE_CRON_SECRET`, `POSTGRES_PASSWORD`, etc.
+4. **Cloud Run** → `tradetalk-api` → Variables & secrets — add remaining secrets that were on Render:
+   - `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`, `FINCRAWLER_KEY`, `PIPELINE_CRON_SECRET`, `POSTGRES_PASSWORD`, etc.
+   - **`GEMINI_API_KEY`** and **`YOUTUBE_API_KEY`** are mounted from **GCP Secret Manager** (not plain env vars). Create or rotate with:
+     ```bash
+     bash scripts/upsert_gcp_secret.sh GEMINI_API_KEY backend/.env
+     bash scripts/upsert_gcp_secret.sh YOUTUBE_API_KEY backend/.env
+     bash scripts/deploy_api_cloudrun.sh --skip-build
+     ```
    - **Auth (required for sign-in):** `JWT_SECRET` (strong random), `GOOGLE_CLIENT_ID` (OAuth Web client). Set `PORTFOLIO_STORAGE=postgres` (deploy script default) so users, watchlists, and chat history persist on Cloud SQL.
    - **Email 2FA:** `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (verified sender domain in Resend).
    - **Frontend (Vercel):** `VITE_GOOGLE_CLIENT_ID` = same as `GOOGLE_CLIENT_ID`; keep `VITE_AUTH_REQUIRED=false` for public browsing with optional sign-in.
