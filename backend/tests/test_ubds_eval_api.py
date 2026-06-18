@@ -8,12 +8,20 @@ os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from backend.auth import get_current_admin_user, UserInfo
 
 
 class TestUbdsEvalApi(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        app.dependency_overrides[get_current_admin_user] = lambda: UserInfo(
+            id="admin-id", email="silwal.saroj44@gmail.com", name="Admin User", avatar=""
+        )
         cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        app.dependency_overrides.pop(get_current_admin_user, None)
 
     def test_run_and_fetch_report(self) -> None:
         r = self.client.post("/admin/ubds/run", json={"mode": "fixture"})
@@ -33,3 +41,4 @@ class TestUbdsEvalApi(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
