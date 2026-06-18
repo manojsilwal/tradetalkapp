@@ -993,7 +993,7 @@ async def run_decision_terminal_request(
     momentum_task = asyncio.ensure_future(_safe_momentum())
 
     try:
-        analysis, poly_raw, ext, spot_quote, scorecard_summary = await asyncio.gather(
+        analysis, poly_raw, ext, spot_quote, scorecard_summary, momentum_result = await asyncio.gather(
             execute_analyze(
                 t, credit_stress, auth_user,
                 award_deep_analysis_xp=False, debate_data_task=debate_data_task,

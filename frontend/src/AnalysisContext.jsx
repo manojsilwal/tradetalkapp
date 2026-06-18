@@ -9,7 +9,7 @@ import { _abortControllers } from './components/SessionsTray';
 const MAX_CONCURRENT_ANALYSES = 3;
 
 const FAST_TIMEOUT_MS = 30000;
-const LLM_TIMEOUT_MS = 120000;
+const LLM_TIMEOUT_MS = 180000; // 180s — /decision-terminal consolidates swarm+debate+DT in one call (~90-150s on cold GCP)
 const LIVE_POLL_FAST_MS = 30000;
 const LIVE_POLL_SLOW_MS = 5 * 60 * 1000;
 const LIVE_POLL_ENABLED = (() => {
