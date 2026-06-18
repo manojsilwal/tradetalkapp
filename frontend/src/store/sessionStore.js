@@ -36,8 +36,12 @@ const resultsDB = createStore('tradetalk-sessions', 'results');
 // ── In-memory mirror ──────────────────────────────────────────────────────────
 const _actions = new Map(); // actionId → ActionRecord
 const _listeners = new Set(); // () => void
+let _snapshotVersion = 0;
+let _cachedSnapshotVersion = -1;
+let _cachedSnapshot = [];
 
 function _notify() {
+    _snapshotVersion += 1;
     _listeners.forEach((fn) => fn());
 }
 
@@ -89,7 +93,12 @@ export function subscribe(listener) {
 
 /** Get a snapshot of all current actions (as a plain array). */
 export function getSnapshot() {
-    return Array.from(_actions.values());
+    // useSyncExternalStore requires referential stability between notifications.
+    if (_cachedSnapshotVersion !== _snapshotVersion) {
+        _cachedSnapshotVersion = _snapshotVersion;
+        _cachedSnapshot = Array.from(_actions.values());
+    }
+    return _cachedSnapshot;
 }
 
 /** Get a single action by ID. */
