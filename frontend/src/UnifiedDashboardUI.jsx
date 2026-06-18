@@ -4,6 +4,8 @@ import { TrendingUp, Shield, CircleDollarSign, Wallet, PieChart, Scale, CheckCir
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, LineChart as ReLineChart, Line, Legend } from 'recharts';
 import { API_BASE_URL } from './api';
 import { useAnalysisHistory } from './AnalysisContext';
+import { useSession } from './SessionContext';
+import * as sessionStore from './store/sessionStore';
 import { SP500_TICKERS } from './sp500';
 import { StaleValue, FreshnessBadge, LastUpdated } from './components/Freshness';
 import { formatFreshnessDateTime, cleanSource } from './freshness';
@@ -130,9 +132,28 @@ function fmtPct(value) {
   return `${Number(value).toFixed(1)}%`;
 }
 
+/** Pick ticker: URL param → running session → in-flight analysis in context. */
+function resolveDashboardTicker({ urlTicker, sessionActions, analyses }) {
+  const fromUrl = urlTicker?.trim().toUpperCase();
+  if (fromUrl) return fromUrl;
+
+  const runningSession = sessionActions.find(
+    (a) => a.type === 'analysis' && a.status === 'running' && a.meta?.ticker,
+  );
+  if (runningSession?.meta?.ticker) {
+    return runningSession.meta.ticker.trim().toUpperCase();
+  }
+
+  const loadingTicker = Object.keys(analyses).find(
+    (sym) => analyses[sym]?.status === 'loading',
+  );
+  return loadingTicker || '';
+}
+
 export default function UnifiedDashboardUI() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { analyses, analyzeTicker: contextAnalyzeTicker, recentAnalyses } = useAnalysisHistory();
+  const { actions: sessionActions, hydrated } = useSession();
   const lastAutoTicker = useRef('');
   const [ticker, setTicker] = useState(() => {
     const param = searchParams.get('ticker')?.trim().toUpperCase();
@@ -266,13 +287,42 @@ export default function UnifiedDashboardUI() {
     contextAnalyzeTicker(sym, forceRefresh);
   }, [ticker, setSearchParams, contextAnalyzeTicker]);
 
+  // Re-bind local ticker when returning from another route without ?ticker=
+  useEffect(() => {
+    if (!hydrated) return;
+    const fromUrl = searchParams.get('ticker')?.trim().toUpperCase() || '';
+    const resolved = resolveDashboardTicker({ urlTicker: fromUrl, sessionActions, analyses });
+    if (!resolved) return;
+
+    if (resolved !== ticker.trim().toUpperCase()) {
+      setTicker(resolved);
+    }
+    if (fromUrl !== resolved) {
+      setSearchParams({ ticker: resolved }, { replace: true });
+    }
+  }, [hydrated, sessionActions, analyses, searchParams, setSearchParams, ticker]);
+
   // Deep-link: /dashboard?ticker=NVDA from Daily Brief or bookmarks
   useEffect(() => {
+    if (!hydrated) return;
     const fromUrl = searchParams.get('ticker')?.trim().toUpperCase();
     if (!fromUrl || fromUrl === lastAutoTicker.current) return;
+
+    const alreadyLoading = analyses[fromUrl]?.status === 'loading';
+    const runningSession = sessionStore.findAction('analysis', 'ticker', fromUrl);
+    const sessionRunning = runningSession?.status === 'running';
+
     lastAutoTicker.current = fromUrl;
+
+    if (alreadyLoading || sessionRunning) {
+      if (ticker.trim().toUpperCase() !== fromUrl) {
+        setTicker(fromUrl);
+      }
+      return;
+    }
+
     analyzeTicker(fromUrl);
-  }, [searchParams, analyzeTicker]);
+  }, [searchParams, analyzeTicker, hydrated, analyses, ticker]);
 
   // Decision Terminal Extracted Variables
   const hasDecisionData = decisionData != null;
@@ -543,10 +593,16 @@ export default function UnifiedDashboardUI() {
 
         {/* 2. STOCK CHART CENTER PANEL */}
         <section className="dt-panel dt-area-chart">
-          <div className="dt-chart-breadcrumb">STOCKS &gt; US &gt; <span>{searchUpper || 'AAPL'}</span></div>
+          <div className="dt-chart-breadcrumb">
+            STOCKS &gt; US &gt; <span>{searchUpper || '—'}</span>
+          </div>
           <div className="dt-company-header">
             <h1 className="dt-company-name">
-              {fundamentalsLoading ? 'Loading...' : (fundamentalsData?.company_info?.company_name || searchUpper || 'AAPL')}
+              {!searchUpper
+                ? 'Select a ticker'
+                : fundamentalsLoading
+                  ? 'Loading...'
+                  : (fundamentalsData?.company_info?.company_name || searchUpper)}
             </h1>
             {!fundamentalsLoading && (fundamentalsData?.company_info || spot != null) && (
               <div className="dt-price-display">

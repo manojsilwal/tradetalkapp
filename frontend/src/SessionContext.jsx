@@ -54,7 +54,7 @@ function _subscribeToasts(listener) {
 }
 
 // ── Provider ──────────────────────────────────────────────────────────────────
-export function SessionProvider({ children, onResume }) {
+export function SessionProvider({ children, onResume, shouldResumeAnalysis }) {
     const [hydrated, setHydrated] = useState(false);
     const resumedRef = useRef(new Set());
 
@@ -76,10 +76,14 @@ export function SessionProvider({ children, onResume }) {
                 for (const action of running) {
                     resumedRef.current.add(action.id);
                     if (action.type === 'analysis' && action.meta?.ticker && onResume) {
-                        addToast(`Resuming ${action.meta.ticker} analysis…`, 'info', 5000);
+                        const sym = action.meta.ticker.trim().toUpperCase();
+                        if (shouldResumeAnalysis && !shouldResumeAnalysis(sym, action.id)) {
+                            continue;
+                        }
+                        addToast(`Resuming ${sym} analysis…`, 'info', 5000);
                         // Slight delay so AnalysisContext is fully mounted
                         setTimeout(() => {
-                            onResume(action.meta.ticker, action.id);
+                            onResume(sym, action.id);
                         }, 500);
                     }
                 }
@@ -87,7 +91,7 @@ export function SessionProvider({ children, onResume }) {
         }
         init();
         return () => { cancelled = true; };
-    }, [onResume]);
+    }, [onResume, shouldResumeAnalysis]);
 
     return (
         <SessionContext.Provider value={{ hydrated }}>

@@ -58,6 +58,8 @@ export function AnalysisProvider({ children }) {
     const analysesRef = useRef({});
     // Maps ticker → session action ID (for sessionStore integration)
     const sessionActionIds = useRef({});
+    // Synchronous per-ticker lock so concurrent analyzeTicker calls cannot double-start
+    const inFlightRef = useRef({});
 
     useEffect(() => {
         analysesRef.current = analyses;
@@ -349,6 +351,13 @@ export function AnalysisProvider({ children }) {
         const sym = tickerSymbol.trim().toUpperCase();
         if (!sym) return;
 
+        if (inFlightRef.current[sym] && !forceRefresh) {
+            if (!_resumedActionId) {
+                addToast(`${sym} is already being analyzed`, 'info', 3000);
+            }
+            return;
+        }
+
         // Check if currently fetching
         const current = analysesRef.current[sym];
         if (current?.status === 'loading' && !forceRefresh) {
@@ -385,17 +394,23 @@ export function AnalysisProvider({ children }) {
         }
 
         stopDashboardPoller();
+        inFlightRef.current[sym] = true;
 
-        // Create a session action record (or reuse resumed one)
+        // Create a session action record (or reuse resumed / running one)
         let sessionActionId = _resumedActionId;
         if (!sessionActionId) {
-            const action = sessionStore.createAction({
-                type: 'analysis',
-                label: `${sym} Analysis`,
-                resumable: true,
-                meta: { ticker: sym },
-            });
-            sessionActionId = action.id;
+            const existingRunning = sessionStore.findAction('analysis', 'ticker', sym);
+            if (existingRunning?.status === 'running') {
+                sessionActionId = existingRunning.id;
+            } else {
+                const action = sessionStore.createAction({
+                    type: 'analysis',
+                    label: `${sym} Analysis`,
+                    resumable: true,
+                    meta: { ticker: sym },
+                });
+                sessionActionId = action.id;
+            }
         }
         sessionActionIds.current[sym] = sessionActionId;
 
@@ -472,7 +487,12 @@ export function AnalysisProvider({ children }) {
             }
         } catch (_) { /* continue */ }
 
-        if (validationFailed) return;
+        if (validationFailed) {
+            delete inFlightRef.current[sym];
+            _abortControllers.delete(sessionActionId);
+            await sessionStore.failAction(sessionActionId, 'Ticker validation failed');
+            return;
+        }
 
         let successCount = 0;
         let lastErr = null;
@@ -732,9 +752,18 @@ export function AnalysisProvider({ children }) {
                     [sym]: updated
                 };
             });
+        }).finally(() => {
+            delete inFlightRef.current[sym];
         });
 
     }, [addAnalysis, getAnalysisState, startDashboardPoller, stopDashboardPoller]);
+
+    const shouldResumeAnalysis = useCallback((ticker, _actionId) => {
+        const sym = ticker.trim().toUpperCase();
+        if (inFlightRef.current[sym]) return false;
+        if (analysesRef.current[sym]?.status === 'loading') return false;
+        return true;
+    }, []);
 
     // Resume an analysis that was interrupted (e.g. by page refresh)
     // Called by SessionProvider on mount when running actions are found in IndexedDB
@@ -935,7 +964,7 @@ export function AnalysisProvider({ children }) {
             recentAnalyses, recentDebates,
             addAnalysis, addDebate,
             getLastAnalysis, getLastDebate,
-            analyses, analyzeTicker, cancelAnalysis, resumeAnalysis,
+            analyses, analyzeTicker, cancelAnalysis, resumeAnalysis, shouldResumeAnalysis,
             dailyBriefState, loadDailyBrief, startDailyBriefDeepRefresh, setDailyBriefActiveTab,
             macroState, loadMacro, setMacroFlowPeriod,
         }}>

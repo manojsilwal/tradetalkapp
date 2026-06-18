@@ -14,9 +14,9 @@ import { GOOGLE_CLIENT_ID } from './api.js'
  * and pass it down to SessionProvider's onResume callback.
  */
 function AppWithSession() {
-    const { resumeAnalysis } = useAnalysisHistory();
+    const { resumeAnalysis, shouldResumeAnalysis } = useAnalysisHistory();
     return (
-        <SessionProvider onResume={resumeAnalysis}>
+        <SessionProvider onResume={resumeAnalysis} shouldResumeAnalysis={shouldResumeAnalysis}>
             <App />
         </SessionProvider>
     );

@@ -13,6 +13,7 @@ import { API_BASE_URL, getToken, apiFetch } from './api'
 import AppAssistantPanel from './AppAssistantPanel'
 import { useAnalysisHistory, analysisStillRunning } from './AnalysisContext.jsx'
 import SessionsTray from './components/SessionsTray'
+import * as sessionStore from './store/sessionStore'
 
 const ConsumerUI = React.lazy(() => import('./UnifiedDashboardUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
@@ -73,11 +74,24 @@ const DEVELOPER_ROUTES = [
     { path: '/system-diagrams', key: 'systemdiagrams', label: 'System Diagrams', icon: Network },
 ]
 
+function resolveDashboardPath(analyses) {
+    const sessionRunning = sessionStore.getSnapshot().find(
+        (a) => a.type === 'analysis' && a.status === 'running' && a.meta?.ticker,
+    );
+    const loadingTicker = Object.keys(analyses || {}).find(
+        (sym) => analyses[sym]?.status === 'loading',
+    );
+    const ctxTicker = typeof window !== 'undefined' ? window.__tt_page_context__?.ticker : null;
+    const ticker = sessionRunning?.meta?.ticker || loadingTicker || ctxTicker;
+    return ticker ? `/dashboard?ticker=${String(ticker).trim().toUpperCase()}` : '/dashboard';
+}
+
 function App() {
     const { user, login, logout } = useAuth()
     const isAdmin = Boolean(user?.is_admin)
     const navigate = useNavigate()
     const location = useLocation()
+    const { analyses } = useAnalysisHistory()
     const [newBadges, setNewBadges] = useState([])
     const [xpFlash, setXpFlash]    = useState(null)
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
@@ -130,6 +144,11 @@ function App() {
             setTimeout(() => setXpFlash(null), 2000)
         }
     }, [])
+
+    const navigateToDashboard = useCallback(() => {
+        navigate(resolveDashboardPath(analyses))
+        setSidebarCollapsed(true)
+    }, [navigate, analyses])
 
     return (
         <div className="app-container">
@@ -217,7 +236,7 @@ function App() {
 
                     <button
                         className={`nav-btn ${activeTab === 'consumer' ? 'active' : ''}`}
-                        onClick={() => { navigate('/dashboard'); setSidebarCollapsed(true); }}
+                        onClick={navigateToDashboard}
                         aria-current={location.pathname === '/dashboard' ? 'page' : undefined}
                     >
                         <LayoutDashboard size={20} />
@@ -383,7 +402,7 @@ function App() {
                 </button>
                 <button
                     className={`mobile-bottom-nav-btn ${activeTab === 'consumer' && !moreMenuOpen ? 'active' : ''}`}
-                    onClick={() => { navigate('/dashboard'); setMoreMenuOpen(false); }}
+                    onClick={() => { navigate(resolveDashboardPath(analyses)); setMoreMenuOpen(false); }}
                 >
                     <BarChart2 size={22} />
                     <span>Analysis</span>
