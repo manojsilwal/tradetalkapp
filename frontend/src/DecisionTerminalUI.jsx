@@ -296,12 +296,14 @@ export default function DecisionTerminalUI() {
                       <span className="dt-models-name">
                         <ProvenanceTip provenance={m.provenance} label={`${m.name}:`} />
                       </span>
-                      <span className={m.available && m.fair_value_usd != null ? 'dt-models-val' : 'dt-models-na'}>
+                      <span className={m.available && (m.fair_value_usd != null || m.momentum_score != null) ? 'dt-models-val' : 'dt-models-na'}>
                         {m.available && m.fair_value_usd != null
                           ? `$${Number(m.fair_value_usd).toFixed(0)}`
-                          : hasData
-                            ? '—'
-                            : '—'}
+                          : m.available && m.momentum_score != null
+                            ? `${Number(m.momentum_score).toFixed(0)}/100`
+                            : hasData
+                              ? '—'
+                              : '—'}
                       </span>
                     </li>
                   ))}

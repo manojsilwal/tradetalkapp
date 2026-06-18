@@ -9,7 +9,6 @@ Pure functions — no I/O. Unit convention policy:
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -66,12 +65,6 @@ def format_usd_compact(n: Optional[float]) -> str:
     if ax >= 1e3:
         return f"${x / 1e3:.2f}K"
     return f"${x:.2f}"
-
-
-def graham_fair_value(eps: float, book_per_share: float) -> Optional[float]:
-    if eps and eps > 0 and book_per_share and book_per_share > 0:
-        return float(math.sqrt(22.5 * eps * book_per_share))
-    return None
 
 
 def verdict_tone(label: str) -> str:

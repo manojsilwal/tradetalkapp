@@ -317,7 +317,7 @@ export default function ConsumerUI() {
                                         { title: "Free Cash Flow Yield", data: metricsData.fcf_yield, icon: <DollarSign size={16} />, isGood: (metricsData.fcf_yield?.trend || '').includes('Up'), color: 'var(--accent-green)' },
                                         { title: "EV / EBIT", data: metricsData.ev_ebit, icon: <TrendingDown size={16} />, isGood: (metricsData.ev_ebit?.trend || '').includes('Down'), color: 'var(--accent-blue)' },
                                         { title: "Price to Tangible Book", data: metricsData.price_tangible_book, icon: <Activity size={16} />, isGood: (metricsData.price_tangible_book?.trend || '').includes('Down'), color: '#00D4FF' },
-                                        { title: "Margin of Safety", data: metricsData.margin_of_safety, icon: <ShieldAlert size={16} />, isGood: (metricsData.margin_of_safety?.trend || '').includes('Better'), color: 'var(--accent-purple)' }
+                                        { title: "Momentum Quality", data: metricsData.momentum_quality, icon: <ShieldAlert size={16} />, isGood: (metricsData.momentum_quality?.current || '').includes('Strong') || (metricsData.momentum_quality?.current || '').includes('Elite'), color: 'var(--accent-purple)' }
                                     ]}
                                     renderSummary={(metrics) => (
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px' }}>
@@ -478,9 +478,9 @@ const METRIC_INSIGHTS = {
         how: 'Stock Price ÷ (Total Assets − Intangibles − Liabilities) per share.',
         icon: '🏗️'
     },
-    'Margin of Safety': {
-        what: 'The discount between the stock\'s current price and its estimated fair value. Bigger discount = more room for error in your investment thesis.',
-        how: 'Estimated intrinsic value (Graham Number) vs. current market price, expressed as a percentage discount.',
+    'Momentum Quality': {
+        what: 'Composite momentum score combining price trend, relative strength vs market/sector, capital flow, risk-adjusted quality, and regime support — minus downside exposure penalty.',
+        how: 'Decision Quality = Momentum Pricing Score − (Downside Exposure × 0.30). Research / screening only — not investment advice.',
         icon: '🛡️'
     },
     'ROIC / ROE (Moat)': {

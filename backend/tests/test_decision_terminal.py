@@ -5,10 +5,10 @@ import unittest
 from backend.decision_terminal import (
     score_polymarket_relevance,
     _fuse_headline_verdict,
-    _graham_fair_value,
     _strip_non_json_floats,
     _decision_terminal_payload_json_safe,
     _build_provider_audit,
+    build_decision_terminal_payload,
 )
 from backend.schemas import (
     DebateResult,
@@ -146,11 +146,76 @@ class TestPolymarketRelevance(unittest.TestCase):
         self.assertLess(s, 0.45)
 
 
-class TestGraham(unittest.TestCase):
-    def test_graham(self):
-        g = _graham_fair_value(5.0, 20.0)
-        self.assertIsNotNone(g)
-        self.assertGreater(g, 0)
+class TestMomentumValuationPanel(unittest.IsolatedAsyncioTestCase):
+    async def test_momentum_model_entry_when_data_available(self):
+        from unittest.mock import AsyncMock, patch
+        import pandas as pd
+
+        fake_df = pd.DataFrame(
+            {
+                "Open": [100.0] * 200,
+                "High": [101.0] * 200,
+                "Low": [99.0] * 200,
+                "Close": [100.0 + i * 0.1 for i in range(200)],
+                "Volume": [1e6] * 200,
+            }
+        )
+        mom_summary = {
+            "momentum_pricing_score": 82.5,
+            "downside_exposure_score": 45.0,
+            "decision_quality_score": 69.0,
+            "classification": "Strong Momentum Candidate",
+            "crash_risk": "Medium",
+            "subscores": {},
+            "downside": {},
+            "risk_flags": [],
+            "agent_summary": "test",
+        }
+
+        with patch(
+            "backend.connectors.momentum_data.fetch_momentum_inputs",
+            new=AsyncMock(return_value=(fake_df, fake_df, fake_df, {"ticker": "AAPL"})),
+        ), patch(
+            "backend.momentum_model.analyze_momentum",
+            return_value=mom_summary,
+        ):
+            payload = await build_decision_terminal_payload(
+                "AAPL",
+                SwarmConsensus(
+                    ticker="AAPL",
+                    macro_state=MarketState(market_regime=MarketRegime.BULL_NORMAL),
+                    global_signal=1,
+                    global_verdict="BUY",
+                    confidence=0.7,
+                    factors={},
+                ),
+                DebateResult(
+                    ticker="AAPL",
+                    arguments=[],
+                    verdict="BUY",
+                    consensus_confidence=0.8,
+                    moderator_summary="",
+                    bull_score=3,
+                    bear_score=1,
+                    neutral_score=1,
+                ),
+                {
+                    "current_price": 150.0,
+                    "roe": 20.0,
+                    "pe_ratio": 25.0,
+                    "sector": "Technology",
+                    "beta": 1.1,
+                },
+                {},
+                {"trailingEps": 5.0},
+                None,
+            )
+
+        momentum_models = [m for m in payload.valuation.models if m.name == "Momentum"]
+        self.assertEqual(len(momentum_models), 1)
+        self.assertTrue(momentum_models[0].available)
+        self.assertEqual(momentum_models[0].momentum_score, 82.5)
+        self.assertEqual(momentum_models[0].momentum_summary["classification"], "Strong Momentum Candidate")
 
 
 class TestProviderAudit(unittest.TestCase):
@@ -178,6 +243,7 @@ class TestProviderAudit(unittest.TestCase):
         )
         self.assertEqual(audit["debate_market_pipeline"]["spot_provider_family"], "stooq")
         self.assertEqual(audit["valuation"]["spot_and_momentum_inputs"], "stooq")
+        self.assertEqual(audit["valuation"]["fair_value_models"]["Momentum"], "composite_momentum_model")
         self.assertEqual(audit["verdict"]["prediction_market"]["provider"], "polymarket")
         self.assertEqual(audit["roadmap"]["scenario_prices_source"], "heuristic")
 

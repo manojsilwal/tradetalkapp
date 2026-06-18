@@ -5,7 +5,6 @@ from backend.metric_primitives import (
     fcf_yield_decimal,
     fcf_yield_percent,
     format_usd_compact,
-    graham_fair_value,
     normalize_gross_margin,
     roic_proxy,
     verdict_tone,
@@ -42,12 +41,6 @@ class TestMetricPrimitives(unittest.TestCase):
         self.assertEqual(format_usd_compact(None), "N/A")
         self.assertEqual(format_usd_compact(1_500_000_000), "$1.50B")
         self.assertEqual(format_usd_compact(2_500_000), "$2.50M")
-
-    def test_graham_fair_value(self):
-        v = graham_fair_value(5.0, 20.0)
-        self.assertIsNotNone(v)
-        self.assertAlmostEqual(v, (22.5 * 5.0 * 20.0) ** 0.5)
-        self.assertIsNone(graham_fair_value(0, 20))
 
     def test_verdict_tone(self):
         self.assertEqual(verdict_tone("STRONG BUY"), "strong_positive")

@@ -151,26 +151,22 @@ class InvestorMetricsConnector(DataConnector):
                 buyback_yield_pct = (abs(buyback_amount) / market_cap) * 100 if market_cap > 0 else 0
             shareholder_yield = dividend_yield_pct + buyback_yield_pct
             
-            # --- 10. Margin of Safety ---
-            # Calculated intrinsic value discount. 
-            # We'll calculate a crude Graham Number as an intrinsic value proxy
-            from backend.metric_primitives import graham_fair_value as _graham
-            from backend.connectors.spot import resolve_spot
+            # --- 10. Momentum Quality (composite momentum model) ---
+            momentum_quality_score: Optional[float] = None
+            momentum_classification = "N/A"
+            try:
+                from backend.connectors.momentum_data import fetch_momentum_inputs_sync
+                from backend.momentum_model import analyze_momentum
 
-            eps = _num(info.get("trailingEps"))
-            bps = _num(info.get("bookValue"))
-            spot_q = resolve_spot(ticker_sym)
-            current_price = spot_q.price if spot_q else _num(info.get("currentPrice"))
-            
-            graham_number = 0
-            margin_of_safety = 0
-            if eps > 0 and bps > 0:
-                g_num = _graham(eps, bps)
-                graham_number = g_num or 0
-                if current_price and current_price > 0 and graham_number:
-                    discount = (graham_number - current_price) / graham_number
-                    margin_of_safety = discount * 100
-                    
+                stock_df, spy_df, sector_df, mom_meta = fetch_momentum_inputs_sync(
+                    ticker_sym, info
+                )
+                mom = analyze_momentum(stock_df, spy_df, sector_df, mom_meta)
+                momentum_quality_score = mom.get("decision_quality_score")
+                momentum_classification = mom.get("classification", "N/A")
+            except Exception:
+                momentum_quality_score = None
+                momentum_classification = "N/A"
             def format_val(val, suffix="", is_currency=False):
                 if val == 0 or val is None: return "N/A"
                 if is_currency:
@@ -208,8 +204,12 @@ class InvestorMetricsConnector(DataConnector):
                 "price_tangible_book": metric_entry(format_val(ptb, "x")),
                 "gross_margins": metric_entry(format_val(gross_margin, "%")),
                 "shareholder_yield": metric_entry(format_val(shareholder_yield, "%")),
-                "margin_of_safety": metric_entry(
-                    format_val(margin_of_safety, "% Discount") if margin_of_safety > 0 else "0% (Premium)"
+                "momentum_quality": metric_entry(
+                    (
+                        f"{momentum_quality_score:.1f}/100 — {momentum_classification}"
+                        if momentum_quality_score is not None
+                        else "N/A"
+                    )
                 ),
                 # Explicit keys used by UnifiedDashboardUI "Key Metrics Activity"
                 "momentum_rsi": {

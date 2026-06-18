@@ -443,6 +443,31 @@ class TerminalValuationModel(BaseModel):
     fair_value_usd: Optional[float] = None
     available: bool = True
     provenance: TerminalFieldProvenance
+    momentum_score: Optional[float] = Field(
+        default=None,
+        description="0-100 composite momentum pricing score when name is Momentum",
+    )
+    momentum_summary: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Full momentum readout dict for UI rendering",
+    )
+
+
+class MomentumReadout(BaseModel):
+    """Structured momentum model output (research / decision-support only)."""
+
+    ticker: str
+    as_of_date: str
+    momentum_pricing_score: float
+    downside_exposure_score: float
+    decision_quality_score: float
+    classification: str
+    crash_risk: str
+    subscores: Dict[str, float] = Field(default_factory=dict)
+    downside: Dict[str, Any] = Field(default_factory=dict)
+    risk_flags: List[str] = Field(default_factory=list)
+    agent_summary: str = ""
+    partial_mode: bool = False
 
 
 class TerminalValuationPanel(BaseModel):

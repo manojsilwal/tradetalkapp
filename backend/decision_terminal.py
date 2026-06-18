@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .metric_primitives import (
     format_usd_compact,
-    graham_fair_value,
     normalize_gross_margin,
     roic_proxy,
 )
@@ -188,10 +187,6 @@ def _get_historical_quality_metrics(ticker: str) -> dict:
     except Exception as e:
         logger.warning("[decision_terminal] historical quality failed for %s: %s", ticker, e)
         return {}
-
-
-def _graham_fair_value(eps: float, book_per_share: float) -> Optional[float]:
-    return graham_fair_value(eps, book_per_share)
 
 
 def _format_usd_compact(n: Optional[float]) -> str:
@@ -387,7 +382,7 @@ def _build_provider_audit(
             "extended_snapshot_for_multiples_and_quality": "yfinance_ticker_info",
             "fair_value_models": {
                 "DCF": "not_implemented",
-                "Graham": "yfinance",
+                "Momentum": "composite_momentum_model",
                 "Multiples": "heuristic",
             },
             "historical_cagr_from_data_lake": hist_cagr_present,
@@ -479,6 +474,7 @@ async def build_decision_terminal_payload(
                 except (TypeError, ValueError):
                     continue
     hist_cagr = _get_historical_cagr_3y(t)
+    hist_quality = _get_historical_quality_metrics(t)
 
     roe_val = debate_data.get("roe")
     if roe_val is None and hist_quality.get("roe") is not None:
@@ -494,16 +490,31 @@ async def build_decision_terminal_payload(
     trailing_eps = ext.get("trailingEps") or None
     if trailing_eps is not None:
         trailing_eps = float(trailing_eps)
-    book_ps = ext.get("bookValue")
-    if book_ps is not None:
-        book_ps = float(book_ps)
 
     pe = debate_data.get("pe_ratio")
     pe_f = float(pe) if pe is not None else None
 
-    gfv = _graham_fair_value(trailing_eps or 0.0, book_ps or 0.0)
-    if gfv is None and trailing_eps and book_ps:
-        gfv = _graham_fair_value(trailing_eps, book_ps)
+    momentum_readout: Optional[Dict[str, Any]] = None
+    momentum_available = False
+    momentum_missing: Optional[str] = None
+    try:
+        from .connectors.momentum_data import fetch_momentum_inputs
+        from .momentum_model import analyze_momentum
+
+        stock_df, spy_df, sector_df, mom_meta = await fetch_momentum_inputs(
+            t,
+            {
+                "sector": debate_data.get("sector"),
+                "industry": debate_data.get("industry"),
+                "marketCap": debate_data.get("market_cap"),
+                "beta": debate_data.get("beta"),
+            },
+        )
+        momentum_readout = analyze_momentum(stock_df, spy_df, sector_df, mom_meta)
+        momentum_available = True
+    except Exception as e:
+        logger.warning("[decision_terminal] momentum model unavailable for %s: %s", t, e)
+        momentum_missing = str(e)
 
     mfv = None
     if price_f:
@@ -521,13 +532,20 @@ async def build_decision_terminal_payload(
             ),
         ),
         TerminalValuationModel(
-            name="Graham",
-            fair_value_usd=gfv,
-            available=gfv is not None,
+            name="Momentum",
+            fair_value_usd=None,
+            available=momentum_available,
+            momentum_score=(
+                momentum_readout.get("momentum_pricing_score") if momentum_readout else None
+            ),
+            momentum_summary=momentum_readout,
             provenance=TerminalFieldProvenance(
-                source="yfinance",
-                formula_or_note="sqrt(22.5 × trailing EPS × book value per share) — Benjamin Graham number.",
-                missing_reason=None if gfv is not None else "Need positive trailing EPS and book value on yfinance.",
+                source="composite_momentum_model",
+                formula_or_note=(
+                    "Composite momentum score (absolute + relative vs SPY/sector + "
+                    "capital flow + risk-adjusted + regime) with downside exposure."
+                ),
+                missing_reason=None if momentum_available else (momentum_missing or "Need 126+ trading days OHLCV."),
             ),
         ),
         TerminalValuationModel(
@@ -562,7 +580,7 @@ async def build_decision_terminal_payload(
         pct_vs_average=pct_vs,
         gauge_label=gauge_label or ("N/A" if price_f is None else "INSUFFICIENT MODEL INPUTS"),
         models=models,
-        panel_note="Average uses Graham + Multiples only when both are available; DCF omitted intentionally.",
+        panel_note="Average uses Multiples only when available; Momentum is a 0–100 score (not USD fair value); DCF omitted intentionally.",
     )
 
     fcf = ext.get("freeCashflow") or debate_data.get("free_cashflow") or hist_quality.get("freeCashflow")
@@ -988,6 +1006,17 @@ async def run_decision_terminal_request(
         headline = (
             verdict_panel.headline_verdict if verdict_panel is not None else ""
         )
+        momentum_out: Dict[str, Any] = {}
+        for m in payload.valuation.models:
+            if m.name == "Momentum" and m.momentum_summary:
+                momentum_out = {
+                    "momentum_pricing_score": m.momentum_summary.get("momentum_pricing_score"),
+                    "momentum_classification": m.momentum_summary.get("classification"),
+                    "downside_exposure_score": m.momentum_summary.get("downside_exposure_score"),
+                    "crash_risk": m.momentum_summary.get("crash_risk"),
+                    "decision_quality_score": m.momentum_summary.get("decision_quality_score"),
+                }
+                break
         _dl.emit_decision(
             decision_type="decision_terminal",
             symbol=t,
@@ -1005,6 +1034,7 @@ async def run_decision_terminal_request(
                     else ""
                 ),
                 "generated_at_utc": payload.generated_at_utc,
+                **momentum_out,
             },
             source_route="backend/decision_terminal.py::run_decision_terminal_request",
             prompt_versions=_pv,
