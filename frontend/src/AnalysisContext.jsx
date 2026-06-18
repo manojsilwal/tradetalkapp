@@ -1,6 +1,12 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import { API_BASE_URL, apiFetch, apiFetchTimed } from './api';
 import { isBriefSessionTrustworthy, shouldSkipDailyBriefRefetch } from './freshness';
+import * as sessionStore from './store/sessionStore';
+import { addToast } from './SessionContext';
+import { _abortControllers } from './components/SessionsTray';
+
+// Max concurrent ticker analyses (prevents API flooding)
+const MAX_CONCURRENT_ANALYSES = 3;
 
 const FAST_TIMEOUT_MS = 30000;
 const LLM_TIMEOUT_MS = 120000;
@@ -50,6 +56,8 @@ export function AnalysisProvider({ children }) {
     // 1. Dashboard / Ticker Analysis States
     const [analyses, setAnalyses] = useState({});
     const analysesRef = useRef({});
+    // Maps ticker → session action ID (for sessionStore integration)
+    const sessionActionIds = useRef({});
 
     useEffect(() => {
         analysesRef.current = analyses;
@@ -298,14 +306,68 @@ export function AnalysisProvider({ children }) {
         return null;
     }, [recentAnalyses]);
 
+    // Cancel a session action by its session action ID
+    const cancelAnalysis = useCallback(async (actionId) => {
+        // Abort HTTP requests
+        const ctrl = _abortControllers.get(actionId);
+        if (ctrl) {
+            ctrl.abort();
+            _abortControllers.delete(actionId);
+        }
+        // Find the ticker for this action
+        const ticker = Object.keys(sessionActionIds.current).find(
+            (t) => sessionActionIds.current[t] === actionId
+        );
+        if (ticker) {
+            setAnalyses((prev) => {
+                const cur = prev[ticker];
+                if (!cur || cur.status !== 'loading') return prev;
+                return {
+                    ...prev,
+                    [ticker]: {
+                        ...cur,
+                        status: 'cancelled',
+                        loading: false,
+                        loadingStep: '',
+                        metricsLoading: false,
+                        scorecardLoading: false,
+                        debateLoading: false,
+                        traceLoading: false,
+                        decisionLoading: false,
+                        predMarketsLoading: false,
+                        smallCapLoading: false,
+                        fundamentalsLoading: false,
+                    },
+                };
+            });
+        }
+        await sessionStore.cancelAction(actionId);
+    }, []);
+
     // Dashboard Analysis Action
-    const analyzeTicker = useCallback(async (tickerSymbol, forceRefresh = false) => {
+    const analyzeTicker = useCallback(async (tickerSymbol, forceRefresh = false, _resumedActionId = null) => {
         const sym = tickerSymbol.trim().toUpperCase();
         if (!sym) return;
 
         // Check if currently fetching
         const current = analysesRef.current[sym];
         if (current?.status === 'loading' && !forceRefresh) {
+            // Dedup: already running — surface a toast if user triggered manually
+            if (!_resumedActionId) {
+                const existingActionId = sessionActionIds.current[sym];
+                if (existingActionId) {
+                    addToast(`${sym} is already being analyzed`, 'info', 3000);
+                }
+            }
+            return;
+        }
+
+        // Concurrency gate — don't flood the API
+        const runningCount = Object.values(analysesRef.current).filter(
+            (a) => a?.status === 'loading'
+        ).length;
+        if (runningCount >= MAX_CONCURRENT_ANALYSES && !forceRefresh) {
+            addToast(`Max ${MAX_CONCURRENT_ANALYSES} analyses at once — wait for one to finish`, 'warning', 4000);
             return;
         }
 
@@ -323,6 +385,24 @@ export function AnalysisProvider({ children }) {
         }
 
         stopDashboardPoller();
+
+        // Create a session action record (or reuse resumed one)
+        let sessionActionId = _resumedActionId;
+        if (!sessionActionId) {
+            const action = sessionStore.createAction({
+                type: 'analysis',
+                label: `${sym} Analysis`,
+                resumable: true,
+                meta: { ticker: sym },
+            });
+            sessionActionId = action.id;
+        }
+        sessionActionIds.current[sym] = sessionActionId;
+
+        // Create an AbortController for this analysis so cancel works properly
+        const abortController = new AbortController();
+        _abortControllers.set(sessionActionId, abortController);
+        const abortSignal = abortController.signal;
 
         // Initialize state
         const initialTickerState = {
@@ -353,29 +433,12 @@ export function AnalysisProvider({ children }) {
             fundamentalsLoading: true,
         };
 
-        setAnalyses(prev => {
-            const next = { ...prev };
-            for (const key of Object.keys(next)) {
-                if (key !== sym && next[key]?.status === 'loading') {
-                    next[key] = {
-                        ...next[key],
-                        status: 'cancelled',
-                        loading: false,
-                        loadingStep: '',
-                        metricsLoading: false,
-                        scorecardLoading: false,
-                        debateLoading: false,
-                        traceLoading: false,
-                        decisionLoading: false,
-                        predMarketsLoading: false,
-                        smallCapLoading: false,
-                        fundamentalsLoading: false,
-                    };
-                }
-            }
-            next[sym] = initialTickerState;
-            return next;
-        });
+        // Note: we no longer cancel other in-flight analyses here.
+        // All tickers run concurrently (up to MAX_CONCURRENT_ANALYSES).
+        setAnalyses(prev => ({
+            ...prev,
+            [sym]: initialTickerState,
+        }));
 
         let validationFailed = false;
 
@@ -446,8 +509,25 @@ export function AnalysisProvider({ children }) {
 
         const SMALL_CAP_BUCKETS = new Set(['Small Cap', 'Micro Cap']);
 
+        // Helper to emit progress to the session tray
+        const TOTAL_STEPS = 5;
+        let stepsCompleted = 0;
+        const emitStep = (stepName) => {
+            stepsCompleted++;
+            sessionStore.updateProgress(sessionActionId, {
+                progress: Math.round((stepsCompleted / TOTAL_STEPS) * 100),
+                activeStep: stepName,
+                stepCompleted: stepName,
+            });
+        };
+        const emitStepFailed = (stepName) => {
+            sessionStore.updateProgress(sessionActionId, {
+                stepFailed: stepName,
+            });
+        };
+
         const jobs = [
-            apiFetchTimed(`${API_BASE_URL}/metrics/${sym}`, {}, FAST_TIMEOUT_MS)
+            apiFetchTimed(`${API_BASE_URL}/metrics/${sym}`, {}, FAST_TIMEOUT_MS, abortSignal)
                 .then(async (res) => {
                     let metrics = res?.metrics ?? null;
                     if (metricsKeyActivityMissing(metrics)) {
@@ -456,6 +536,7 @@ export function AnalysisProvider({ children }) {
                                 `${API_BASE_URL}/metrics/${sym}`,
                                 {},
                                 FAST_TIMEOUT_MS,
+                                abortSignal,
                             );
                             if (retry?.metrics && !metricsKeyActivityMissing(retry.metrics)) {
                                 metrics = retry.metrics;
@@ -467,6 +548,7 @@ export function AnalysisProvider({ children }) {
                     }
                     const bucket = res?.cap_bucket ?? null;
                     onSuccess();
+                    emitStep('Metrics & market data');
                     updateTickerState({
                         metricsData: metrics,
                         metricsFreshness: res?.data_freshness ?? null,
@@ -476,7 +558,7 @@ export function AnalysisProvider({ children }) {
 
                     if (bucket && SMALL_CAP_BUCKETS.has(bucket)) {
                         updateTickerState({ smallCapLoading: true });
-                        apiFetchTimed(`${API_BASE_URL}/small-cap-assessment/${encodeURIComponent(sym)}`, {}, FAST_TIMEOUT_MS)
+                        apiFetchTimed(`${API_BASE_URL}/small-cap-assessment/${encodeURIComponent(sym)}`, {}, FAST_TIMEOUT_MS, abortSignal)
                             .then(smallCapRes => {
                                 updateTickerState({ smallCapData: smallCapRes, smallCapLoading: false });
                             })
@@ -489,6 +571,7 @@ export function AnalysisProvider({ children }) {
                 })
                 .catch((err) => {
                     onFail(err);
+                    emitStepFailed('Metrics');
                     updateTickerState({
                         metricsData: null,
                         capBucket: null,
@@ -498,13 +581,15 @@ export function AnalysisProvider({ children }) {
                     });
                 }),
 
-            apiFetchTimed(`${API_BASE_URL}/prediction-markets?ticker=${sym}`, {}, FAST_TIMEOUT_MS)
+            apiFetchTimed(`${API_BASE_URL}/prediction-markets?ticker=${sym}`, {}, FAST_TIMEOUT_MS, abortSignal)
                 .then((res) => {
                     onSuccess();
+                    emitStep('Prediction markets');
                     updateTickerState({ predMarketsData: res, predMarketsLoading: false });
                 })
                 .catch((err) => {
                     onFail(err);
+                    emitStepFailed('Prediction markets');
                     updateTickerState({ predMarketsData: null, predMarketsLoading: false });
                 }),
 
@@ -515,9 +600,11 @@ export function AnalysisProvider({ children }) {
                 `${API_BASE_URL}/decision-terminal?ticker=${encodeURIComponent(sym)}${forceRefresh ? '&force=true' : ''}`,
                 {},
                 LLM_TIMEOUT_MS,
+                abortSignal,
             )
                 .then((res) => {
                     onSuccess();
+                    emitStep('Multi-agent debate & valuation');
                     updateTickerState({
                         decisionData: res,
                         decisionLoading: false,
@@ -530,6 +617,7 @@ export function AnalysisProvider({ children }) {
                 })
                 .catch((err) => {
                     onFail(err);
+                    emitStepFailed('Debate & valuation');
                     updateTickerState({
                         decisionData: null,
                         decisionLoading: false,
@@ -547,13 +635,16 @@ export function AnalysisProvider({ children }) {
                 `${API_BASE_URL}/scorecard/${encodeURIComponent(sym)}?preset=balanced&skip_llm_scores=true`,
                 {},
                 FAST_TIMEOUT_MS,
+                abortSignal,
             )
                 .then((res) => {
                     onSuccess();
+                    emitStep('Scorecard');
                     updateTickerState({ scorecardData: res, scorecardError: null, scorecardLoading: false });
                 })
                 .catch((err) => {
                     onFail(err);
+                    emitStepFailed('Scorecard');
                     updateTickerState({
                         scorecardError: err?.message || 'Scorecard unavailable',
                         scorecardData: null,
@@ -561,21 +652,29 @@ export function AnalysisProvider({ children }) {
                     });
                 }),
 
-            apiFetchTimed(`${API_BASE_URL}/stock-fundamentals/${sym}`, {}, FAST_TIMEOUT_MS)
+            apiFetchTimed(`${API_BASE_URL}/stock-fundamentals/${sym}`, {}, FAST_TIMEOUT_MS, abortSignal)
                 .then((res) => {
                     onSuccess();
+                    emitStep('Fundamentals');
                     updateTickerState({ fundamentalsData: res, fundamentalsLoading: false });
                 })
                 .catch((err) => {
                     onFail(err);
+                    emitStepFailed('Fundamentals');
                     updateTickerState({ fundamentalsData: null, fundamentalsLoading: false });
                 }),
         ];
 
         Promise.allSettled(jobs).then(() => {
+            // Clean up abort controller
+            _abortControllers.delete(sessionActionId);
+
             setAnalyses(prev => {
                 const current = prev[sym];
                 if (!current) return prev;
+
+                // If analysis was cancelled externally, don't overwrite
+                if (current.status === 'cancelled') return prev;
 
                 // Truthful-data contract: any insufficient-data refusal from the
                 // backend marks the whole analysis as errored — never present a
@@ -616,7 +715,16 @@ export function AnalysisProvider({ children }) {
                             fundamentals: updated.fundamentalsData,
                         });
                         startDashboardPoller(sym);
+                        // Complete the session action and notify user
+                        sessionStore.completeAction(sessionActionId, {
+                            ticker: sym,
+                            completedAt: Date.now(),
+                        });
+                        addToast(`${sym} analysis complete ✓`, 'success', 5000);
                     }, 0);
+                } else if (!isSuccess) {
+                    sessionStore.failAction(sessionActionId, finalError || 'Analysis failed');
+                    addToast(`${sym} analysis failed`, 'error', 5000);
                 }
 
                 return {
@@ -627,6 +735,12 @@ export function AnalysisProvider({ children }) {
         });
 
     }, [addAnalysis, getAnalysisState, startDashboardPoller, stopDashboardPoller]);
+
+    // Resume an analysis that was interrupted (e.g. by page refresh)
+    // Called by SessionProvider on mount when running actions are found in IndexedDB
+    const resumeAnalysis = useCallback((ticker, actionId) => {
+        analyzeTicker(ticker, false, actionId);
+    }, [analyzeTicker]);
 
     // Daily Brief Action
     const loadDailyBrief = useCallback(async (forceRefresh = false) => {
@@ -821,7 +935,7 @@ export function AnalysisProvider({ children }) {
             recentAnalyses, recentDebates,
             addAnalysis, addDebate,
             getLastAnalysis, getLastDebate,
-            analyses, analyzeTicker,
+            analyses, analyzeTicker, cancelAnalysis, resumeAnalysis,
             dailyBriefState, loadDailyBrief, startDailyBriefDeepRefresh, setDailyBriefActiveTab,
             macroState, loadMacro, setMacroFlowPeriod,
         }}>

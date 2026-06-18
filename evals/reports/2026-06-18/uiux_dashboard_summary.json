@@ -1,0 +1,30 @@
+{
+  "run_id": "uiux_eval_20260618_054358",
+  "timestamp": "2026-06-18T05:43:58.342705+00:00",
+  "app_name": "TradeTalk",
+  "version": "dev",
+  "status": "pass",
+  "overall_score": 93.51,
+  "grade": "A",
+  "top_strengths": [
+    "Strong task success completion (100.0)",
+    "Strong efficiency flow friction (95.56)",
+    "Strong error rate recovery (88.31)",
+    "Strong navigation information architecture (100.0)",
+    "Strong visual design consistency (90.18)"
+  ],
+  "top_issues": [],
+  "category_scores": {
+    "task_success_completion": 100.0,
+    "efficiency_flow_friction": 95.56,
+    "error_rate_recovery": 88.31,
+    "navigation_information_architecture": 100.0,
+    "visual_design_consistency": 90.18,
+    "accessibility_responsiveness": 88.0,
+    "user_satisfaction_trust": 81.16
+  },
+  "recommendation": "Release can proceed with monitored follow-ups.",
+  "report_path": "/evals/reports/2026-06-18/uiux_behavior_design_report.md",
+  "previous_overall_score": 93.51,
+  "overall_score_delta": 0.0
+}

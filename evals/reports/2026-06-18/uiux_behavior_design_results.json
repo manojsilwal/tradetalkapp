@@ -1,0 +1,237 @@
+{
+  "run_id": "uiux_eval_20260618_054358",
+  "app_name": "TradeTalk",
+  "version": "dev",
+  "benchmark_type": "internal",
+  "overall_ui_behavior_design_score": 93.51,
+  "grade": "A",
+  "status": "pass",
+  "scores": {
+    "task_success_completion": {
+      "score": 100.0,
+      "weight": 0.25,
+      "metrics": {
+        "task_completion_rate": 1.0,
+        "critical_task_success_rate": 1.0,
+        "task_abandonment_rate": 0.0
+      }
+    },
+    "efficiency_flow_friction": {
+      "score": 95.56,
+      "weight": 0.15,
+      "metrics": {
+        "median_time_on_task_ms": 28000.0,
+        "p95_time_on_task_ms": 65000.0,
+        "average_steps_to_complete": 4.31,
+        "backtrack_rate": 0.3846
+      }
+    },
+    "error_rate_recovery": {
+      "score": 88.31,
+      "weight": 0.15,
+      "metrics": {
+        "error_rate": 0.0769,
+        "recovery_success_rate": 1.0,
+        "error_free_completion_rate": 0.9231
+      }
+    },
+    "navigation_information_architecture": {
+      "score": 100.0,
+      "weight": 0.15,
+      "metrics": {
+        "navigation_success_rate": 1.0,
+        "first_click_success_rate": 1.0
+      }
+    },
+    "visual_design_consistency": {
+      "score": 90.18,
+      "weight": 0.1,
+      "metrics": {
+        "design_system_compliance_rate": 0.91,
+        "contrast_pass_rate": 0.94,
+        "empty_state_coverage": 0.82,
+        "loading_state_coverage": 0.88,
+        "error_state_coverage": 0.86
+      }
+    },
+    "accessibility_responsiveness": {
+      "score": 88.0,
+      "weight": 0.1,
+      "metrics": {
+        "critical_accessibility_issues": 0,
+        "moderate_accessibility_issues": 4,
+        "mobile_layout_pass_rate": 0.88,
+        "contrast_pass_rate": 0.94
+      }
+    },
+    "user_satisfaction_trust": {
+      "score": 81.16,
+      "weight": 0.1,
+      "metrics": {
+        "sus_score": 76.0,
+        "csat_score": 0.84,
+        "seq_score": 6.09,
+        "trust_rating": 0.81,
+        "nps": 28.0
+      }
+    }
+  },
+  "task_results": [
+    {
+      "task_id": "agent_start_dashboard",
+      "task_name": "Start agentic task from dashboard",
+      "completed": true,
+      "time_on_task_ms": 28000.0,
+      "error_count": 0,
+      "steps": 4,
+      "backtrack_count": 0,
+      "seq_score": 6.2,
+      "critical": true
+    },
+    {
+      "task_id": "understand_agent_path",
+      "task_name": "Understand which agent/path was selected",
+      "completed": true,
+      "time_on_task_ms": 18000.0,
+      "error_count": 0,
+      "steps": 3,
+      "backtrack_count": 0,
+      "seq_score": 6.1,
+      "critical": true
+    },
+    {
+      "task_id": "nav_swarm_score",
+      "task_name": "Open SwarmScore evaluation report",
+      "completed": true,
+      "time_on_task_ms": 12000.0,
+      "error_count": 0,
+      "steps": 3,
+      "backtrack_count": 0,
+      "seq_score": 6.5,
+      "critical": true
+    },
+    {
+      "task_id": "nav_observer_trace",
+      "task_name": "View multi-agent progress in Observer",
+      "completed": true,
+      "time_on_task_ms": 35000.0,
+      "error_count": 0,
+      "steps": 5,
+      "backtrack_count": 1,
+      "seq_score": 6.0,
+      "critical": true
+    },
+    {
+      "task_id": "inspect_rag_evidence",
+      "task_name": "Inspect RAG sources on chat evidence",
+      "completed": true,
+      "time_on_task_ms": 42000.0,
+      "error_count": 0,
+      "steps": 6,
+      "backtrack_count": 1,
+      "seq_score": 5.8,
+      "critical": true
+    },
+    {
+      "task_id": "nav_macro_surface",
+      "task_name": "Open macro analysis surface",
+      "completed": true,
+      "time_on_task_ms": 48000.0,
+      "error_count": 0,
+      "steps": 4,
+      "backtrack_count": 0,
+      "seq_score": 6.1,
+      "critical": false
+    },
+    {
+      "task_id": "nav_decision_terminal",
+      "task_name": "Run decision terminal analyze flow",
+      "completed": true,
+      "time_on_task_ms": 65000.0,
+      "error_count": 0,
+      "steps": 5,
+      "backtrack_count": 0,
+      "seq_score": 6.3,
+      "critical": true
+    },
+    {
+      "task_id": "find_previous_eval",
+      "task_name": "Find previous evaluation run",
+      "completed": true,
+      "time_on_task_ms": 15000.0,
+      "error_count": 0,
+      "steps": 3,
+      "backtrack_count": 0,
+      "seq_score": 6.4,
+      "critical": false
+    },
+    {
+      "task_id": "compare_two_reports",
+      "task_name": "Compare two generated reports",
+      "completed": true,
+      "time_on_task_ms": 22000.0,
+      "error_count": 0,
+      "steps": 4,
+      "backtrack_count": 0,
+      "seq_score": 6.2,
+      "critical": false
+    },
+    {
+      "task_id": "export_eval_report",
+      "task_name": "Export evaluation report",
+      "completed": true,
+      "time_on_task_ms": 18000.0,
+      "error_count": 0,
+      "steps": 4,
+      "backtrack_count": 0,
+      "seq_score": 6.0,
+      "critical": false
+    },
+    {
+      "task_id": "dashboard_alert",
+      "task_name": "Understand dashboard alert/recommendation",
+      "completed": true,
+      "time_on_task_ms": 24000.0,
+      "error_count": 0,
+      "steps": 3,
+      "backtrack_count": 0,
+      "seq_score": 6.1,
+      "critical": false
+    },
+    {
+      "task_id": "recover_tool_failure",
+      "task_name": "Recover from failed tool/API call",
+      "completed": true,
+      "time_on_task_ms": 72000.0,
+      "error_count": 1,
+      "steps": 7,
+      "backtrack_count": 2,
+      "seq_score": 5.6,
+      "critical": true
+    },
+    {
+      "task_id": "understand_ai_confidence",
+      "task_name": "Understand confidence on agent output",
+      "completed": true,
+      "time_on_task_ms": 38000.0,
+      "error_count": 0,
+      "steps": 5,
+      "backtrack_count": 1,
+      "seq_score": 5.9,
+      "critical": true
+    }
+  ],
+  "top_strengths": [
+    "Strong task success completion (100.0)",
+    "Strong efficiency flow friction (95.56)",
+    "Strong error rate recovery (88.31)",
+    "Strong navigation information architecture (100.0)",
+    "Strong visual design consistency (90.18)"
+  ],
+  "top_issues": [],
+  "recommendation": "Release can proceed with monitored follow-ups.",
+  "missing_inputs": [],
+  "timestamp": "2026-06-18T05:43:58.342705+00:00",
+  "previous_overall_score": 93.51,
+  "overall_score_delta": 0.0
+}

@@ -11,6 +11,7 @@ import OnboardingOverlay from './components/OnboardingOverlay.jsx'
 import { API_BASE_URL, getToken, apiFetch } from './api'
 import AppAssistantPanel from './AppAssistantPanel'
 import { useAnalysisHistory, analysisStillRunning } from './AnalysisContext.jsx'
+import SessionsTray from './components/SessionsTray'
 
 const ConsumerUI = React.lazy(() => import('./UnifiedDashboardUI'))
 const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
@@ -375,8 +376,8 @@ function App() {
             {/* App-level persistent assistant panel — always available, survives route changes */}
             <AppAssistantPanel prefetch={chatPrefetch} />
 
-            {/* Global floating loader bar (Bottom-Left Corner) */}
-            <GlobalLoadingBar />
+            {/* Global sessions tray — shows all active/completed analyses regardless of page */}
+            <SessionsTray />
 
             {/* Mobile Bottom Navigation Bar (Hidden on Desktop) */}
             <nav className="mobile-bottom-nav">

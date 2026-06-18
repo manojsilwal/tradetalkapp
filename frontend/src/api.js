@@ -85,14 +85,36 @@ export async function apiFetch(url, options = {}) {
   return res.json();
 }
 
-/** apiFetch with AbortController timeout — prevents hung LLM routes from blocking the UI forever. */
-export async function apiFetchTimed(url, options = {}, timeoutMs = 90000) {
+/** apiFetch with AbortController timeout — prevents hung LLM routes from blocking the UI forever.
+ *  @param {string} url
+ *  @param {object} options
+ *  @param {number} timeoutMs
+ *  @param {AbortSignal|null} externalSignal — optional signal from a caller's AbortController (e.g. for cancel-session)
+ */
+export async function apiFetchTimed(url, options = {}, timeoutMs = 90000, externalSignal = null) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  // Combine timeout signal with external (user cancel) signal when available
+  let signal = controller.signal;
+  if (externalSignal) {
+    try {
+      // AbortSignal.any is the standard way to compose signals (Chrome 116+, Firefox 124+)
+      signal = AbortSignal.any
+        ? AbortSignal.any([controller.signal, externalSignal])
+        : controller.signal;
+      // Fallback: manually abort our controller when external signal fires
+      if (!AbortSignal.any && externalSignal) {
+        externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+      }
+    } catch (_) { /* keep timeout-only signal */ }
+  }
+
   try {
-    return await apiFetch(url, { ...options, signal: controller.signal });
+    return await apiFetch(url, { ...options, signal });
   } catch (e) {
     if (e?.name === 'AbortError') {
+      if (externalSignal?.aborted) throw new Error('Request cancelled by user');
       throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
     }
     throw e;
@@ -100,6 +122,7 @@ export async function apiFetchTimed(url, options = {}, timeoutMs = 90000) {
     clearTimeout(timer);
   }
 }
+
 
 /** JSON POST with auth headers (fire-and-forget safe). */
 export async function apiPost(url, body, options = {}) {
