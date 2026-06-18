@@ -595,7 +595,7 @@ function GlobalLoadingBar() {
         }
     }, [loadingTicker, prevTicker])
 
-    if (location.pathname === '/dashboard' || location.pathname === '/decision-terminal') {
+    if (location.pathname === '/dashboard' || location.pathname === '/decision-terminal' || location.pathname === '/login') {
         return null
     }
 
