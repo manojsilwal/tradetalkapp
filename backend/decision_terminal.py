@@ -421,6 +421,7 @@ async def build_decision_terminal_payload(
     ext: dict,
     llm_client: Any,
     *,
+    momentum_readout: Optional[Dict[str, Any]] = None,
     include_provider_audit: bool = False,
     tool_registry: Any = None,
     spot_quote: Any = None,
@@ -494,41 +495,68 @@ async def build_decision_terminal_payload(
     pe = debate_data.get("pe_ratio")
     pe_f = float(pe) if pe is not None else None
 
-    momentum_readout: Optional[Dict[str, Any]] = None
-    momentum_available = False
-    momentum_missing: Optional[str] = None
-    try:
-        from .connectors.momentum_data import fetch_momentum_inputs
-        from .momentum_model import analyze_momentum
-
-        stock_df, spy_df, sector_df, mom_meta = await fetch_momentum_inputs(
-            t,
-            {
-                "sector": debate_data.get("sector"),
-                "industry": debate_data.get("industry"),
-                "marketCap": debate_data.get("market_cap"),
-                "beta": debate_data.get("beta"),
-            },
-        )
-        momentum_readout = analyze_momentum(stock_df, spy_df, sector_df, mom_meta)
-        momentum_available = True
-    except Exception as e:
-        logger.warning("[decision_terminal] momentum model unavailable for %s: %s", t, e)
-        momentum_missing = str(e)
+    momentum_available = momentum_readout is not None
 
     mfv = None
     if price_f:
         mfv = _multiples_heuristic_fair_price(trailing_eps, roe_pct, price_f, pe_f)
 
+    def _heuristic_dcf() -> Optional[float]:
+        try:
+            # Gather FCF
+            fcf_raw = ext.get("freeCashflow") or debate_data.get("free_cashflow")
+            if not fcf_raw or fcf_raw <= 0:
+                return None
+            
+            # Gather Shares Outstanding
+            shares_out = ext.get("sharesOutstanding")
+            if not shares_out:
+                mc = ext.get("marketCap") or debate_data.get("market_cap")
+                if mc and price_f and price_f > 0:
+                    shares_out = mc / price_f
+                else:
+                    return None
+            
+            if shares_out <= 0:
+                return None
+                
+            # Gather Growth Rate (fallback to 5%)
+            g = 0.05
+            rg = ext.get("revenueGrowth")
+            if rg is not None:
+                g = max(0.02, min(0.15, float(rg)))
+            elif hist_cagr:
+                g = max(0.02, min(0.15, float(hist_cagr) / 100.0))
+                
+            # Assumptions
+            wacc = 0.10
+            tgr = 0.025
+            years = 5
+            
+            # NPV of 5 years FCF
+            dcf_val = 0.0
+            for i in range(1, years + 1):
+                dcf_val += (fcf_raw * (1 + g)**i) / ((1 + wacc)**i)
+                
+            # Terminal Value
+            tv = (fcf_raw * (1 + g)**years * (1 + tgr)) / (wacc - tgr)
+            dcf_val += tv / ((1 + wacc)**years)
+            
+            return float(dcf_val / shares_out)
+        except Exception:
+            return None
+
+    dcf_price = _heuristic_dcf()
+
     models: List[TerminalValuationModel] = [
         TerminalValuationModel(
             name="DCF",
-            fair_value_usd=None,
-            available=False,
+            fair_value_usd=dcf_price,
+            available=(dcf_price is not None),
             provenance=TerminalFieldProvenance(
-                source="not_implemented",
-                missing_reason="No deterministic DCF engine; add assumptions-backed module before showing a DCF fair value.",
-                formula_or_note="Deferred per product policy — avoid LLM-only DCF.",
+                source="heuristic_model",
+                missing_reason="Insufficient FCF or shares outstanding data" if dcf_price is None else None,
+                formula_or_note="5-year projection using trailing FCF, capped revenue growth, 10% WACC, and 2.5% terminal growth.",
             ),
         ),
         TerminalValuationModel(
@@ -545,7 +573,7 @@ async def build_decision_terminal_payload(
                     "Composite momentum score (absolute + relative vs SPY/sector + "
                     "capital flow + risk-adjusted + regime) with downside exposure."
                 ),
-                missing_reason=None if momentum_available else (momentum_missing or "Need 126+ trading days OHLCV."),
+                missing_reason=None if momentum_available else "Momentum model fetch failed or timed out.",
             ),
         ),
         TerminalValuationModel(
@@ -890,7 +918,7 @@ async def _build_scorecard_for_terminal(ticker: str) -> Optional[TerminalScoreca
         from .scorecard_service import build_terminal_scorecard_summary
 
         return await build_terminal_scorecard_summary(
-            ticker, preset="balanced", skip_llm_scores=True
+            ticker, preset="balanced", skip_llm_scores=False
         )
     except Exception as e:
         logger.warning("[decision_terminal] scorecard embed failed %s: %s", ticker, e)
@@ -949,6 +977,20 @@ async def run_decision_terminal_request(
     debate_data_task = asyncio.ensure_future(
         tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0)
     )
+    # Start momentum fetch concurrently so it has the full ~90s window
+    async def _safe_momentum() -> Optional[Dict[str, Any]]:
+        try:
+            from .connectors.momentum_data import fetch_momentum_inputs
+            from .momentum_model import analyze_momentum
+            
+            # Use info=None so it fetches what it needs directly from yfinance
+            stock_df, spy_df, sector_df, mom_meta = await fetch_momentum_inputs(t, None)
+            return analyze_momentum(stock_df, spy_df, sector_df, mom_meta)
+        except Exception as e:
+            logger.warning("[decision_terminal] momentum model unavailable for %s: %s", t, e)
+            return None
+
+    momentum_task = asyncio.ensure_future(_safe_momentum())
 
     try:
         analysis, poly_raw, ext, spot_quote, scorecard_summary = await asyncio.gather(
@@ -960,6 +1002,7 @@ async def run_decision_terminal_request(
             asyncio.to_thread(_sync_extended_snapshot, t),
             asyncio.to_thread(_resolve_spot_for_terminal, t),
             _build_scorecard_for_terminal(t),
+            momentum_task,
         )
     except BaseException:
         # Avoid a "Task was destroyed but it is pending" warning if a sibling
@@ -987,6 +1030,7 @@ async def run_decision_terminal_request(
         poly_raw,
         ext,
         llm_client,
+        momentum_readout=momentum_task.result(),
         include_provider_audit=provider_audit,
         tool_registry=tool_registry,
         spot_quote=spot_quote,

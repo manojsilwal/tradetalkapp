@@ -369,6 +369,13 @@ export default function DecisionTerminalUI() {
                   </div>
                 ))}
             </div>
+            {hasData && payload?.scorecard_summary?.one_line_reason && (
+              <div className="dt-scorecard-verdict">
+                <span className="dt-capsule">
+                  Analysis: {payload.scorecard_summary.one_line_reason}
+                </span>
+              </div>
+            )}
           </section>
 
           {/* —— Verdict & sentiment —— */}
