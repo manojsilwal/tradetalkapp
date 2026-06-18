@@ -23,18 +23,18 @@ logger = logging.getLogger(__name__)
 # ``GEMINI_FALLBACK_MODEL`` — legacy alias retained for backward compat; still used
 #                           when a caller does not specify a tier (= heavy default).
 #
-# Both tiers default to ``gemini-3.5-flash``. OpenRouter (minimax m3) is the primary
-# provider; Gemini 3.5 Flash is the fallback when OpenRouter fails.
+# Both tiers default to ``gemini-2.5-flash`` (stable JSON + AI Studio access).
+# OpenRouter is the primary provider; Gemini is the fallback when OpenRouter fails.
 #
 # When ``GEMINI_PRIMARY=1``, ``LLMClient._provider_generate`` routes every call
 # through ``gemini_simple_completion_sync`` with the tier-appropriate model —
 # burning credits on the Gemini account and skipping OpenRouter entirely.
 GEMINI_MODEL = os.environ.get(
     "GEMINI_MODEL",
-    os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash"),
+    os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash"),
 ).strip()
 GEMINI_MODEL_LIGHT = os.environ.get(
-    "GEMINI_MODEL_LIGHT", "gemini-3.5-flash"
+    "GEMINI_MODEL_LIGHT", "gemini-2.5-flash"
 ).strip()
 # Kept for callers that still import the old name.
 GEMINI_FALLBACK_MODEL = GEMINI_MODEL
@@ -208,9 +208,11 @@ def _response_text(response: Any) -> str:
         pass
     try:
         cand = response.candidates[0]
-        if getattr(cand, "content", None) and cand.content.parts:
+        content = getattr(cand, "content", None)
+        parts = getattr(content, "parts", None) if content else None
+        if parts:
             chunks = []
-            for p in cand.content.parts:
+            for p in parts:
                 if getattr(p, "text", None):
                     chunks.append(p.text)
             return "".join(chunks).strip()

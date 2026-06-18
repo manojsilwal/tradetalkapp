@@ -787,13 +787,10 @@ class LLMClient:
             return (_fallback_template_or_raise(role), prompt_version)
         http_models = [_http_openai_model_for_role(self._provider, role)]
 
-        # Gemini-primary path (GEMINI_PRIMARY=1): route every role through Gemini
-        # 3.5 Flash. On any Gemini failure we go straight to
-        # ``FALLBACK_TEMPLATES`` — OpenRouter is intentionally NOT consulted so
-        # all LLM spend lands on the Gemini account (user config:
-        # "primary_with_local_fallback"). To re-enable OpenRouter as a fallback,
-        # clear GEMINI_PRIMARY.
-        if gemini_primary_enabled():
+        # Gemini-primary (GEMINI_PRIMARY=1): try Gemini first, then OpenRouter,
+        # then InsufficientDataError for verdict roles — never a fabricated verdict.
+        gemini_primary_first = gemini_primary_enabled()
+        if gemini_primary_first:
             g = self._gemini_try_json_role(system, prompt, role)
             if g is not None:
                 g = self._enforce_contract(
@@ -802,13 +799,20 @@ class LLMClient:
                 )
                 return g, prompt_version
             logger.info(
-                "[LLMClient] role=%s Gemini-primary unavailable — using local fallback template",
+                "[LLMClient] role=%s Gemini-primary failed — trying OpenRouter",
                 role,
             )
-            return fallback()
 
         try:
             if self._openrouter_pool is None:
+                if not gemini_primary_first:
+                    g = self._gemini_try_json_role(system, prompt, role)
+                    if g is not None:
+                        g = self._enforce_contract(
+                            g, role=role, prompt_version=prompt_version,
+                            model=_gemini_model_for_role(role),
+                        )
+                        return g, prompt_version
                 return fallback()
             clients = self._openrouter_pool.sync_clients_for_request(
                 should_try_other_openrouter_keys_on_429()
@@ -911,13 +915,14 @@ class LLMClient:
                         model,
                         redact_secrets_in_text(str(last_err)),
                     )
-            g = self._gemini_try_json_role(system, prompt, role)
-            if g is not None:
-                g = self._enforce_contract(
-                    g, role=role, prompt_version=prompt_version,
-                    model=_gemini_model_for_role(role),
-                )
-                return g, prompt_version
+            if not gemini_primary_first:
+                g = self._gemini_try_json_role(system, prompt, role)
+                if g is not None:
+                    g = self._enforce_contract(
+                        g, role=role, prompt_version=prompt_version,
+                        model=_gemini_model_for_role(role),
+                    )
+                    return g, prompt_version
             return fallback()
         except InsufficientDataError:
             raise

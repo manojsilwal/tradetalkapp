@@ -9,12 +9,9 @@ Behavior under test:
      bull/bear/moderator/strategy_parser and the light model for swarm_analyst/
      swarm_synthesizer/rag_narrative_polish/video_veo_text_fallback.
   3. With ``GEMINI_PRIMARY=1`` and a Gemini key set:
-     - :meth:`LLMClient._provider_generate` calls Gemini FIRST and never touches
-       the OpenRouter path (even if a pool is configured).
-     - When Gemini returns an empty string / raises, it falls back to the
-       rule-based :data:`FALLBACK_TEMPLATES`, NOT to OpenRouter.
-     - :meth:`LLMClient._plain_text_generate_sync` follows the same contract
-       and returns the original ``user`` text on Gemini failure.
+     - :meth:`LLMClient._provider_generate` calls Gemini FIRST.
+     - When Gemini returns empty / raises, OpenRouter is tried next (if configured).
+     - When both fail, verdict roles raise :class:`InsufficientDataError`.
   4. Without ``GEMINI_PRIMARY=1`` the old OpenRouter-primary path is preserved
      (no regression).
 
@@ -174,8 +171,8 @@ class TestProviderGenerateGeminiPrimary(_EnvSandbox):
         self.assertEqual(captured["model"], GEMINI_MODEL_LIGHT)
         self.assertEqual(result.get("signal"), 1)
 
-    def test_primary_gemini_failure_raises_insufficient_data_not_openrouter(self):
-        """When Gemini errors on a verdict role, raise InsufficientDataError — never OpenRouter, never a template."""
+    def test_primary_gemini_failure_raises_insufficient_data_after_openrouter(self):
+        """When Gemini and OpenRouter both fail on a verdict role, raise InsufficientDataError."""
         os.environ["GEMINI_PRIMARY"] = "1"
         os.environ["GEMINI_API_KEY"] = "test-key"
 
@@ -193,10 +190,10 @@ class TestProviderGenerateGeminiPrimary(_EnvSandbox):
             with self.assertRaises(InsufficientDataError):
                 client._provider_generate("bull", "prompt")
 
-        mock_pool.sync_clients_for_request.assert_not_called()
+        mock_pool.sync_clients_for_request.assert_called()
 
     def test_primary_gemini_failure_nonverdict_role_returns_template(self):
-        """Non-verdict roles may still degrade to templates on Gemini failure."""
+        """Non-verdict roles may still degrade to templates when Gemini and OpenRouter fail."""
         os.environ["GEMINI_PRIMARY"] = "1"
         os.environ["GEMINI_API_KEY"] = "test-key"
 
@@ -211,10 +208,10 @@ class TestProviderGenerateGeminiPrimary(_EnvSandbox):
             result, _ = client._provider_generate("video_scene_director", "prompt")
 
         self.assertEqual(result, FALLBACK_TEMPLATES["video_scene_director"])
-        mock_pool.sync_clients_for_request.assert_not_called()
+        mock_pool.sync_clients_for_request.assert_called()
 
-    def test_primary_gemini_empty_raises_insufficient_data_not_openrouter(self):
-        """Empty Gemini output on a verdict role raises; OpenRouter still untouched."""
+    def test_primary_gemini_empty_raises_after_openrouter(self):
+        """Empty Gemini output on a verdict role raises after OpenRouter is tried."""
         os.environ["GEMINI_PRIMARY"] = "1"
         os.environ["GEMINI_API_KEY"] = "test-key"
 
@@ -224,12 +221,12 @@ class TestProviderGenerateGeminiPrimary(_EnvSandbox):
 
         with mock.patch(
             "backend.llm_client.gemini_simple_completion_sync",
-            return_value="",  # empty string = failure
+            return_value="",
         ):
             with self.assertRaises(InsufficientDataError):
                 client._provider_generate("bear", "prompt")
 
-        mock_pool.sync_clients_for_request.assert_not_called()
+        mock_pool.sync_clients_for_request.assert_called()
 
     def test_primary_off_keeps_openrouter_primary(self):
         """With GEMINI_PRIMARY cleared, the old OpenRouter-primary path runs."""
