@@ -20,16 +20,27 @@ function AgentIcon({ role, color, size = 20 }) {
 
 function AgentCardSkeleton({ agent }) {
   return (
-    <div style={{ background: 'rgba(15,23,42,0.6)', borderRadius: 12, padding: '20px 24px', border: '1px solid rgba(255,255,255,0.07)', borderTop: `3px solid ${agent.color}` }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+    <div style={{
+      background: 'rgba(15,23,42,0.6)',
+      borderRadius: 12,
+      padding: '20px 24px',
+      border: '1px solid rgba(255,255,255,0.07)',
+      borderTop: `3px solid ${agent.color}`,
+      height: '380px',
+      display: 'flex',
+      flexDirection: 'column',
+      boxSizing: 'border-box',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexShrink: 0 }}>
         <div style={{ width: 36, height: 36, borderRadius: 8, background: agent.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Loader2 size={18} color={agent.color} style={{ animation: 'spin 1s linear infinite' }} />
         </div>
         <div style={{ height: 14, width: 110, background: 'rgba(255,255,255,0.06)', borderRadius: 4 }} />
       </div>
-      <div style={{ height: 16, background: 'rgba(255,255,255,0.05)', borderRadius: 4, marginBottom: 8 }} />
-      <div style={{ height: 14, background: 'rgba(255,255,255,0.04)', borderRadius: 4, marginBottom: 6, width: '85%' }} />
-      <div style={{ height: 12, background: 'rgba(255,255,255,0.03)', borderRadius: 4, width: '70%' }} />
+      <div style={{ height: 16, background: 'rgba(255,255,255,0.05)', borderRadius: 4, marginBottom: 8, flexShrink: 0 }} />
+      <div style={{ height: 14, background: 'rgba(255,255,255,0.04)', borderRadius: 4, marginBottom: 6, width: '85%', flexShrink: 0 }} />
+      <div style={{ flex: 1, background: 'rgba(255,255,255,0.02)', borderRadius: 4, width: '100%', marginBottom: 12 }} />
+      <div style={{ height: 10, background: 'rgba(255,255,255,0.03)', borderRadius: 4, width: '70%', flexShrink: 0 }} />
     </div>
   );
 }
@@ -46,6 +57,10 @@ function AgentCard({ argument, agent }) {
       borderTop: `3px solid ${isDegraded ? '#f59e0b' : agent.color}`,
       opacity: isDegraded ? 0.7 : 1,
       position: 'relative',
+      height: '380px',
+      display: 'flex',
+      flexDirection: 'column',
+      boxSizing: 'border-box',
     }}>
       {isDegraded && (
         <div style={{
@@ -58,7 +73,7 @@ function AgentCard({ argument, agent }) {
           Heuristic only
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexShrink: 0 }}>
         <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: agent.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <AgentIcon role={argument.agent_role} color={isDegraded ? '#f59e0b' : agent.color} size={18} />
         </div>
@@ -70,9 +85,9 @@ function AgentCard({ argument, agent }) {
           {stanceStyle.label}
         </span>
       </div>
-      <p style={{ color: '#f1f5f9', fontSize: '0.95rem', fontWeight: 600, lineHeight: 1.4, marginBottom: 12 }}>{argument.headline}</p>
-      <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', marginBottom: 12 }} />
-      <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <p style={{ color: '#f1f5f9', fontSize: '0.95rem', fontWeight: 600, lineHeight: 1.4, marginBottom: 12, flexShrink: 0 }}>{argument.headline}</p>
+      <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', marginBottom: 12, flexShrink: 0 }} />
+      <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto', paddingRight: 4 }} className="dt-debate-card-list">
         {(argument.key_points || []).map((pt, i) => (
           <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 6, background: isDegraded ? '#f59e0b' : agent.color }} />
@@ -80,7 +95,7 @@ function AgentCard({ argument, agent }) {
           </li>
         ))}
       </ul>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexShrink: 0 }}>
         <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.05)' }}>
           <div style={{ height: '100%', borderRadius: 2, width: `${Math.round((argument.confidence || 0) * 100)}%`, background: isDegraded ? '#f59e0b' : agent.color, transition: 'width 0.8s ease' }} />
         </div>
@@ -93,12 +108,18 @@ function AgentCard({ argument, agent }) {
 export default function DebateThreadPanel({ result, loading = false }) {
   if (!loading && !result) return null;
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
-      {DEBATE_AGENTS.map((agent, idx) => {
-        const isLast = idx === 4;
+    <div style={{
+      display: 'flex',
+      flexDirection: 'row',
+      gap: 16,
+      overflowX: 'auto',
+      paddingBottom: 12,
+      width: '100%',
+    }} className="dt-debate-scroller">
+      {DEBATE_AGENTS.map((agent) => {
         const argument = result?.arguments?.find((a) => a.agent_role === agent.role);
         return (
-          <div key={agent.role} style={isLast ? { gridColumn: '1 / -1', maxWidth: 480, margin: '0 auto', width: '100%' } : {}}>
+          <div key={agent.role} style={{ flex: '0 0 340px', width: 340, boxSizing: 'border-box' }}>
             {loading || !argument ? <AgentCardSkeleton agent={agent} /> : <AgentCard argument={argument} agent={agent} />}
           </div>
         );

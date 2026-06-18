@@ -1,7 +1,57 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Scale } from 'lucide-react';
+import { Scale, HelpCircle } from 'lucide-react';
 import { FreshnessBadge } from './Freshness';
+
+function TooltipHelp({ text }) {
+  const [visible, setVisible] = React.useState(false);
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <button
+        type="button"
+        onClick={() => setVisible(!visible)}
+        onMouseEnter={() => setVisible(true)}
+        onMouseLeave={() => setVisible(false)}
+        style={{
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          padding: 0,
+          marginLeft: '4px',
+          display: 'flex',
+          alignItems: 'center',
+          color: '#64748b'
+        }}
+        title="What does this mean?"
+      >
+        <HelpCircle size={12} />
+      </button>
+      {visible && (
+        <div style={{
+          position: 'absolute',
+          bottom: '22px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '200px',
+          padding: '8px 10px',
+          borderRadius: '8px',
+          background: 'rgba(15,23,42,0.96)',
+          border: '1px solid rgba(255,255,255,0.15)',
+          color: '#cbd5e1',
+          fontSize: '0.72rem',
+          lineHeight: '1.35',
+          zIndex: 100,
+          boxShadow: '0 8px 20px rgba(0,0,0,0.6)',
+          textAlign: 'left',
+          pointerEvents: 'none',
+          whiteSpace: 'normal',
+        }}>
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const SIGNAL_COLORS_COMPARATIVE = {
   Exceptional: '#10b981',
@@ -153,10 +203,31 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
         >
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 12 }}>
             {[
-              { label: 'Return', value: formatNum(row.return_score?.weighted) },
-              { label: 'Risk', value: formatNum(row.risk_score?.weighted) },
-              { label: 'Ratio', value: formatNum(row.ratio), bold: true },
-              { label: 'SITG boost', value: row.sitg_boost > 0 ? `+${formatNum(row.sitg_boost)}` : formatNum(row.sitg_boost ?? 0) },
+              {
+                label: 'Return',
+                displayLabel: 'Reward Potential',
+                value: formatNum(row.return_score?.weighted),
+                tooltip: 'A score from 0 to 10 predicting expected upside based on historical growth and profitability metrics. Higher is better.'
+              },
+              {
+                label: 'Risk',
+                displayLabel: 'Risk Level',
+                value: formatNum(row.risk_score?.weighted),
+                tooltip: 'A score from 0 to 10 predicting potential downsides based on debt, stock volatility (Beta), and valuation multiples. Lower is safer.'
+              },
+              {
+                label: 'Ratio',
+                displayLabel: 'Reward-to-Risk Ratio',
+                value: formatNum(row.ratio),
+                bold: true,
+                tooltip: 'Reward divided by Risk. A ratio above 1.0 indicates that the potential reward outweighs the risk.'
+              },
+              {
+                label: 'SITG boost',
+                displayLabel: 'Insider Alignment (SITG) Boost',
+                value: row.sitg_boost > 0 ? `+${formatNum(row.sitg_boost)}` : formatNum(row.sitg_boost ?? 0),
+                tooltip: "Skin In The Game (SITG) boost. An extra credit added to the score when corporate executives or founders own a significant amount of the company's stock, aligning their interests with yours."
+              },
             ].map((m) => (
               <div
                 key={m.label}
@@ -167,7 +238,10 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
                   border: '1px solid rgba(255,255,255,0.06)',
                 }}
               >
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>{m.label}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center' }}>
+                  <span>{m.displayLabel}</span>
+                  <TooltipHelp text={m.tooltip} />
+                </div>
                 <div style={{ fontSize: '1.35rem', fontWeight: m.bold ? 800 : 700 }}>{m.value}</div>
               </div>
             ))}
@@ -179,7 +253,10 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
                 border: '1px solid rgba(255,255,255,0.06)',
               }}
             >
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Profile</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center' }}>
+                <span>Risk-Reward Profile</span>
+                <TooltipHelp text="The broad category this stock's risk-reward configuration falls into (e.g. Balanced, Conservative, Caution, Avoid)." />
+              </div>
               <div style={{ fontSize: '1rem', fontWeight: 700, color: signalColor }}>
                 {row.signal || '—'}
               </div>
@@ -192,7 +269,10 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
                 border: '1px solid rgba(255,255,255,0.06)',
               }}
             >
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Label</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center' }}>
+                <span>Overall Rating</span>
+                <TooltipHelp text="The AI-synthesized rating label summarizing the general attractiveness of this risk-reward configuration." />
+              </div>
               <div style={{ fontSize: '1rem', fontWeight: 700, color: verdictColor }}>
                 {row.verdict || '—'}
               </div>
@@ -210,6 +290,10 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
                 </>
               ) : null}
             </div>
+            <p style={{ marginTop: 12, fontSize: '0.76rem', color: 'var(--text-muted)', lineHeight: 1.45 }}>
+              💡 <strong>How to read:</strong> Look for assets in the <strong>top-left</strong> quadrant (High Return, Low Risk). 
+              A <strong>Reward-to-Risk Ratio</strong> above <strong>1.00</strong> means the potential gains outweigh the risks.
+            </p>
             <button
               type="button"
               onClick={() => navigate('/scorecard')}

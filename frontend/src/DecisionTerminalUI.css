@@ -1475,6 +1475,36 @@ h4.dt-metrics-section-title {
   width: 100%;
 }
 
+/* Debate horizontal scroller & card list scrollbar styling */
+.dt-debate-scroller::-webkit-scrollbar {
+  height: 6px;
+}
+.dt-debate-scroller::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.3);
+  border-radius: 4px;
+}
+.dt-debate-scroller::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
+}
+.dt-debate-scroller::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.dt-debate-card-list::-webkit-scrollbar {
+  width: 4px;
+}
+.dt-debate-card-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dt-debate-card-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 4px;
+}
+.dt-debate-card-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
+}
+
 /* Mobile chart + tabs */
 @media (max-width: 768px) {
   .dt-company-name {
