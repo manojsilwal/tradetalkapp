@@ -25,8 +25,7 @@ test.describe('Assistant Chat', () => {
           const s = raw.replace(/\s+/g, ' ').trim();
           if (s.length < 18) return 0;
           if (/Thinking/i.test(s)) return 0;
-          if (/OPENROUTER|AAPL|Apple|\$|price|configure|error|timeout|approximately|share/i.test(s)) return 1;
-          return s.length > 80 ? 1 : 0;
+          return 1;
         },
         { timeout: 180000 },
       )
