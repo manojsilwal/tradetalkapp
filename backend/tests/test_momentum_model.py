@@ -64,6 +64,11 @@ class TestMomentumModel(unittest.TestCase):
         self.assertIn("classification", out)
         self.assertIn("agent_summary", out)
         self.assertIsInstance(out["risk_flags"], list)
+        self.assertIn("component_breakdown", out)
+        self.assertIn("technical_positioning", out)
+        self.assertIn("final_agent_narrative", out)
+        self.assertIn("model_read", out)
+        self.assertTrue(len(out["component_breakdown"]) == 5)
 
     def test_uptrend_beats_decline(self) -> None:
         up = analyze_momentum(self.uptrend, self.spy, self.sector, self.meta)

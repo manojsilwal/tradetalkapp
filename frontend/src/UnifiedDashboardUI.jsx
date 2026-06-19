@@ -10,6 +10,7 @@ import { SP500_TICKERS } from './sp500';
 import { StaleValue, FreshnessBadge, LastUpdated } from './components/Freshness';
 import { formatFreshnessDateTime, cleanSource } from './freshness';
 import DashboardScorecardPanel from './components/DashboardScorecardPanel';
+import MomentumPricingPanel, { extractMomentumReadout } from './components/MomentumPricingPanel';
 import VerdictToneLegend from './components/VerdictToneLegend';
 import DebateThreadPanel from './components/debate/DebateThreadPanel';
 import './DecisionTerminalUI.css';
@@ -353,6 +354,7 @@ export default function UnifiedDashboardUI() {
   const q = decisionData?.quality;
   const z = decisionData?.verdict;
   const r = decisionData?.roadmap;
+  const momentumReadout = useMemo(() => extractMomentumReadout(v), [v]);
 
   const getBriefText = () => {
     if (predMarketsLoading) return 'Loading...';
@@ -1112,6 +1114,12 @@ export default function UnifiedDashboardUI() {
         />
         </div>
       </div>
+
+      <MomentumPricingPanel
+        readout={momentumReadout}
+        loading={decisionLoading || (isAnalyzing && !momentumReadout)}
+        ticker={searchUpper}
+      />
 
       {(debateLoading || debateData || isAnalyzing) && (
         <section className="dt-panel dt-area-debate" data-testid="dashboard-debate-panel">

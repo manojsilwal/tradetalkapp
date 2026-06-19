@@ -23,6 +23,12 @@ test.describe('Analysis Surfaces', () => {
     await expect(page.getByTestId('dashboard-current-price')).toBeVisible({ timeout: 240000 });
     await expect(page.getByText('Verdict & Sentiment Hub')).toBeVisible();
     await expect(page.getByText('Business Quality Scorecard')).toBeVisible();
+    const momentumPanel = page.getByTestId('momentum-pricing-panel');
+    await expect(momentumPanel).toBeVisible({ timeout: 240000 });
+    await expect(momentumPanel.getByText('Momentum Stock Pricing Analysis')).toBeVisible();
+    await expect(momentumPanel.getByText(/\/\s*100/)).toBeVisible();
+    await expect(momentumPanel.getByRole('columnheader', { name: 'Component' })).toBeVisible();
+    await expect(momentumPanel.getByRole('columnheader', { name: 'Score' })).toBeVisible();
     await expectNoGenericFetchFailure(page);
   });
 

@@ -375,11 +375,40 @@ def compute_momentum_indicators(
     market_cap = _safe_float(metadata.get("market_cap"), 0.0)
     avg_dollar_vol = float((close.tail(20) * stock["Volume"].tail(20)).mean()) if n >= 20 else 0.0
 
+    lookback_52w = min(252, n)
+    high_52w = float(close.tail(lookback_52w).max())
+    low_52w = float(close.tail(lookback_52w).min())
+    pct_vs_52w_high = (
+        (last_close / high_52w - 1.0) * 100.0
+        if high_52w and not math.isnan(high_52w)
+        else float("nan")
+    )
+    prior_close = float(close.iloc[-2]) if n >= 2 else float("nan")
+    daily_return_pct = (
+        (last_close / prior_close - 1.0) * 100.0
+        if prior_close and not math.isnan(prior_close)
+        else float("nan")
+    )
+
+    def _pct_vs_ema(level: float) -> float:
+        if level and not math.isnan(level) and level != 0:
+            return (last_close / level - 1.0) * 100.0
+        return float("nan")
+
     return {
         "bars": n,
         "partial_mode": partial,
         "as_of_date": str(as_of_date or close.index[-1].date().isoformat()),
         "close": last_close,
+        "prior_close": prior_close,
+        "daily_return_pct": daily_return_pct,
+        "high_52w": high_52w,
+        "low_52w": low_52w,
+        "pct_vs_52w_high": pct_vs_52w_high,
+        "pct_vs_ema_20": _pct_vs_ema(e20),
+        "pct_vs_ema_50": _pct_vs_ema(e50),
+        "pct_vs_ema_100": _pct_vs_ema(e100) if n >= 100 else float("nan"),
+        "pct_vs_ema_200": _pct_vs_ema(e200) if n >= 200 else float("nan"),
         "return_1m": ret_1m,
         "return_3m": ret_3m,
         "return_6m": ret_6m,
@@ -696,12 +725,38 @@ def compute_downside_exposure(ind: Dict[str, Any]) -> Dict[str, Any]:
 
     if downside_score < 25:
         crash_risk = "Low"
+    elif downside_score < 40:
+        crash_risk = "Medium-Low"
     elif downside_score < 50:
         crash_risk = "Medium"
     elif downside_score < 75:
         crash_risk = "High"
     else:
         crash_risk = "Extreme"
+
+    close = ind["close"]
+    zones: List[Dict[str, Any]] = []
+
+    def _zone(label: str, level: float, meaning: str) -> None:
+        if level and not math.isnan(level) and close > 0:
+            pb = (level / close - 1.0) * 100.0
+            zones.append(
+                {
+                    "label": label,
+                    "level_usd": round(level, 2),
+                    "pullback_pct": round(pb, 1),
+                    "meaning": meaning,
+                }
+            )
+
+    _zone("Mild pullback / first support", e50, "Normal retest zone")
+    if e100 and not math.isnan(e100):
+        _zone("Trend-damage zone", e100, "Momentum starts weakening materially")
+    if e200 and not math.isnan(e200):
+        _zone("Major trend support", e200, "Long-term trend test")
+    if not math.isnan(mdd_6m) and mdd_6m < 0:
+        deeper = close * (1.0 + mdd_6m * 0.85)
+        _zone("Deeper breakdown zone", deeper, "More serious correction risk")
 
     return {
         "historical_drawdown_risk": round(hist_dd_risk, 1),
@@ -715,7 +770,235 @@ def compute_downside_exposure(ind: Dict[str, Any]) -> Dict[str, Any]:
         "mild_pullback_estimate": fmt_range(mild_vals, "-3% to -7%"),
         "trend_damage_estimate": fmt_range(mod_vals, "-8% to -15%"),
         "major_breakdown_estimate": fmt_range(sev_vals, "-18% to -32%"),
+        "downside_zones": zones,
     }
+
+
+COMPONENT_WEIGHTS: Tuple[Tuple[str, str, float], ...] = (
+    ("absolute_price_momentum", "Absolute Price Momentum", 0.30),
+    ("relative_momentum", "Relative Momentum", 0.25),
+    ("capital_flow_confirmation", "Capital Flow Confirmation", 0.20),
+    ("risk_adjusted_momentum", "Risk-Adjusted Momentum", 0.15),
+    ("market_regime_support", "Market Regime Support", 0.10),
+)
+
+
+def _component_read(key: str, score: float, ind: Dict[str, Any]) -> str:
+    if key == "absolute_price_momentum":
+        below_20 = ind.get("pct_vs_ema_20", float("nan"))
+        if not math.isnan(below_20) and below_20 < -1:
+            return "Strong medium/long-term trend, but short-term momentum cooled"
+        if score >= 70:
+            return "Strong multi-horizon price trend"
+        if score >= 55:
+            return "Constructive trend with mixed short-term signals"
+        return "Weak or deteriorating price momentum"
+    if key == "relative_momentum":
+        if score >= 70:
+            return "Good broad-market relative strength"
+        if score >= 55:
+            return "Moderate outperformance vs benchmark"
+        return "Lagging benchmark or sector"
+    if key == "capital_flow_confirmation":
+        rel_vol = ind.get("relative_volume_20d", float("nan"))
+        if not math.isnan(rel_vol) and rel_vol >= 1.3 and score < 65:
+            return "Volume elevated, but breakout follow-through is mixed"
+        if score >= 60:
+            return "Volume and flow support the trend"
+        return "Capital flow confirmation is weak"
+    if key == "risk_adjusted_momentum":
+        if score >= 60:
+            return "Trend intact with acceptable volatility"
+        return "Volatility or drawdown risk elevated"
+    if score >= 65:
+        return "Supportive market backdrop"
+    return "Market regime is neutral or headwind"
+
+
+def _derive_extended_risk_flags(
+    ind: Dict[str, Any],
+    subscores: Dict[str, float],
+    final_score: float,
+) -> Tuple[List[str], List[str]]:
+    active: List[str] = []
+    clear: List[str] = []
+
+    close = ind.get("close", float("nan"))
+    e20 = ind.get("ema_20", float("nan"))
+    e50 = ind.get("ema_50", float("nan"))
+    e200 = ind.get("ema_200", float("nan"))
+    rsi_v = ind.get("rsi_14", float("nan"))
+    rel_vol = ind.get("relative_volume_20d", float("nan"))
+    pct_hi = ind.get("pct_vs_52w_high", float("nan"))
+    ret_1m = ind.get("return_1m", float("nan"))
+
+    if not math.isnan(e20) and not math.isnan(close) and close < e20:
+        active.append("Price Below 20-Day Moving Average")
+    if not math.isnan(ret_1m) and ret_1m < 0 and not math.isnan(e20) and close < e20:
+        active.append("Short-Term Momentum Cooling")
+    if not math.isnan(pct_hi) and pct_hi < -3:
+        active.append("Recent Pullback From 52-Week High")
+    if not math.isnan(rel_vol) and rel_vol >= 1.2 and subscores.get("capital_flow_confirmation", 50) < 65:
+        active.append("Elevated Volume But Mixed Follow-Through")
+    if 50 <= subscores.get("relative_momentum", 50) < 72:
+        active.append("Industry Relative Strength Only Moderate")
+
+    if math.isnan(rsi_v) or rsi_v <= 75:
+        clear.append("No extreme RSI overbought condition")
+    if math.isnan(e200) or (not math.isnan(close) and close >= e200):
+        clear.append("No price below 200-day moving average")
+    if math.isnan(rsi_v) or rsi_v >= 30:
+        if not math.isnan(e50) and not math.isnan(close) and close >= e50:
+            clear.append("No major long-term trend breakdown")
+    adv = ind.get("avg_dollar_volume_20d", 0.0)
+    if adv >= 25_000_000:
+        clear.append("No low-liquidity risk")
+
+    if final_score >= 90 and not active:
+        pass  # elite — fewer flags expected
+
+    return active, clear
+
+
+def _build_technical_positioning(ind: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+
+    def _row(metric: str, value: Any) -> None:
+        rows.append({"metric": metric, "value": value})
+
+    pct_hi = ind.get("pct_vs_52w_high")
+    if pct_hi is not None and not math.isnan(_safe_float(pct_hi)):
+        _row("Price vs 52-week high", f"{pct_hi:.1f}%")
+    for label, key in (
+        ("Price vs 20-day SMA", "pct_vs_ema_20"),
+        ("Price vs 50-day SMA", "pct_vs_ema_50"),
+        ("Price vs 100-day SMA", "pct_vs_ema_100"),
+        ("Price vs 200-day SMA", "pct_vs_ema_200"),
+    ):
+        v = ind.get(key, float("nan"))
+        if v is not None and not math.isnan(_safe_float(v)):
+            _row(label, f"{v:+.1f}%")
+    rsi_v = ind.get("rsi_14")
+    if rsi_v is not None and not math.isnan(_safe_float(rsi_v)):
+        _row("RSI 14", f"~{rsi_v:.1f}")
+    rel_vol = ind.get("relative_volume_20d")
+    if rel_vol is not None and not math.isnan(_safe_float(rel_vol)):
+        _row("Relative volume (20d)", f"{rel_vol:.1f}x")
+    return rows
+
+
+def _build_model_read(
+    ind: Dict[str, Any],
+    final_score: float,
+    classification: str,
+) -> str:
+    close = ind.get("close")
+    e20 = ind.get("ema_20")
+    e50 = ind.get("ema_50")
+    e200 = ind.get("ema_200")
+    pct_hi = ind.get("pct_vs_52w_high", float("nan"))
+
+    parts: List[str] = []
+    if final_score >= 80:
+        parts.append("Momentum structure remains constructive.")
+    elif final_score >= 65:
+        parts.append("Longer-term momentum is still constructive, but short-term momentum may be mixed.")
+    elif final_score >= 50:
+        parts.append("Momentum is neutral with conflicting horizon signals.")
+    else:
+        parts.append("Momentum has weakened across key horizons.")
+
+    if (
+        not math.isnan(_safe_float(e50))
+        and not math.isnan(_safe_float(e200))
+        and not math.isnan(_safe_float(close))
+    ):
+        if close >= e50 and close >= e200:
+            parts.append("Price remains above key 50-day and 200-day averages.")
+        elif close < e50:
+            parts.append("Price has slipped below the 50-day average — watch support.")
+    if not math.isnan(_safe_float(e20)) and not math.isnan(_safe_float(close)) and close < e20:
+        parts.append("Short-term trend is choppy with price below the 20-day average.")
+    if not math.isnan(_safe_float(pct_hi)) and pct_hi < -3:
+        parts.append(
+            f"The stock has pulled back roughly {abs(pct_hi):.1f}% from its 52-week high."
+        )
+    parts.append(f"Classification: {classification}.")
+    return " ".join(parts)
+
+
+def _build_final_agent_narrative(
+    ticker: str,
+    ind: Dict[str, Any],
+    final_score: float,
+    downside: Dict[str, Any],
+    classification: str,
+    subscores: Dict[str, float],
+) -> str:
+    e50 = ind.get("ema_50")
+    watch_level = f"${e50:.0f}" if e50 and not math.isnan(_safe_float(e50)) else "the 50-day average"
+    top = max(subscores.items(), key=lambda x: x[1])[0].replace("_", " ")
+    weak = min(subscores.items(), key=lambda x: x[1])[0].replace("_", " ")
+
+    return (
+        f"{ticker}'s momentum profile is "
+        f"{'constructive but not elite' if final_score >= 65 else 'mixed to weak'}. "
+        f"The model score of {final_score:.1f}/100 classifies {ticker} as {classification}. "
+        f"Downside exposure {downside['downside_exposure_score']:.1f}/100 ({downside['crash_risk']}) "
+        f"suggests pullback risk is {'manageable but not negligible' if downside['downside_exposure_score'] < 50 else 'elevated'}. "
+        f"Strongest component: {top}; weakest: {weak}. "
+        f"Key level to watch is the 50-day SMA near {watch_level}; a clean break below raises risk toward "
+        f"100-day and 200-day support zones."
+    )
+
+
+def enrich_momentum_readout(
+    base: Dict[str, Any],
+    ind: Dict[str, Any],
+    subscores: Dict[str, float],
+    downside: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Add structured UI fields for stock-analysis momentum panel."""
+    final_score = base["momentum_pricing_score"]
+    classification = base["classification"]
+    ticker = base["ticker"]
+
+    short_term_mixed = (
+        not math.isnan(_safe_float(ind.get("pct_vs_ema_20")))
+        and ind["pct_vs_ema_20"] < -0.5
+        and final_score >= 60
+    )
+    if short_term_mixed and "Short-Term" not in classification:
+        classification = f"{classification} / Short-Term Mixed"
+        base["classification"] = classification
+
+    active_flags, clear_flags = _derive_extended_risk_flags(ind, subscores, final_score)
+    merged_flags = list(dict.fromkeys(base.get("risk_flags", []) + active_flags))
+
+    breakdown = [
+        {
+            "component": label,
+            "weight_pct": int(weight * 100),
+            "score": subscores[key],
+            "read": _component_read(key, subscores[key], ind),
+        }
+        for key, label, weight in COMPONENT_WEIGHTS
+    ]
+
+    base.update(
+        {
+            "latest_price_used": round(ind["close"], 2),
+            "model_read": _build_model_read(ind, final_score, classification),
+            "component_breakdown": breakdown,
+            "technical_positioning": _build_technical_positioning(ind),
+            "risk_flags_active": merged_flags,
+            "risk_flags_clear": clear_flags,
+            "final_agent_narrative": _build_final_agent_narrative(
+                ticker, ind, final_score, downside, classification, subscores
+            ),
+        }
+    )
+    return base
 
 
 def classify_momentum(
@@ -825,7 +1108,7 @@ def analyze_momentum(
         final_score, downside, classification, risk_flags, subscores
     )
 
-    return {
+    readout = {
         "ticker": str(metadata.get("ticker", "")).upper(),
         "as_of_date": ind["as_of_date"],
         "momentum_pricing_score": round(final_score, 2),
@@ -840,3 +1123,4 @@ def analyze_momentum(
         "partial_mode": ind.get("partial_mode", False),
         "indicators": {k: v for k, v in ind.items() if k not in ("sector", "industry")},
     }
+    return enrich_momentum_readout(readout, ind, subscores, downside)

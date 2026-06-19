@@ -472,6 +472,13 @@ class MomentumReadout(BaseModel):
     risk_flags: List[str] = Field(default_factory=list)
     agent_summary: str = ""
     partial_mode: bool = False
+    latest_price_used: Optional[float] = None
+    model_read: Optional[str] = None
+    component_breakdown: List[Dict[str, Any]] = Field(default_factory=list)
+    technical_positioning: List[Dict[str, Any]] = Field(default_factory=list)
+    risk_flags_active: List[str] = Field(default_factory=list)
+    risk_flags_clear: List[str] = Field(default_factory=list)
+    final_agent_narrative: Optional[str] = None
 
 
 class TerminalValuationPanel(BaseModel):

@@ -26,6 +26,7 @@ import {
 import { API_BASE_URL, apiFetch } from './api';
 import { SP500_TICKERS } from './sp500';
 import { DataTrustBanner } from './components/Freshness';
+import MomentumPricingPanel, { extractMomentumReadout } from './components/MomentumPricingPanel';
 import { cleanSource } from './freshness';
 import './DecisionTerminalUI.css';
 import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
@@ -183,6 +184,7 @@ export default function DecisionTerminalUI() {
   const z = payload?.verdict;
   const r = payload?.roadmap;
   const hasData = !!payload;
+  const momentumReadout = useMemo(() => extractMomentumReadout(v), [v]);
 
   const bigGaugeFill = useMemo(() => valuationArcRatio(v?.pct_vs_average), [v?.pct_vs_average]);
   const pmFill = useMemo(
@@ -533,6 +535,12 @@ export default function DecisionTerminalUI() {
             )}
           </section>
         </div>
+
+        <MomentumPricingPanel
+          readout={momentumReadout}
+          loading={loading}
+          ticker={searchUpper}
+        />
 
         {payload?.generated_at_utc && (
           <footer className="dt-footer-meta">

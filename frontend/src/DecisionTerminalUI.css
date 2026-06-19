@@ -1555,3 +1555,219 @@ h4.dt-metrics-section-title {
     text-align: center;
   }
 }
+
+/* —— Momentum Stock Pricing Analysis panel —— */
+.mom-panel {
+  margin-top: 0;
+}
+
+.mom-head .mom-disclaimer {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--dt-muted, #94a3b8);
+}
+
+.mom-as-of {
+  margin: 4px 0 0;
+  font-size: 0.75rem;
+  color: var(--dt-muted, #64748b);
+}
+
+.mom-loading,
+.mom-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--dt-muted, #94a3b8);
+  font-size: 0.85rem;
+  margin-top: 16px;
+}
+
+.mom-block {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.mom-block-title {
+  margin: 0 0 12px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mom-score-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.mom-score-pill {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.mom-score-pill-label {
+  font-size: 0.72rem;
+  color: var(--dt-muted, #94a3b8);
+  margin-bottom: 4px;
+}
+
+.mom-score-pill-value {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #f8fafc;
+}
+
+.mom-classification-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.mom-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 255, 136, 0.1);
+  border: 1px solid rgba(0, 255, 136, 0.25);
+  color: #86efac;
+}
+
+.mom-badge.muted {
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.2);
+  color: #cbd5e1;
+}
+
+.mom-read {
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: #cbd5e1;
+  margin: 0 0 10px;
+}
+
+.mom-json {
+  font-size: 0.72rem;
+  line-height: 1.45;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  color: #a5f3fc;
+  margin: 0;
+}
+
+.mom-table-wrap {
+  overflow-x: auto;
+}
+
+.mom-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.mom-table th,
+.mom-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.mom-table th {
+  color: var(--dt-muted, #94a3b8);
+  font-weight: 600;
+}
+
+.mom-table .mom-num {
+  font-weight: 700;
+  color: #f1f5f9;
+  white-space: nowrap;
+}
+
+.mom-read-cell {
+  color: #cbd5e1;
+  max-width: 280px;
+}
+
+.mom-footnote {
+  margin: 10px 0 0;
+  font-size: 0.78rem;
+  color: var(--dt-muted, #94a3b8);
+}
+
+.mom-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.mom-mini-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.mom-mini-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-top: 6px;
+}
+
+.mom-mini-score {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #00ff88;
+  margin: 4px 0 8px;
+}
+
+.mom-mini-text {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--dt-muted, #94a3b8);
+}
+
+.mom-flags {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.mom-flag-col ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: #fca5a5;
+}
+
+.mom-flag-col.clear ul {
+  color: #86efac;
+}
+
+.mom-summary {
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+@media (max-width: 720px) {
+  .mom-score-grid {
+    grid-template-columns: 1fr;
+  }
+}
