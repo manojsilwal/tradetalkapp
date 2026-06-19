@@ -1,6 +1,7 @@
 {
   "fed_funds_rate": 3.63,
   "cpi_yoy": 2.8,
+  "treasury_10y": 4.46,
   "fetched_at": "2026-05-01T00:00:00+00:00",
   "source": "fred.stlouisfed.org",
   "note": "Seed values used when live FRED fetch is unavailable; refresh via /macro/fred-snapshot after deploy."

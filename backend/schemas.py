@@ -451,6 +451,10 @@ class TerminalValuationModel(BaseModel):
         default=None,
         description="Full momentum readout dict for UI rendering",
     )
+    scenarios: Optional[Dict[str, float]] = Field(
+        default=None,
+        description="Optional bear/base/bull fair values (e.g. DCF scenario range)",
+    )
 
 
 class MomentumReadout(BaseModel):

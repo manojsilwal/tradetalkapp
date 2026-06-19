@@ -93,30 +93,10 @@ def _company_tokens_from_debate_data(dd: dict) -> List[str]:
 
 
 def _sync_extended_snapshot(ticker: str) -> dict:
-    """Extra yfinance info fields for quality + valuation heuristics."""
-    try:
-        import yfinance as yf
+    """Extra yfinance fields for quality + valuation (info + statement fallbacks)."""
+    from .valuation_inputs import fetch_yfinance_valuation_snapshot
 
-        t = yf.Ticker(ticker.upper())
-        info = t.info or {}
-        return {
-            "currentRatio": info.get("currentRatio"),
-            "totalDebt": info.get("totalDebt"),
-            "ebitda": info.get("ebitda"),
-            "trailingEps": info.get("trailingEps"),
-            "bookValue": info.get("bookValue"),
-            "returnOnEquity": info.get("returnOnEquity"),
-            "grossMargins": info.get("grossMargins"),
-            "freeCashflow": info.get("freeCashflow"),
-            "regularMarketPrice": info.get("regularMarketPrice"),
-            "currentPrice": info.get("currentPrice"),
-            "previousClose": info.get("previousClose")
-            or info.get("regularMarketPreviousClose"),
-            "longName": info.get("longName") or info.get("shortName") or ticker.upper(),
-        }
-    except Exception as e:
-        logger.warning("[decision_terminal] extended snapshot failed %s: %s", ticker, e)
-        return {}
+    return fetch_yfinance_valuation_snapshot(ticker)
 
 
 def _get_historical_cagr_3y(ticker: str) -> Optional[float]:
@@ -379,9 +359,9 @@ def _build_provider_audit(
         "valuation": {
             "panel": "valuation",
             "spot_and_momentum_inputs": spot_family,
-            "extended_snapshot_for_multiples_and_quality": "yfinance_ticker_info",
+            "extended_snapshot_for_multiples_and_quality": "yfinance_valuation_snapshot",
             "fair_value_models": {
-                "DCF": "not_implemented",
+                "DCF": "owner_earnings_dcf_scenarios",
                 "Momentum": "composite_momentum_model",
                 "Multiples": "heuristic",
             },
@@ -501,62 +481,55 @@ async def build_decision_terminal_payload(
     if price_f:
         mfv = _multiples_heuristic_fair_price(trailing_eps, roe_pct, price_f, pe_f)
 
-    def _heuristic_dcf() -> Optional[float]:
-        try:
-            # Gather FCF
-            fcf_raw = ext.get("freeCashflow") or debate_data.get("free_cashflow")
-            if not fcf_raw or fcf_raw <= 0:
-                return None
-            
-            # Gather Shares Outstanding
-            shares_out = ext.get("sharesOutstanding")
-            if not shares_out:
-                mc = ext.get("marketCap") or debate_data.get("market_cap")
-                if mc and price_f and price_f > 0:
-                    shares_out = mc / price_f
-                else:
-                    return None
-            
-            if shares_out <= 0:
-                return None
-                
-            # Gather Growth Rate (fallback to 5%)
-            g = 0.05
-            rg = ext.get("revenueGrowth")
-            if rg is not None:
-                g = max(0.02, min(0.15, float(rg)))
-            elif hist_cagr:
-                g = max(0.02, min(0.15, float(hist_cagr) / 100.0))
-                
-            # Assumptions
-            wacc = 0.10
-            tgr = 0.025
-            years = 5
-            
-            # NPV of 5 years FCF
-            dcf_val = 0.0
-            for i in range(1, years + 1):
-                dcf_val += (fcf_raw * (1 + g)**i) / ((1 + wacc)**i)
-                
-            # Terminal Value
-            tv = (fcf_raw * (1 + g)**years * (1 + tgr)) / (wacc - tgr)
-            dcf_val += tv / ((1 + wacc)**years)
-            
-            return float(dcf_val / shares_out)
-        except Exception:
-            return None
+    from .valuation_inputs import compute_dcf_scenarios, owner_earnings_fcf
 
-    dcf_price = _heuristic_dcf()
+    dcf_result = compute_dcf_scenarios(
+        ext,
+        hist_cagr_pct=hist_cagr,
+        price_usd=price_f,
+    )
+    dcf_price = dcf_result.get("base_fair_value_usd")
+    dcf_scenarios = dcf_result.get("scenarios") or {}
+    fcf_for_quality, _fcf_src = owner_earnings_fcf(ext)
+
+    def _dcf_provenance_note() -> str:
+        if not dcf_result.get("available"):
+            return dcf_result.get("missing_reason") or "Insufficient DCF inputs."
+        bear = dcf_scenarios.get("bear")
+        bull = dcf_scenarios.get("bull")
+        parts = [
+            "Owner-earnings DCF (OCF−capex with statement fallbacks), declining 5Y FCF growth, "
+            f"CAPM WACC {dcf_result.get('wacc_base', 0):.1%}, terminal 2.5%, net cash added.",
+            f"FCF source: {dcf_result.get('fcf_source')}; "
+            f"net cash: ${dcf_result.get('net_cash_usd', 0) / 1e9:.1f}B ({dcf_result.get('net_cash_source')}).",
+        ]
+        if bear is not None and bull is not None and dcf_price is not None:
+            parts.append(
+                f"Scenario range: bear ${bear:.0f} · base ${dcf_price:.0f} · bull ${bull:.0f}."
+            )
+        return " ".join(parts)
 
     models: List[TerminalValuationModel] = [
         TerminalValuationModel(
             name="DCF",
             fair_value_usd=dcf_price,
-            available=(dcf_price is not None),
+            available=bool(dcf_result.get("available")),
+            scenarios={
+                k: float(v)
+                for k, v in dcf_scenarios.items()
+                if v is not None
+            }
+            or None,
             provenance=TerminalFieldProvenance(
-                source="heuristic_model",
-                missing_reason="Insufficient FCF or shares outstanding data" if dcf_price is None else None,
-                formula_or_note="5-year projection using trailing FCF, capped revenue growth, 10% WACC, and 2.5% terminal growth.",
+                source="owner_earnings_dcf",
+                confidence=0.55,
+                missing_reason=(
+                    None
+                    if dcf_result.get("available")
+                    else dcf_result.get("missing_reason")
+                    or "Insufficient owner-earnings FCF or shares outstanding data"
+                ),
+                formula_or_note=_dcf_provenance_note(),
             ),
         ),
         TerminalValuationModel(
@@ -608,10 +581,14 @@ async def build_decision_terminal_payload(
         pct_vs_average=pct_vs,
         gauge_label=gauge_label or ("N/A" if price_f is None else "INSUFFICIENT MODEL INPUTS"),
         models=models,
-        panel_note="Average uses Multiples only when available; Momentum is a 0–100 score (not USD fair value); DCF omitted intentionally.",
+        panel_note=(
+            "Average uses DCF (base case) and Multiples when available. "
+            "Momentum is a 0–100 score (not USD fair value). "
+            "DCF shows bear/base/bull in model provenance."
+        ),
     )
 
-    fcf = ext.get("freeCashflow") or debate_data.get("free_cashflow") or hist_quality.get("freeCashflow")
+    fcf = fcf_for_quality or ext.get("freeCashflow") or debate_data.get("free_cashflow") or hist_quality.get("freeCashflow")
     debt = ext.get("totalDebt") or hist_quality.get("totalDebt")
     ebitda = ext.get("ebitda") or hist_quality.get("ebitda")
     cr = ext.get("currentRatio")

@@ -298,7 +298,16 @@ export default function DecisionTerminalUI() {
                       </span>
                       <span className={m.available && (m.fair_value_usd != null || m.momentum_score != null) ? 'dt-models-val' : 'dt-models-na'}>
                         {m.available && m.fair_value_usd != null
-                          ? `$${Number(m.fair_value_usd).toFixed(0)}`
+                          ? (
+                            <>
+                              ${Number(m.fair_value_usd).toFixed(0)}
+                              {m.name === 'DCF' && m.scenarios?.bear != null && m.scenarios?.bull != null && (
+                                <span className="dt-models-range" style={{ fontSize: '0.75rem', opacity: 0.75, marginLeft: 6 }}>
+                                  ({Number(m.scenarios.bear).toFixed(0)}–{Number(m.scenarios.bull).toFixed(0)})
+                                </span>
+                              )}
+                            </>
+                          )
                           : m.available && m.momentum_score != null
                             ? `${Number(m.momentum_score).toFixed(0)}/100`
                             : hasData

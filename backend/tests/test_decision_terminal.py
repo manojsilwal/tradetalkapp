@@ -218,6 +218,55 @@ class TestMomentumValuationPanel(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(momentum_models[0].momentum_score, 82.5)
         self.assertEqual(momentum_models[0].momentum_summary["classification"], "Strong Momentum Candidate")
 
+    async def test_dcf_model_includes_scenarios(self):
+        ext = {
+            "operatingCashflow": 140_000_000_000,
+            "capitalExpenditures": -11_000_000_000,
+            "sharesOutstanding": 14_690_000_000,
+            "totalCash": 45_570_000_000,
+            "shortTermInvestments": 22_940_000_000,
+            "longTermInvestments": 78_090_000_000,
+            "totalDebt": 84_710_000_000,
+            "beta": 1.09,
+            "revenueGrowth": 0.06,
+            "trailingEps": 8.26,
+        }
+        payload = await build_decision_terminal_payload(
+            "AAPL",
+            SwarmConsensus(
+                ticker="AAPL",
+                macro_state=MarketState(market_regime=MarketRegime.BULL_NORMAL),
+                global_signal=1,
+                global_verdict="BUY",
+                confidence=0.7,
+                factors={},
+            ),
+            DebateResult(
+                ticker="AAPL",
+                arguments=[],
+                verdict="BUY",
+                consensus_confidence=0.8,
+                moderator_summary="",
+                bull_score=3,
+                bear_score=1,
+                neutral_score=1,
+            ),
+            {"current_price": 298.0, "roe": 150.0, "pe_ratio": 36.0},
+            {},
+            ext,
+            None,
+        )
+        dcf = [m for m in payload.valuation.models if m.name == "DCF"][0]
+        self.assertTrue(dcf.available)
+        self.assertIsNotNone(dcf.fair_value_usd)
+        self.assertGreater(dcf.fair_value_usd, 120.0)
+        self.assertIsNotNone(dcf.scenarios)
+        assert dcf.scenarios is not None
+        self.assertIn("bear", dcf.scenarios)
+        self.assertIn("bull", dcf.scenarios)
+        self.assertLess(dcf.scenarios["bear"], dcf.fair_value_usd)
+        self.assertGreater(dcf.scenarios["bull"], dcf.fair_value_usd)
+
 
 class TestProviderAudit(unittest.TestCase):
     def test_maps_blocks_and_spot_family(self):

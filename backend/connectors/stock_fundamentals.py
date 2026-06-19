@@ -106,6 +106,11 @@ def _build_metrics(info: Dict[str, Any]) -> Dict[str, Any]:
     market_cap = _num(info.get("marketCap"))
     fcf = _num(info.get("freeCashflow"))
     shares = _num(info.get("sharesOutstanding"))
+    ocf = _num(info.get("operatingCashflow"))
+    capex = _num(info.get("capitalExpenditures"))
+    owner_earnings = None
+    if ocf is not None and capex is not None:
+        owner_earnings = ocf + capex if capex <= 0 else ocf - abs(capex)
 
     fcf_yield = _safe_div(fcf, market_cap)
     fcf_per_share = _safe_div(fcf, shares)
@@ -120,6 +125,9 @@ def _build_metrics(info: Dict[str, Any]) -> Dict[str, Any]:
         },
         "cash_flow": {
             "free_cash_flow": fcf,
+            "operating_cash_flow": ocf,
+            "capital_expenditures": capex,
+            "owner_earnings": owner_earnings,
             "fcf_yield": round(fcf_yield, 4) if fcf_yield is not None else None,
             "fcf_per_share": round(fcf_per_share, 2) if fcf_per_share is not None else None,
             "period_label": "TTM",

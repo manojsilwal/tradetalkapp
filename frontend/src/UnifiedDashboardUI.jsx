@@ -799,6 +799,12 @@ export default function UnifiedDashboardUI() {
                         <span className="dt-metric-label">FCF Per Share</span>
                         <span className="dt-metric-value">{fundamentalsData?.metrics?.cash_flow?.fcf_per_share != null ? `$${fundamentalsData.metrics.cash_flow.fcf_per_share.toFixed(2)}` : <span className="dt-metric-dash">—</span>}</span>
                       </div>
+                      {metricsData?.owner_earnings?.current && metricsData.owner_earnings.current !== 'N/A' && (
+                        <div className="dt-metric-row">
+                          <span className="dt-metric-label">Owner Earnings (OCF − capex)</span>
+                          <span className="dt-metric-value">{metricsData.owner_earnings.current}</span>
+                        </div>
+                      )}
 
                       <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Balance Sheet</h4>
                       <div className="dt-metric-row">
@@ -1061,10 +1067,21 @@ export default function UnifiedDashboardUI() {
                     <span className="dt-models-name">
                       <ProvenanceTip provenance={m.provenance} label={`${m.name}:`} />
                     </span>
-                    <span className={m.available && m.fair_value_usd != null ? 'dt-models-val' : 'dt-models-na'}>
+                    <span className={m.available && (m.fair_value_usd != null || m.momentum_score != null) ? 'dt-models-val' : 'dt-models-na'}>
                       {m.available && m.fair_value_usd != null
-                        ? `$${Number(m.fair_value_usd).toFixed(0)}`
-                        : '—'}
+                        ? (
+                          <>
+                            ${Number(m.fair_value_usd).toFixed(0)}
+                            {m.name === 'DCF' && m.scenarios?.bear != null && m.scenarios?.bull != null && (
+                              <span className="dt-models-range" style={{ fontSize: '0.75rem', opacity: 0.75, marginLeft: 6 }}>
+                                ({Number(m.scenarios.bear).toFixed(0)}–{Number(m.scenarios.bull).toFixed(0)})
+                              </span>
+                            )}
+                          </>
+                        )
+                        : m.available && m.momentum_score != null
+                          ? `${Number(m.momentum_score).toFixed(0)}/100`
+                          : '—'}
                     </span>
                   </li>
                 ))}
