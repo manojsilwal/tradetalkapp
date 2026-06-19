@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { BookOpen, CheckCircle2, Lock, ChevronRight, Star, Zap, Award, Film, Play, XCircle, Clock, Trophy, ArrowRightLeft } from 'lucide-react';
 import VideoPlayer from './VideoPlayer';
 import { API_BASE_URL, apiFetch } from './api';
+import { ACADEMY_MODULES } from './academyRoutes';
+import MomentumLessonExample from './components/MomentumLessonExample';
 
 const TYPE_LABELS = { A: '📊 Market Call', B: '⚔️ Debate Duel', C: '🎓 Strategy Quiz' };
 const TYPE_DESC   = {
@@ -11,6 +14,7 @@ const TYPE_DESC   = {
 };
 
 export default function AcademyUI({ onXpGained }) {
+    const [searchParams, setSearchParams] = useSearchParams();
     // ── Unified Loading & Error States ───────────────────────────────────────
     const [loading, setLoading]       = useState(true);
     const [error, setError]           = useState(null);
@@ -96,8 +100,19 @@ export default function AcademyUI({ onXpGained }) {
         return `${h}h ${m}m`;
     };
 
-    // ── Learning Path Handlers ────────────────────────────────────────────────
-    const openModule = async (modId) => {
+    const startPolling = (modId) => {
+        const interval = setInterval(async () => {
+            const data = await apiFetch(`${API_BASE_URL}/learning/module/${modId}`);
+            setModuleDetail(data);
+            if (data?.lesson?.status !== 'generating') {
+                clearInterval(interval);
+                setPollInterval(null);
+            }
+        }, 5000);
+        setPollInterval(interval);
+    };
+
+    const openModule = useCallback(async (modId) => {
         if (pollInterval) clearInterval(pollInterval);
         setShowVideo(false);
         setActiveModule(modId);
@@ -112,18 +127,22 @@ export default function AcademyUI({ onXpGained }) {
         } catch (err) {
             console.error('[Academy] failed to open module:', err);
         }
-    };
+    }, [pollInterval]);
 
-    const startPolling = (modId) => {
-        const interval = setInterval(async () => {
-            const data = await apiFetch(`${API_BASE_URL}/learning/module/${modId}`);
-            setModuleDetail(data);
-            if (data?.lesson?.status !== 'generating') {
-                clearInterval(interval);
-                setPollInterval(null);
-            }
-        }, 5000);
-        setPollInterval(interval);
+    useEffect(() => {
+        if (loading || !curriculum || activeModule) return;
+        const modId = searchParams.get('module');
+        if (modId) {
+            openModule(modId);
+        }
+    }, [loading, curriculum, activeModule, searchParams, openModule]);
+
+    const closeModule = () => {
+        setActiveModule(null);
+        setModuleDetail(null);
+        if (searchParams.get('module')) {
+            setSearchParams({}, { replace: true });
+        }
     };
 
     const handleGenerateVideo = async () => {
@@ -203,7 +222,7 @@ export default function AcademyUI({ onXpGained }) {
         return (
             <div className="fade-in" style={{ maxWidth: 680, margin: '0 auto', padding: '0 16px' }}>
                 <button
-                    onClick={() => { setActiveModule(null); setModuleDetail(null); }}
+                    onClick={closeModule}
                     style={{ background: 'none', border: 'none', color: '#a78bfa', fontSize: 13, cursor: 'pointer', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 6 }}
                 >
                     ← Back to Academy
@@ -226,6 +245,10 @@ export default function AcademyUI({ onXpGained }) {
                         </div>
                     )}
                 </div>
+
+                {activeModule === ACADEMY_MODULES.momentumPricing && (
+                    <MomentumLessonExample ticker={searchParams.get('ticker')} />
+                )}
 
                 {/* Video Module */}
                 {moduleDetail.lesson && (
@@ -743,6 +766,13 @@ function QuizResult({ result, score, total, passScore }) {
 }
 
 function featureName(id) {
-    const map = { consumer: 'Valuation Dashboard', macro: 'Global Macro', debate: 'AI Debate', backtest: 'Strategy Lab', observer: 'Developer Trace' };
+    const map = {
+        consumer: 'Valuation Dashboard',
+        macro: 'Global Macro',
+        debate: 'AI Debate',
+        backtest: 'Strategy Lab',
+        observer: 'Developer Trace',
+        dashboard: 'Unified Dashboard',
+    };
     return map[id] || id;
 }

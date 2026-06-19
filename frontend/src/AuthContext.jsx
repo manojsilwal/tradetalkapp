@@ -111,7 +111,7 @@ export function AuthProvider({ children }) {
             }
             try {
                 const data = await apiFetch(`${API_BASE_URL}/auth/me`);
-                setUser(data);
+                setUser({ ...data, is_admin: Boolean(data.is_admin) });
             } catch {
                 clearToken();
                 if (IS_DEV_AUTH) {

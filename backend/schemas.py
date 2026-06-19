@@ -486,11 +486,46 @@ class TerminalValuationPanel(BaseModel):
     average_fair_value_usd: Optional[float] = None
     pct_vs_average: Optional[float] = Field(
         default=None,
-        description="Positive = stock trades below average fair value (undervalued)",
+        description="Margin of safety: (fair − price) / fair × 100; positive = undervalued",
     )
+    valuation_gap_pct: Optional[float] = Field(
+        default=None,
+        description="(price − fair) / fair × 100; positive = trading above fair value",
+    )
+    implied_downside_pct: Optional[float] = Field(
+        default=None,
+        description="(fair − price) / price × 100; negative when price exceeds fair value",
+    )
+    valuation_signal: str = Field(
+        default="",
+        description="Graduated label, e.g. Moderately Overvalued",
+    )
+    valuation_confidence: str = Field(
+        default="",
+        description="Low / Medium / High model agreement and coverage",
+    )
+    dcf_range_low_usd: Optional[float] = None
+    dcf_range_high_usd: Optional[float] = None
+    bull_case_assessment: str = ""
+    bear_case_assessment: str = ""
     gauge_label: str = ""
     models: List[TerminalValuationModel] = Field(default_factory=list)
     panel_note: str = ""
+
+
+class MetricHealthAssessment(BaseModel):
+    tone: str = Field(default="neutral", description="positive | neutral | caution | negative")
+    label: str = ""
+    detail: str = ""
+
+
+class FundamentalHealthPanel(BaseModel):
+    headline: str = ""
+    tone: str = "neutral"
+    summary: str = ""
+    macro_regime: str = ""
+    macro_note: str = ""
+    coverage_pct: Optional[float] = None
 
 
 class TerminalQualityRow(BaseModel):
@@ -499,10 +534,14 @@ class TerminalQualityRow(BaseModel):
     value_label: str
     status_label: str = ""
     provenance: TerminalFieldProvenance
+    assessment_tone: str = ""
+    assessment_label: str = ""
+    assessment_detail: str = ""
 
 
 class TerminalQualityPanel(BaseModel):
     rows: List[TerminalQualityRow] = Field(default_factory=list)
+    fundamental_health: Optional[FundamentalHealthPanel] = None
 
 
 class TerminalVerdictPanel(BaseModel):

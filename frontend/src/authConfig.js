@@ -10,4 +10,5 @@ export const GUEST_USER = {
   name: 'Guest',
   avatar: '',
   guest: true,
+  is_admin: false,
 };

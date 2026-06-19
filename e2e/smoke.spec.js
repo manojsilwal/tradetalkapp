@@ -18,10 +18,17 @@ test.describe('TradeTalkApp E2E smoke', () => {
 
 
 
-  test('Strategy Lab tab loads', async ({ page }) => {
+  test('mobile bottom nav opens paper portfolio', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(FRONTEND);
-    await page.click('text=Strategy Lab');
-    await expect(page.locator('textarea, input').first()).toBeVisible({ timeout: 10000 });
+    await dismissOnboarding(page);
+    await page.getByRole('button', { name: 'Portfolio', exact: true }).click();
+    await expect(page).toHaveURL(/\/portfolio/);
+    await expectOneOf(
+      page,
+      [/Unlock Paper Portfolio/i, /Import holdings/i, /Open Positions/i, /Add Position/i],
+      30000,
+    );
   });
 
   test('paper portfolio route shows import entry or auth gate', async ({ page }) => {

@@ -748,13 +748,14 @@ def _latest_price_date(result: dict):
 
 
 @router.get("/stock-fundamentals/{ticker}")
-async def get_stock_fundamentals(ticker: str):
+async def get_stock_fundamentals(ticker: str, market_regime: Optional[str] = None):
     """
     Consolidated stock data for the analysis page: price history (multiple
     time-frames), valuation / cash-flow / margin / growth / balance /
     dividend metrics, quarterly + annual financials, and company info.
     """
     from ..data_errors import InsufficientDataError
+    from ..business_health import build_stock_fundamentals_health
 
     t = validate_ticker_query(ticker)
 
@@ -776,6 +777,14 @@ async def get_stock_fundamentals(ticker: str):
             ).model_dump()
         except Exception:
             pass
+        health_block = build_stock_fundamentals_health(
+            result.get("metrics") or {},
+            market_regime=market_regime,
+        )
+        result["health"] = {
+            "fundamental_health": health_block["fundamental_health"].model_dump(),
+            "metrics": {k: v.model_dump() for k, v in health_block["metrics"].items()},
+        }
         return result
     except InsufficientDataError:
         raise

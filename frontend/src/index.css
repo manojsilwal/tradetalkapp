@@ -393,6 +393,22 @@ body {
     background: rgba(255, 255, 255, 0.04);
   }
 
+  .drawer-profile-section-static {
+    cursor: default;
+  }
+
+  .drawer-profile-section-static:active {
+    background: transparent;
+  }
+
+  .drawer-guest-label {
+    padding: 8px 6px 4px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: -0.01em;
+  }
+
   .drawer-profile-avatar-container {
     width: 48px;
     height: 48px;

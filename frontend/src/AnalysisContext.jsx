@@ -634,6 +634,19 @@ export function AnalysisProvider({ children }) {
                         debateError: null,
                         debateLoading: false,
                     });
+                    const regime = res?.swarm?.macro_state?.market_regime;
+                    if (regime) {
+                        apiFetchTimed(
+                            `${API_BASE_URL}/stock-fundamentals/${encodeURIComponent(sym)}?market_regime=${encodeURIComponent(regime)}`,
+                            {},
+                            FAST_TIMEOUT_MS,
+                            abortSignal,
+                        )
+                            .then((fundRes) => {
+                                updateTickerState({ fundamentalsData: fundRes });
+                            })
+                            .catch(() => {});
+                    }
                 })
                 .catch((err) => {
                     onFail(err);

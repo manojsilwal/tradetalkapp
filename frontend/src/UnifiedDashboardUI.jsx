@@ -10,9 +10,11 @@ import { SP500_TICKERS } from './sp500';
 import { StaleValue, FreshnessBadge, LastUpdated } from './components/Freshness';
 import { formatFreshnessDateTime, cleanSource } from './freshness';
 import DashboardScorecardPanel from './components/DashboardScorecardPanel';
-import MomentumPricingPanel, { extractMomentumReadout } from './components/MomentumPricingPanel';
+import ConsensusValuationPanel from './components/ConsensusValuationPanel';
+import FundamentalHealthBanner, { MetricHealthChip } from './components/FundamentalHealthBanner';
 import VerdictToneLegend from './components/VerdictToneLegend';
 import DebateThreadPanel from './components/debate/DebateThreadPanel';
+import DebateVerdictSummary from './components/debate/DebateVerdictSummary';
 import './DecisionTerminalUI.css';
 import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
 
@@ -24,6 +26,13 @@ const QUALITY_ICONS = {
   margin: PieChart,
   current_ratio: Scale,
 };
+
+function assessmentToneClass(tone) {
+  if (tone === 'positive') return 'ok';
+  if (tone === 'caution') return 'warn';
+  if (tone === 'negative') return 'negative';
+  return 'muted';
+}
 
 function SemiGauge({ fillRatio, size = 'large', className = '' }) {
   const gid = useId().replace(/:/g, '');
@@ -80,12 +89,6 @@ function SemiGauge({ fillRatio, size = 'large', className = '' }) {
       />
     </svg>
   );
-}
-
-function valuationArcRatio(pctVsAverage) {
-  if (pctVsAverage == null || Number.isNaN(pctVsAverage)) return 0.42;
-  const c = Math.max(-35, Math.min(35, pctVsAverage));
-  return (c + 35) / 70;
 }
 
 function polymarketArcRatio(pct) {
@@ -354,7 +357,6 @@ export default function UnifiedDashboardUI() {
   const q = decisionData?.quality;
   const z = decisionData?.verdict;
   const r = decisionData?.roadmap;
-  const momentumReadout = useMemo(() => extractMomentumReadout(v), [v]);
 
   const getBriefText = () => {
     if (predMarketsLoading) return 'Loading...';
@@ -374,7 +376,6 @@ export default function UnifiedDashboardUI() {
     return 'Active Markets Scan';
   };
 
-  const valFill = valuationArcRatio(v?.pct_vs_average);
   const pmFill = z?.polymarket_gated_out ? 0.35 : polymarketArcRatio(z?.prediction_market_bullish_pct);
   const socialFactor = traceData?.factors?.social_sentiment;
   const socialConfPct = socialFactor?.confidence != null
@@ -403,6 +404,8 @@ export default function UnifiedDashboardUI() {
   );
   const reconciliation = decisionData?.reconciliation;
   const embeddedScorecard = decisionData?.scorecard_summary;
+  const fundamentalHealth = q?.fundamental_health ?? fundamentalsData?.health?.fundamental_health;
+  const financialMetricHealth = fundamentalsData?.health?.metrics ?? {};
   const scenarioPrices = useMemo(() => roadmapScenarioPrices(r, spot), [r, spot]);
 
   const roadmapChartData = useMemo(
@@ -580,6 +583,9 @@ export default function UnifiedDashboardUI() {
         {/* 1. BUSINESS QUALITY SCORECARD */}
         <section className="dt-panel dt-area-scorecard">
           <h2 className="dt-panel-title">Business Quality Scorecard</h2>
+          {hasDecisionData && q?.fundamental_health && (
+            <FundamentalHealthBanner health={q.fundamental_health} />
+          )}
           {decisionLoading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', marginTop: 14, fontSize: '0.9rem' }}>
               <Loader2 className="spinner" size={18} /> Loading scorecard…
@@ -588,15 +594,22 @@ export default function UnifiedDashboardUI() {
             <div className="dt-quality-3x2" style={{ marginTop: '16px' }}>
               {(q?.rows || []).map((row) => {
                 const IconComp = QUALITY_ICONS[row.id] || TrendingUp;
-                const st = (row.status_label || '').toLowerCase();
-                const tone = st.includes('good') && !st.includes('strong') ? 'warn' : ['excellent', 'strong', 'robust', 'low', 'high'].some((k) => st.includes(k)) ? 'ok' : 'muted';
+                const tone = row.assessment_tone
+                  ? assessmentToneClass(row.assessment_tone)
+                  : 'muted';
+                const statusText = row.assessment_label || row.status_label || '—';
                 return (
                   <div key={row.id} className="dt-q-tile">
                     <div className="dt-q-tile-icon"><IconComp size={20} strokeWidth={1.6} /></div>
                     <div className="dt-q-tile-body">
                       <div className="dt-q-tile-label"><ProvenanceTip provenance={row.provenance} label={row.label} /></div>
                       <div className="dt-q-tile-value">{row.value_label || '—'}</div>
-                      <div className={`dt-q-tile-status dt-tone-${tone}`}>{row.status_label || '—'}</div>
+                      <div
+                        className={`dt-q-tile-status dt-q-tile-assessment dt-tone-${tone}`}
+                        title={row.assessment_detail || ''}
+                      >
+                        {statusText}
+                      </div>
                     </div>
                   </div>
                 );
@@ -733,6 +746,12 @@ export default function UnifiedDashboardUI() {
             <h2 className="dt-panel-title" style={{ margin: 0 }}>Financial Health &amp; Performance</h2>
             <LastUpdated freshness={fundamentalsData?.data_freshness} label="Fundamentals" />
           </div>
+          {fundamentalHealth && (
+            <FundamentalHealthBanner
+              health={fundamentalHealth}
+              testId="financial-health-banner"
+            />
+          )}
             <div className="dt-metrics-split">
               <div className="dt-metrics-col">
                 <h3 className="dt-metrics-block-title">Consolidated Metrics</h3>
@@ -752,37 +771,61 @@ export default function UnifiedDashboardUI() {
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">PE Ratio (TTM)</span>
-                        <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.trailing_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                        <span className="dt-metric-value">
+                          {fundamentalsData?.metrics?.valuation?.trailing_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}
+                          <MetricHealthChip assessment={financialMetricHealth.trailing_pe} />
+                        </span>
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">PE Ratio (Forward)</span>
-                        <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.forward_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                        <span className="dt-metric-value">
+                          {fundamentalsData?.metrics?.valuation?.forward_pe?.toFixed(1) || <span className="dt-metric-dash">—</span>}
+                          <MetricHealthChip assessment={financialMetricHealth.forward_pe} />
+                        </span>
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">Price to Sales</span>
-                        <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.price_to_sales?.toFixed(2) || <span className="dt-metric-dash">—</span>}</span>
+                        <span className="dt-metric-value">
+                          {fundamentalsData?.metrics?.valuation?.price_to_sales?.toFixed(2) || <span className="dt-metric-dash">—</span>}
+                          <MetricHealthChip assessment={financialMetricHealth.price_to_sales} />
+                        </span>
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">EV / EBITDA</span>
-                        <span className="dt-metric-value">{fundamentalsData?.metrics?.valuation?.ev_to_ebitda?.toFixed(1) || <span className="dt-metric-dash">—</span>}</span>
+                        <span className="dt-metric-value">
+                          {fundamentalsData?.metrics?.valuation?.ev_to_ebitda?.toFixed(1) || <span className="dt-metric-dash">—</span>}
+                          <MetricHealthChip assessment={financialMetricHealth.ev_to_ebitda} />
+                        </span>
                       </div>
 
                       <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Margins &amp; Growth</h4>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">Profit Margin</span>
-                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.profit_margins != null ? fundamentalsData.metrics.margins_and_growth.profit_margins * 100 : null)}</span>
+                        <span className="dt-metric-value">
+                          {fmtPct(fundamentalsData?.metrics?.margins_and_growth?.profit_margins != null ? fundamentalsData.metrics.margins_and_growth.profit_margins * 100 : null)}
+                          <MetricHealthChip assessment={financialMetricHealth.profit_margin} />
+                        </span>
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">Operating Margin</span>
-                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.operating_margins != null ? fundamentalsData.metrics.margins_and_growth.operating_margins * 100 : null)}</span>
+                        <span className="dt-metric-value">
+                          {fmtPct(fundamentalsData?.metrics?.margins_and_growth?.operating_margins != null ? fundamentalsData.metrics.margins_and_growth.operating_margins * 100 : null)}
+                          <MetricHealthChip assessment={financialMetricHealth.operating_margin} />
+                        </span>
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">Earnings Growth YoY</span>
-                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.earnings_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.earnings_growth_yoy * 100 : null)}</span>
+                        <span className="dt-metric-value">
+                          {fmtPct(fundamentalsData?.metrics?.margins_and_growth?.earnings_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.earnings_growth_yoy * 100 : null)}
+                          <MetricHealthChip assessment={financialMetricHealth.earnings_growth_yoy} />
+                        </span>
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">Revenue Growth YoY</span>
-                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.margins_and_growth?.revenue_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.revenue_growth_yoy * 100 : null)}</span>
+                        <span className="dt-metric-value">
+                          {fmtPct(fundamentalsData?.metrics?.margins_and_growth?.revenue_growth_yoy != null ? fundamentalsData.metrics.margins_and_growth.revenue_growth_yoy * 100 : null)}
+                          <MetricHealthChip assessment={financialMetricHealth.revenue_growth_yoy} />
+                        </span>
                       </div>
                     </div>
 
@@ -795,7 +838,10 @@ export default function UnifiedDashboardUI() {
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">FCF Yield</span>
-                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.cash_flow?.fcf_yield != null ? fundamentalsData.metrics.cash_flow.fcf_yield * 100 : null)}</span>
+                        <span className="dt-metric-value">
+                          {fmtPct(fundamentalsData?.metrics?.cash_flow?.fcf_yield != null ? fundamentalsData.metrics.cash_flow.fcf_yield * 100 : null)}
+                          <MetricHealthChip assessment={financialMetricHealth.fcf_yield} />
+                        </span>
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">FCF Per Share</span>
@@ -821,11 +867,17 @@ export default function UnifiedDashboardUI() {
                       <h4 className="dt-metrics-section-title" style={{ marginTop: 20 }}>Dividends</h4>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">Dividend Yield</span>
-                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.dividend_yield != null ? fundamentalsData.metrics.dividend.dividend_yield * 100 : null)}</span>
+                        <span className="dt-metric-value">
+                          {fmtPct(fundamentalsData?.metrics?.dividend?.dividend_yield != null ? fundamentalsData.metrics.dividend.dividend_yield * 100 : null)}
+                          <MetricHealthChip assessment={financialMetricHealth.dividend_yield} />
+                        </span>
                       </div>
                       <div className="dt-metric-row">
                         <span className="dt-metric-label">Payout Ratio</span>
-                        <span className="dt-metric-value">{fmtPct(fundamentalsData?.metrics?.dividend?.payout_ratio != null ? fundamentalsData.metrics.dividend.payout_ratio * 100 : null)}</span>
+                        <span className="dt-metric-value">
+                          {fmtPct(fundamentalsData?.metrics?.dividend?.payout_ratio != null ? fundamentalsData.metrics.dividend.payout_ratio * 100 : null)}
+                          <MetricHealthChip assessment={financialMetricHealth.payout_ratio} />
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -1040,69 +1092,17 @@ export default function UnifiedDashboardUI() {
           {/* 5. CONSENSUS VALUATION SIGNAL */}
           <section className="dt-panel dt-area-valuation" style={{ margin: 0 }}>
           <h2 className="dt-panel-title">Consensus Valuation Signal</h2>
-          <div className="dt-valuation-split">
-            <div className="dt-valuation-gauge">
-              {decisionLoading ? (
-                <div className="dt-metrics-loading" style={{ minHeight: 120 }}>
-                  <Loader2 className="spinner" size={22} />
-                </div>
-              ) : (
-                <>
-                  <SemiGauge fillRatio={hasDecisionData ? valFill : 0.38} size="large" />
-                  <div className="dt-gauge-caption">{hasDecisionData ? v?.gauge_label || '—' : '—'}</div>
-                  {hasDecisionData && spot != null && (
-                    <div className="dt-gauge-sub">
-                      Spot ${Number(spot).toFixed(2)}
-                      {v?.average_fair_value_usd != null && (
-                        <> · Avg fair ${Number(v.average_fair_value_usd).toFixed(0)}</>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-            <div className="dt-valuation-models">
-              <div className="dt-models-heading">Valuation models</div>
-              <ul className="dt-models-list">
-                {(v?.models || []).map((m) => (
-                  <li key={m.name} className="dt-models-li">
-                    <span className="dt-models-name">
-                      <ProvenanceTip provenance={m.provenance} label={`${m.name}:`} />
-                    </span>
-                    <span className={m.available && (m.fair_value_usd != null || m.momentum_score != null) ? 'dt-models-val' : 'dt-models-na'}>
-                      {m.available && m.fair_value_usd != null
-                        ? (
-                          <>
-                            ${Number(m.fair_value_usd).toFixed(0)}
-                            {m.name === 'DCF' && m.scenarios?.bear != null && m.scenarios?.bull != null && (
-                              <span className="dt-models-range" style={{ fontSize: '0.75rem', opacity: 0.75, marginLeft: 6 }}>
-                                ({Number(m.scenarios.bear).toFixed(0)}–{Number(m.scenarios.bull).toFixed(0)})
-                              </span>
-                            )}
-                          </>
-                        )
-                        : m.available && m.momentum_score != null
-                          ? `${Number(m.momentum_score).toFixed(0)}/100`
-                          : '—'}
-                    </span>
-                  </li>
-                ))}
-                {hasDecisionData && (
-                  <li className="dt-models-li dt-models-average">
-                    <span className="dt-models-name">Average:</span>
-                    <span className="dt-models-val">
-                      {v?.average_fair_value_usd != null
-                        ? `$${Number(v.average_fair_value_usd).toFixed(0)}`
-                        : '—'}
-                    </span>
-                  </li>
-                )}
-                {!hasDecisionData && !decisionLoading && (
-                  <li className="dt-models-li dt-models-placeholder"><span>Average:</span><span>—</span></li>
-                )}
-              </ul>
-            </div>
-          </div>
+          <ConsensusValuationPanel
+            valuation={v}
+            hasData={hasDecisionData}
+            loading={decisionLoading}
+            ticker={searchUpper}
+            loadingFallback={
+              <div className="dt-metrics-loading" style={{ minHeight: 120 }}>
+                <Loader2 className="spinner" size={22} />
+              </div>
+            }
+          />
         </section>
 
         <DashboardScorecardPanel
@@ -1115,12 +1115,6 @@ export default function UnifiedDashboardUI() {
         </div>
       </div>
 
-      <MomentumPricingPanel
-        readout={momentumReadout}
-        loading={decisionLoading || (isAnalyzing && !momentumReadout)}
-        ticker={searchUpper}
-      />
-
       {(debateLoading || debateData || isAnalyzing) && (
         <section className="dt-panel dt-area-debate" data-testid="dashboard-debate-panel">
           <h2 className="dt-panel-title">Investment Committee Debate</h2>
@@ -1128,6 +1122,10 @@ export default function UnifiedDashboardUI() {
             <p style={{ color: 'var(--accent-red)', fontSize: '0.85rem', marginTop: 12 }}>{debateError}</p>
           )}
           <div style={{ marginTop: 14 }}>
+            <DebateVerdictSummary
+              result={debateData}
+              loading={debateLoading || (isAnalyzing && !debateData)}
+            />
             <DebateThreadPanel result={debateData} loading={debateLoading || (isAnalyzing && !debateData)} />
           </div>
         </section>

@@ -54,7 +54,8 @@ class TestMetricCrossConsistency(unittest.TestCase):
         panel = build_reconciliation(
             headline_verdict="BUY",
             pct_vs_average=-12.0,
-            gauge_label="-12.00% OVERVALUED",
+            gauge_label="Moderately Overvalued",
+            valuation_gap_pct=12.0,
             predicted_cagr_base_pct=8.0,
             scorecard_summary=sc,
         )

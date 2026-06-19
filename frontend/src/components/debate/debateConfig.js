@@ -22,3 +22,55 @@ export const VERDICT_STYLES = {
   'STRONG SELL': { color: '#ef4444', glow: '0 0 20px rgba(239,68,68,0.4)' },
 };
 
+/** Count bullish / bearish / neutral stances from debate arguments or API scores. */
+export function deriveDebateScores(result) {
+  if (!result) return { bull: 0, bear: 0, neutral: 0 };
+  if (result.bull_score != null && result.bear_score != null) {
+    return {
+      bull: result.bull_score,
+      bear: result.bear_score,
+      neutral: result.neutral_score ?? 0,
+    };
+  }
+  const args = result.arguments || [];
+  let bull = 0;
+  let bear = 0;
+  let neutral = 0;
+  for (const a of args) {
+    if (a.stance === 'BULLISH') bull += 1;
+    else if (a.stance === 'BEARISH') bear += 1;
+    else neutral += 1;
+  }
+  return { bull, bear, neutral };
+}
+
+/** Same tiering as backend debate_agents heuristic fallback. */
+export function heuristicDebateVerdict(bull, bear) {
+  if (bull >= 4) return 'STRONG BUY';
+  if (bull === 3) return 'BUY';
+  if (bear >= 4) return 'STRONG SELL';
+  if (bear === 3) return 'SELL';
+  return 'NEUTRAL';
+}
+
+/** Ensure verdict + summary exist when API omitted moderator fields. */
+export function normalizeDebateResult(result) {
+  if (!result) return null;
+  const scores = deriveDebateScores(result);
+  const verdict = (result.verdict && String(result.verdict).trim())
+    ? result.verdict
+    : heuristicDebateVerdict(scores.bull, scores.bear);
+  const voteLine = `${scores.bull} bullish · ${scores.bear} bearish · ${scores.neutral} neutral`;
+  const moderator_summary = result.moderator_summary?.trim()
+    ? result.moderator_summary
+    : `Committee vote split: ${voteLine}.`;
+  return {
+    ...result,
+    verdict,
+    moderator_summary,
+    bull_score: scores.bull,
+    bear_score: scores.bear,
+    neutral_score: scores.neutral,
+  };
+}
+

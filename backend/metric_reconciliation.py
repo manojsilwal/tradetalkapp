@@ -38,6 +38,7 @@ def build_reconciliation(
     fusion_note: str = "",
     pct_vs_average: Optional[float] = None,
     gauge_label: str = "",
+    valuation_gap_pct: Optional[float] = None,
     predicted_cagr_base_pct: Optional[float] = None,
     swarm_rejected: bool = False,
     scorecard_summary: Optional[TerminalScorecardSummary] = None,
@@ -59,7 +60,17 @@ def build_reconciliation(
             supporting.append(chip)
 
     if gauge_label:
-        _add("valuation", gauge_label, f"Fair value gap: {pct_vs_average:+.1f}%" if pct_vs_average is not None else "")
+        gap_detail = ""
+        if valuation_gap_pct is not None:
+            if valuation_gap_pct > 0:
+                gap_detail = f"Valuation gap: +{valuation_gap_pct:.1f}% above fair value"
+            elif valuation_gap_pct < 0:
+                gap_detail = f"Valuation gap: {valuation_gap_pct:.1f}% below fair value"
+            else:
+                gap_detail = "Valuation gap: near fair value"
+        elif pct_vs_average is not None:
+            gap_detail = f"Fair value gap: {pct_vs_average:+.1f}%"
+        _add("valuation", gauge_label, gap_detail)
 
     if predicted_cagr_base_pct is not None:
         cagr_label = f"Roadmap base +{predicted_cagr_base_pct:.1f}% CAGR (3Y)" if predicted_cagr_base_pct >= 0 else f"Roadmap base {predicted_cagr_base_pct:.1f}% CAGR (3Y)"

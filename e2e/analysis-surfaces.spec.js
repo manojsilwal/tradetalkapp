@@ -23,12 +23,16 @@ test.describe('Analysis Surfaces', () => {
     await expect(page.getByTestId('dashboard-current-price')).toBeVisible({ timeout: 240000 });
     await expect(page.getByText('Verdict & Sentiment Hub')).toBeVisible();
     await expect(page.getByText('Business Quality Scorecard')).toBeVisible();
-    const momentumPanel = page.getByTestId('momentum-pricing-panel');
-    await expect(momentumPanel).toBeVisible({ timeout: 240000 });
-    await expect(momentumPanel.getByText('Momentum Stock Pricing Analysis')).toBeVisible();
-    await expect(momentumPanel.getByText(/\/\s*100/)).toBeVisible();
-    await expect(momentumPanel.getByRole('columnheader', { name: 'Component' })).toBeVisible();
-    await expect(momentumPanel.getByRole('columnheader', { name: 'Score' })).toBeVisible();
+    await expect(page.getByTestId('consensus-valuation-panel')).toBeVisible({ timeout: 240000 });
+    await expect(page.getByTestId('debate-panel-verdict')).toBeVisible({ timeout: 240000 });
+    await expect(page.getByTestId('debate-panel-verdict-label')).toBeVisible();
+    await expect(page.getByText(/STRONG BUY|BUY|NEUTRAL|SELL|STRONG SELL/)).toBeVisible();
+    await expect(page.getByTestId('fundamental-health-banner')).toBeVisible({ timeout: 240000 });
+    await expect(page.getByText(/High-quality business|Mixed fundamentals|Weak fundamentals|Insufficient data/)).toBeVisible();
+    await expect(page.locator('.dt-health-chip').first()).toBeVisible();
+    await expect(page.getByText(/\/100/)).toBeVisible();
+    await page.getByTestId('momentum-model-tip-trigger').hover();
+    await expect(page.getByTestId('momentum-model-hover-tip')).toBeVisible();
     await expectNoGenericFetchFailure(page);
   });
 

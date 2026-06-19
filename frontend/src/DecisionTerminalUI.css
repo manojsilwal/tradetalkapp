@@ -673,6 +673,44 @@ h4.dt-metrics-section-title {
   color: var(--dt-muted);
 }
 
+.dt-valuation-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dt-valuation-metrics {
+  margin: 0;
+  padding: 0;
+}
+
+.dt-valuation-metrics-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.78rem;
+  padding: 5px 0;
+  border-bottom: 1px dashed rgba(139, 160, 181, 0.15);
+}
+
+.dt-valuation-metrics-row:last-child {
+  border-bottom: none;
+}
+
+.dt-valuation-metrics-row dt {
+  color: var(--dt-muted);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.dt-valuation-metrics-row dd {
+  margin: 0;
+  font-weight: 700;
+  color: var(--dt-text);
+  text-align: right;
+}
+
 .dt-valuation-models {
   padding-top: 4px;
 }
@@ -825,6 +863,74 @@ h4.dt-metrics-section-title {
 
 .dt-tone-muted {
   color: var(--dt-muted);
+}
+
+.dt-tone-negative {
+  color: #f87171;
+}
+
+.dt-fundamental-health-banner {
+  margin: 12px 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(139, 160, 181, 0.22);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dt-fundamental-health-headline {
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.dt-fundamental-health-summary {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--dt-text);
+}
+
+.dt-fundamental-health-macro {
+  margin: 6px 0 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--dt-muted);
+}
+
+.dt-fundamental-health-framing {
+  margin: 8px 0 0;
+  font-size: 0.68rem;
+  color: var(--dt-muted);
+  font-style: italic;
+}
+
+.dt-health-chip {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  margin-left: 8px;
+  vertical-align: middle;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dt-health-chip.dt-tone-ok {
+  background: rgba(0, 255, 136, 0.12);
+}
+
+.dt-health-chip.dt-tone-warn {
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.dt-health-chip.dt-tone-negative {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.dt-q-tile-assessment {
+  font-size: 0.68rem;
+  font-weight: 700;
+  margin-top: 4px;
 }
 
 /* Verdict split */
@@ -1148,6 +1254,64 @@ h4.dt-metrics-section-title {
   opacity: 0.45;
 }
 
+.dt-momentum-tip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.dt-momentum-tip-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  line-height: 1;
+  color: inherit;
+}
+
+.dt-momentum-tip-btn:hover .dt-tip-icon {
+  opacity: 0.85;
+}
+
+.dt-momentum-hover-tip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  width: min(280px, 88vw);
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(139, 160, 181, 0.35);
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  text-align: left;
+  pointer-events: none;
+}
+
+.dt-momentum-hover-tip-main {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--dt-text);
+}
+
+.dt-momentum-hover-tip-read {
+  margin: 6px 0 0;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: var(--dt-muted);
+}
+
+.dt-momentum-hover-tip-hint {
+  margin: 8px 0 0;
+  font-size: 0.65rem;
+  line-height: 1.35;
+  color: #c4b5fd;
+  font-weight: 600;
+}
+
+/* Legacy popover styles removed — click navigates to Academy */
 .spinner {
   animation: dtspin 0.7s linear infinite;
 }
@@ -1768,6 +1932,174 @@ h4.dt-metrics-section-title {
 
 @media (max-width: 720px) {
   .mom-score-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Investor Academy — momentum worked example (L2M6) */
+.acad-momentum-example {
+  margin-bottom: 24px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(124, 58, 237, 0.28);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(59, 130, 246, 0.06));
+}
+
+.acad-momentum-example--generic {
+  border-color: rgba(139, 160, 181, 0.25);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.acad-momentum-example--warn {
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.acad-momentum-example-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 800;
+  color: #e2e8f0;
+}
+
+.acad-momentum-example-lead {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #94a3b8;
+}
+
+.acad-momentum-example-tip {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+
+.acad-momentum-example-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.acad-momentum-dashboard-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #c4b5fd;
+  text-decoration: none;
+}
+
+.acad-momentum-dashboard-link:hover {
+  color: #e9d5ff;
+  text-decoration: underline;
+}
+
+.acad-momentum-valuation-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin: 12px 0 14px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.acad-momentum-val-signal {
+  font-weight: 700;
+  color: #00ff88;
+}
+
+.acad-momentum-score-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.acad-momentum-score-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.acad-momentum-score-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: #00ff88;
+  margin-top: 4px;
+}
+
+.acad-momentum-score-note {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.acad-momentum-meta {
+  margin: 0 0 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.acad-momentum-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 255, 136, 0.12);
+  color: #00ff88;
+}
+
+.acad-momentum-badge.muted {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+}
+
+.acad-momentum-read,
+.acad-momentum-narrative {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #cbd5e1;
+  margin: 0 0 10px;
+}
+
+.acad-momentum-subscores,
+.acad-momentum-zones ul,
+.acad-momentum-flags ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.acad-momentum-zones-title,
+.acad-momentum-flags-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #a78bfa;
+  margin-bottom: 6px;
+}
+
+.acad-momentum-flags-title {
+  color: #f87171;
+}
+
+.acad-momentum-as-of {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
+@media (max-width: 640px) {
+  .acad-momentum-score-grid {
     grid-template-columns: 1fr;
   }
 }

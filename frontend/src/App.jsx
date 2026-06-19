@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense, useEffect, useRef } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2, Settings, Bell, HelpCircle, FileText, ChevronRight, ExternalLink, MoreHorizontal, BarChart2 } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2, Bell, ChevronRight, MoreHorizontal, BarChart2 } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -93,6 +93,7 @@ function resolveDashboardPath(analyses, recentAnalyses = []) {
 function App() {
     const { user, login, logout } = useAuth()
     const isAdmin = Boolean(user?.is_admin)
+    const isSignedIn = Boolean(user && !user.guest)
     const navigate = useNavigate()
     const location = useLocation()
     const { analyses, recentAnalyses } = useAnalysisHistory()
@@ -104,6 +105,7 @@ function App() {
     const [unreadNotifications, setUnreadNotifications] = useState(3) // default to 3 to match design
 
     React.useEffect(() => {
+        if (!isAdmin) return;
         const headers = { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) }
         apiFetch(`${API_BASE_URL}/notifications/history`, { headers })
             .then(data => {
@@ -112,7 +114,7 @@ function App() {
                 }
             })
             .catch(() => {});
-    }, []);
+    }, [isAdmin]);
 
     React.useEffect(() => {
         const token = getToken()
@@ -173,8 +175,8 @@ function App() {
         <div className="app-container">
             <OnboardingOverlay />
 
-            {/* XP flash toast */}
-            {xpFlash && (
+            {/* XP flash toast (admin preview — gamification not production-ready) */}
+            {isAdmin && xpFlash && (
                 <div style={{
                     position: 'fixed', top: 20, right: 24, zIndex: 9998,
                     background: 'linear-gradient(135deg, #7c3aed, #a78bfa)',
@@ -188,8 +190,8 @@ function App() {
                 </div>
             )}
 
-            {/* Badge popup */}
-            <BadgePopup badges={newBadges} />
+            {/* Badge popup (admin preview) */}
+            {isAdmin && <BadgePopup badges={newBadges} />}
 
             {/* Premium Sidebar */}
             <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -214,7 +216,7 @@ function App() {
                         <h1>TradeTalk</h1>
                     </button>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <NotificationBell />
+                        {isAdmin && <NotificationBell />}
                         <button className="mobile-menu-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label="Toggle navigation menu">
                             <Menu size={20} />
                         </button>
@@ -251,8 +253,8 @@ function App() {
                     </div>
                 </div>
 
-                {/* XP bar */}
-                <XPBar />
+                {/* XP / streak progress (admin preview — not production-ready) */}
+                {isAdmin && <XPBar />}
 
                 <nav className="nav-menu" aria-label="Main navigation">
                     {/* --- Core tools --- */}
@@ -288,14 +290,16 @@ function App() {
 
 
 
-                    <button
-                        className={`nav-btn ${activeTab === 'backtest' ? 'active' : ''}`}
-                        onClick={() => { navigate('/backtest'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/backtest' ? 'page' : undefined}
-                    >
-                        <FlaskConical size={20} />
-                        <span>Strategy Lab</span>
-                    </button>
+                    {isAdmin && (
+                        <button
+                            className={`nav-btn ${activeTab === 'backtest' ? 'active' : ''}`}
+                            onClick={() => { navigate('/backtest'); setSidebarCollapsed(true); }}
+                            aria-current={location.pathname === '/backtest' ? 'page' : undefined}
+                        >
+                            <FlaskConical size={20} />
+                            <span>Strategy Lab</span>
+                        </button>
+                    )}
 
 
 
@@ -313,19 +317,23 @@ function App() {
                         <span>Paper Portfolio</span>
                     </button>
 
-                    {/* --- Learning --- */}
-                    <div style={{ fontSize: 9, color: '#475569', fontWeight: 700, letterSpacing: 1.5, padding: '12px 12px 4px' }}>
-                        LEARNING
-                    </div>
+                    {/* --- Learning (admin preview — not production-ready) --- */}
+                    {isAdmin && (
+                        <>
+                            <div style={{ fontSize: 9, color: '#475569', fontWeight: 700, letterSpacing: 1.5, padding: '12px 12px 4px' }}>
+                                LEARNING
+                            </div>
 
-                    <button
-                        className={`nav-btn ${activeTab === 'academy' ? 'active' : ''}`}
-                        onClick={() => { navigate('/learning'); setSidebarCollapsed(true); }}
-                        aria-current={location.pathname === '/learning' ? 'page' : undefined}
-                    >
-                        <BookOpen size={20} />
-                        <span>Investor Academy</span>
-                    </button>
+                            <button
+                                className={`nav-btn ${activeTab === 'academy' ? 'active' : ''}`}
+                                onClick={() => { navigate('/learning'); setSidebarCollapsed(true); }}
+                                aria-current={location.pathname === '/learning' ? 'page' : undefined}
+                            >
+                                <BookOpen size={20} />
+                                <span>Investor Academy</span>
+                            </button>
+                        </>
+                    )}
                     {/* --- Developer (admin only) --- */}
                     {isAdmin && (
                         <>
@@ -360,7 +368,11 @@ function App() {
 
                             <Route path="/chat" element={<ChatUI prefetch={chatPrefetch} />} />
 
-                            <Route path="/backtest" element={<BacktestUI />} />
+                            <Route path="/backtest" element={
+                                <AdminGate featureName="Strategy Lab">
+                                    <BacktestUI />
+                                </AdminGate>
+                            } />
 
                             <Route path="/daily-brief" element={<DailyBriefUI />} />
                             <Route path="/observer" element={
@@ -394,9 +406,11 @@ function App() {
                                 </AdminGate>
                             } />
                             <Route path="/challenge" element={
-                                <GamificationTab user={user} featureName="Investor Academy" featureIcon="📚">
-                                    <AcademyUI onXpGained={handleXpGained} />
-                                </GamificationTab>
+                                <AdminGate featureName="Investor Academy">
+                                    <GamificationTab user={user} featureName="Investor Academy" featureIcon="📚">
+                                        <AcademyUI onXpGained={handleXpGained} />
+                                    </GamificationTab>
+                                </AdminGate>
                             } />
                             <Route path="/portfolio" element={
                                 <GamificationTab user={user} featureName="Paper Portfolio" featureIcon="📈">
@@ -410,9 +424,11 @@ function App() {
                             } />
                             <Route path="/login" element={<AuthGate featureName="Your Account" featureIcon="👤" />} />
                             <Route path="/learning" element={
-                                <GamificationTab user={user} featureName="Investor Academy" featureIcon="📚">
-                                    <AcademyUI onXpGained={handleXpGained} />
-                                </GamificationTab>
+                                <AdminGate featureName="Investor Academy">
+                                    <GamificationTab user={user} featureName="Investor Academy" featureIcon="📚">
+                                        <AcademyUI onXpGained={handleXpGained} />
+                                    </GamificationTab>
+                                </AdminGate>
                             } />
                         </Routes>
                     </Suspense>
@@ -449,11 +465,11 @@ function App() {
                     <span>Macro</span>
                 </button>
                 <button
-                    className={`mobile-bottom-nav-btn ${activeTab === 'backtest' && !moreMenuOpen ? 'active' : ''}`}
-                    onClick={() => { navigate('/backtest'); setMoreMenuOpen(false); }}
+                    className={`mobile-bottom-nav-btn ${activeTab === 'portfolio' && !moreMenuOpen ? 'active' : ''}`}
+                    onClick={() => { navigate('/portfolio'); setMoreMenuOpen(false); }}
                 >
-                    <FlaskConical size={22} />
-                    <span>Lab</span>
+                    <Target size={22} />
+                    <span>Portfolio</span>
                 </button>
                 <button
                     className={`mobile-bottom-nav-btn ${moreMenuOpen ? 'active' : ''}`}
@@ -469,118 +485,79 @@ function App() {
                 <div className="mobile-drawer-backdrop" onClick={() => setMoreMenuOpen(false)}>
                     <div className="mobile-drawer" onClick={(e) => e.stopPropagation()}>
                         <div className="drawer-handle" onClick={() => setMoreMenuOpen(false)}></div>
-                        
-                        {/* Profile Header section */}
-                        <div className="drawer-profile-section" onClick={() => { setMoreMenuOpen(false); navigate('/portfolio'); }}>
-                            <div className="drawer-profile-avatar-container">
-                                {user && user.avatar ? (
-                                    <img src={user.avatar} className="drawer-profile-avatar" alt={user.name} />
-                                ) : (
-                                    <img 
-                                        src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop" 
-                                        className="drawer-profile-avatar" 
-                                        alt="Default Avatar" 
-                                    />
-                                )}
-                            </div>
-                            <div className="drawer-profile-info">
-                                <div className="drawer-profile-name">{user && user.name ? user.name : 'Elias Thorne'}</div>
-                                <div className="drawer-profile-tier">{user && !user.guest ? 'QUANT PRO TIER' : 'QUANT PRO TIER'}</div>
-                            </div>
-                            <ChevronRight className="drawer-chevron-right" size={20} />
-                        </div>
-                        
-                        <div className="drawer-divider"></div>
-                        
-                        {/* Scrollable menu content */}
-                        <div className="drawer-menu-content">
-                            {/* Standard options from mockup */}
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); alert('Settings are managed via browser preferences.'); }}>
-                                <Settings size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">Settings</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/chat'); }}>
-                                <Bell size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">Notifications</span>
-                                {unreadNotifications > 0 && (
-                                    <span className="drawer-notification-badge">{unreadNotifications} NEW</span>
-                                )}
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/learning'); }}>
-                                <HelpCircle size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">Help & Support</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-                            
-                            <a 
-                                href="https://tradetalk.app/terms" 
-                                target="_blank" 
-                                rel="noreferrer" 
-                                className="drawer-item"
-                                onClick={() => setMoreMenuOpen(false)}
-                                style={{ textDecoration: 'none', color: 'inherit' }}
-                            >
-                                <FileText size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">Terms of Service</span>
-                                <ExternalLink size={16} className="drawer-chevron-arrow" style={{ opacity: 0.6 }} />
-                            </a>
 
-                            <div className="drawer-section-title">TradeTalk Features</div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/portfolio'); }}>
-                                <Target size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">Paper Portfolio</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-                            
-                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/learning'); }}>
-                                <BookOpen size={20} className="drawer-item-icon" />
-                                <span className="drawer-item-label">Investor Academy</span>
-                                <ChevronRight className="drawer-chevron-arrow" size={16} />
-                            </div>
-
-                            {/* Dev Suite Section (admin only) */}
-                            {isAdmin && (
-                                <>
-                                    <div className="drawer-section-title">Developer Suite</div>
-                                    {DEVELOPER_ROUTES.map(({ path, label, icon: Icon }) => (
-                                        <div
-                                            key={path}
-                                            className="drawer-item"
-                                            onClick={() => { setMoreMenuOpen(false); navigate(path); }}
-                                        >
-                                            <Icon size={20} className="drawer-item-icon" />
-                                            <span className="drawer-item-label">{label}</span>
-                                            <ChevronRight className="drawer-chevron-arrow" size={16} />
+                        {isSignedIn ? (
+                            <>
+                                <div className="drawer-profile-section drawer-profile-section-static">
+                                    {user.avatar ? (
+                                        <div className="drawer-profile-avatar-container">
+                                            <img src={user.avatar} className="drawer-profile-avatar" alt={user.name || user.email} />
                                         </div>
-                                    ))}
-                                </>
-                            )}
-                        </div>
-                        
-                        <div className="drawer-divider"></div>
-                        
-                        {/* Log Out Action button */}
-                        {user && !user.guest ? (
-                            <div 
-                                className="drawer-item log-out-item" 
-                                onClick={() => { setMoreMenuOpen(false); logout(); }}
-                            >
-                                <LogOut size={20} className="drawer-item-icon log-out-icon" />
-                                <span className="drawer-item-label log-out-label">Log Out</span>
-                            </div>
+                                    ) : null}
+                                    <div className="drawer-profile-info">
+                                        <div className="drawer-profile-name">{user.name || user.email}</div>
+                                    </div>
+                                </div>
+
+                                {isAdmin && (
+                                    <>
+                                        <div className="drawer-divider"></div>
+                                        <div className="drawer-menu-content">
+                                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/chat'); }}>
+                                                <Bell size={20} className="drawer-item-icon" />
+                                                <span className="drawer-item-label">Notifications</span>
+                                                {unreadNotifications > 0 && (
+                                                    <span className="drawer-notification-badge">{unreadNotifications} NEW</span>
+                                                )}
+                                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                                            </div>
+                                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/backtest'); }}>
+                                                <FlaskConical size={20} className="drawer-item-icon" />
+                                                <span className="drawer-item-label">Strategy Lab</span>
+                                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                                            </div>
+                                            <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/learning'); }}>
+                                                <BookOpen size={20} className="drawer-item-icon" />
+                                                <span className="drawer-item-label">Investor Academy</span>
+                                                <ChevronRight className="drawer-chevron-arrow" size={16} />
+                                            </div>
+                                            <div className="drawer-section-title">Developer Suite</div>
+                                            {DEVELOPER_ROUTES.map(({ path, label, icon: Icon }) => (
+                                                <div
+                                                    key={path}
+                                                    className="drawer-item"
+                                                    onClick={() => { setMoreMenuOpen(false); navigate(path); }}
+                                                >
+                                                    <Icon size={20} className="drawer-item-icon" />
+                                                    <span className="drawer-item-label">{label}</span>
+                                                    <ChevronRight className="drawer-chevron-arrow" size={16} />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+
+                                <div className="drawer-divider"></div>
+                                <div
+                                    className="drawer-item log-out-item"
+                                    onClick={() => { setMoreMenuOpen(false); logout(); }}
+                                >
+                                    <LogOut size={20} className="drawer-item-icon log-out-icon" />
+                                    <span className="drawer-item-label log-out-label">Log Out</span>
+                                </div>
+                            </>
                         ) : (
-                            <div 
-                                className="drawer-item log-out-item" 
-                                onClick={() => { setMoreMenuOpen(false); navigate('/login'); }}
-                            >
-                                <LogIn size={20} className="drawer-item-icon log-out-icon" />
-                                <span className="drawer-item-label log-out-label" style={{ color: '#60a5fa' }}>Log In</span>
-                            </div>
+                            <>
+                                <div className="drawer-guest-label">Guest</div>
+                                <div className="drawer-divider"></div>
+                                <div
+                                    className="drawer-item log-out-item"
+                                    onClick={() => { setMoreMenuOpen(false); navigate('/login'); }}
+                                >
+                                    <LogIn size={20} className="drawer-item-icon log-out-icon" />
+                                    <span className="drawer-item-label log-out-label" style={{ color: '#60a5fa' }}>Log In</span>
+                                </div>
+                            </>
                         )}
                     </div>
                 </div>

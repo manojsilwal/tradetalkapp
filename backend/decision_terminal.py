@@ -562,29 +562,66 @@ async def build_decision_terminal_payload(
         ),
     ]
 
-    usable = [m.fair_value_usd for m in models if m.available and m.fair_value_usd is not None]
+    from .valuation_signal import (
+        case_assessments,
+        implied_downside_pct,
+        margin_of_safety_pct,
+        valuation_confidence_label,
+        valuation_gap_pct,
+        valuation_signal_label,
+    )
+
+    valuation_models = [m for m in models if m.name != "Momentum"]
+    usable = [
+        m.fair_value_usd
+        for m in valuation_models
+        if m.available and m.fair_value_usd is not None
+    ]
     avg_fair = round(sum(usable) / len(usable), 2) if usable else None
     pct_vs = None
-    gauge_label = ""
+    gap_pct = None
+    downside_pct = None
+    signal_label = ""
+    confidence_label = ""
+    bull_assessment = ""
+    bear_assessment = ""
+    dcf_low = dcf_scenarios.get("bear")
+    dcf_high = dcf_scenarios.get("bull")
     if avg_fair and price_f and avg_fair > 0:
-        pct_vs = round((avg_fair - price_f) / avg_fair * 100.0, 2)
-        if pct_vs > 1.0:
-            gauge_label = f"+{pct_vs:.2f}% UNDERVALUED"
-        elif pct_vs < -1.0:
-            gauge_label = f"{pct_vs:.2f}% OVERVALUED"
-        else:
-            gauge_label = "NEAR FAIR VALUE"
+        pct_vs = margin_of_safety_pct(price_f, avg_fair)
+        gap_pct = valuation_gap_pct(price_f, avg_fair)
+        downside_pct = implied_downside_pct(price_f, avg_fair)
+        signal_label = valuation_signal_label(gap_pct, price_f, dcf_high)
+        bull_assessment, bear_assessment = case_assessments(price_f, dcf_low, dcf_high)
+        confidence_label = valuation_confidence_label(
+            len(usable),
+            bool(dcf_result.get("available")),
+            dcf_low,
+            dcf_high,
+            dcf_price,
+            usable,
+        )
+
+    gauge_label = signal_label or ("N/A" if price_f is None else "INSUFFICIENT MODEL INPUTS")
 
     valuation = TerminalValuationPanel(
         current_price_usd=price_f,
         average_fair_value_usd=avg_fair,
         pct_vs_average=pct_vs,
-        gauge_label=gauge_label or ("N/A" if price_f is None else "INSUFFICIENT MODEL INPUTS"),
+        valuation_gap_pct=gap_pct,
+        implied_downside_pct=downside_pct,
+        valuation_signal=signal_label,
+        valuation_confidence=confidence_label,
+        dcf_range_low_usd=float(dcf_low) if dcf_low is not None else None,
+        dcf_range_high_usd=float(dcf_high) if dcf_high is not None else None,
+        bull_case_assessment=bull_assessment,
+        bear_case_assessment=bear_assessment,
+        gauge_label=gauge_label,
         models=models,
         panel_note=(
-            "Average uses DCF (base case) and Multiples when available. "
-            "Momentum is a 0–100 score (not USD fair value). "
-            "DCF shows bear/base/bull in model provenance."
+            "Base fair value averages DCF (base case) and Multiples when available. "
+            "Momentum is shown separately (0–100 score, not blended into fair value). "
+            "Valuation gap and implied downside use distinct denominators."
         ),
     )
 
@@ -665,6 +702,47 @@ async def build_decision_terminal_payload(
                 ),
             ),
         ]
+    )
+
+    market_regime = (
+        swarm.macro_state.market_regime.value
+        if swarm.macro_state and swarm.macro_state.market_regime
+        else "BULL_NORMAL"
+    )
+    market_cap_raw = ext.get("marketCap")
+    market_cap_f: Optional[float] = None
+    if market_cap_raw is not None:
+        try:
+            market_cap_f = float(market_cap_raw)
+        except (TypeError, ValueError):
+            market_cap_f = None
+
+    from .business_health import enrich_quality_panel
+
+    fcf_float: Optional[float] = None
+    if fcf is not None:
+        try:
+            fcf_float = float(fcf)
+        except (TypeError, ValueError):
+            fcf_float = None
+
+    cr_float: Optional[float] = None
+    if cr is not None:
+        try:
+            cr_float = float(cr)
+        except (TypeError, ValueError):
+            cr_float = None
+
+    quality = enrich_quality_panel(
+        quality,
+        market_regime=market_regime,
+        roic_pct=roic_proxy_val if roe_pct else None,
+        moat_status=moat_st,
+        fcf_usd=fcf_float,
+        market_cap=market_cap_f,
+        debt_to_ebitda=debt_ratio_val,
+        gross_margin_pct=gross_m if gross_m else None,
+        current_ratio=cr_float,
     )
 
     tokens = _company_tokens_from_debate_data(debate_data)
@@ -853,6 +931,7 @@ async def build_decision_terminal_payload(
             fusion_note=fusion_note,
             pct_vs_average=pct_vs,
             gauge_label=gauge_label,
+            valuation_gap_pct=gap_pct,
             predicted_cagr_base_pct=cagr_b,
             swarm_rejected=_swarm_rejection_present(swarm),
             scorecard_summary=scorecard_summary,

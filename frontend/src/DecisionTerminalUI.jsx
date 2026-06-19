@@ -26,7 +26,8 @@ import {
 import { API_BASE_URL, apiFetch } from './api';
 import { SP500_TICKERS } from './sp500';
 import { DataTrustBanner } from './components/Freshness';
-import MomentumPricingPanel, { extractMomentumReadout } from './components/MomentumPricingPanel';
+import ConsensusValuationPanel from './components/ConsensusValuationPanel';
+import FundamentalHealthBanner from './components/FundamentalHealthBanner';
 import { cleanSource } from './freshness';
 import './DecisionTerminalUI.css';
 import { buildRoadmapChartData, roadmapScenarioPrices } from './roadmapChartData';
@@ -39,6 +40,13 @@ const QUALITY_ICONS = {
   margin: PieChart,
   current_ratio: Scale,
 };
+
+function assessmentToneClass(tone) {
+  if (tone === 'positive') return 'ok';
+  if (tone === 'caution') return 'warn';
+  if (tone === 'negative') return 'negative';
+  return 'muted';
+}
 
 /** Semicircular gauge — fillRatio 0..1 (green arc). */
 function SemiGauge({ fillRatio, size = 'large', className = '' }) {
@@ -184,9 +192,7 @@ export default function DecisionTerminalUI() {
   const z = payload?.verdict;
   const r = payload?.roadmap;
   const hasData = !!payload;
-  const momentumReadout = useMemo(() => extractMomentumReadout(v), [v]);
 
-  const bigGaugeFill = useMemo(() => valuationArcRatio(v?.pct_vs_average), [v?.pct_vs_average]);
   const pmFill = useMemo(
     () => (z?.polymarket_gated_out ? 0.35 : polymarketArcRatio(z?.prediction_market_bullish_pct)),
     [z?.polymarket_gated_out, z?.prediction_market_bullish_pct],
@@ -275,82 +281,22 @@ export default function DecisionTerminalUI() {
           {/* —— Consensus valuation —— */}
           <section className="dt-panel">
             <h2 className="dt-panel-title">Consensus valuation signal</h2>
-            <div className="dt-valuation-split">
-              <div className="dt-valuation-gauge">
-                <SemiGauge fillRatio={hasData ? bigGaugeFill : 0.38} size="large" />
-                <div className="dt-gauge-caption">
-                  {hasData ? v?.gauge_label || '—' : '—'}
-                </div>
-                {hasData && spot != null && (
-                  <div className="dt-gauge-sub">
-                    Spot ${Number(spot).toFixed(2)}
-                    {v?.average_fair_value_usd != null && (
-                      <> · Avg fair ${Number(v.average_fair_value_usd).toFixed(2)}</>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="dt-valuation-models">
-                <div className="dt-models-heading">Valuation models</div>
-                <ul className="dt-models-list">
-                  {(v?.models || []).map((m) => (
-                    <li key={m.name} className="dt-models-li">
-                      <span className="dt-models-name">
-                        <ProvenanceTip provenance={m.provenance} label={`${m.name}:`} />
-                      </span>
-                      <span className={m.available && (m.fair_value_usd != null || m.momentum_score != null) ? 'dt-models-val' : 'dt-models-na'}>
-                        {m.available && m.fair_value_usd != null
-                          ? (
-                            <>
-                              ${Number(m.fair_value_usd).toFixed(0)}
-                              {m.name === 'DCF' && m.scenarios?.bear != null && m.scenarios?.bull != null && (
-                                <span className="dt-models-range" style={{ fontSize: '0.75rem', opacity: 0.75, marginLeft: 6 }}>
-                                  ({Number(m.scenarios.bear).toFixed(0)}–{Number(m.scenarios.bull).toFixed(0)})
-                                </span>
-                              )}
-                            </>
-                          )
-                          : m.available && m.momentum_score != null
-                            ? `${Number(m.momentum_score).toFixed(0)}/100`
-                            : hasData
-                              ? '—'
-                              : '—'}
-                      </span>
-                    </li>
-                  ))}
-                  {hasData && (
-                    <li className="dt-models-li dt-models-average">
-                      <span className="dt-models-name">Average:</span>
-                      <span className="dt-models-val">
-                        {v?.average_fair_value_usd != null
-                          ? `$${Number(v.average_fair_value_usd).toFixed(0)}`
-                          : '—'}
-                      </span>
-                    </li>
-                  )}
-                  {!hasData && (
-                    <>
-                      <li className="dt-models-li dt-models-placeholder"><span>Average:</span><span>—</span></li>
-                    </>
-                  )}
-                </ul>
-              </div>
-            </div>
+            <ConsensusValuationPanel valuation={v} hasData={hasData} loading={loading} ticker={ticker} />
           </section>
 
           {/* —— Quality scorecard —— */}
           <section className="dt-panel">
             <h2 className="dt-panel-title">Business quality scorecard</h2>
+            {hasData && q?.fundamental_health && (
+              <FundamentalHealthBanner health={q.fundamental_health} />
+            )}
             <div className="dt-quality-3x2">
               {(q?.rows || []).map((row) => {
                 const IconComp = QUALITY_ICONS[row.id] || TrendingUp;
-                const st = (row.status_label || '').toLowerCase();
-                const tone =
-                  st.includes('good') && !st.includes('strong')
-                    ? 'warn'
-                    : ['excellent', 'strong', 'robust', 'low', 'high'].some((k) => st.includes(k))
-                      ? 'ok'
-                      : 'muted';
+                const tone = row.assessment_tone
+                  ? assessmentToneClass(row.assessment_tone)
+                  : 'muted';
+                const statusText = row.assessment_label || row.status_label || '—';
                 return (
                   <div key={row.id} className="dt-q-tile">
                     <div className="dt-q-tile-icon">
@@ -361,7 +307,12 @@ export default function DecisionTerminalUI() {
                         <ProvenanceTip provenance={row.provenance} label={row.label} />
                       </div>
                       <div className="dt-q-tile-value">{row.value_label || '—'}</div>
-                      <div className={`dt-q-tile-status dt-tone-${tone}`}>{row.status_label || '—'}</div>
+                      <div
+                        className={`dt-q-tile-status dt-q-tile-assessment dt-tone-${tone}`}
+                        title={row.assessment_detail || ''}
+                      >
+                        {statusText}
+                      </div>
                     </div>
                   </div>
                 );
@@ -535,12 +486,6 @@ export default function DecisionTerminalUI() {
             )}
           </section>
         </div>
-
-        <MomentumPricingPanel
-          readout={momentumReadout}
-          loading={loading}
-          ticker={searchUpper}
-        />
 
         {payload?.generated_at_utc && (
           <footer className="dt-footer-meta">
