@@ -209,6 +209,7 @@ class TestMomentumValuationPanel(unittest.IsolatedAsyncioTestCase):
                 {},
                 {"trailingEps": 5.0},
                 None,
+                momentum_readout=mom_summary,
             )
 
         momentum_models = [m for m in payload.valuation.models if m.name == "Momentum"]

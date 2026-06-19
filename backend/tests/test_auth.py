@@ -30,6 +30,15 @@ def _use_temp_auth_db(testcase: unittest.TestCase) -> None:
     testcase._tmp.close()
     testcase._db_path = testcase._tmp.name
     os.environ["PROGRESS_DB_PATH"] = testcase._db_path
+    
+    def cleanup():
+        os.environ.pop("PROGRESS_DB_PATH", None)
+        try:
+            os.unlink(testcase._db_path)
+        except OSError:
+            pass
+    testcase.addCleanup(cleanup)
+    
     auth_mod.DB_PATH = testcase._db_path
     if hasattr(auth_mod._local, "conn"):
         delattr(auth_mod._local, "conn")

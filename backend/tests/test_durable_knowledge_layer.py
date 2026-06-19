@@ -76,25 +76,33 @@ class TestDurableKnowledgeLayer(unittest.TestCase):
         loop.close()
 
     @patch("backend.ingestion_agent.logger")
-    @patch("google.cloud.storage.Client", create=True)
-    def test_raw_payload_local_archiving(self, mock_gcs_client, mock_logger):
-        # Force GCS client creation or upload to fail to guarantee local path fallback
+    def test_raw_payload_local_archiving(self, mock_logger):
+        import sys
+        from unittest.mock import MagicMock
+        
+        # Mock google.cloud.storage in sys.modules so imports don't fail
+        mock_storage = MagicMock()
+        mock_gcs_client = mock_storage.Client
         mock_gcs_client.side_effect = Exception("force GCS fallback for test")
         
-        # Verify local file archiving works correctly
-        from backend.ingestion_agent import _archive_raw_payload
-        
-        candidate_id = "test_candidate_123"
-        payload = {"price": 150.0, "status": "ok"}
-        
-        path = _archive_raw_payload("single_stock_search", candidate_id, payload)
-        
-        self.assertTrue(os.path.exists(path))
-        self.assertTrue(path.endswith(f"{candidate_id}.json"))
-        
-        with open(path, "r") as f:
-            saved_payload = json.load(f)
-        self.assertEqual(saved_payload, payload)
+        sys.modules["google.cloud.storage"] = mock_storage
+        try:
+            # Verify local file archiving works correctly
+            from backend.ingestion_agent import _archive_raw_payload
+            
+            candidate_id = "test_candidate_123"
+            payload = {"price": 150.0, "status": "ok"}
+            
+            path = _archive_raw_payload("single_stock_search", candidate_id, payload)
+            
+            self.assertTrue(os.path.exists(path))
+            self.assertTrue(path.endswith(f"{candidate_id}.json"))
+            
+            with open(path, "r") as f:
+                saved_payload = json.load(f)
+            self.assertEqual(saved_payload, payload)
+        finally:
+            sys.modules.pop("google.cloud.storage", None)
 
     @patch("backend.deps.llm_client.generate", new_callable=AsyncMock)
     @patch("backend.mcp_server.backend.backend")

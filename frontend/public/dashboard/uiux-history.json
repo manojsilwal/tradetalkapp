@@ -1,19 +1,5 @@
 [
   {
-    "run_id": "uiux_eval_20260616_220759",
-    "timestamp": "2026-06-16T22:07:59.642516+00:00",
-    "overall_score": 93.51,
-    "grade": "A",
-    "status": "pass"
-  },
-  {
-    "run_id": "uiux_eval_20260616_221313",
-    "timestamp": "2026-06-16T22:13:13.107714+00:00",
-    "overall_score": 93.51,
-    "grade": "A",
-    "status": "pass"
-  },
-  {
     "run_id": "uiux_eval_20260616_221313",
     "timestamp": "2026-06-16T22:13:13.119492+00:00",
     "overall_score": 93.51,
@@ -205,6 +191,20 @@
   {
     "run_id": "uiux_eval_20260618_170158",
     "timestamp": "2026-06-18T17:01:58.985332+00:00",
+    "overall_score": 93.51,
+    "grade": "A",
+    "status": "pass"
+  },
+  {
+    "run_id": "uiux_eval_20260619_011558",
+    "timestamp": "2026-06-19T01:15:58.169042+00:00",
+    "overall_score": 93.51,
+    "grade": "A",
+    "status": "pass"
+  },
+  {
+    "run_id": "uiux_eval_20260619_011558",
+    "timestamp": "2026-06-19T01:15:58.179092+00:00",
     "overall_score": 93.51,
     "grade": "A",
     "status": "pass"
