@@ -884,8 +884,10 @@ export default function UnifiedDashboardUI() {
       </div>
 
       <div className="dt-valuation-verdict-grid">
-        {/* 3. VERDICT & SENTIMENT + FUTURE PRICE ROADMAP */}
-        <section className="dt-panel dt-area-verdict" style={{ margin: 0 }}>
+        {/* Left Column: Verdict & Sentiment + Roadmap */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* 3. VERDICT & SENTIMENT + FUTURE PRICE ROADMAP */}
+          <section className="dt-panel dt-area-verdict" style={{ margin: 0 }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <h2 className="dt-panel-title" style={{ margin: 0 }}>Verdict &amp; Sentiment Hub</h2>
             <LastUpdated
@@ -1023,9 +1025,12 @@ export default function UnifiedDashboardUI() {
             </div>
           </div>
         </section>
+        </div>
 
-        {/* 5. CONSENSUS VALUATION SIGNAL */}
-        <section className="dt-panel dt-area-valuation" style={{ margin: 0 }}>
+        {/* Right Column: Consensus Valuation Signal + Risk-Reward Scorecard */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* 5. CONSENSUS VALUATION SIGNAL */}
+          <section className="dt-panel dt-area-valuation" style={{ margin: 0 }}>
           <h2 className="dt-panel-title">Consensus Valuation Signal</h2>
           <div className="dt-valuation-split">
             <div className="dt-valuation-gauge">
@@ -1080,15 +1085,16 @@ export default function UnifiedDashboardUI() {
             </div>
           </div>
         </section>
-      </div>
 
-      <DashboardScorecardPanel
-        data={scorecardData}
-        embeddedSummary={embeddedScorecard}
-        ticker={searchUpper}
-        loading={scorecardLoading || (isAnalyzing && !scorecardData && !embeddedScorecard)}
-        error={scorecardError}
-      />
+        <DashboardScorecardPanel
+          data={scorecardData}
+          embeddedSummary={embeddedScorecard}
+          ticker={searchUpper}
+          loading={scorecardLoading || (isAnalyzing && !scorecardData && !embeddedScorecard)}
+          error={scorecardError}
+        />
+        </div>
+      </div>
 
       {(debateLoading || debateData || isAnalyzing) && (
         <section className="dt-panel dt-area-debate" data-testid="dashboard-debate-panel">
