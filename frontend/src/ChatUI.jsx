@@ -671,6 +671,7 @@ export default function ChatUI({ prefetch = null }) {
         {messages.map((m, i) => (
           <div
             key={i}
+            data-testid={m.role === 'user' ? 'user-message' : 'assistant-message'}
             style={{
               marginBottom: 12,
               whiteSpace: 'pre-wrap',
@@ -724,7 +725,10 @@ export default function ChatUI({ prefetch = null }) {
           </div>
         ))}
         {streaming && (
-          <div style={{ whiteSpace: 'pre-wrap', color: '#e2e8f0', fontSize: 14, display: 'flex', justifyContent: 'flex-start' }}>
+          <div
+            data-testid="assistant-message"
+            style={{ whiteSpace: 'pre-wrap', color: '#e2e8f0', fontSize: 14, display: 'flex', justifyContent: 'flex-start' }}
+          >
             <div style={{ maxWidth: '82%', padding: '12px 16px', borderRadius: 14, border: '1px solid rgba(148,163,184,0.12)', background: 'linear-gradient(180deg, rgba(30,41,59,0.78), rgba(15,23,42,0.7))' }}>
               {linkifyContent(streaming)}
               <span className="cursor-blink">▍</span>

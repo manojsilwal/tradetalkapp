@@ -30,15 +30,15 @@ test.describe('Chat assistant parity', () => {
     await page.getByRole('button', { name: 'Send' }).click();
 
     // Wait for assistant line that looks like a quote-bearing answer.
-    const line = page.locator('strong:has-text("Assistant:")').last();
+    const line = page.getByTestId('assistant-message').last();
     await expect.poll(async () => {
-      const raw = await line.evaluate((el) => el.parentElement?.innerText || '').catch(() => '');
+      const raw = await line.innerText().catch(() => '');
       const txt = String(raw || '').replace(/\s+/g, ' ').trim();
       if (txt.length < 20) return 0;
       return /\$?\d+(?:\.\d+)?/.test(txt) ? 1 : 0;
     }, { timeout: 180000 }).toBe(1);
 
-    const raw = await line.evaluate((el) => el.parentElement?.innerText || '').catch(() => '');
+    const raw = await line.innerText().catch(() => '');
     if (/Chat error|429|RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(raw)) {
       test.skip(
         true,

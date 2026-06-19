@@ -768,10 +768,14 @@ export default function AppAssistantPanel({ prefetch = null }) {
               )}
 
               {messages.map((m, i) => (
-                <div key={i} style={{
-                  marginBottom: 10, display: 'flex',
-                  justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start',
-                }}>
+                <div
+                  key={i}
+                  data-testid={m.role === 'user' ? 'user-message' : 'assistant-message'}
+                  style={{
+                    marginBottom: 10, display: 'flex',
+                    justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start',
+                  }}
+                >
                   <div style={{
                     maxWidth: '88%', padding: '10px 13px',
                     borderRadius: m.role === 'user' ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
@@ -804,7 +808,10 @@ export default function AppAssistantPanel({ prefetch = null }) {
               ))}
 
               {streaming && (
-                <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'flex-start' }}>
+                <div
+                  data-testid="assistant-message"
+                  style={{ marginBottom: 10, display: 'flex', justifyContent: 'flex-start' }}
+                >
                   <div style={{
                     maxWidth: '88%', padding: '10px 13px', borderRadius: '14px 14px 14px 2px',
                     fontSize: '0.83rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', color: '#e2e8f0',
