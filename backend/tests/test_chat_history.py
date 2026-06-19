@@ -1,11 +1,13 @@
 """Tests for chat session history API (authenticated users)."""
 import os
+import tempfile
+
+# Initialize temporary database path before importing any backend modules
+_tmp_dir = tempfile.TemporaryDirectory()
+_db_path = os.path.join(_tmp_dir.name, "progress.db")
+os.environ["PROGRESS_DB_PATH"] = _db_path
+
 import unittest
-
-os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
-os.environ.setdefault("DEV_MODE", "true")
-os.environ.setdefault("GOOGLE_CLIENT_ID", "")
-
 from fastapi.testclient import TestClient
 
 from backend import agent_memory
@@ -16,6 +18,22 @@ from backend.main import app
 class TestChatHistory(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Clean up any cached thread-local connections to the legacy database
+        from backend import auth as auth_mod
+        from backend import agent_memory as am_mod
+        if hasattr(auth_mod._local, "conn"):
+            try:
+                auth_mod._local.conn.close()
+            except Exception:
+                pass
+            delattr(auth_mod._local, "conn")
+        if hasattr(am_mod._local, "conn"):
+            try:
+                am_mod._local.conn.close()
+            except Exception:
+                pass
+            delattr(am_mod._local, "conn")
+
         init_users_db()
         agent_memory.init_agent_memory_db()
         upsert_user("hist_user_1", "hist@example.com", "Hist User", "")
@@ -38,6 +56,26 @@ class TestChatHistory(unittest.TestCase):
             "AAPL is trading near recent highs.",
             semantic_summary="User asked about AAPL",
         )
+
+    @classmethod
+    def tearDownClass(cls):
+        from backend import auth as auth_mod
+        from backend import agent_memory as am_mod
+        if hasattr(auth_mod._local, "conn"):
+            try:
+                auth_mod._local.conn.close()
+            except Exception:
+                pass
+            delattr(auth_mod._local, "conn")
+        if hasattr(am_mod._local, "conn"):
+            try:
+                am_mod._local.conn.close()
+            except Exception:
+                pass
+            delattr(am_mod._local, "conn")
+
+        os.environ.pop("PROGRESS_DB_PATH", None)
+        _tmp_dir.cleanup()
 
     def test_list_sessions_requires_auth(self):
         res = self.client.get("/chat/sessions")
