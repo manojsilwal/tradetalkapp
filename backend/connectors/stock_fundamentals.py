@@ -2,14 +2,24 @@
 Stock Fundamentals Connector — consolidated data for the stock analysis page.
 
 Fetches price history, valuation metrics, financial performance, and company
-info from yfinance.  Follows the truthful-data contract: unavailable fields
-are returned as ``None``, never fabricated.
+info from yfinance with fallbacks:
+  - Spot price: ``resolve_spot`` (Yahoo chart → Stooq → FinCrawler → yfinance)
+  - Thin/missing metrics: FinCrawler ``/quote/smart`` when configured
+  - Empty chart bars: Yahoo chart API (same surface as quote fallbacks)
+
+Follows the truthful-data contract: unavailable fields are ``None``, never
+fabricated. Partial payloads are returned when at least price or core metrics
+are available; the router rejects only truly empty responses.
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
-from typing import Any, Dict, List, Optional
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +78,171 @@ def _safe_div(
     if numerator is None or denominator is None or denominator == 0:
         return default
     return numerator / denominator
+
+
+def _safe_yfinance_info(ticker_obj: Any) -> Tuple[Dict[str, Any], bool]:
+    """Return (info dict, degraded) — never raises on yfinance parse failures."""
+    try:
+        raw = ticker_obj.info
+        if isinstance(raw, dict):
+            return raw, False
+        return {}, True
+    except Exception as exc:
+        logger.warning("yfinance .info failed: %s", exc)
+        return {}, True
+
+
+def _fetch_fc_fundamentals_sync(ticker: str) -> Dict[str, Any]:
+    try:
+        from backend.fincrawler_client import fc
+
+        return fc.get_fundamentals_sync(ticker) or {}
+    except Exception as exc:
+        logger.warning("FinCrawler fundamentals fallback failed for %s: %s", ticker, exc)
+        return {}
+
+
+def _merge_fc_into_info(info: Dict[str, Any], fc: Dict[str, Any]) -> Dict[str, Any]:
+    if not fc:
+        return info
+    merged = dict(info)
+    name = fc.get("company_name")
+    if name:
+        merged.setdefault("longName", name)
+        merged.setdefault("shortName", name)
+    if fc.get("market_cap") is not None:
+        merged.setdefault("marketCap", fc["market_cap"])
+    if fc.get("pe_ratio") is not None:
+        merged.setdefault("trailingPE", fc["pe_ratio"])
+    if fc.get("forward_pe") is not None:
+        merged.setdefault("forwardPE", fc["forward_pe"])
+    if fc.get("regular_market_price") is not None:
+        merged.setdefault("regularMarketPrice", fc["regular_market_price"])
+    if fc.get("change_pct") is not None:
+        merged.setdefault("regularMarketChangePercent", fc["change_pct"])
+    return merged
+
+
+def _patch_metrics_from_fc(metrics: Dict[str, Any], fc: Dict[str, Any]) -> None:
+    if not fc:
+        return
+    val = metrics.setdefault("valuation", {})
+    if val.get("market_cap") is None and fc.get("market_cap") is not None:
+        val["market_cap"] = _num(fc["market_cap"])
+    if val.get("trailing_pe") is None and fc.get("pe_ratio") is not None:
+        val["trailing_pe"] = _num(fc["pe_ratio"])
+    if val.get("forward_pe") is None and fc.get("forward_pe") is not None:
+        val["forward_pe"] = _num(fc["forward_pe"])
+
+
+def _metrics_sparse(metrics: Dict[str, Any]) -> bool:
+    val = metrics.get("valuation") or {}
+    filled = sum(
+        1
+        for key in ("market_cap", "trailing_pe", "forward_pe", "price_to_sales", "ev_to_ebitda")
+        if val.get(key) is not None
+    )
+    return filled < 1
+
+
+def _fetch_yahoo_chart_bars(symbol: str, period: str) -> List[Dict[str, Any]]:
+    """OHLCV bars via Yahoo chart API when yfinance history is empty."""
+    interval = _PERIOD_INTERVAL_MAP.get(period)
+    if not interval:
+        return []
+    sym = urllib.parse.quote((symbol or "").upper().strip(), safe="")
+    if not sym:
+        return []
+    query = urllib.parse.urlencode({"range": period, "interval": interval})
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?{query}"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "TradeTalk/1.0 (stock-fundamentals chart fallback)"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            if getattr(resp, "status", 200) == 429:
+                return []
+            raw = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception as exc:
+        logger.debug("Yahoo chart fallback failed period=%s symbol=%s: %s", period, symbol, exc)
+        return []
+
+    results = (raw.get("chart") or {}).get("result") or []
+    if not results:
+        return []
+    block = results[0]
+    timestamps = block.get("timestamp") or []
+    quotes = ((block.get("indicators") or {}).get("quote") or [{}])[0]
+    if not timestamps:
+        return []
+
+    def _series(key: str) -> List[Any]:
+        return list(quotes.get(key) or [])
+
+    opens, highs, lows, closes, volumes = (
+        _series("open"),
+        _series("high"),
+        _series("low"),
+        _series("close"),
+        _series("volume"),
+    )
+    bars: List[Dict[str, Any]] = []
+    for i, ts in enumerate(timestamps):
+        close = closes[i] if i < len(closes) else None
+        if close is None:
+            continue
+        try:
+            close_f = float(close)
+            if math.isnan(close_f):
+                continue
+        except (TypeError, ValueError):
+            continue
+        ts_iso = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+        bars.append({
+            "timestamp": ts_iso,
+            "open": _num(opens[i] if i < len(opens) else None),
+            "high": _num(highs[i] if i < len(highs) else None),
+            "low": _num(lows[i] if i < len(lows) else None),
+            "close": round(close_f, 4),
+            "volume": int(volumes[i]) if i < len(volumes) and volumes[i] is not None else None,
+        })
+    return bars
+
+
+def _apply_spot_to_company_info(company_info: Dict[str, Any], ticker: str) -> None:
+    from .spot import resolve_spot
+
+    spot_q = resolve_spot(ticker)
+    if spot_q is None:
+        return
+    company_info["current_price"] = round(spot_q.price, 4)
+    company_info["spot_source"] = spot_q.source
+    prev = company_info.get("previous_close")
+    if prev is not None and prev != 0:
+        company_info["price_change"] = round(spot_q.price - prev, 4)
+        company_info["price_change_pct"] = round((spot_q.price - prev) / prev * 100, 4)
+
+
+def fundamentals_payload_usable(result: Optional[dict]) -> bool:
+    """True when the dashboard can show price and/or core valuation fields."""
+    if not result:
+        return False
+    ci = result.get("company_info") or {}
+    if ci.get("current_price") is not None:
+        return True
+    ph = result.get("price_history") or {}
+    if any(isinstance(bars, list) and bars for bars in ph.values()):
+        return True
+    metrics = result.get("metrics") or {}
+    val = metrics.get("valuation") or {}
+    if any(val.get(k) is not None for k in ("market_cap", "trailing_pe", "forward_pe")):
+        return True
+    cf = metrics.get("cash_flow") or {}
+    if cf.get("free_cash_flow") is not None or cf.get("fcf_yield") is not None:
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +335,11 @@ def _find_row(df: Any, labels: tuple[str, ...]) -> Any:
     """Return the first matching row from a DataFrame's index."""
     if df is None or getattr(df, "empty", True):
         return None
+    index = getattr(df, "index", None)
+    if index is None:
+        return None
     for label in labels:
-        if label in df.index:
+        if label in index:
             return df.loc[label]
     return None
 
@@ -175,11 +353,15 @@ def _extract_financials(df: Any) -> List[Dict[str, Any]]:
 
     periods: List[Dict[str, Any]] = []
     # Use revenue_row columns as the canonical set; fall back to ni_row
-    cols = revenue_row.index if revenue_row is not None else ni_row.index
+    rev_index = getattr(revenue_row, "index", None) if revenue_row is not None else None
+    ni_index = getattr(ni_row, "index", None) if ni_row is not None else None
+    cols = rev_index if rev_index is not None else ni_index
+    if cols is None:
+        return []
     for col in cols:
         period_label = col.date().isoformat() if hasattr(col, "date") else str(col)
-        rev = _num(revenue_row[col]) if revenue_row is not None and col in revenue_row.index else None
-        ni = _num(ni_row[col]) if ni_row is not None and col in ni_row.index else None
+        rev = _num(revenue_row[col]) if revenue_row is not None and rev_index is not None and col in rev_index else None
+        ni = _num(ni_row[col]) if ni_row is not None and ni_index is not None and col in ni_index else None
         periods.append({
             "period": period_label,
             "revenue": rev,
@@ -233,63 +415,110 @@ def fetch_stock_fundamentals(ticker: str) -> dict:
       - ``price_history``   — dict of period → list of OHLCV bars
       - ``metrics``         — valuation, cash-flow, margins, growth, balance, dividend
       - ``financials``      — quarterly and annual revenue + net income
+      - ``market_data_degraded`` — True when fallbacks or partial yfinance were used
+      - ``data_sources``    — provenance hints per section
     """
     import yfinance as yf
 
     t_up = ticker.upper().strip()
+    data_sources: Dict[str, str] = {
+        "info": "none",
+        "price_history": "none",
+        "metrics": "none",
+    }
+    degraded = False
+    info: Dict[str, Any] = {}
+    price_history: Dict[str, List[Dict[str, Any]]] = {
+        period: [] for period in _PERIOD_INTERVAL_MAP
+    }
+    quarterly_financials: List[Dict[str, Any]] = []
+    annual_financials: List[Dict[str, Any]] = []
+
+    ticker_obj = None
     try:
-        t = yf.Ticker(t_up)
-        info: Dict[str, Any] = t.info or {}
+        ticker_obj = yf.Ticker(t_up)
+        info, info_degraded = _safe_yfinance_info(ticker_obj)
+        degraded = degraded or info_degraded
+        if info:
+            data_sources["info"] = "yfinance"
 
-        # ---- Company info ----
-        company_info = _build_company_info(info)
-        from .spot import resolve_spot
-
-        spot_q = resolve_spot(t_up)
-        if spot_q is not None:
-            company_info["current_price"] = round(spot_q.price, 4)
-            company_info["spot_source"] = spot_q.source
-            prev = company_info.get("previous_close")
-            if prev is not None and prev != 0:
-                company_info["price_change"] = round(spot_q.price - prev, 4)
-                company_info["price_change_pct"] = round(
-                    (spot_q.price - prev) / prev * 100, 4
-                )
-
-        # ---- Price history for every supported period ----
-        price_history: Dict[str, List[Dict[str, Any]]] = {}
         for period in _PERIOD_INTERVAL_MAP:
-            bars = _fetch_price_history(t, period)
-            price_history[period] = bars
+            bars: List[Dict[str, Any]] = []
+            if ticker_obj is not None:
+                bars = _fetch_price_history(ticker_obj, period)
+            if bars:
+                price_history[period] = bars
+                if data_sources["price_history"] == "none":
+                    data_sources["price_history"] = "yfinance"
+            else:
+                chart_bars = _fetch_yahoo_chart_bars(t_up, period)
+                price_history[period] = chart_bars
+                if chart_bars:
+                    data_sources["price_history"] = "yahoo_chart"
+                    degraded = True
 
-        # ---- Consolidated metrics ----
-        metrics = _build_metrics(info)
-
-        # ---- Financial performance ----
-        quarterly_financials: List[Dict[str, Any]] = []
-        annual_financials: List[Dict[str, Any]] = []
         try:
-            quarterly_financials = _extract_financials(t.quarterly_income_stmt)
+            if ticker_obj is not None:
+                quarterly_financials = _extract_financials(ticker_obj.quarterly_income_stmt)
         except Exception as exc:
             logger.warning("Quarterly income stmt failed for %s: %s", t_up, exc)
         try:
-            annual_financials = _extract_financials(t.income_stmt)
+            if ticker_obj is not None:
+                annual_financials = _extract_financials(ticker_obj.income_stmt)
         except Exception as exc:
             logger.warning("Annual income stmt failed for %s: %s", t_up, exc)
-
-        return {
-            "ticker": t_up,
-            "company_info": company_info,
-            "price_history": price_history,
-            "metrics": metrics,
-            "financials": {
-                "quarterly": quarterly_financials,
-                "annual": annual_financials,
-            },
-        }
-
     except Exception as exc:
+        logger.warning("[StockFundamentalsConnector] yfinance path failed for %s: %s", t_up, exc)
+        degraded = True
+
+    metrics = _build_metrics(info)
+    fc_row: Dict[str, Any] = {}
+    if _metrics_sparse(metrics):
+        fc_row = _fetch_fc_fundamentals_sync(t_up)
+        if fc_row:
+            info = _merge_fc_into_info(info, fc_row)
+            metrics = _build_metrics(info)
+            _patch_metrics_from_fc(metrics, fc_row)
+            data_sources["metrics"] = "fincrawler"
+            degraded = True
+        elif info:
+            data_sources["metrics"] = "yfinance"
+    else:
+        data_sources["metrics"] = "yfinance"
+
+    company_info = _build_company_info(info)
+    _apply_spot_to_company_info(company_info, t_up)
+
+    if company_info.get("current_price") is None:
+        if not fc_row:
+            fc_row = _fetch_fc_fundamentals_sync(t_up)
+        px = _num(fc_row.get("regular_market_price"))
+        if px is not None:
+            company_info["current_price"] = round(px, 4)
+            company_info["spot_source"] = "fincrawler"
+            degraded = True
+
+    result = {
+        "ticker": t_up,
+        "company_info": company_info,
+        "price_history": price_history,
+        "metrics": metrics,
+        "financials": {
+            "quarterly": quarterly_financials,
+            "annual": annual_financials,
+        },
+        "market_data_degraded": degraded,
+        "data_sources": data_sources,
+    }
+
+    if not fundamentals_payload_usable(result):
         logger.error(
-            "[StockFundamentalsConnector] fetch failed for %s: %s", t_up, exc,
+            "[StockFundamentalsConnector] no usable fundamentals for %s after fallbacks",
+            t_up,
         )
-        raise
+        raise RuntimeError(
+            f"No usable price or valuation data for {t_up} after yfinance, "
+            "Yahoo chart, FinCrawler, and spot fallbacks."
+        )
+
+    return result

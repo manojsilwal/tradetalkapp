@@ -6,7 +6,12 @@ from unittest.mock import patch, MagicMock
 import pandas as pd
 from datetime import datetime
 
-from backend.connectors.stock_fundamentals import fetch_stock_fundamentals
+from backend.connectors.stock_fundamentals import (
+    _extract_financials,
+    _find_row,
+    fetch_stock_fundamentals,
+    fundamentals_payload_usable,
+)
 from backend.routers.analysis import get_stock_fundamentals
 
 # Helper to mock yfinance Ticker history
@@ -110,10 +115,104 @@ class TestStockFundamentals(unittest.IsolatedAsyncioTestCase):
 
     @patch("backend.routers.analysis.fetch_stock_fundamentals")
     async def test_endpoint_returns_json(self, mock_fetch):
-        mock_fetch.return_value = {"ticker": "MSFT", "company_info": {"company_name": "Microsoft"}}
+        mock_fetch.return_value = {
+            "ticker": "MSFT",
+            "company_info": {"company_name": "Microsoft", "current_price": 420.0},
+            "price_history": {"1mo": [{"timestamp": "2026-06-01", "close": 420.0}]},
+            "metrics": {"valuation": {"market_cap": 1e12, "trailing_pe": 30.0}},
+            "financials": {"quarterly": [], "annual": []},
+        }
         result = await get_stock_fundamentals("MSFT")
         self.assertEqual(result["ticker"], "MSFT")
         self.assertEqual(result["company_info"]["company_name"], "Microsoft")
+        self.assertIn("health", result)
+
+    def test_find_row_tolerates_missing_index(self):
+        class BadFrame:
+            empty = False
+            index = None
+
+        self.assertIsNone(_find_row(BadFrame(), ("Total Revenue",)))
+
+    def test_extract_financials_tolerates_missing_index(self):
+        class BadFrame:
+            empty = False
+            index = None
+
+        self.assertEqual(_extract_financials(BadFrame()), [])
+
+    @patch("backend.connectors.spot.resolve_spot", return_value=None)
+    @patch("yfinance.Ticker")
+    def test_info_parse_failure_returns_partial_payload(self, mock_ticker_class, _mock_resolve_spot):
+        mock_ticker_instance = MagicMock()
+        type(mock_ticker_instance).info = property(
+            lambda self: (_ for _ in ()).throw(
+                TypeError("argument of type 'NoneType' is not iterable")
+            )
+        )
+        mock_ticker_instance.history.return_value = self.mock_history_df
+        mock_ticker_instance.income_stmt = self.mock_annual_stmt
+        mock_ticker_instance.quarterly_income_stmt = self.mock_quarterly_stmt
+        mock_ticker_class.return_value = mock_ticker_instance
+
+        result = fetch_stock_fundamentals("AMAT")
+        self.assertEqual(result["ticker"], "AMAT")
+        self.assertTrue(fundamentals_payload_usable(result))
+        self.assertIn("metrics", result)
+        self.assertIn("price_history", result)
+        self.assertTrue(result.get("market_data_degraded"))
+
+    @patch("backend.connectors.stock_fundamentals._fetch_fc_fundamentals_sync")
+    @patch("backend.connectors.spot.resolve_spot", return_value=None)
+    @patch("yfinance.Ticker")
+    def test_fincrawler_fills_sparse_metrics(self, mock_ticker_class, _mock_resolve_spot, mock_fc):
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.info = {}
+        mock_ticker_instance.history.return_value = pd.DataFrame()
+        mock_ticker_instance.income_stmt = None
+        mock_ticker_instance.quarterly_income_stmt = None
+        mock_ticker_class.return_value = mock_ticker_instance
+        mock_fc.return_value = {
+            "company_name": "Applied Materials, Inc.",
+            "market_cap": 150_000_000_000,
+            "pe_ratio": 22.5,
+            "forward_pe": 20.1,
+            "regular_market_price": 617.0,
+            "source": "fincrawler",
+        }
+
+        result = fetch_stock_fundamentals("AMAT")
+        self.assertEqual(result["metrics"]["valuation"]["market_cap"], 150_000_000_000)
+        self.assertEqual(result["metrics"]["valuation"]["trailing_pe"], 22.5)
+        self.assertEqual(result["company_info"]["current_price"], 617.0)
+        self.assertEqual(result["data_sources"]["metrics"], "fincrawler")
+        mock_fc.assert_called()
+
+    @patch("backend.connectors.stock_fundamentals._fetch_yahoo_chart_bars")
+    @patch("backend.connectors.spot.resolve_spot", return_value=None)
+    @patch("yfinance.Ticker")
+    def test_yahoo_chart_fallback_when_history_empty(self, mock_ticker_class, _mock_resolve_spot, mock_chart):
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.info = self.mock_info
+        mock_ticker_instance.history.return_value = pd.DataFrame()
+        mock_ticker_instance.income_stmt = self.mock_annual_stmt
+        mock_ticker_instance.quarterly_income_stmt = self.mock_quarterly_stmt
+        mock_ticker_class.return_value = mock_ticker_instance
+        mock_chart.return_value = [
+            {
+                "timestamp": "2026-06-18T13:30:00+00:00",
+                "open": 610.0,
+                "high": 620.0,
+                "low": 608.0,
+                "close": 617.0,
+                "volume": 1000,
+            }
+        ]
+
+        result = fetch_stock_fundamentals("AMAT")
+        self.assertEqual(result["price_history"]["1mo"], mock_chart.return_value)
+        self.assertEqual(result["data_sources"]["price_history"], "yahoo_chart")
+        mock_chart.assert_called()
 
 if __name__ == "__main__":
     unittest.main()

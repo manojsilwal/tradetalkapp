@@ -756,24 +756,35 @@ async def get_stock_fundamentals(ticker: str, market_regime: Optional[str] = Non
     """
     from ..data_errors import InsufficientDataError
     from ..business_health import build_stock_fundamentals_health
+    from ..connectors.stock_fundamentals import fundamentals_payload_usable
 
     t = validate_ticker_query(ticker)
 
     try:
         result = await asyncio.to_thread(fetch_stock_fundamentals, t)
+        if not fundamentals_payload_usable(result):
+            raise InsufficientDataError(
+                "yfinance",
+                f"Stock fundamentals unavailable for {t} after all fallbacks.",
+                ticker=t,
+                missing=["stock_fundamentals"],
+            )
         try:
             from ..freshness import assess, assess_spot
 
             price_as_of = _latest_price_date(result)
+            info_src = (result.get("data_sources") or {}).get("info") or "yfinance"
             result["data_freshness"] = assess(
                 data_class="fundamentals",
-                source="yfinance",
+                source=info_src,
                 as_of=price_as_of,
+                degraded=bool(result.get("market_data_degraded")),
             ).model_dump()
             spot_src = (result.get("company_info") or {}).get("spot_source") or "yfinance"
             result["spot_freshness"] = assess_spot(
                 source=spot_src,
                 as_of=price_as_of,
+                degraded=bool(result.get("market_data_degraded")),
             ).model_dump()
         except Exception:
             pass
