@@ -18,8 +18,10 @@ MIN_ANNUAL_OCF_YEARS = 3
 MAX_ANNUAL_OCF_YEARS = 5
 
 DEFAULT_RISK_FREE = 0.0446
-DEFAULT_EQUITY_PREMIUM = 0.04
+DEFAULT_EQUITY_PREMIUM = 0.05
 DEFAULT_BETA = 1.0
+DEFAULT_TAX_RATE = 0.21
+DEFAULT_COST_OF_DEBT_SPREAD = 0.015
 DCF_YEARS = 5
 
 BASE_GROWTH_PATH = [0.06, 0.05, 0.04, 0.035, 0.03]
@@ -100,18 +102,31 @@ def _annual_cashflow_rows(cashflow_df: Any, *, max_years: int = MAX_ANNUAL_OCF_Y
 
 
 def median_owner_earnings_fcf(rows: List[Dict[str, Any]]) -> Tuple[Optional[float], str]:
-    """Median owner earnings (OCF − |capex|) across annual rows."""
+    """
+    Weighted normalized FCF: 50% latest + 30% 3y avg + 20% 5y median (if >=5 years available).
+    If <5 years, falls back entirely to the latest FCF.
+    Includes negative FCF years.
+    """
     earnings: List[float] = []
     for row in rows:
         ocf = _num(row.get("ocf"))
         if ocf is None:
             continue
         oe = _owner_earnings(ocf, _num(row.get("capex")))
-        if oe > 0:
-            earnings.append(oe)
+        earnings.append(oe)
+
     if not earnings:
         return None, "none"
-    return float(statistics.median(earnings)), "median_5y_owner_earnings"
+
+    latest_fcf = earnings[-1]
+
+    if len(earnings) >= 5:
+        avg_3y_fcf = sum(earnings[-3:]) / 3.0
+        median_5y_fcf = float(statistics.median(earnings[-5:]))
+        normalized = 0.50 * latest_fcf + 0.30 * avg_3y_fcf + 0.20 * median_5y_fcf
+        return normalized, "weighted_normalized_fcf"
+
+    return latest_fcf, "latest_fcf_fallback"
 
 
 def median_ocf_yoy_growth_pct(rows: List[Dict[str, Any]]) -> Optional[float]:
@@ -152,8 +167,28 @@ def capm_wacc(
     """Simple CAPM cost of equity: Rf + beta * ERP, floored at Rf + 2%."""
     rf = risk_free if risk_free is not None else risk_free_rate()
     b = _num(beta, DEFAULT_BETA) or DEFAULT_BETA
-    wacc = rf + b * equity_premium
-    return max(rf + 0.02, min(0.14, wacc))
+    ke = rf + b * equity_premium
+    return max(rf + 0.02, min(0.14, ke))
+
+
+def compute_true_wacc(
+    ke: float,
+    market_cap: float,
+    total_debt: float,
+    risk_free: float,
+) -> float:
+    """Computes full WACC combining cost of equity and after-tax cost of debt."""
+    if market_cap <= 0:
+        return ke
+
+    total_capital = market_cap + total_debt
+    equity_weight = market_cap / total_capital
+    debt_weight = total_debt / total_capital
+
+    kd = risk_free + DEFAULT_COST_OF_DEBT_SPREAD
+    kd_after_tax = kd * (1.0 - DEFAULT_TAX_RATE)
+
+    return equity_weight * ke + debt_weight * kd_after_tax
 
 
 def owner_earnings_fcf(snapshot: Dict[str, Any]) -> Tuple[Optional[float], str]:
@@ -181,8 +216,13 @@ def owner_earnings_fcf(snapshot: Dict[str, Any]) -> Tuple[Optional[float], str]:
 def net_cash_equity(snapshot: Dict[str, Any]) -> Tuple[Optional[float], str]:
     """
     Cash + short-term + long-term investments − total debt.
+    Subtracts an estimate of required operating cash (e.g. 3% of revenue).
     Uses balance-sheet fallbacks when .info fields are missing.
     """
+    sector = snapshot.get("sector")
+    if sector in ["Financial Services", "Financials", "Banks", "Insurance", "Capital Markets"]:
+        return None, "sector_excluded"
+
     cash = _num(snapshot.get("totalCash")) or 0.0
     st_inv = _num(snapshot.get("shortTermInvestments")) or 0.0
     lt_inv = _num(snapshot.get("longTermInvestments")) or 0.0
@@ -203,7 +243,11 @@ def net_cash_equity(snapshot: Dict[str, Any]) -> Tuple[Optional[float], str]:
     if cash == 0 and st_inv == 0 and lt_inv == 0 and debt == 0:
         return None, "none"
 
-    net = cash + st_inv + lt_inv - debt
+    # Subtract estimated required operating cash (3% of revenue)
+    rev = _num(snapshot.get("totalRevenue")) or 0.0
+    required_operating_cash = rev * 0.03
+
+    net = cash + st_inv + lt_inv - debt - required_operating_cash
     src = "balance_sheet" if bs_cash_st is not None or bs_inv is not None else "yfinance_info"
     return net, src
 
@@ -252,34 +296,56 @@ def dcf_fair_value_per_share(
         return None
 
 
-def build_base_growth_path(
+def calculate_blended_growth_anchor(
+    fcf_cagr: Optional[float],
     revenue_growth: Optional[float],
-    hist_cagr_pct: Optional[float],
+    ocf_cagr: Optional[float],
+) -> float:
+    """
+    Blended growth anchor:
+    35% FCF CAGR + 30% revenue CAGR + 15% OCF CAGR.
+    Normalized based on available metrics.
+    """
+    components = []
+    if fcf_cagr is not None:
+        components.append((fcf_cagr, 0.35))
+    if revenue_growth is not None:
+        # Convert revenue growth to percentage if it's not already
+        rg = revenue_growth * 100.0 if abs(revenue_growth) < 1.0 else revenue_growth
+        components.append((rg, 0.30))
+    if ocf_cagr is not None:
+        components.append((ocf_cagr, 0.15))
+
+    if not components:
+        return 0.05 * 100.0 # Default 5%
+
+    total_weight = sum(w for _, w in components)
+    blended_cagr = sum(val * (w / total_weight) for val, w in components)
+    return blended_cagr
+
+
+def build_base_growth_path(
+    anchor_pct: float,
+    terminal_growth: float = BASE_TERMINAL_G,
 ) -> List[float]:
     """
-    Declining 5Y FCF growth for the base case (6% → 3% by default).
-    When revenue or historical growth is weak, scale the path down toward 2%.
+    Maps the anchor into a gradual 5-year path.
+    g1 = anchor
+    g2 = 0.80 * anchor + 0.20 * terminal
+    g3 = 0.60 * anchor + 0.40 * terminal
+    g4 = 0.40 * anchor + 0.60 * terminal
+    g5 = 0.25 * anchor + 0.75 * terminal
     """
-    path = list(BASE_GROWTH_PATH)
-    anchor: Optional[float] = None
-    if revenue_growth is not None:
-        rg = float(revenue_growth)
-        anchor = rg / 100.0 if abs(rg) > 1.0 else rg
-    elif hist_cagr_pct is not None:
-        anchor = float(hist_cagr_pct) / 100.0
+    anchor = anchor_pct / 100.0
+    anchor = max(0.02, min(0.15, anchor)) # Clamp between 2% and 15%
 
-    if anchor is None:
-        return path
-
-    anchor = max(0.02, min(0.10, anchor))
-    if anchor >= 0.055:
-        return path
-
-    scale = anchor / path[0]
-    scaled = [max(0.02, g * scale) for g in path]
-    for i in range(1, len(scaled)):
-        scaled[i] = min(scaled[i], scaled[i - 1])
-    return scaled
+    return [
+        anchor,
+        0.80 * anchor + 0.20 * terminal_growth,
+        0.60 * anchor + 0.40 * terminal_growth,
+        0.40 * anchor + 0.60 * terminal_growth,
+        0.25 * anchor + 0.75 * terminal_growth,
+    ]
 
 
 def compute_dcf_scenarios(
@@ -297,16 +363,21 @@ def compute_dcf_scenarios(
         net_cash = 0.0
 
     shares = _num(snapshot.get("sharesOutstanding"))
+    mc = _num(snapshot.get("marketCap"))
     if not shares and price_usd and price_usd > 0:
-        mc = _num(snapshot.get("marketCap"))
         if mc:
             shares = mc / price_usd
 
     beta = _num(snapshot.get("beta"), DEFAULT_BETA)
     rf = risk_free_rate()
-    wacc_base = capm_wacc(beta, risk_free=rf, equity_premium=DEFAULT_EQUITY_PREMIUM)
-    wacc_bear = min(0.14, wacc_base + 0.009)
-    wacc_bull = max(rf + 0.02, wacc_base - 0.006)
+    ke = capm_wacc(beta, risk_free=rf, equity_premium=DEFAULT_EQUITY_PREMIUM)
+
+    total_debt = _num(snapshot.get("totalDebt")) or _num(snapshot.get("balance_total_debt")) or 0.0
+    mc_val = mc if mc is not None else ((shares * price_usd) if shares and price_usd else 0.0)
+    wacc_base = compute_true_wacc(ke, mc_val, total_debt, rf)
+
+    wacc_bear = min(0.14, wacc_base + 0.015)
+    wacc_bull = max(rf + 0.02, wacc_base - 0.010)
 
     rev_g = snapshot.get("revenueGrowth")
     rev_g_num = _num(rev_g) if rev_g is not None else None
@@ -342,14 +413,16 @@ def compute_dcf_scenarios(
             hist_anchor = hist_cagr_pct
             growth_anchor_source = "hist_cagr_fallback"
 
-    if growth_anchor_source == "median_5y_ocf_yoy":
-        base_path = build_base_growth_path(None, hist_anchor)
-    elif growth_anchor_source == "revenue_growth":
-        base_path = build_base_growth_path(rev_g_num, hist_anchor if hist_anchor is not None else None)
-    elif growth_anchor_source == "hist_cagr_fallback":
-        base_path = build_base_growth_path(None, hist_anchor)
-    else:
-        base_path = build_base_growth_path(None, None)
+    fcf_cagr_pct = hist_cagr_pct # Use the provided hist_cagr_pct as FCF CAGR proxy if available
+    ocf_cagr_pct = median_yoy_growth_pct
+
+    blended_anchor_pct = calculate_blended_growth_anchor(
+        fcf_cagr=fcf_cagr_pct,
+        revenue_growth=rev_g_num,
+        ocf_cagr=ocf_cagr_pct,
+    )
+    growth_anchor_source = "blended_growth_anchor"
+    base_path = build_base_growth_path(blended_anchor_pct, BASE_TERMINAL_G)
 
     out: Dict[str, Any] = {
         "fcf_usd": fcf,
@@ -389,6 +462,64 @@ def compute_dcf_scenarios(
     out["base_fair_value_usd"] = round(base_fv, 2) if base_fv is not None else None
     out["available"] = base_fv is not None
     out["growth_path_base"] = [round(g, 4) for g in base_path]
+
+    # Calculate Terminal Value % and Guardrails
+    terminal_spread = wacc_base - BASE_TERMINAL_G
+    out["wacc_terminal_spread_pct"] = round(terminal_spread * 100, 2)
+    warning_flags = []
+
+    if terminal_spread < 0.025:
+        warning_flags.append("terminal_spread_low")
+
+    sbc = _num(snapshot.get("stockBasedCompensation")) or 0.0
+    sbc_to_fcf = (sbc / fcf) if fcf > 0 else 0.0
+    out["sbc_to_fcf_pct"] = round(sbc_to_fcf * 100, 2)
+    if sbc_to_fcf > 0.10:
+        warning_flags.append("high_sbc")
+
+    sector = snapshot.get("sector")
+    sector_suitability = "high"
+    if sector in ["Financial Services", "Financials", "Banks", "Insurance", "Real Estate", "Biotech"]:
+        sector_suitability = "low"
+        warning_flags.append("sector_unsuitable")
+
+    # Estimate terminal value % of total value
+    terminal_value_pct = None
+    try:
+        # Re-run Gordon growth terminal value to find its PV
+        years = DCF_YEARS
+        path = list(base_path[:years])
+        while len(path) < years:
+            path.append(path[-1] if path else 0.03)
+
+        fcfs = [fcf]
+        for g in path:
+            fcfs.append(fcfs[-1] * (1.0 + g))
+
+        terminal_fcf = fcfs[years] * (1.0 + BASE_TERMINAL_G)
+        tv = terminal_fcf / terminal_spread
+        tv_pv = tv / ((1.0 + wacc_base) ** years)
+
+        equity = dcf_equity_value(fcf, base_path, wacc_base, BASE_TERMINAL_G)
+        total_ev = equity + net_cash
+
+        if total_ev > 0:
+            terminal_value_pct = (tv_pv / total_ev) * 100
+            out["terminal_value_pct"] = round(terminal_value_pct, 1)
+            if terminal_value_pct > 85.0:
+                warning_flags.append("terminal_value_high")
+    except Exception:
+        pass
+
+    out["valuation_warning_flags"] = warning_flags
+    out["sector_dcf_suitability"] = sector_suitability
+
+    # Base confidence score on flags
+    confidence = 80
+    if warning_flags:
+        confidence -= 15 * len(warning_flags)
+    out["dcf_confidence_score"] = max(0, min(100, confidence))
+
     return out
 
 
@@ -427,6 +558,8 @@ def fetch_yfinance_valuation_snapshot(ticker: str) -> Dict[str, Any]:
                 "previousClose": info.get("previousClose")
                 or info.get("regularMarketPreviousClose"),
                 "longName": info.get("longName") or info.get("shortName") or t_up,
+                "sector": info.get("sector"),
+                "totalRevenue": info.get("totalRevenue"),
             }
         )
 
@@ -447,8 +580,27 @@ def fetch_yfinance_valuation_snapshot(ticker: str) -> Dict[str, Any]:
                     cf,
                     ("Capital Expenditure", "Purchase Of PPE"),
                 )
+
+            out["stockBasedCompensation"] = _first_row_value(
+                cf,
+                ("Stock Based Compensation", "Share Based Compensation"),
+            )
         except Exception as exc:
             logger.debug("[valuation_inputs] cashflow statement failed %s: %s", t_up, exc)
+
+        try:
+            financials = t.financials
+            out["operatingIncome"] = _first_row_value(
+                financials,
+                ("Operating Income",),
+            )
+            if out.get("totalRevenue") is None:
+                out["totalRevenue"] = _first_row_value(
+                    financials,
+                    ("Total Revenue",),
+                )
+        except Exception as exc:
+            logger.debug("[valuation_inputs] financials statement failed %s: %s", t_up, exc)
 
         try:
             bs = t.balance_sheet
