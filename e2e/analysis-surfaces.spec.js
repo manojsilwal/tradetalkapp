@@ -20,6 +20,8 @@ test.describe('Analysis Surfaces', () => {
     await dismissOnboarding(page);
     await expect(page.getByRole('heading', { name: 'TradeTalk', exact: true })).toBeVisible({ timeout: 15000 });
     await runUnifiedLandingAnalyze(page, 'AAPL');
+    await expect(page.getByTestId('dashboard-analysis-progress')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId('dashboard-verdict-elapsed')).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId('dashboard-current-price')).toBeVisible({ timeout: 240000 });
     await expect(page.getByText('Verdict & Sentiment Hub')).toBeVisible();
     await expect(page.getByText('Business Quality Scorecard')).toBeVisible();

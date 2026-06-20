@@ -43,19 +43,16 @@ class _EnvIsolated(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.db_path = os.path.join(self._tmp.name, "r.db")
-        self._env_keys = (
-            "RESOURCES_DB_PATH",
-            "RESOURCES_USE_REGISTRY",
-            "SEPL_TOOL_ENABLE", "SEPL_TOOL_DRY_RUN",
-            "SEPL_TOOL_MIN_MARGIN", "SEPL_TOOL_MAX_PER_DAY",
-            "SEPL_TOOL_MAX_PER_DAY_TIER_0",
-            "SEPL_TOOL_MAX_PER_DAY_TIER_1",
-            "SEPL_TOOL_MAX_PER_DAY_TIER_2",
-            "SEPL_TOOL_CANDIDATES_PER_CYCLE",
-        )
-        self._orig_env = {k: os.environ.get(k) for k in self._env_keys}
+        self.db_path = os.path.join(self._tmp.name, "resources.db")
+        self._orig_env = {}
+        self._env_keys = ["RESOURCES_DB_PATH", "RESOURCES_USE_REGISTRY", "MACRO_CONNECTOR_CACHE_TTL_S"]
+        for k in self._env_keys:
+            self._orig_env[k] = os.environ.get(k)
+        os.environ["RESOURCES_DB_PATH"] = self.db_path
+        os.environ["RESOURCES_USE_REGISTRY"] = "0"
         _reset_singleton_for_tests()
+        import backend.connectors.macro as macro_conn
+        macro_conn._macro_snapshot_cache = None
 
     def tearDown(self) -> None:
         for k in self._env_keys:
@@ -65,6 +62,8 @@ class _EnvIsolated(unittest.TestCase):
             else:
                 os.environ[k] = v
         _reset_singleton_for_tests()
+        import backend.connectors.macro as macro_conn
+        macro_conn._macro_snapshot_cache = None
 
 
 def _mock_yfinance_with_vix(vix_level: float):

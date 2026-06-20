@@ -497,8 +497,25 @@ async def build_decision_terminal_payload(
             return dcf_result.get("missing_reason") or "Insufficient DCF inputs."
         bear = dcf_scenarios.get("bear")
         bull = dcf_scenarios.get("bull")
+        fcf_years = dcf_result.get("fcf_years_used") or 0
+        growth_src = dcf_result.get("growth_anchor_source")
+        if fcf_years >= 3 and dcf_result.get("fcf_source") == "median_5y_owner_earnings":
+            fcf_desc = (
+                f"5Y median owner earnings (OCF−capex across {fcf_years} fiscal years)"
+            )
+        else:
+            fcf_desc = "Owner-earnings DCF (OCF−capex with statement fallbacks)"
+        if growth_src == "median_5y_ocf_yoy":
+            yoy = dcf_result.get("median_yoy_growth_pct")
+            growth_desc = (
+                f"base growth anchored to median YoY OCF ({yoy:.1f}%)"
+                if yoy is not None
+                else "base growth anchored to median YoY OCF"
+            )
+        else:
+            growth_desc = "declining 5Y FCF growth path"
         parts = [
-            "Owner-earnings DCF (OCF−capex with statement fallbacks), declining 5Y FCF growth, "
+            f"{fcf_desc}; {growth_desc}, "
             f"CAPM WACC {dcf_result.get('wacc_base', 0):.1%}, terminal 2.5%, net cash added.",
             f"FCF source: {dcf_result.get('fcf_source')}; "
             f"net cash: ${dcf_result.get('net_cash_usd', 0) / 1e9:.1f}B ({dcf_result.get('net_cash_source')}).",

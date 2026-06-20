@@ -39,22 +39,37 @@ def _use_postgres() -> bool:
 
 
 def extract_tickers_from_text(text: str) -> List[str]:
-    """Extract stock ticker symbols like $AAPL or known finance terms from text."""
-    # Find words with $ prefix e.g. $AAPL, $MSFT
-    tickers = re.findall(r'\$([A-Za-z]{1,5})\b', text)
-    # Match standard stock symbols that are uppercase of length 2-5
-    common = {"AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "NFLX", "AMD", "SPY", "QQQ", "GLD"}
-    for word in re.findall(r'\b([A-Z]{2,5})\b', text):
-        if word in common:
+    """Extract stock ticker symbols like $AAPL, $brk.b, or known finance terms from text."""
+    # Find words with $ prefix, allowing optional suffix like .B, -B, /B (case-insensitive)
+    tickers = re.findall(r'\$([A-Za-z]{1,5}(?:[./-][A-Za-z]{1,2})?)\b', text)
+    
+    # Match standard stock symbols that are uppercase of length 2-5, or with common suffixes
+    common = {
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "NFLX", "AMD", "SPY", "QQQ", "GLD",
+        "GME", "AMC", "PLTR", "COIN", "MSTR", "BABA", "NIO", "SMCI", "ARM", "ASML", "MU", "INTC",
+        "JPM", "DIS", "V", "MA", "WMT", "COST", "HD", "XOM", "CVX", "JNJ", "LLY", "MRK", "PFE", "UNH",
+        "BRK.A", "BRK.B", "BRK/A", "BRK/B"
+    }
+    
+    # Check for uppercase words and compare to our common set
+    for word in re.findall(r'\b([A-Z]{2,5}(?:[./-][A-Z]{1,2})?)\b', text):
+        # Normalize slash to dot or match directly
+        norm_word = word.replace('/', '.')
+        if word in common or norm_word in common:
             tickers.append(word)
+        elif word.split('.')[0] in common or word.split('/')[0] in common or word.split('-')[0] in common:
+            tickers.append(word)
+
     seen = set()
     out = []
     for t in tickers:
-        tu = t.upper()
+        # Standardize tickers to uppercase and convert slashes to dots for consistency
+        tu = t.upper().replace('/', '.')
         if tu not in seen:
             seen.add(tu)
             out.append(tu)
     return out
+
 
 
 def _get_conn() -> sqlite3.Connection:

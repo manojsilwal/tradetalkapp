@@ -130,7 +130,7 @@ def _build_registry() -> ToolRegistry:
             handler=_macro_fetch,
             input_model=MacroFetchInput,
             side_effect=ToolSideEffect.READ,
-            default_timeout_s=45.0,
+            default_timeout_s=90.0,
             description="Global macro snapshot (VIX, credit stress, etc.).",
         )
     )

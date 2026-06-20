@@ -1,0 +1,30 @@
+# Prewarm decision-terminal verdict cache for top S&P tickers (sequential, ~20 names).
+# Required repo secrets:
+#   TRADETALK_API_BASE — Cloud Run API URL (no trailing slash)
+#   PIPELINE_CRON_SECRET — must match PIPELINE_CRON_SECRET on the API service
+name: Verdict cache prewarm
+
+on:
+  schedule:
+    # Pre-US cash open (~13:00 UTC) and mid US session (~18:30 UTC)
+    - cron: "0 13 * * 1-5"
+    - cron: "30 18 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  prewarm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /decision-terminal/prewarm
+        env:
+          TRADETALK_API_BASE: ${{ secrets.TRADETALK_API_BASE }}
+          SECRET: ${{ secrets.PIPELINE_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          BASE="${TRADETALK_API_BASE:-}"
+          test -n "${BASE:-}" || { echo "Set TRADETALK_API_BASE (Cloud Run URL) in repo secrets"; exit 1; }
+          test -n "${SECRET:-}" || { echo "Set PIPELINE_CRON_SECRET in repo secrets (same as backend env)"; exit 1; }
+
+          curl -fsS --max-time 7200 -X POST "${BASE}/decision-terminal/prewarm" \
+            -H "Authorization: Bearer ${SECRET}" \
+            -H "Content-Type: application/json"

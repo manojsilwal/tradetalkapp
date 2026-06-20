@@ -101,7 +101,7 @@ async def _macro_stale(tool_registry: Any) -> bool:
     )
     stale = False
     try:
-        macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=45.0)
+        macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=90.0)
     except Exception:
         return False
     ind = macro_data.get("indicators") or {}

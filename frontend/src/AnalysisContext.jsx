@@ -4,12 +4,15 @@ import { isBriefSessionTrustworthy, shouldSkipDailyBriefRefetch } from './freshn
 import * as sessionStore from './store/sessionStore';
 import { addToast } from './SessionContext';
 import { _abortControllers } from './components/SessionsTray';
+import { SP500_TICKERS } from './sp500';
+
+const SP500_TICKER_SET = new Set(SP500_TICKERS);
 
 // Max concurrent ticker analyses (prevents API flooding)
 const MAX_CONCURRENT_ANALYSES = 3;
 
 const FAST_TIMEOUT_MS = 30000;
-const LLM_TIMEOUT_MS = 180000; // 180s — /decision-terminal consolidates swarm+debate+DT in one call (~90-150s on cold GCP)
+const LLM_TIMEOUT_MS = 240000; // 240s — cold GCP decision-terminal can exceed 150s (swarm + debate + LLM)
 const LIVE_POLL_FAST_MS = 30000;
 const LIVE_POLL_SLOW_MS = 5 * 60 * 1000;
 const LIVE_POLL_ENABLED = (() => {
@@ -30,6 +33,10 @@ function metricsKeyActivityMissing(metrics) {
 
 function fundamentalsMissing(fundamentals) {
     return !fundamentals?.metrics;
+}
+
+function decisionTerminalMissing(state) {
+    return !state?.decisionData;
 }
 
 export function analysisStillRunning(state) {
@@ -60,6 +67,7 @@ export function AnalysisProvider({ children }) {
     const sessionActionIds = useRef({});
     // Synchronous per-ticker lock so concurrent analyzeTicker calls cannot double-start
     const inFlightRef = useRef({});
+    const analysisToastFlagsRef = useRef({});
 
     useEffect(() => {
         analysesRef.current = analyses;
@@ -382,7 +390,13 @@ export function AnalysisProvider({ children }) {
 
         // Check if already fetched (re-fetch when key metrics were empty from a prior rate-limit)
         const existing = getAnalysisState(sym);
-        if (existing?.status === 'success' && !forceRefresh && !metricsKeyActivityMissing(existing.metricsData) && !fundamentalsMissing(existing.fundamentalsData)) {
+        if (
+            existing?.status === 'success'
+            && !forceRefresh
+            && !metricsKeyActivityMissing(existing.metricsData)
+            && !fundamentalsMissing(existing.fundamentalsData)
+            && !decisionTerminalMissing(existing)
+        ) {
             if (!analysesRef.current[sym]) {
                 setAnalyses(prev => ({
                     ...prev,
@@ -395,6 +409,7 @@ export function AnalysisProvider({ children }) {
 
         stopDashboardPoller();
         inFlightRef.current[sym] = true;
+        analysisToastFlagsRef.current[sym] = { fundamentals: false, verdict: false };
 
         // Create a session action record (or reuse resumed / running one)
         let sessionActionId = _resumedActionId;
@@ -418,11 +433,12 @@ export function AnalysisProvider({ children }) {
         const abortController = new AbortController();
         _abortControllers.set(sessionActionId, abortController);
         const abortSignal = abortController.signal;
+        const skipTickerValidation = SP500_TICKER_SET.has(sym);
 
         // Initialize state
         const initialTickerState = {
             status: 'loading',
-            loadingStep: 'Validating symbol…',
+            loadingStep: skipTickerValidation ? 'Loading data…' : 'Validating symbol…',
             error: null,
             loading: true,
             traceData: null,
@@ -457,35 +473,37 @@ export function AnalysisProvider({ children }) {
 
         let validationFailed = false;
 
-        try {
-            const probe = await apiFetch(`${API_BASE_URL}/metrics/validate/${encodeURIComponent(sym)}`).catch(() => null);
-            const probeSoftFail = probe?.reason === 'probe_timeout' || probe?.reason === 'probe_failed';
-            if (probe && probe.exists === false && !probeSoftFail) {
-                const msg = probe.reason === 'invalid_format'
-                    ? `Ticker "${sym}" looks invalid. Check the symbol format and try again.`
-                    : `Could not find a market quote for "${sym}". Check the symbol and try again.`;
-                
-                setAnalyses(prev => ({
-                    ...prev,
-                    [sym]: {
-                        ...prev[sym],
-                        status: 'error',
-                        error: msg,
-                        loading: false,
-                        loadingStep: '',
-                        traceLoading: false,
-                        metricsLoading: false,
-                        smallCapLoading: false,
-                        debateLoading: false,
-                        decisionLoading: false,
-                        scorecardLoading: false,
-                        predMarketsLoading: false,
-                        fundamentalsLoading: false,
-                    }
-                }));
-                validationFailed = true;
-            }
-        } catch (_) { /* continue */ }
+        if (!skipTickerValidation) {
+            try {
+                const probe = await apiFetch(`${API_BASE_URL}/metrics/validate/${encodeURIComponent(sym)}`).catch(() => null);
+                const probeSoftFail = probe?.reason === 'probe_timeout' || probe?.reason === 'probe_failed';
+                if (probe && probe.exists === false && !probeSoftFail) {
+                    const msg = probe.reason === 'invalid_format'
+                        ? `Ticker "${sym}" looks invalid. Check the symbol format and try again.`
+                        : `Could not find a market quote for "${sym}". Check the symbol and try again.`;
+
+                    setAnalyses(prev => ({
+                        ...prev,
+                        [sym]: {
+                            ...prev[sym],
+                            status: 'error',
+                            error: msg,
+                            loading: false,
+                            loadingStep: '',
+                            traceLoading: false,
+                            metricsLoading: false,
+                            smallCapLoading: false,
+                            debateLoading: false,
+                            decisionLoading: false,
+                            scorecardLoading: false,
+                            predMarketsLoading: false,
+                            fundamentalsLoading: false,
+                        }
+                    }));
+                    validationFailed = true;
+                }
+            } catch (_) { /* continue */ }
+        }
 
         if (validationFailed) {
             delete inFlightRef.current[sym];
@@ -634,6 +652,11 @@ export function AnalysisProvider({ children }) {
                         debateError: null,
                         debateLoading: false,
                     });
+                    const flags = analysisToastFlagsRef.current[sym];
+                    if (!flags?.verdict) {
+                        analysisToastFlagsRef.current[sym] = { ...flags, verdict: true };
+                        addToast(`${sym} verdict ready ✓`, 'success', 5000);
+                    }
                     const regime = res?.swarm?.macro_state?.market_regime;
                     if (regime) {
                         apiFetchTimed(
@@ -690,6 +713,11 @@ export function AnalysisProvider({ children }) {
                     onSuccess();
                     emitStep('Fundamentals');
                     updateTickerState({ fundamentalsData: res, fundamentalsLoading: false });
+                    const flags = analysisToastFlagsRef.current[sym];
+                    if (res?.metrics && !flags?.fundamentals) {
+                        analysisToastFlagsRef.current[sym] = { ...flags, fundamentals: true };
+                        addToast(`${sym} fundamentals ready`, 'info', 4000);
+                    }
                 })
                 .catch((err) => {
                     onFail(err);
@@ -753,7 +781,6 @@ export function AnalysisProvider({ children }) {
                             ticker: sym,
                             completedAt: Date.now(),
                         });
-                        addToast(`${sym} analysis complete ✓`, 'success', 5000);
                     }, 0);
                 } else if (!isSuccess) {
                     sessionStore.failAction(sessionActionId, finalError || 'Analysis failed');

@@ -89,6 +89,76 @@ class TestVerdictCache(unittest.TestCase):
         key = ("AAPL", last_completed_session())
         self.assertIn(key, vc._store)
 
+    def test_supabase_read_populates_memory(self):
+        payload = _minimal_payload("MSFT")
+        session = last_completed_session()
+        captured = payload.verdict_captured_at_utc
+
+        class _Query:
+            def __init__(self, data):
+                self._data = data
+
+            def select(self, *_a, **_k):
+                return self
+
+            def eq(self, *_a, **_k):
+                return self
+
+            def limit(self, *_a, **_k):
+                return self
+
+            def execute(self):
+                return type("R", (), {"data": self._data})()
+
+        class _Client:
+            def table(self, _name):
+                return _Query(
+                    [
+                        {
+                            "payload_json": payload.model_dump(mode="json"),
+                            "verdict_captured_at_utc": captured,
+                        }
+                    ]
+                )
+
+        with patch.dict(os.environ, {"VERDICT_CACHE_BACKEND": "supabase"}):
+            with patch.object(vc, "_supabase_client", return_value=_Client()):
+                with patch.object(vc, "overlay_fresh_spot", side_effect=lambda p, **kw: p):
+                    hit = vc.get_cached_verdict("MSFT")
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.ticker, "MSFT")
+        self.assertIn(("MSFT", session), vc._store)
+
+    def test_supabase_write_on_store(self):
+        payload = _minimal_payload("NVDA")
+        upserted = {}
+
+        class _Query:
+            def upsert(self, row):
+                upserted.update(row)
+                return self
+
+            def execute(self):
+                return type("R", (), {"data": [upserted]})()
+
+        class _Client:
+            def table(self, _name):
+                return _Query()
+
+        with patch.dict(os.environ, {"VERDICT_CACHE_BACKEND": "supabase"}):
+            with patch.object(vc, "_supabase_client", return_value=_Client()):
+                vc.store_verdict_cache("NVDA", payload)
+        self.assertEqual(upserted.get("ticker"), "NVDA")
+        self.assertEqual(upserted.get("payload_json", {}).get("ticker"), "NVDA")
+
+
+class TestVerdictPrewarmTickers(unittest.TestCase):
+    def test_default_ticker_list_nonempty(self):
+        from backend.verdict_prewarm import PREWARM_DEFAULT_TICKERS
+
+        self.assertGreaterEqual(len(PREWARM_DEFAULT_TICKERS), 15)
+        self.assertIn("MSFT", PREWARM_DEFAULT_TICKERS)
+
 
 class TestConnectorCacheSessionTtl(unittest.TestCase):
     def test_open_session_shorter_ttl(self):

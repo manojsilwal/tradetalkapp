@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import os
+import time
 import yfinance as yf
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 from ..data_errors import InsufficientDataError
 from .base import DataConnector
 from .fred import fetch_macro_snapshot
@@ -16,6 +18,12 @@ _MACRO_VIX_DEFAULTS: Dict[str, float] = {
     "status_threshold": 1.1,
 }
 
+_macro_snapshot_cache: Optional[Tuple[float, Dict[str, Any]]] = None
+
+
+def _macro_cache_ttl_s() -> float:
+    return max(30.0, float(os.environ.get("MACRO_CONNECTOR_CACHE_TTL_S", "120")))
+
 
 class MacroHealthConnector(DataConnector):
     """
@@ -26,6 +34,13 @@ class MacroHealthConnector(DataConnector):
         self.force_bearish = force_bearish
 
     async def fetch_data(self, **kwargs) -> Dict[str, Any]:
+        global _macro_snapshot_cache
+        now = time.monotonic()
+        if _macro_snapshot_cache is not None:
+            cached_at, cached_payload = _macro_snapshot_cache
+            if now - cached_at <= _macro_cache_ttl_s():
+                return cached_payload
+
         fred_task = asyncio.create_task(fetch_macro_snapshot(include_extended=False))
 
         # Fetch the VIX index. Truthful-data contract: no placeholder value —
@@ -337,7 +352,7 @@ class MacroHealthConnector(DataConnector):
         except Exception as exc:
             logger.warning("[MacroConnector] FRED merge failed: %s", exc)
         
-        return {
+        payload = {
             "source": "yfinance ^VIX Volatility & Sector ETFs (Live)",
             "indicators": indicators,
             "sectors": sector_data,
@@ -347,3 +362,5 @@ class MacroHealthConnector(DataConnector):
             "cash_reserves": cash_reserves,
             "status": "Stress Detected" if credit_stress_index > stress_threshold else "Normal"
         }
+        _macro_snapshot_cache = (now, payload)
+        return payload

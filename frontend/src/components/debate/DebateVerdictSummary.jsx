@@ -1,6 +1,51 @@
 import React from 'react';
-import { Gavel } from 'lucide-react';
+import { Gavel, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { VERDICT_STYLES, normalizeDebateResult } from './debateConfig';
+
+function highlightText(text) {
+  if (!text) return '';
+  
+  // Regex to capture key terms: percentages, multiples, macro regimes, stances, tickers, specific metrics, and standalone numbers.
+  const pattern = /(\b[A-Z]{3,5}(?:'s)?\b|\b-?\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?x\b|\b(?:STRONG_BUY|STRONG_SELL|BEAR_STRESS|BULL_STRESS|GOLDILOCKS|STAGNATION)\b|\b(?:STRONG BUY|STRONG SELL|BUY|SELL|NEUTRAL)\b|\b\d+(?:\.\d+)?\b|\bFCF\b|\bROE\b|\bP\/E\b|\bVIX\b)/g;
+
+  const parts = text.split(pattern);
+  return parts.map((part, index) => {
+    const isTicker = /^[A-Z]{3,5}(?:'s)?$/.test(part) && !['FCF', 'ROE', 'VIX', 'BUY', 'SELL'].includes(part);
+    const isPercentage = /-?\d+(?:\.\d+)?%/.test(part);
+    const isMultiple = /\d+(?:\.\d+)?x/.test(part);
+    const isStanceOrRegime = /^(?:STRONG_BUY|STRONG_SELL|BEAR_STRESS|BULL_STRESS|GOLDILOCKS|STAGNATION|STRONG BUY|STRONG SELL|BUY|SELL|NEUTRAL)$/.test(part);
+    const isNumber = /^\d+(?:\.\d+)?$/.test(part);
+    const isMetric = /^(?:FCF|ROE|P\/E|VIX)$/.test(part);
+    
+    if (isTicker || isPercentage || isMultiple || isStanceOrRegime || isNumber || isMetric) {
+      let color = '#38bdf8'; // Blue highlight for tickers/misc
+      if (isPercentage || isMultiple || isNumber) {
+        color = '#34d399'; // Greenish for numbers/metrics
+        if (part.startsWith('-')) {
+          color = '#f87171'; // Red for negative percentages
+        }
+      } else if (isStanceOrRegime) {
+        if (part.includes('BUY') || part === 'BULLISH' || part === 'GOLDILOCKS') {
+          color = '#10b981';
+        } else if (part.includes('SELL') || part === 'BEARISH' || part.includes('STRESS') || part === 'STAGNATION') {
+          color = '#ef4444';
+        } else {
+          color = '#94a3b8';
+        }
+      } else if (isMetric) {
+        color = '#fbbf24'; // Yellow for metrics (FCF, ROE, P/E, VIX)
+      }
+      
+      return (
+        <strong key={index} style={{ color, fontWeight: 700 }}>
+          {part}
+        </strong>
+      );
+    }
+    
+    return part;
+  });
+}
 
 function ScoreRing({ bullScore, bearScore }) {
   const total = 5;
@@ -25,24 +70,26 @@ function ScoreRing({ bullScore, bearScore }) {
         strokeDasharray={`${bullArc} ${norm}`}
         transform="rotate(-90 60 60)" strokeLinecap="round"
       />
-      <text x="60" y="55" textAnchor="middle" fill="#e2e8f0" fontSize="20" fontWeight="700">{displayScore}</text>
-      <text x="60" y="72" textAnchor="middle" fill="#64748b" fontSize="10">/ {total}</text>
+      <text x="60" y="58" textAnchor="middle" fill="#ffffff" fontSize="24" fontWeight="800">{displayScore}</text>
+      <text x="60" y="78" textAnchor="middle" fill="#64748b" fontSize="11" fontWeight="600">/ {total}</text>
     </svg>
   );
 }
 
 function VoteChip({ label, count, color }) {
   if (!count) return null;
+  const bg = label === 'Neutral' ? '#1e293b' : `${color}18`;
+  const textCol = label === 'Neutral' ? '#e2e8f0' : color;
   return (
     <span
       style={{
         padding: '4px 10px',
-        borderRadius: 20,
-        background: `${color}18`,
-        color,
+        borderRadius: 4,
+        background: bg,
+        color: textCol,
         fontSize: '0.72rem',
         fontWeight: 700,
-        letterSpacing: '0.04em',
+        letterSpacing: '0.02em',
       }}
     >
       {count} {label}
@@ -56,10 +103,10 @@ export default function DebateVerdictSummary({ result, loading = false }) {
       <div
         data-testid="debate-panel-verdict"
         style={{
-          background: 'rgba(15,23,42,0.75)',
-          borderRadius: 14,
+          background: 'var(--dt-card)',
+          borderRadius: 12,
           padding: '24px 28px',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid rgba(255,255,255,0.05)',
           marginBottom: 16,
         }}
       >
@@ -76,54 +123,75 @@ export default function DebateVerdictSummary({ result, loading = false }) {
   const verdictStyle = VERDICT_STYLES[normalized.verdict] || VERDICT_STYLES.NEUTRAL;
   const { bull_score, bear_score, neutral_score } = normalized;
 
+  // Determine trend icon next to verdict
+  let TrendIcon = Minus;
+  if (normalized.verdict.includes('BUY')) {
+    TrendIcon = TrendingUp;
+  } else if (normalized.verdict.includes('SELL')) {
+    TrendIcon = TrendingDown;
+  }
+
   return (
     <div
       data-testid="debate-panel-verdict"
       style={{
-        background: 'rgba(15,23,42,0.75)',
-        borderRadius: 14,
-        padding: '24px 28px',
-        border: `1px solid ${verdictStyle.color}33`,
-        boxShadow: verdictStyle.glow !== 'none' ? `inset 0 0 40px ${verdictStyle.color}0a` : 'none',
-        marginBottom: 16,
+        background: 'var(--dt-card)',
+        borderRadius: 12,
+        padding: '24px 20px',
+        border: '1px solid rgba(255,255,255,0.05)',
+        borderTop: `3px solid ${verdictStyle.color}`,
+        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)',
+        display: 'flex',
+        flexDirection: 'column',
+        boxSizing: 'border-box',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
         <ScoreRing bullScore={bull_score} bearScore={bear_score} />
         <div style={{ flex: 1, minWidth: 160 }}>
-          <div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
+          <div style={{ color: '#64748b', fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginBottom: 4 }}>
             Investment Committee Verdict
           </div>
-          <div
-            data-testid="debate-panel-verdict-label"
-            style={{
-              color: verdictStyle.color,
-              fontSize: 'clamp(1.4rem,3vw,2rem)',
-              fontWeight: 800,
-              letterSpacing: '-0.01em',
-              textShadow: verdictStyle.glow,
-              marginBottom: 6,
-            }}
-          >
-            {normalized.verdict}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <div
+              data-testid="debate-panel-verdict-label"
+              style={{
+                color: verdictStyle.color,
+                fontSize: '1.9rem',
+                fontWeight: 800,
+                letterSpacing: '-0.01em',
+                textShadow: verdictStyle.glow,
+                lineHeight: 1.1,
+              }}
+            >
+              {normalized.verdict}
+            </div>
+            <TrendIcon size={26} color={verdictStyle.color} style={{ opacity: 0.9, display: 'inline-block' }} />
           </div>
-          <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: 8 }}>
-            Confidence: {Math.round((normalized.consensus_confidence || 0) * 100)}%
-            <span style={{ color: '#64748b' }}> · from 5 specialist agents</span>
+          <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: 8, lineHeight: 1.3 }}>
+            Confidence: {Math.round((normalized.consensus_confidence || 0) * 100)}% · from 5 specialist agents
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             <VoteChip label="Bullish" count={bull_score} color="#10b981" />
-            <VoteChip label="Bearish" count={bear_score} color="#ef4444" />
             <VoteChip label="Neutral" count={neutral_score} color="#94a3b8" />
+            <VoteChip label="Bearish" count={bear_score} color="#ef4444" />
           </div>
         </div>
       </div>
-      <blockquote style={{ margin: 0, padding: '14px 18px', borderLeft: `3px solid ${verdictStyle.color}66`, background: `${verdictStyle.color}08`, borderRadius: '0 8px 8px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          <Gavel size={16} color={verdictStyle.color} style={{ flexShrink: 0, marginTop: 2 }} />
-          <p style={{ color: '#cbd5e1', fontSize: '0.87rem', lineHeight: 1.65, margin: 0 }}>{normalized.moderator_summary}</p>
-        </div>
-      </blockquote>
+
+      {/* Dark background box for the Moderator Summary */}
+      <div
+        style={{
+          background: '#090e15',
+          borderRadius: 8,
+          padding: '16px',
+          border: '1px solid rgba(255,255,255,0.03)',
+        }}
+      >
+        <p style={{ color: '#cbd5e1', fontSize: '0.84rem', lineHeight: 1.55, margin: 0, fontWeight: 500 }}>
+          {highlightText(normalized.moderator_summary)}
+        </p>
+      </div>
     </div>
   );
 }

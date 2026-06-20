@@ -70,11 +70,16 @@ class TestAgentMemory(unittest.TestCase):
         self.assertEqual(agent_memory.format_memory_context_block([]), "")
 
     def test_extract_tickers_from_text(self):
-        text = "I am interested in buying some $AAPL stock, or maybe some MSFT."
+        text = "I am interested in buying some $AAPL stock, or maybe some MSFT. Also $brk.b and BRK/B and PLTR."
         tickers = agent_memory.extract_tickers_from_text(text)
         self.assertIn("AAPL", tickers)
         self.assertIn("MSFT", tickers)
-        self.assertEqual(len(tickers), 2)
+        self.assertIn("BRK.B", tickers)
+        self.assertIn("PLTR", tickers)
+        # Verify normalization of slash to dot
+        self.assertNotIn("BRK/B", tickers)
+        self.assertEqual(len(tickers), 4)
+
 
     def test_save_memory_auto_generates_summary_and_tickers(self):
         agent_memory.init_agent_memory_db()

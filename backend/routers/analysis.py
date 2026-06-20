@@ -33,10 +33,15 @@ from ..deps import (
     knowledge_store, llm_client, tool_registry, up, kalshi_connector,
 )
 from ..coral_agents import hub_record_attempt
+from ..cron_auth import require_cron_secret
 from ..swarm_reliability.schemas import EvidenceArtifact, EvidenceManifest, parse_iso_datetime
 from .. import user_preferences as uprefs
 
 router = APIRouter(tags=["analysis"])
+
+# Live macro snapshot (VIX + sector ETFs + capital flows) can take 40–50s on cold GCP;
+# the previous 45s cap caused intermittent HTTP 504 and an empty decision-terminal UI.
+_MACRO_FETCH_TIMEOUT_S = max(45.0, float(os.environ.get("MACRO_FETCH_TIMEOUT_S", "90")))
 
 _rl_expensive = rate_limit("expensive")
 
@@ -112,7 +117,7 @@ async def _execute_swarm_trace(
         cycle_id = f"trace-{ticker.upper()}-{int(_time.time())}"
         trace_manifest = EvidenceManifest(cycle_id=cycle_id)
         try:
-            macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=45.0)
+            macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=_MACRO_FETCH_TIMEOUT_S)
         except asyncio.TimeoutError:
             raise HTTPException(
                 status_code=504,
@@ -332,7 +337,7 @@ async def _execute_debate(
 
     if macro_data is None:
         try:
-            macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=45.0)
+            macro_data = await tool_registry.invoke("macro_fetch", {}, timeout_s=_MACRO_FETCH_TIMEOUT_S)
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail={"error": "timeout", "tool": "macro_fetch", "message": "Macro data fetch timed out"}) from None
 
@@ -526,6 +531,31 @@ async def decision_terminal_get(
         llm_client=llm_client,
         provider_audit=want_audit,
         force=force,
+    )
+
+
+@router.post("/decision-terminal/prewarm", dependencies=[Depends(require_cron_secret)])
+async def decision_terminal_prewarm(
+    tickers: Optional[str] = Query(
+        None,
+        description="Comma-separated tickers; defaults to top-liquidity S&P names.",
+    ),
+):
+    """
+    Cron hook: sequentially warm per-trading-day verdict cache for popular tickers.
+    Requires PIPELINE_CRON_SECRET when set on the API (same as other cron routes).
+    """
+    from ..verdict_prewarm import run_verdict_prewarm
+
+    sym_list = None
+    if tickers:
+        sym_list = [t.strip() for t in tickers.split(",") if t.strip()]
+    return await run_verdict_prewarm(
+        tickers=sym_list,
+        execute_analyze=_execute_analyze,
+        tool_registry=tool_registry,
+        poly_connector=poly_connector,
+        llm_client=llm_client,
     )
 
 

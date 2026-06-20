@@ -282,7 +282,7 @@ class FinCrawlerClient:
                 )
                 text = await self.scrape_text(edgar_url)
             result = text[:max_chars] if text else f"No {form} filing found for {ticker}."
-            _cache_set(cache_key, result)
+            _cache_set(cache_key, result, ttl=30 * 86400)
             return result
         except Exception as e:
             logger.warning("[FinCrawler] get_sec_filing failed for %s %s: %s", ticker, form, e)

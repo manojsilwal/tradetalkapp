@@ -7,9 +7,15 @@ from __future__ import annotations
 
 import logging
 import math
+import statistics
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+_OCF_LABELS = ("Operating Cash Flow",)
+_CAPEX_LABELS = ("Capital Expenditure", "Purchase Of PPE")
+MIN_ANNUAL_OCF_YEARS = 3
+MAX_ANNUAL_OCF_YEARS = 5
 
 DEFAULT_RISK_FREE = 0.0446
 DEFAULT_EQUITY_PREMIUM = 0.04
@@ -46,6 +52,81 @@ def _first_row_value(df: Any, labels: Tuple[str, ...]) -> Optional[float]:
             if val is not None:
                 return val
     return None
+
+
+def _owner_earnings(ocf: float, capex: Optional[float]) -> float:
+    if capex is not None:
+        return ocf + capex if capex <= 0 else ocf - abs(capex)
+    return ocf
+
+
+def _annual_cashflow_rows(cashflow_df: Any, *, max_years: int = MAX_ANNUAL_OCF_YEARS) -> List[Dict[str, Any]]:
+    """Extract up to ``max_years`` of annual OCF/capex, sorted oldest → newest."""
+    if cashflow_df is None or getattr(cashflow_df, "empty", True):
+        return []
+
+    ocf_series = None
+    for label in _OCF_LABELS:
+        if label in cashflow_df.index:
+            ocf_series = cashflow_df.loc[label]
+            break
+    if ocf_series is None:
+        return []
+
+    capex_series = None
+    for label in _CAPEX_LABELS:
+        if label in cashflow_df.index:
+            capex_series = cashflow_df.loc[label]
+            break
+
+    rows: List[Dict[str, Any]] = []
+    for col in ocf_series.index:
+        ocf = _num(ocf_series[col])
+        if ocf is None:
+            continue
+        capex = None
+        if capex_series is not None and col in capex_series.index:
+            capex = _num(capex_series[col])
+        try:
+            year = int(col.year) if hasattr(col, "year") else int(str(col)[:4])
+        except (TypeError, ValueError):
+            continue
+        rows.append({"year": year, "ocf": ocf, "capex": capex})
+
+    rows.sort(key=lambda r: r["year"])
+    if len(rows) > max_years:
+        rows = rows[-max_years:]
+    return rows
+
+
+def median_owner_earnings_fcf(rows: List[Dict[str, Any]]) -> Tuple[Optional[float], str]:
+    """Median owner earnings (OCF − |capex|) across annual rows."""
+    earnings: List[float] = []
+    for row in rows:
+        ocf = _num(row.get("ocf"))
+        if ocf is None:
+            continue
+        oe = _owner_earnings(ocf, _num(row.get("capex")))
+        if oe > 0:
+            earnings.append(oe)
+    if not earnings:
+        return None, "none"
+    return float(statistics.median(earnings)), "median_5y_owner_earnings"
+
+
+def median_ocf_yoy_growth_pct(rows: List[Dict[str, Any]]) -> Optional[float]:
+    """Median consecutive YoY OCF growth (%), oldest → newest."""
+    ordered = sorted(rows, key=lambda r: r["year"])
+    rates: List[float] = []
+    for i in range(1, len(ordered)):
+        prev = _num(ordered[i - 1].get("ocf"))
+        cur = _num(ordered[i].get("ocf"))
+        if prev is None or cur is None or prev <= 0:
+            continue
+        rates.append((cur / prev - 1.0) * 100.0)
+    if not rates:
+        return None
+    return round(float(statistics.median(rates)), 2)
 
 
 def risk_free_rate() -> float:
@@ -211,7 +292,6 @@ def compute_dcf_scenarios(
     Bear / base / bull owner-earnings DCF fair values per share.
     Returns dict with fair_value base + scenarios + provenance inputs.
     """
-    fcf, fcf_source = owner_earnings_fcf(snapshot)
     net_cash, net_cash_source = net_cash_equity(snapshot)
     if net_cash is None:
         net_cash = 0.0
@@ -229,14 +309,55 @@ def compute_dcf_scenarios(
     wacc_bull = max(rf + 0.02, wacc_base - 0.006)
 
     rev_g = snapshot.get("revenueGrowth")
-    base_path = build_base_growth_path(
-        _num(rev_g) if rev_g is not None else None,
-        hist_cagr_pct,
-    )
+    rev_g_num = _num(rev_g) if rev_g is not None else None
+
+    annual_rows = snapshot.get("annual_cashflow_5y") or []
+    median_ocf_usd: Optional[float] = None
+    median_yoy_growth_pct: Optional[float] = None
+    fcf_years_used = 0
+    growth_anchor_source = "default_path"
+    hist_anchor: Optional[float] = None
+
+    if len(annual_rows) >= MIN_ANNUAL_OCF_YEARS:
+        fcf, fcf_source = median_owner_earnings_fcf(annual_rows)
+        median_yoy_growth_pct = median_ocf_yoy_growth_pct(annual_rows)
+        fcf_years_used = len(annual_rows)
+        ocf_vals = [_num(r.get("ocf")) for r in annual_rows]
+        ocf_vals = [v for v in ocf_vals if v is not None]
+        if ocf_vals:
+            median_ocf_usd = float(statistics.median(ocf_vals))
+        if median_yoy_growth_pct is not None:
+            hist_anchor = median_yoy_growth_pct
+            growth_anchor_source = "median_5y_ocf_yoy"
+        elif rev_g_num is not None:
+            growth_anchor_source = "revenue_growth"
+        elif hist_cagr_pct is not None:
+            hist_anchor = hist_cagr_pct
+            growth_anchor_source = "hist_cagr_fallback"
+    else:
+        fcf, fcf_source = owner_earnings_fcf(snapshot)
+        if rev_g_num is not None:
+            growth_anchor_source = "revenue_growth"
+        elif hist_cagr_pct is not None:
+            hist_anchor = hist_cagr_pct
+            growth_anchor_source = "hist_cagr_fallback"
+
+    if growth_anchor_source == "median_5y_ocf_yoy":
+        base_path = build_base_growth_path(None, hist_anchor)
+    elif growth_anchor_source == "revenue_growth":
+        base_path = build_base_growth_path(rev_g_num, hist_anchor if hist_anchor is not None else None)
+    elif growth_anchor_source == "hist_cagr_fallback":
+        base_path = build_base_growth_path(None, hist_anchor)
+    else:
+        base_path = build_base_growth_path(None, None)
 
     out: Dict[str, Any] = {
         "fcf_usd": fcf,
         "fcf_source": fcf_source,
+        "fcf_years_used": fcf_years_used,
+        "median_ocf_usd": round(median_ocf_usd, 2) if median_ocf_usd is not None else None,
+        "median_yoy_growth_pct": median_yoy_growth_pct,
+        "growth_anchor_source": growth_anchor_source,
         "net_cash_usd": net_cash,
         "net_cash_source": net_cash_source,
         "shares": shares,
@@ -311,6 +432,7 @@ def fetch_yfinance_valuation_snapshot(ticker: str) -> Dict[str, Any]:
 
         try:
             cf = t.cashflow
+            out["annual_cashflow_5y"] = _annual_cashflow_rows(cf)
             out["statement_free_cash_flow"] = _first_row_value(
                 cf,
                 ("Free Cash Flow",),
