@@ -7,84 +7,111 @@ This document provides a holistic end-to-end trace of how data moves through the
 ```mermaid
 flowchart TD
   %% --- 1. Frontend Layer ---
-  subgraph frontend [Frontend (React / Vite)]
-    UI_Dashboard[Unified Dashboard\n/dashboard]
-    UI_DailyBrief[Daily Brief\n/daily-brief]
-    UI_Portfolio[Paper Portfolio\n/portfolio]
-    UI_Chat[Chat UI\n/chat]
-    UI_Macro[Macro UI\n/macro]
-    UI_Backtest[Strategy Lab\n/backtest]
-    UI_Video[Video Academy\n/learning]
-    UI_Scorecard[Scorecard UI\n/scorecard]
+  subgraph frontend ["Frontend (React / Vite)"]
+    UI_Dashboard["Unified Dashboard
+/dashboard"]
+    UI_DailyBrief["Daily Brief
+/daily-brief"]
+    UI_Portfolio["Paper Portfolio
+/portfolio"]
+    UI_Chat["Chat UI
+/chat"]
+    UI_Macro["Macro UI
+/macro"]
+    UI_Backtest["Strategy Lab
+/backtest"]
+    UI_Video["Video Academy
+/learning"]
+    UI_Scorecard["Scorecard UI
+/scorecard"]
 
-    FE_API[api.js (apiFetch, apiFetchTimed, fetchJsonWithMeta)]
-    FE_Context[AnalysisContext.jsx\n(Background Poller)]
+    FE_API["api.js (apiFetch, apiFetchTimed, fetchJsonWithMeta)"]
+    FE_Context["AnalysisContext.jsx
+(Background Poller)"]
   end
 
   %% --- 2. API Router Layer (FastAPI) ---
-  subgraph routers [Backend Routers]
-    R_Analysis[/routers/analysis.py\n(Decision Terminal, Trace, Metrics)/]
-    R_DailyBrief[/routers/daily_brief.py/]
-    R_Portfolio[/routers/portfolio.py/]
-    R_Chat[/routers/chat.py/]
-    R_Macro[/routers/macro.py/]
-    R_Backtest[/routers/backtest.py/]
-    R_Knowledge[/routers/knowledge.py\n(Ingest Pipelines)/]
-    R_Scorecard[/routers/scorecard.py\n(Risk-Return Scorecard)/]
-    R_MCP[/mcp_server/router.py\n(Live Quotes)/]
+  subgraph routers ["Backend Routers"]
+    R_Analysis[/"routers/analysis.py
+(Decision Terminal, Trace, Metrics)"/]
+    R_DailyBrief[/"routers/daily_brief.py"/]
+    R_Portfolio[/"routers/portfolio.py"/]
+    R_Chat[/"routers/chat.py"/]
+    R_Macro[/"routers/macro.py"/]
+    R_Backtest[/"routers/backtest.py"/]
+    R_Knowledge[/"routers/knowledge.py
+(Ingest Pipelines)"/]
+    R_Scorecard[/"routers/scorecard.py
+(Risk-Return Scorecard)"/]
+    R_MCP[/"mcp_server/router.py
+(Live Quotes)"/]
   end
 
-  %% --- 3. Caching & Freshness ---
-  subgraph cache [Caching & Trust Layer]
-    VC[(Verdict Cache\n(Per Ticker/Session))]
-    CC[(Connector Cache\n(60s open / 300s closed))]
-    DTL[Data Trust Layer\n(freshness.py, assess_spot)]
+  %% --- 3. Caching & Trust Layer ---
+  subgraph cache ["Caching & Trust Layer"]
+    VC[("Verdict Cache
+(Per Ticker/Session)")]
+    CC[("Connector Cache
+(60s open / 300s closed)")]
+    DTL["Data Trust Layer
+(freshness.py, assess_spot)"]
   end
 
   %% --- 4. Agent & Analysis Layer ---
-  subgraph intelligence [Intelligence Layer (Agents & LLMs)]
-    SWARM{Swarm Agents\n(Bull, Bear, Value, Momentum, etc.)}
-    DEBATE{Debate Agents\n(Moderator, Analysts)}
-    SCORECARD_AGENTS{Scorecard Agents\n(SITG Scorer, Exec Risk)}
-    CHAT_AGENTS{Chat Agents\n(Financial Assistant, Tools)}
-    VIDEO_AGENTS{Video Generation Agent\n(Gemini Veo / Text Fallback)}
+  subgraph intelligence ["Intelligence Layer (Agents & LLMs)"]
+    SWARM{"Swarm Agents
+(Bull, Bear, Value, Momentum, etc.)"}
+    DEBATE{"Debate Agents
+(Moderator, Analysts)"}
+    SCORECARD_AGENTS{"Scorecard Agents
+(SITG Scorer, Exec Risk)"}
+    CHAT_AGENTS{"Chat Agents
+(Financial Assistant, Tools)"}
+    VIDEO_AGENTS{"Video Generation Agent
+(Gemini Veo / Text Fallback)"}
 
-    LLM_Gateway[llm_client.py\n(Gateway & Guardrails)]
+    LLM_Gateway["llm_client.py
+(Gateway & Guardrails)"]
   end
 
   %% --- 5. RAG & Knowledge Store ---
-  subgraph knowledge [Vector Memory (RAG)]
-    KS[knowledge_store.py]
-    V_DB[(Vector Backend\nSupabase pgvector / Chroma)]
+  subgraph knowledge ["Vector Memory (RAG)"]
+    KS["knowledge_store.py"]
+    V_DB[("Vector Backend
+Supabase pgvector / Chroma")]
   end
 
   %% --- 6. Persistent Storage (Databases & Lakes) ---
-  subgraph storage [Persistence Layer]
-    DB_Ledger[(Decision Ledger\n(SQLite/Postgres))]
-    DB_App[(App DBs\nAuth, Portfolio, Chat, Alert Store)]
-    DB_Macro[(Domain DBs\nmacro_flow.db, supply_chain.db)]
-    DATA_LAKE[(Data Lake\ndaily_prices, BQ, Parquet)]
+  subgraph storage ["Persistence Layer"]
+    DB_Ledger[("Decision Ledger
+(SQLite/Postgres)")]
+    DB_App[("App DBs
+Auth, Portfolio, Chat, Alert Store)")]
+    DB_Macro[("Domain DBs
+macro_flow.db, supply_chain.db)")]
+    DATA_LAKE[("Data Lake
+daily_prices, BQ, Parquet)")]
   end
 
   %% --- 7. Data Ingestion & Connectors ---
-  subgraph ingestion [Ingestion & Connectors]
-    C_YF[yfinance_batch.py]
-    C_Fred[fred.py (FRED CSV)]
-    C_Poly[polymarket.py & kalshi.py]
-    C_RSS[news_scanner.py (Google News RSS)]
-    C_FinCrawler[fincrawler_client.py (SEC, Stooq)]
-    C_Spot[live_quote.py (Hedged Pricing Engine)]
+  subgraph ingestion ["Ingestion & Connectors"]
+    C_YF["yfinance_batch.py"]
+    C_Fred["fred.py (FRED CSV)"]
+    C_Poly["polymarket.py & kalshi.py"]
+    C_RSS["news_scanner.py (Google News RSS)"]
+    C_FinCrawler["fincrawler_client.py (SEC, Stooq)"]
+    C_Spot["live_quote.py (Hedged Pricing Engine)"]
 
-    CRON[Daily Pipeline / sp500-ingest / Scheduled Jobs]
+    CRON["Daily Pipeline / sp500-ingest / Scheduled Jobs"]
   end
 
   %% --- 8. External Data Sources (Truth) ---
-  subgraph external [External Providers]
-    SRC_YF(Yahoo Finance)
-    SRC_Fred(FRED)
-    SRC_Markets(Polymarket / Kalshi)
-    SRC_News(News Sites / Social)
-    SRC_LLMs(OpenRouter / Gemini)
+  subgraph external ["External Providers"]
+    SRC_YF("Yahoo Finance")
+    SRC_Fred("FRED")
+    SRC_Markets("Polymarket / Kalshi")
+    SRC_News("News Sites / Social")
+    SRC_LLMs("OpenRouter / Gemini")
   end
 
   %% === CONNECTIONS ===
