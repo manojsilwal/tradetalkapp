@@ -50,8 +50,12 @@ class TestMedianCashflowHelpers(unittest.TestCase):
     def test_median_owner_earnings(self) -> None:
         rows = _sample_annual_rows()
         fcf, src = median_owner_earnings_fcf(rows)
-        self.assertEqual(src, "median_5y_owner_earnings")
-        self.assertAlmostEqual(fcf, 108_000_000_000, delta=1e6)
+        self.assertEqual(src, "weighted_normalized_fcf")
+        # latest: 126B
+        # 3y avg: (108 + 117 + 126) / 3 = 117B
+        # 5y median: 108B
+        # normalized: 0.5*126 + 0.3*117 + 0.2*108 = 63 + 35.1 + 21.6 = 119.7B
+        self.assertAlmostEqual(fcf, 119_700_000_000, delta=1e6)
 
     def test_median_ocf_yoy_growth(self) -> None:
         rows = _sample_annual_rows()
@@ -86,7 +90,7 @@ class TestNetCashEquity(unittest.TestCase):
 
 class TestDcfMath(unittest.TestCase):
     def test_declining_growth_path(self) -> None:
-        path = build_base_growth_path(0.166, None)
+        path = build_base_growth_path(16.6, 0.025)
         self.assertEqual(len(path), 5)
         self.assertGreater(path[0], path[-1])
 
@@ -106,8 +110,8 @@ class TestDcfMath(unittest.TestCase):
         }
         result = compute_dcf_scenarios(snapshot, hist_cagr_pct=None, price_usd=298.0)
         self.assertTrue(result["available"])
-        self.assertEqual(result["fcf_source"], "median_5y_owner_earnings")
-        self.assertEqual(result["growth_anchor_source"], "median_5y_ocf_yoy")
+        self.assertEqual(result["fcf_source"], "weighted_normalized_fcf")
+        self.assertEqual(result["growth_anchor_source"], "blended_growth_anchor")
         self.assertEqual(result["fcf_years_used"], 5)
         base = result["scenarios"]["base"]
         bear = result["scenarios"]["bear"]
@@ -115,8 +119,8 @@ class TestDcfMath(unittest.TestCase):
         self.assertIsNotNone(bear)
         assert base is not None and bear is not None
         self.assertGreater(base, 120.0)
-        self.assertLess(base, 200.0)
-        self.assertGreater(bear, 95.0)
+        self.assertLess(base, 220.0) # Updated upper bound to account for terminal spread changes
+        self.assertGreater(bear, 85.0) # Lowered bear bound slightly due to new WACC calculation increasing discount rate
         self.assertLess(bear, base)
 
     def test_prefers_median_over_ttm_when_5y_present(self) -> None:
@@ -131,8 +135,8 @@ class TestDcfMath(unittest.TestCase):
             "annual_cashflow_5y": _sample_annual_rows(),
         }
         result = compute_dcf_scenarios(snapshot, hist_cagr_pct=25.0, price_usd=100.0)
-        self.assertEqual(result["fcf_source"], "median_5y_owner_earnings")
-        self.assertEqual(result["growth_anchor_source"], "median_5y_ocf_yoy")
+        self.assertEqual(result["fcf_source"], "weighted_normalized_fcf")
+        self.assertEqual(result["growth_anchor_source"], "blended_growth_anchor")
         self.assertNotEqual(result["fcf_usd"], 190_000_000_000)
 
     def test_fallback_to_ttm_when_insufficient_history(self) -> None:
@@ -148,7 +152,7 @@ class TestDcfMath(unittest.TestCase):
         }
         result = compute_dcf_scenarios(snapshot, hist_cagr_pct=None, price_usd=100.0)
         self.assertEqual(result["fcf_source"], "ocf_minus_capex")
-        self.assertEqual(result["growth_anchor_source"], "revenue_growth")
+        self.assertEqual(result["growth_anchor_source"], "blended_growth_anchor")
         self.assertEqual(result["fcf_years_used"], 0)
 
     def test_capm_wacc_reasonable_for_low_beta(self) -> None:
