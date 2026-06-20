@@ -48,6 +48,7 @@ def init_schema() -> None:
             "001_paper_portfolio.sql",
             "002_portfolio_memory.sql",
             "003_snapshot_spy_return.sql",
+            "006_stocks_sec_info.sql",
         ):
             cur.execute((mig_dir / name).read_text(encoding="utf-8"))
     conn.commit()
@@ -379,3 +380,65 @@ def close_position(user_id: str, position_id: str) -> Dict[str, Any]:
     except Exception:
         pass
     return result
+
+
+def get_all_unique_portfolio_tickers() -> List[str]:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT ticker FROM paper_positions WHERE closed = 0")
+        return [row["ticker"] for row in cur.fetchall()]
+
+
+def upsert_stock_sec_info(
+    ticker: str,
+    ceo_name: str,
+    sitg_score: float,
+    ceo_base_salary: Optional[float],
+    sitg_value: Optional[float],
+    sitg_multiple: Optional[float],
+    sitg_percentile_tier: Optional[str],
+    insider_buy_count_12m: int,
+    insider_sell_count_12m: int,
+    insider_net_shares_12m: float,
+    held_percent_insiders: float,
+) -> None:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO stocks (
+                ticker, ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
+                sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
+                insider_net_shares_12m, held_percent_insiders, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (ticker) DO UPDATE SET
+                ceo_name=EXCLUDED.ceo_name,
+                sitg_score=EXCLUDED.sitg_score,
+                ceo_base_salary=EXCLUDED.ceo_base_salary,
+                sitg_value=EXCLUDED.sitg_value,
+                sitg_multiple=EXCLUDED.sitg_multiple,
+                sitg_percentile_tier=EXCLUDED.sitg_percentile_tier,
+                insider_buy_count_12m=EXCLUDED.insider_buy_count_12m,
+                insider_sell_count_12m=EXCLUDED.insider_sell_count_12m,
+                insider_net_shares_12m=EXCLUDED.insider_net_shares_12m,
+                held_percent_insiders=EXCLUDED.held_percent_insiders,
+                updated_at=EXCLUDED.updated_at
+            """,
+            (
+                ticker.upper(), ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
+                sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
+                insider_net_shares_12m, held_percent_insiders, time.time()
+            )
+        )
+    conn.commit()
+
+
+def get_stock_sec_info(ticker: str) -> Optional[Dict[str, Any]]:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM stocks WHERE ticker = %s", (ticker.upper(),))
+        row = cur.fetchone()
+        if row:
+            return dict(row)
+    return None

@@ -32,12 +32,15 @@ async def run_daily_pipeline(knowledge_store, llm_client=None) -> dict:
         "errors": [],
     }
 
+    from .sec_filing_job import run_sec_filing_job
+
     jobs = [
         _ingest_price_movements(knowledge_store),
         _ingest_macro_snapshot(knowledge_store),
         _ingest_youtube(knowledge_store),
+        run_sec_filing_job(),
     ]
-    job_names = ["price_movements", "macro_snapshot", "youtube"]
+    job_names = ["price_movements", "macro_snapshot", "youtube", "sec_filing_job"]
     if os.environ.get("DATA_LAKE_DAILY_INCREMENTAL", "1").strip().lower() not in ("0", "false", "no"):
         jobs.append(asyncio.to_thread(_run_data_lake_incremental_sync))
         job_names.append("data_lake_incremental")

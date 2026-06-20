@@ -83,6 +83,20 @@ def init_portfolio_db():
             recorded_at     REAL NOT NULL,
             PRIMARY KEY (user_id, snapshot_date)
         );
+        CREATE TABLE IF NOT EXISTS stocks (
+            ticker         TEXT PRIMARY KEY,
+            ceo_name       TEXT,
+            sitg_score     REAL,
+            ceo_base_salary REAL,
+            sitg_value      REAL,
+            sitg_multiple   REAL,
+            sitg_percentile_tier TEXT,
+            insider_buy_count_12m INTEGER,
+            insider_sell_count_12m INTEGER,
+            insider_net_shares_12m REAL,
+            held_percent_insiders REAL,
+            updated_at     REAL
+        );
     """)
     _ensure_position_metadata_columns(conn)
     conn.commit()
@@ -622,3 +636,84 @@ def close_position(user_id: str, position_id: str) -> Dict[str, Any]:
     except Exception:
         pass
     return result
+
+
+def get_all_unique_portfolio_tickers() -> List[str]:
+    if _use_postgres():
+        try:
+            from . import paper_portfolio_pg as pg
+            return pg.get_all_unique_portfolio_tickers()
+        except Exception:
+            pass
+    conn = _get_conn()
+    rows = conn.execute("SELECT DISTINCT ticker FROM paper_positions WHERE closed = 0").fetchall()
+    return [row["ticker"] for row in rows]
+
+
+def upsert_stock_sec_info(
+    ticker: str,
+    ceo_name: str,
+    sitg_score: float,
+    ceo_base_salary: Optional[float],
+    sitg_value: Optional[float],
+    sitg_multiple: Optional[float],
+    sitg_percentile_tier: Optional[str],
+    insider_buy_count_12m: int,
+    insider_sell_count_12m: int,
+    insider_net_shares_12m: float,
+    held_percent_insiders: float,
+) -> None:
+    if _use_postgres():
+        try:
+            from . import paper_portfolio_pg as pg
+            pg.upsert_stock_sec_info(
+                ticker, ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
+                sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
+                insider_net_shares_12m, held_percent_insiders
+            )
+            return
+        except Exception:
+            pass
+    conn = _get_conn()
+    conn.execute(
+        """
+        INSERT INTO stocks (
+            ticker, ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
+            sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
+            insider_net_shares_12m, held_percent_insiders, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ticker) DO UPDATE SET
+            ceo_name=excluded.ceo_name,
+            sitg_score=excluded.sitg_score,
+            ceo_base_salary=excluded.ceo_base_salary,
+            sitg_value=excluded.sitg_value,
+            sitg_multiple=excluded.sitg_multiple,
+            sitg_percentile_tier=excluded.sitg_percentile_tier,
+            insider_buy_count_12m=excluded.insider_buy_count_12m,
+            insider_sell_count_12m=excluded.insider_sell_count_12m,
+            insider_net_shares_12m=excluded.insider_net_shares_12m,
+            held_percent_insiders=excluded.held_percent_insiders,
+            updated_at=excluded.updated_at
+        """,
+        (
+            ticker.upper(), ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
+            sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
+            insider_net_shares_12m, held_percent_insiders, time.time()
+        )
+    )
+    conn.commit()
+
+
+def get_stock_sec_info(ticker: str) -> Optional[Dict[str, Any]]:
+    if _use_postgres():
+        try:
+            from . import paper_portfolio_pg as pg
+            return pg.get_stock_sec_info(ticker)
+        except Exception:
+            pass
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM stocks WHERE ticker = ?", (ticker.upper(),)).fetchone()
+    if row:
+        return dict(row)
+    return None

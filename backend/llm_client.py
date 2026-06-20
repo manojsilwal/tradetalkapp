@@ -156,7 +156,7 @@ AGENT_SYSTEM_PROMPTS = {
         "specialist analysts. Given their arguments, produce a final investment verdict. "
         "Be decisive, balanced, and cite the weight of evidence. ONLY discuss investment topics. "
         "Respond ONLY with valid JSON: {\"verdict\": \"STRONG BUY|BUY|NEUTRAL|SELL|STRONG SELL\", "
-        "\"summary\": \"2-3 sentence plain-English explanation\"}"
+        "\"summary\": \"1-2 sentence ultra-concise, punchy plain-English explanation of the key reasons. Keep it under 60 words for quick scanning.\"}"
     ),
     "strategy_parser": (
         "You are a quantitative analyst converting plain-English investing strategies into structured "
@@ -279,7 +279,11 @@ AGENT_SYSTEM_PROMPTS = {
         "  \"form4_sells_12m\": integer-or-null,\n"
         "  \"compensation_mix\": \"short phrase: cash-heavy / equity-heavy / balanced / unknown\",\n"
         "  \"archetype\": \"one of the rubric rows (e.g. 'Long-tenured professional CEO')\",\n"
-        "  \"reasoning\": \"2-3 sentences citing specific signals (Form 4, proxy, ownership %). If data is incomplete, say so.\"\n"
+        "  \"reasoning\": \"2-3 sentences citing specific signals (Form 4, proxy, ownership %). If data is incomplete, say so.\",\n"
+        "  \"ceo_base_salary\": number-or-null (estimated base salary in raw USD, e.g. 1000000. Use 1000000 as default if unknown),\n"
+        "  \"sitg_value\": number-or-null (estimated market value of stock owned in raw USD, e.g. 45000000),\n"
+        "  \"sitg_multiple\": number-or-null (SITG Multiple = SITG Value / CEO Base Salary, e.g. 45.0),\n"
+        "  \"sitg_percentile_tier\": \"string-or-null: 'Founder-Level SITG' if multiple >= 100; 'Most S&P 500 CEOs' if 5 <= multiple < 100; 'Below Average SITG' if multiple < 5\"\n"
         "}"
     ),
     "execution_risk_scorer": (
@@ -455,6 +459,10 @@ FALLBACK_TEMPLATES = {
         "compensation_mix": "unknown",
         "archetype": "Most S&P 500 CEOs",
         "reasoning": "Insufficient insider / proxy data observed; defaulting to typical hired-professional-CEO tier.",
+        "ceo_base_salary": None,
+        "sitg_value": None,
+        "sitg_multiple": None,
+        "sitg_percentile_tier": None,
     },
     "execution_risk_scorer": {
         "exec_score": 5,
@@ -1120,7 +1128,9 @@ class LLMClient:
             f"Ticker: {ticker.upper()}\n\n"
             f"The 5 analyst arguments:\n{args_str}\n\n"
             f"Historical debate context:\n{historical_context}\n\n"
-            f"Synthesise these into a final investment verdict."
+            f"Synthesise these into a final investment verdict. In the 'summary', provide a highly quantitative, "
+            f"punchy summary citing specific metrics (like P/E, growth, ROE, FCF, macro regimes, VIX) from the arguments, "
+            f"focusing on the core tension. Keep it under 70 words."
         )
         return await self.generate("moderator", prompt)
 

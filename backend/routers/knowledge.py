@@ -82,6 +82,22 @@ async def trigger_sp500_ingestion(background_tasks: BackgroundTasks, tickers: li
     return {"status": "accepted", "message": "S&P 500 ingestion triggered in background"}
 
 
+@router.post("/sec-filing-job", dependencies=[Depends(require_cron_secret)])
+async def trigger_sec_filing_job(background_tasks: BackgroundTasks):
+    """Trigger the daily SEC filing / insider ingestion job for portfolio stocks."""
+    from ..sec_filing_job import run_sec_filing_job
+    import logging
+
+    async def _bg_job():
+        try:
+            await run_sec_filing_job()
+        except Exception as e:
+            logging.error(f"[KnowledgeRouter] Background SEC filing job failed: {e}")
+
+    background_tasks.add_task(_bg_job)
+    return {"status": "accepted", "message": "SEC filing job triggered in background"}
+
+
 class ClaimIngestRequest(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=32)
     claim_text: str = Field(..., min_length=1, max_length=8000)

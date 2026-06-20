@@ -160,6 +160,10 @@ class ScorecardInput:
     sitg_score: float                  # 0-10, from sitg_scorer persona
     ceo_name: str = ""
     sitg_archetype: str = ""
+    ceo_base_salary: Optional[float] = None
+    sitg_value: Optional[float] = None
+    sitg_multiple: Optional[float] = None
+    sitg_percentile_tier: Optional[str] = None
 
 
 @dataclass
@@ -193,6 +197,10 @@ class ScorecardRow:
     signal: str
     action: str
     quadrant: str
+    ceo_base_salary: Optional[float] = None
+    sitg_value: Optional[float] = None
+    sitg_multiple: Optional[float] = None
+    sitg_percentile_tier: Optional[str] = None
 
 
 @dataclass
@@ -223,6 +231,10 @@ def _row_to_dict(r: ScorecardRow) -> Dict[str, Any]:
         "signal": r.signal,
         "action": r.action,
         "quadrant": r.quadrant,
+        "ceo_base_salary": r.ceo_base_salary,
+        "sitg_value": r.sitg_value,
+        "sitg_multiple": r.sitg_multiple,
+        "sitg_percentile_tier": r.sitg_percentile_tier,
     }
 
 
@@ -380,6 +392,10 @@ def score_basket(
                 signal=interp["signal"],
                 action=interp["action"],
                 quadrant=quadrant,
+                ceo_base_salary=row.ceo_base_salary,
+                sitg_value=row.sitg_value,
+                sitg_multiple=row.sitg_multiple,
+                sitg_percentile_tier=row.sitg_percentile_tier,
             )
         )
     return BasketResult(
@@ -437,6 +453,10 @@ def score_single(
         signal=interp["signal"],
         action=interp["action"],
         quadrant=quadrant,
+        ceo_base_salary=row.ceo_base_salary,
+        sitg_value=row.sitg_value,
+        sitg_multiple=row.sitg_multiple,
+        sitg_percentile_tier=row.sitg_percentile_tier,
     )
 
 

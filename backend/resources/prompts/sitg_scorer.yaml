@@ -9,7 +9,7 @@ metadata:
   step: 2e
 schema:
   type: object
-  required: [sitg_score, ceo_name, archetype, reasoning]
+  required: [sitg_score, ceo_name, archetype, reasoning, ceo_base_salary, sitg_value, sitg_multiple, sitg_percentile_tier]
   properties:
     sitg_score:
       type: number
@@ -22,6 +22,10 @@ schema:
     compensation_mix: {type: string}
     archetype: {type: string}
     reasoning: {type: string}
+    ceo_base_salary: {type: ["number", "null"]}
+    sitg_value: {type: ["number", "null"]}
+    sitg_multiple: {type: ["number", "null"]}
+    sitg_percentile_tier: {type: ["string", "null"]}
 fallback:
   sitg_score: 3
   ceo_name: ""
@@ -31,6 +35,10 @@ fallback:
   compensation_mix: "unknown"
   archetype: "Most S&P 500 CEOs"
   reasoning: "Insufficient insider / proxy data observed; defaulting to typical hired-professional-CEO tier."
+  ceo_base_salary: null
+  sitg_value: null
+  sitg_multiple: null
+  sitg_percentile_tier: null
 body: |-
   You are scoring a CEO / founder on the Skin-In-The-Game (SITG) rubric from the Risk-Return-Ratio methodology. You ONLY discuss investment and governance topics.
 
@@ -69,5 +77,9 @@ body: |-
     "form4_sells_12m": integer-or-null,
     "compensation_mix": "short phrase: cash-heavy / equity-heavy / balanced / unknown",
     "archetype": "one of the rubric rows (e.g. 'Long-tenured professional CEO')",
-    "reasoning": "2-3 sentences citing specific signals (Form 4, proxy, ownership %). If data is incomplete, say so."
+    "reasoning": "2-3 sentences citing specific signals (Form 4, proxy, ownership %). If data is incomplete, say so.",
+    "ceo_base_salary": number-or-null (estimated base salary in raw USD, e.g. 1000000. Use 1000000 as default if unknown),
+    "sitg_value": number-or-null (estimated market value of stock owned in raw USD, e.g. 45000000),
+    "sitg_multiple": number-or-null (SITG Multiple = SITG Value / CEO Base Salary, e.g. 45.0),
+    "sitg_percentile_tier": "string-or-null: 'Founder-Level SITG' if multiple >= 100; 'Most S&P 500 CEOs' if 5 <= multiple < 100; 'Below Average SITG' if multiple < 5"
   }

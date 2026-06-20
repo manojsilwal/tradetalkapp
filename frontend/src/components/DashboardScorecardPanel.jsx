@@ -69,6 +69,51 @@ function formatNum(v) {
   return Number(v).toFixed(2);
 }
 
+function formatCurrency(val) {
+  if (val == null || Number.isNaN(Number(val))) return '—';
+  const num = Number(val);
+  if (num >= 1e9) {
+    return `$${(num / 1e9).toFixed(2)}B`;
+  }
+  if (num >= 1e6) {
+    return `$${(num / 1e6).toFixed(2)}M`;
+  }
+  if (num >= 1e3) {
+    return `$${(num / 1e3).toFixed(2)}K`;
+  }
+  return `$${num.toLocaleString()}`;
+}
+
+function getTierStyle(tier) {
+  const t = (tier || '').toLowerCase();
+  if (t.includes('founder') || t.includes('top 10')) {
+    return {
+      color: '#10b981',
+      background: 'rgba(16,185,129,0.12)',
+      border: '1px solid rgba(16,185,129,0.25)',
+    };
+  }
+  if (t.includes('above') || t.includes('most')) {
+    return {
+      color: '#f59e0b',
+      background: 'rgba(245,158,11,0.12)',
+      border: '1px solid rgba(245,158,11,0.25)',
+    };
+  }
+  if (t.includes('below') || t.includes('bottom')) {
+    return {
+      color: '#ef4444',
+      background: 'rgba(239,68,68,0.12)',
+      border: '1px solid rgba(239,68,68,0.25)',
+    };
+  }
+  return {
+    color: '#94a3b8',
+    background: 'rgba(148,163,184,0.12)',
+    border: '1px solid rgba(148,163,184,0.25)',
+  };
+}
+
 function MiniScatter({ row, neutralStyle }) {
   if (!row) return null;
   const width = 280;
@@ -323,9 +368,53 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
               }}
             >
               {row.ceo_name && (
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 6 }}>
-                  CEO: {row.ceo_name}
-                  {row.sitg_archetype ? ` · SITG: ${row.sitg_archetype}` : ''}
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+                    <span style={{ fontSize: '0.85rem', color: '#cbd5e1', fontWeight: 600 }}>
+                      CEO: {row.ceo_name}
+                    </span>
+                    {row.sitg_percentile_tier ? (
+                      <span
+                        style={{
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          padding: '2px 8px',
+                          borderRadius: '12px',
+                          ...getTierStyle(row.sitg_percentile_tier),
+                        }}
+                      >
+                        {row.sitg_percentile_tier}
+                      </span>
+                    ) : row.sitg_archetype ? (
+                      <span
+                        style={{
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          padding: '2px 8px',
+                          borderRadius: '12px',
+                          ...getTierStyle(row.sitg_archetype),
+                        }}
+                      >
+                        {row.sitg_archetype}
+                      </span>
+                    ) : null}
+                  </div>
+                  {(row.ceo_base_salary != null && row.sitg_value != null) && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
+                      <span>
+                        SITG Multiple: <strong style={{ color: '#f59e0b' }}>{formatNum(row.sitg_multiple)}x</strong>
+                      </span>
+                      <span>·</span>
+                      <span>SITG Value: <strong>{formatCurrency(row.sitg_value)}</strong></span>
+                      <span>·</span>
+                      <span>Base Salary: <strong>{formatCurrency(row.ceo_base_salary)}</strong></span>
+                    </div>
+                  )}
+                  {!(row.ceo_base_salary != null && row.sitg_value != null) && row.sitg_archetype && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      SITG Profile: {row.sitg_archetype}
+                    </div>
+                  )}
                 </div>
               )}
               {row.one_line_reason && (

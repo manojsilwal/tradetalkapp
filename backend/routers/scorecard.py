@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,6 +32,8 @@ from ..connectors.scorecard_data import ScorecardData, fetch_basket, fetch_score
 from ..data_errors import InsufficientDataError
 from ..deps import llm_client
 from ..rate_limiter import rate_limit
+from ..fincrawler_client import fc
+from ..paper_portfolio import get_stock_sec_info, upsert_stock_sec_info
 from ..scorecard import (
     PRESETS,
     BasketResult,
@@ -114,6 +117,10 @@ class ScorecardRowOut(BaseModel):
     # Original raw data bundle echoed back for UI / audit
     inputs: Dict[str, Any]
     data_freshness: Optional[Dict[str, Any]] = None
+    ceo_base_salary: Optional[float] = None
+    sitg_value: Optional[float] = None
+    sitg_multiple: Optional[float] = None
+    sitg_percentile_tier: Optional[str] = None
 
 
 class ScorecardResponse(BaseModel):
@@ -174,6 +181,10 @@ async def compare_scorecard(
             sitg_score=sitg_by_ticker[d.ticker]["sitg_score"],
             sitg_archetype=sitg_by_ticker[d.ticker].get("archetype", ""),
             exec_score=exec_by_ticker[d.ticker]["exec_score"],
+            ceo_base_salary=sitg_by_ticker[d.ticker].get("ceo_base_salary"),
+            sitg_value=sitg_by_ticker[d.ticker].get("sitg_value"),
+            sitg_multiple=sitg_by_ticker[d.ticker].get("sitg_multiple"),
+            sitg_percentile_tier=sitg_by_ticker[d.ticker].get("sitg_percentile_tier"),
         )
         for d in data_rows
     ]
@@ -222,6 +233,10 @@ async def compare_scorecard(
                     "ratio": row.ratio,
                     "one_line_reason": v.get("one_line_reason", ""),
                     "compare": True,
+                    "ceo_base_salary": row.ceo_base_salary,
+                    "sitg_value": row.sitg_value,
+                    "sitg_multiple": row.sitg_multiple,
+                    "sitg_percentile_tier": row.sitg_percentile_tier,
                 },
                 source_route="backend/routers/scorecard.py::compare_scorecard",
                 prompt_versions=_pv,
@@ -245,6 +260,10 @@ async def compare_scorecard(
                 verdict=str(v.get("verdict", "Balanced")),
                 one_line_reason=str(v.get("one_line_reason", "")),
                 inputs=data.to_dict(),
+                ceo_base_salary=row.ceo_base_salary,
+                sitg_value=row.sitg_value,
+                sitg_multiple=row.sitg_multiple,
+                sitg_percentile_tier=row.sitg_percentile_tier,
             )
         )
 
@@ -289,6 +308,10 @@ async def single_ticker_scorecard(
         sitg_score=sitg_by_ticker[data.ticker]["sitg_score"],
         sitg_archetype=sitg_by_ticker[data.ticker].get("archetype", ""),
         exec_score=exec_by_ticker[data.ticker]["exec_score"],
+        ceo_base_salary=sitg_by_ticker[data.ticker].get("ceo_base_salary"),
+        sitg_value=sitg_by_ticker[data.ticker].get("sitg_value"),
+        sitg_multiple=sitg_by_ticker[data.ticker].get("sitg_multiple"),
+        sitg_percentile_tier=sitg_by_ticker[data.ticker].get("sitg_percentile_tier"),
     )
     row = score_single(inp, preset=preset_key)
 
@@ -313,6 +336,10 @@ async def single_ticker_scorecard(
                 "quadrant": row.quadrant,
                 "ratio": row.ratio,
                 "one_line_reason": v.get("one_line_reason", ""),
+                "ceo_base_salary": row.ceo_base_salary,
+                "sitg_value": row.sitg_value,
+                "sitg_multiple": row.sitg_multiple,
+                "sitg_percentile_tier": row.sitg_percentile_tier,
             },
             source_route="backend/routers/scorecard.py::single_ticker_scorecard",
             prompt_versions=_pv,
@@ -337,6 +364,10 @@ async def single_ticker_scorecard(
         one_line_reason=str(v.get("one_line_reason", "")),
         inputs=data.to_dict(),
         data_freshness=_scorecard_freshness(),
+        ceo_base_salary=row.ceo_base_salary,
+        sitg_value=row.sitg_value,
+        sitg_multiple=row.sitg_multiple,
+        sitg_percentile_tier=row.sitg_percentile_tier,
     )
 
 
@@ -348,6 +379,10 @@ def _data_to_scorecard_input(
     sitg_score: float,
     sitg_archetype: str,
     exec_score: float,
+    ceo_base_salary: Optional[float] = None,
+    sitg_value: Optional[float] = None,
+    sitg_multiple: Optional[float] = None,
+    sitg_percentile_tier: Optional[str] = None,
 ) -> ScorecardInput:
     return ScorecardInput(
         ticker=d.ticker,
@@ -363,6 +398,10 @@ def _data_to_scorecard_input(
         sitg_score=float(sitg_score),
         ceo_name=d.ceo_name,
         sitg_archetype=sitg_archetype,
+        ceo_base_salary=ceo_base_salary,
+        sitg_value=sitg_value,
+        sitg_multiple=sitg_multiple,
+        sitg_percentile_tier=sitg_percentile_tier,
     )
 
 
@@ -380,14 +419,45 @@ async def _fetch_subjective_scores(
     """
     if skip_llm:
         sitg_map = {
-            d.ticker: {"sitg_score": 3.0, "archetype": "Most S&P 500 CEOs"}
+            d.ticker: {
+                "sitg_score": 3.0,
+                "archetype": "Most S&P 500 CEOs",
+                "ceo_base_salary": None,
+                "sitg_value": None,
+                "sitg_multiple": None,
+                "sitg_percentile_tier": None,
+            }
             for d in data_rows
         }
         exec_map = {d.ticker: {"exec_score": 5.0, "profile_tier": "mid_growth"} for d in data_rows}
         return sitg_map, exec_map
 
     async def _score_sitg(d: ScorecardData) -> tuple[str, dict]:
+        # Check cache
         try:
+            cached = get_stock_sec_info(d.ticker)
+            if cached and cached.get("updated_at") and (time.time() - cached["updated_at"] < 30 * 86400):
+                return d.ticker, {
+                    "sitg_score": float(cached["sitg_score"]),
+                    "archetype": cached.get("sitg_percentile_tier") or "Most S&P 500 CEOs",
+                    "ceo_base_salary": cached.get("ceo_base_salary"),
+                    "sitg_value": cached.get("sitg_value"),
+                    "sitg_multiple": cached.get("sitg_multiple"),
+                    "sitg_percentile_tier": cached.get("sitg_percentile_tier"),
+                    "cached": True,
+                }
+        except Exception as e:
+            logger.warning("[scorecard] failed to read stocks cache for %s: %s", d.ticker, e)
+
+        # Cache miss or stale
+        try:
+            proxy_context = ""
+            if fc.enabled:
+                try:
+                    proxy_context = await fc.get_sec_filing(d.ticker, form="DEF 14A", max_chars=8000)
+                except Exception as e:
+                    logger.warning("[scorecard] failed to fetch DEF 14A for %s: %s", d.ticker, e)
+
             ctx = {
                 "ticker": d.ticker,
                 "company_name": d.company_name,
@@ -398,12 +468,54 @@ async def _fetch_subjective_scores(
                 "insider_sell_count_12m": d.insider_sell_count_12m,
                 "insider_net_shares_12m": d.insider_net_shares_12m,
                 "held_percent_insiders": d.held_percent_insiders,
+                "proxy_context": proxy_context,
             }
             out = await llm_client.generate_sitg_score(d.ticker, ctx)
             score = float(out.get("sitg_score", 3.0))
+
+            ceo_name = out.get("ceo_name") or d.ceo_name or ""
+            salary = out.get("ceo_base_salary")
+            value = out.get("sitg_value")
+            multiple = None
+            tier = None
+
+            if salary is not None and value is not None and salary > 0:
+                multiple = value / salary
+                llm_tier = out.get("sitg_percentile_tier") or ""
+                
+                if multiple >= 100:
+                    tier = llm_tier if "founder" in llm_tier.lower() or "top 10" in llm_tier.lower() else "Founder-Level SITG"
+                elif multiple >= 5:
+                    tier = llm_tier if "above" in llm_tier.lower() or "most" in llm_tier.lower() else "Most S&P 500 CEOs"
+                else:
+                    tier = "Below Average SITG"
+                multiple = round(multiple, 2)
+
+            # Save to cache
+            try:
+                upsert_stock_sec_info(
+                    ticker=d.ticker,
+                    ceo_name=ceo_name,
+                    sitg_score=score,
+                    ceo_base_salary=salary,
+                    sitg_value=value,
+                    sitg_multiple=multiple,
+                    sitg_percentile_tier=tier,
+                    insider_buy_count_12m=d.insider_buy_count_12m,
+                    insider_sell_count_12m=d.insider_sell_count_12m,
+                    insider_net_shares_12m=d.insider_net_shares_12m,
+                    held_percent_insiders=d.held_percent_insiders,
+                )
+            except Exception as db_err:
+                logger.error("[scorecard] failed to cache SITG results in DB: %s", db_err)
+
             return d.ticker, {
                 "sitg_score": max(0.0, min(10.0, score)),
-                "archetype": str(out.get("archetype") or ""),
+                "archetype": tier or str(out.get("archetype") or "Most S&P 500 CEOs"),
+                "ceo_base_salary": salary,
+                "sitg_value": value,
+                "sitg_multiple": multiple,
+                "sitg_percentile_tier": tier,
                 "raw": out,
             }
         except InsufficientDataError:
