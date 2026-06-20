@@ -182,7 +182,7 @@ export default function ConsensusValuationPanel({
                     ? (
                       <>
                         ${fmtUsdPlainInt(m.fair_value_usd)}
-                        {m.name === 'DCF' && m.scenarios?.bear != null && m.scenarios?.bull != null && (
+                        {m.name?.includes('DCF') && m.scenarios?.bear != null && m.scenarios?.bull != null && (
                           <span className="dt-models-range">
                             ({fmtUsdPlainInt(m.scenarios.bear)}–{fmtUsdPlainInt(m.scenarios.bull)})
                           </span>
