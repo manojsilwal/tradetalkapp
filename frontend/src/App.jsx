@@ -32,6 +32,7 @@ const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
 const ChatUI = React.lazy(() => import('./ChatUI'))
 
 const LlmCallsUI = React.lazy(() => import('./LlmCallsUI'))
+const FundLeaderboardUI = React.lazy(() => import('./intelligence/funds/FundLeaderboardUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when auth is required and user is not signed in.
@@ -365,6 +366,7 @@ function App() {
                             <Route path="/dashboard" element={<ConsumerUI />} />
                             <Route path="/decision-terminal" element={<DecisionTerminalUI />} />
                             <Route path="/macro" element={<MacroUI />} />
+                            <Route path="/intelligence/funds/leaderboard" element={<FundLeaderboardUI />} />
 
                             <Route path="/chat" element={<ChatUI prefetch={chatPrefetch} />} />
 
