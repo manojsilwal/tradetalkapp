@@ -495,35 +495,38 @@ async def build_decision_terminal_payload(
     def _dcf_provenance_note() -> str:
         if not dcf_result.get("available"):
             return dcf_result.get("missing_reason") or "Insufficient DCF inputs."
+
         bear = dcf_scenarios.get("bear")
         bull = dcf_scenarios.get("bull")
         fcf_years = dcf_result.get("fcf_years_used") or 0
         growth_src = dcf_result.get("growth_anchor_source")
-        if fcf_years >= 3 and dcf_result.get("fcf_source") == "median_5y_owner_earnings":
-            fcf_desc = (
-                f"5Y median owner earnings (OCF−capex across {fcf_years} fiscal years)"
-            )
+        model_name = dcf_result.get("model_name", "DCF")
+
+        parts = []
+        if model_name == "High-Growth Revenue-to-FCF DCF":
+            rev_g = dcf_result.get("revenue_growth", 0)
+            target_margin = dcf_result.get("target_fcf_margin_base", 0)
+            parts.append(f"High-Growth DCF: 10-year fade from {rev_g:.1%} revenue growth.")
+            parts.append(f"FCF margin expands to mature target of {target_margin:.1%}.")
+            parts.append("Warning: This valuation is highly sensitive to revenue growth, mature margin, dilution, and WACC assumptions.")
         else:
-            fcf_desc = "Owner-earnings DCF (OCF−capex with statement fallbacks)"
-        if growth_src == "median_5y_ocf_yoy":
-            yoy = dcf_result.get("median_yoy_growth_pct")
-            growth_desc = (
-                f"base growth anchored to median YoY OCF ({yoy:.1f}%)"
-                if yoy is not None
-                else "base growth anchored to median YoY OCF"
-            )
-        else:
-            growth_desc = "declining 5Y FCF growth path"
-        parts = [
-            f"{fcf_desc}; {growth_desc}, "
-            f"CAPM WACC {dcf_result.get('wacc_base', 0):.1%}, terminal 2.5%, net cash added.",
-            f"FCF source: {dcf_result.get('fcf_source')}; "
-            f"net cash: ${dcf_result.get('net_cash_usd', 0) / 1e9:.1f}B ({dcf_result.get('net_cash_source')}).",
-        ]
+            if fcf_years >= 3 and dcf_result.get("fcf_source") == "median_5y_owner_earnings":
+                fcf_desc = f"5Y median owner earnings (OCF−capex across {fcf_years} fiscal years)"
+            else:
+                fcf_desc = "Owner-earnings DCF (OCF−capex with statement fallbacks)"
+
+            if growth_src == "median_5y_ocf_yoy":
+                yoy = dcf_result.get("median_yoy_growth_pct")
+                growth_desc = f"base growth anchored to median YoY OCF ({yoy:.1f}%)" if yoy is not None else "base growth anchored to median YoY OCF"
+            else:
+                growth_desc = "declining 5Y FCF growth path"
+
+            parts.append(f"{fcf_desc}; {growth_desc}, CAPM WACC {dcf_result.get('wacc_base', 0):.1%}, terminal 2.5%, net cash added.")
+            parts.append(f"FCF source: {dcf_result.get('fcf_source')}; net cash: ${dcf_result.get('net_cash_usd', 0) / 1e9:.1f}B ({dcf_result.get('net_cash_source')}).")
+
         if bear is not None and bull is not None and dcf_price is not None:
-            parts.append(
-                f"Scenario range: bear ${bear:.0f} · base ${dcf_price:.0f} · bull ${bull:.0f}."
-            )
+            parts.append(f"Scenario range: bear ${bear:.0f} · base ${dcf_price:.0f} · bull ${bull:.0f}.")
+
         return " ".join(parts)
 
     models: List[TerminalValuationModel] = [
@@ -660,6 +663,44 @@ async def build_decision_terminal_payload(
     moat_lab, moat_st = _moat_heuristic(roe_pct, gm_ratio)
 
     roic_proxy_val = roic_proxy(roe_pct)
+
+    # FinCrawler extra fundamental data for High-Growth metrics
+    if not isinstance(ext, dict):
+        ext = {}
+    if "totalRevenue" not in ext or "revenueGrowth" not in ext:
+        try:
+            from backend.fincrawler_client import FinCrawlerClient
+            fc_client = FinCrawlerClient()
+            fund = fc_client.get_fundamentals_sync(ticker)
+            if fund:
+                if "totalRevenue" not in ext: ext["totalRevenue"] = fund.get("totalRevenue")
+                if "revenueGrowth" not in ext: ext["revenueGrowth"] = fund.get("revenueGrowth")
+                if "freeCashflow" not in ext: ext["freeCashflow"] = fund.get("freeCashflow")
+                if "totalCash" not in ext: ext["totalCash"] = fund.get("totalCash")
+                if "stockBasedCompensation" not in ext: ext["stockBasedCompensation"] = fund.get("stockBasedCompensation")
+                if "grossMargins" not in ext: ext["grossMargins"] = fund.get("grossMargins")
+        except Exception:
+            pass
+
+    # Calculate High-Growth Metrics
+    rev_g = ext.get("revenueGrowth")
+    fcf = ext.get("freeCashflow") or ext.get("operatingCashflow") or 0.0
+    rev_0 = ext.get("totalRevenue")
+
+    fcf_margin_val = (fcf / rev_0) * 100.0 if rev_0 and rev_0 > 0 else None
+    rev_g_pct = rev_g * 100.0 if rev_g is not None else None
+
+    rule_of_40_val = None
+    if rev_g_pct is not None and fcf_margin_val is not None:
+        rule_of_40_val = rev_g_pct + fcf_margin_val
+
+    total_cash = ext.get("totalCash")
+    sbc = ext.get("stockBasedCompensation") or 0.0
+    cash_burn_months = None
+    if total_cash and fcf < 0:
+        cash_burn_months = (total_cash / abs(fcf)) * 12.0
+
+    # We will append these inside TerminalQualityPanel rows construction
     quality = TerminalQualityPanel(
         rows=[
             TerminalQualityRow(
@@ -716,6 +757,36 @@ async def build_decision_terminal_payload(
                 provenance=TerminalFieldProvenance(
                     source="yfinance",
                     missing_reason=None if cr is not None else "Not reported in info bundle.",
+                ),
+            ),
+            TerminalQualityRow(
+                id="revenue_growth",
+                label="Revenue Growth (TTM)",
+                value_label=f"{rev_g_pct:.1f}%" if rev_g_pct is not None else "N/A",
+                status_label="High Growth" if rev_g_pct and rev_g_pct > 20 else ("Moderate" if rev_g_pct and rev_g_pct > 5 else "Slow"),
+                provenance=TerminalFieldProvenance(
+                    source="yfinance/statements",
+                    formula_or_note="YoY Revenue Growth %",
+                ),
+            ),
+            TerminalQualityRow(
+                id="rule_of_40",
+                label="Rule of 40",
+                value_label=f"{rule_of_40_val:.1f}" if rule_of_40_val is not None else "N/A",
+                status_label="Pass" if rule_of_40_val and rule_of_40_val >= 40 else "Fail",
+                provenance=TerminalFieldProvenance(
+                    source="yfinance/statements",
+                    formula_or_note="Revenue Growth % + FCF Margin %",
+                ),
+            ),
+            TerminalQualityRow(
+                id="cash_runway",
+                label="Cash Runway",
+                value_label=f"{cash_burn_months:.1f} months" if cash_burn_months is not None else ("Profitable" if fcf > 0 else "N/A"),
+                status_label="Healthy" if cash_burn_months and cash_burn_months > 24 else ("Warning" if cash_burn_months and cash_burn_months < 12 else "Stable"),
+                provenance=TerminalFieldProvenance(
+                    source="yfinance/statements",
+                    formula_or_note="Total Cash / Absolute Negative FCF (annualized)",
                 ),
             ),
         ]

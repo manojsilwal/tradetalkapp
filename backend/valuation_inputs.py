@@ -357,7 +357,37 @@ def compute_dcf_scenarios(
     """
     Bear / base / bull owner-earnings DCF fair values per share.
     Returns dict with fair_value base + scenarios + provenance inputs.
+    Includes a model selector to route to High-Growth Revenue-to-FCF DCF if needed.
     """
+    # Model Selection Logic
+    rev_g = _num(snapshot.get("revenueGrowth"))
+    gross_margin = _num(snapshot.get("grossMargins"))
+
+    annual_rows = snapshot.get("annual_cashflow_5y") or []
+    fcf, _ = owner_earnings_fcf(snapshot)
+    rev_0 = _num(snapshot.get("totalRevenue"))
+
+    current_fcf_margin = None
+    if fcf is not None and rev_0 is not None and rev_0 > 0:
+        current_fcf_margin = fcf / rev_0
+
+    positive_fcf_years = sum(1 for r in annual_rows if _num(r.get("ocf")) is not None and _num(r.get("ocf")) > 0)
+
+    # Mature Owner-Earnings DCF: FCF margin > 5% and FCF positive for 3 of last 5 years
+    if current_fcf_margin is not None and current_fcf_margin > 0.05 and positive_fcf_years >= 3:
+        model_type = "Owner-Earnings"
+    # High-Growth Revenue-to-FCF DCF: revenue growth > 20% and gross margin > 40%
+    elif rev_g is not None and rev_g > 0.20 and gross_margin is not None and gross_margin > 0.40:
+        model_type = "High-Growth"
+    else:
+        model_type = "Owner-Earnings" # Fallback to standard owner-earnings DCF
+
+    if model_type == "High-Growth":
+        res = compute_high_growth_dcf_scenarios(snapshot, price_usd=price_usd)
+        res["model_name"] = "High-Growth Revenue-to-FCF DCF"
+        return res
+
+    # Standard Owner-Earnings execution continues here...
     net_cash, net_cash_source = net_cash_equity(snapshot)
     if net_cash is None:
         net_cash = 0.0
@@ -519,6 +549,7 @@ def compute_dcf_scenarios(
     if warning_flags:
         confidence -= 15 * len(warning_flags)
     out["dcf_confidence_score"] = max(0, min(100, confidence))
+    out["model_name"] = "Mature Owner-Earnings DCF"
 
     return out
 
@@ -624,5 +655,147 @@ def fetch_yfinance_valuation_snapshot(ticker: str) -> Dict[str, Any]:
 
     except Exception as exc:
         logger.warning("[valuation_inputs] snapshot failed %s: %s", t_up, exc)
+
+    return out
+
+def compute_high_growth_dcf_scenarios(
+    snapshot: Dict[str, Any],
+    *,
+    price_usd: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Bear / base / bull high-growth revenue-to-FCF scenarios.
+    """
+    net_cash, net_cash_source = net_cash_equity(snapshot)
+    if net_cash is None:
+        net_cash = 0.0
+
+    shares = _num(snapshot.get("sharesOutstanding"))
+    mc = _num(snapshot.get("marketCap"))
+    if not shares and price_usd and price_usd > 0:
+        if mc:
+            shares = mc / price_usd
+
+    beta = _num(snapshot.get("beta"), DEFAULT_BETA)
+    rf = risk_free_rate()
+    ke = capm_wacc(beta, risk_free=rf, equity_premium=DEFAULT_EQUITY_PREMIUM)
+
+    total_debt = _num(snapshot.get("totalDebt")) or _num(snapshot.get("balance_total_debt")) or 0.0
+    mc_val = mc if mc is not None else ((shares * price_usd) if shares and price_usd else 0.0)
+    wacc_base = compute_true_wacc(ke, mc_val, total_debt, rf)
+
+    wacc_bear = min(0.14, wacc_base + 0.015)
+    wacc_bull = max(rf + 0.02, wacc_base - 0.010)
+
+    rev_0 = _num(snapshot.get("totalRevenue"))
+    rev_g_num = _num(snapshot.get("revenueGrowth"))
+
+    if rev_0 is None or rev_0 <= 0 or not shares or shares <= 0:
+        return {
+            "available": False,
+            "missing_reason": "Insufficient revenue or shares outstanding for High-Growth DCF."
+        }
+
+    if rev_g_num is None:
+        return {
+            "available": False,
+            "missing_reason": "Missing revenue growth metric for High-Growth DCF."
+        }
+
+    gross_margins = _num(snapshot.get("grossMargins"))
+
+    # Calculate current FCF margin
+    fcf, fcf_source = owner_earnings_fcf(snapshot)
+    fcf = fcf or _num(snapshot.get("freeCashflow")) or _num(snapshot.get("operatingCashflow"))
+    current_fcf_margin = 0.0
+    if fcf is not None and rev_0 > 0:
+        current_fcf_margin = fcf / rev_0
+
+    # Heuristics for mature FCF margins based on gross margins
+    if gross_margins is not None:
+        base_target_margin = max(0.15, gross_margins * 0.3) # E.g. 70% GM -> 21% FCF margin
+    else:
+        base_target_margin = 0.20
+
+    target_fcf_margin_bear = max(0.08, base_target_margin * 0.5)
+    target_fcf_margin_base = base_target_margin
+    target_fcf_margin_bull = min(0.35, base_target_margin * 1.5)
+
+    def calculate_hg_dcf(
+        rev_g_initial: float,
+        wacc: float,
+        term_g: float,
+        target_margin: float,
+        years: int = 10
+    ) -> float:
+        revenue = rev_0
+        fcfs = []
+        for i in range(1, years + 1):
+            g = rev_g_initial - (rev_g_initial - term_g) * (i / years)
+            m = current_fcf_margin + (target_margin - current_fcf_margin) * (i / years)
+            revenue *= (1.0 + g)
+            fcf_val = revenue * m
+            fcfs.append(fcf_val)
+
+        pv = sum(fcfs[i] / ((1.0 + wacc) ** (i + 1)) for i in range(years))
+        terminal_fcf = fcfs[-1] * (1.0 + term_g)
+        if wacc <= term_g:
+            return 0.0 # Invalid
+        tv = terminal_fcf / (wacc - term_g)
+        tv_pv = tv / ((1.0 + wacc) ** years)
+
+        equity_value = pv + tv_pv + net_cash
+        if equity_value < 0:
+            return 0.0
+        return float(equity_value / shares)
+
+    rev_g_bear = max(0.0, rev_g_num * 0.5)
+    rev_g_base = rev_g_num
+    rev_g_bull = min(1.0, rev_g_num * 1.5)
+
+    bear_fv = calculate_hg_dcf(rev_g_bear, wacc_bear, BEAR_TERMINAL_G, target_fcf_margin_bear)
+    base_fv = calculate_hg_dcf(rev_g_base, wacc_base, BASE_TERMINAL_G, target_fcf_margin_base)
+    bull_fv = calculate_hg_dcf(rev_g_bull, wacc_bull, BULL_TERMINAL_G, target_fcf_margin_bull)
+
+    out = {
+        "fcf_usd": fcf,
+        "fcf_source": fcf_source,
+        "fcf_years_used": 0,
+        "growth_anchor_source": "revenue_growth",
+        "net_cash_usd": net_cash,
+        "net_cash_source": net_cash_source,
+        "shares": shares,
+        "beta": beta,
+        "risk_free_rate": round(rf, 4),
+        "wacc_base": round(wacc_base, 4),
+        "scenarios": {
+            "bear": round(bear_fv, 2) if bear_fv else None,
+            "base": round(base_fv, 2) if base_fv else None,
+            "bull": round(bull_fv, 2) if bull_fv else None,
+        },
+        "base_fair_value_usd": round(base_fv, 2) if base_fv else None,
+        "available": bool(base_fv and base_fv > 0),
+        "current_fcf_margin": round(current_fcf_margin, 4),
+        "target_fcf_margin_base": round(target_fcf_margin_base, 4),
+        "revenue_growth": round(rev_g_num, 4),
+    }
+
+    warning_flags = ["high_growth_sensitivity"]
+    terminal_spread = wacc_base - BASE_TERMINAL_G
+    if terminal_spread < 0.025:
+        warning_flags.append("terminal_spread_low")
+
+    sector = snapshot.get("sector")
+    if sector in ["Financial Services", "Financials", "Banks", "Insurance", "Real Estate", "Biotech"]:
+        warning_flags.append("sector_unsuitable")
+
+    out["valuation_warning_flags"] = warning_flags
+    out["sector_dcf_suitability"] = "high"
+
+    confidence = 70
+    if len(warning_flags) > 1:
+        confidence -= 15 * (len(warning_flags) - 1)
+    out["dcf_confidence_score"] = max(0, min(100, confidence))
+    out["model_name"] = "Mature Owner-Earnings DCF"
 
     return out
