@@ -109,6 +109,16 @@ class TestSecFilingJob(unittest.IsolatedAsyncioTestCase):
             }
         }[ticker]
 
+        mock_llm.generate_new_revenue_engine_score = AsyncMock()
+        mock_llm.generate_new_revenue_engine_score.side_effect = lambda ticker, ctx: {
+            "financial_traction_score": 50.0,
+            "customer_adoption_score": 50.0,
+            "management_commitment_score": 50.0,
+            "market_opportunity_score": 50.0,
+            "monetization_clarity_score": 50.0,
+            "execution_capacity_score": 50.0,
+        }
+
         # 6. Execute job
         result = await run_sec_filing_job()
 
@@ -131,7 +141,14 @@ class TestSecFilingJob(unittest.IsolatedAsyncioTestCase):
             insider_buy_count_12m=0,
             insider_sell_count_12m=4,
             insider_net_shares_12m=-10000,
-            held_percent_insiders=0.07
+            held_percent_insiders=0.07,
+            financial_traction_score=50.0,
+            customer_adoption_score=50.0,
+            management_commitment_score=50.0,
+            market_opportunity_score=50.0,
+            monetization_clarity_score=50.0,
+            execution_capacity_score=50.0,
+            new_revenue_engine_score=50.0
         )
         mock_upsert.assert_any_call(
             ticker="MSFT",
@@ -144,7 +161,14 @@ class TestSecFilingJob(unittest.IsolatedAsyncioTestCase):
             insider_buy_count_12m=1,
             insider_sell_count_12m=1,
             insider_net_shares_12m=0,
-            held_percent_insiders=0.08
+            held_percent_insiders=0.08,
+            financial_traction_score=50.0,
+            customer_adoption_score=50.0,
+            management_commitment_score=50.0,
+            market_opportunity_score=50.0,
+            monetization_clarity_score=50.0,
+            execution_capacity_score=50.0,
+            new_revenue_engine_score=50.0
         )
 
     @patch("urllib.request.urlopen")

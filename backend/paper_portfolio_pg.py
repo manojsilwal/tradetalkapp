@@ -49,6 +49,7 @@ def init_schema() -> None:
             "002_portfolio_memory.sql",
             "003_snapshot_spy_return.sql",
             "006_stocks_sec_info.sql",
+            "007_stocks_revenue_engine.sql",
         ):
             cur.execute((mig_dir / name).read_text(encoding="utf-8"))
     conn.commit()
@@ -401,6 +402,13 @@ def upsert_stock_sec_info(
     insider_sell_count_12m: int,
     insider_net_shares_12m: float,
     held_percent_insiders: float,
+    financial_traction_score: Optional[float] = None,
+    customer_adoption_score: Optional[float] = None,
+    management_commitment_score: Optional[float] = None,
+    market_opportunity_score: Optional[float] = None,
+    monetization_clarity_score: Optional[float] = None,
+    execution_capacity_score: Optional[float] = None,
+    new_revenue_engine_score: Optional[float] = None,
 ) -> None:
     conn = _get_conn()
     with conn.cursor() as cur:
@@ -409,9 +417,11 @@ def upsert_stock_sec_info(
             INSERT INTO stocks (
                 ticker, ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
                 sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
-                insider_net_shares_12m, held_percent_insiders, updated_at
+                insider_net_shares_12m, held_percent_insiders, financial_traction_score,
+                customer_adoption_score, management_commitment_score, market_opportunity_score,
+                monetization_clarity_score, execution_capacity_score, new_revenue_engine_score, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (ticker) DO UPDATE SET
                 ceo_name=EXCLUDED.ceo_name,
                 sitg_score=EXCLUDED.sitg_score,
@@ -423,12 +433,21 @@ def upsert_stock_sec_info(
                 insider_sell_count_12m=EXCLUDED.insider_sell_count_12m,
                 insider_net_shares_12m=EXCLUDED.insider_net_shares_12m,
                 held_percent_insiders=EXCLUDED.held_percent_insiders,
+                financial_traction_score=COALESCE(EXCLUDED.financial_traction_score, stocks.financial_traction_score),
+                customer_adoption_score=COALESCE(EXCLUDED.customer_adoption_score, stocks.customer_adoption_score),
+                management_commitment_score=COALESCE(EXCLUDED.management_commitment_score, stocks.management_commitment_score),
+                market_opportunity_score=COALESCE(EXCLUDED.market_opportunity_score, stocks.market_opportunity_score),
+                monetization_clarity_score=COALESCE(EXCLUDED.monetization_clarity_score, stocks.monetization_clarity_score),
+                execution_capacity_score=COALESCE(EXCLUDED.execution_capacity_score, stocks.execution_capacity_score),
+                new_revenue_engine_score=COALESCE(EXCLUDED.new_revenue_engine_score, stocks.new_revenue_engine_score),
                 updated_at=EXCLUDED.updated_at
             """,
             (
                 ticker.upper(), ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
                 sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
-                insider_net_shares_12m, held_percent_insiders, time.time()
+                insider_net_shares_12m, held_percent_insiders, financial_traction_score,
+                customer_adoption_score, management_commitment_score, market_opportunity_score,
+                monetization_clarity_score, execution_capacity_score, new_revenue_engine_score, time.time()
             )
         )
     conn.commit()

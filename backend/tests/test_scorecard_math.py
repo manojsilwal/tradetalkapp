@@ -65,19 +65,19 @@ class TestPresetWeights(unittest.TestCase):
 
     def test_growth_weights(self):
         w = PRESETS["growth"]
-        self.assertEqual(w, Weights(w1=5, w2=5, w3=3, w4=0, w5=2, w6=2, w7=4, w8=1, w9=4))
+        self.assertEqual(w, Weights(w1=5, w2=5, w3=3, w4=0, w5=2, w6=2, w7=4, w8=1, w9=4, w10=3))
 
     def test_value_weights(self):
         w = PRESETS["value"]
-        self.assertEqual(w, Weights(w1=2, w2=2, w3=5, w4=2, w5=5, w6=2, w7=3, w8=3, w9=3))
+        self.assertEqual(w, Weights(w1=2, w2=2, w3=5, w4=2, w5=5, w6=2, w7=3, w8=3, w9=3, w10=1))
 
     def test_income_weights(self):
         w = PRESETS["income"]
-        self.assertEqual(w, Weights(w1=1, w2=1, w3=2, w4=5, w5=3, w6=3, w7=2, w8=4, w9=2))
+        self.assertEqual(w, Weights(w1=1, w2=1, w3=2, w4=5, w5=3, w6=3, w7=2, w8=4, w9=2, w10=1))
 
     def test_balanced_weights(self):
         w = PRESETS["balanced"]
-        self.assertEqual(w, Weights(w1=3, w2=3, w3=2, w4=1, w5=3, w6=2, w7=3, w8=2, w9=4))
+        self.assertEqual(w, Weights(w1=3, w2=3, w3=2, w4=1, w5=3, w6=2, w7=3, w8=2, w9=4, w10=2))
 
     def test_resolve_with_overrides(self):
         merged = resolve_weights("balanced", {"w6": 4.0})

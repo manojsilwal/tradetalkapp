@@ -60,11 +60,11 @@ class TestScorecardRouterPresets(unittest.TestCase):
         self.assertEqual(
             set(body.keys()), {"growth", "value", "income", "balanced"}
         )
-        # Each preset has all nine weights w1..w9.
+        # Each preset has all 10 weights w1..w10.
         for name, weights in body.items():
             self.assertEqual(
                 set(weights.keys()),
-                {"w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9"},
+                {"w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9", "w10"},
                 f"preset {name} is missing weights",
             )
 

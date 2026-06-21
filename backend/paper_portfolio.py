@@ -95,10 +95,18 @@ def init_portfolio_db():
             insider_sell_count_12m INTEGER,
             insider_net_shares_12m REAL,
             held_percent_insiders REAL,
+            financial_traction_score REAL,
+            customer_adoption_score REAL,
+            management_commitment_score REAL,
+            market_opportunity_score REAL,
+            monetization_clarity_score REAL,
+            execution_capacity_score REAL,
+            new_revenue_engine_score REAL,
             updated_at     REAL
         );
     """)
     _ensure_position_metadata_columns(conn)
+    _ensure_stocks_metadata_columns(conn)
     conn.commit()
     try:
         from . import portfolio_memory as pm
@@ -107,6 +115,24 @@ def init_portfolio_db():
     except Exception:
         pass
 
+
+def _ensure_stocks_metadata_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(stocks)").fetchall()
+    }
+    columns = {
+        "financial_traction_score": "REAL DEFAULT NULL",
+        "customer_adoption_score": "REAL DEFAULT NULL",
+        "management_commitment_score": "REAL DEFAULT NULL",
+        "market_opportunity_score": "REAL DEFAULT NULL",
+        "monetization_clarity_score": "REAL DEFAULT NULL",
+        "execution_capacity_score": "REAL DEFAULT NULL",
+        "new_revenue_engine_score": "REAL DEFAULT NULL",
+    }
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE stocks ADD COLUMN {name} {ddl}")
 
 def _ensure_position_metadata_columns(conn: sqlite3.Connection) -> None:
     existing = {
@@ -662,6 +688,13 @@ def upsert_stock_sec_info(
     insider_sell_count_12m: int,
     insider_net_shares_12m: float,
     held_percent_insiders: float,
+    financial_traction_score: Optional[float] = None,
+    customer_adoption_score: Optional[float] = None,
+    management_commitment_score: Optional[float] = None,
+    market_opportunity_score: Optional[float] = None,
+    monetization_clarity_score: Optional[float] = None,
+    execution_capacity_score: Optional[float] = None,
+    new_revenue_engine_score: Optional[float] = None,
 ) -> None:
     if _use_postgres():
         try:
@@ -669,7 +702,9 @@ def upsert_stock_sec_info(
             pg.upsert_stock_sec_info(
                 ticker, ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
                 sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
-                insider_net_shares_12m, held_percent_insiders
+                insider_net_shares_12m, held_percent_insiders, financial_traction_score,
+                customer_adoption_score, management_commitment_score, market_opportunity_score,
+                monetization_clarity_score, execution_capacity_score, new_revenue_engine_score
             )
             return
         except Exception:
@@ -680,9 +715,11 @@ def upsert_stock_sec_info(
         INSERT INTO stocks (
             ticker, ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
             sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
-            insider_net_shares_12m, held_percent_insiders, updated_at
+            insider_net_shares_12m, held_percent_insiders, financial_traction_score,
+            customer_adoption_score, management_commitment_score, market_opportunity_score,
+            monetization_clarity_score, execution_capacity_score, new_revenue_engine_score, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(ticker) DO UPDATE SET
             ceo_name=excluded.ceo_name,
             sitg_score=excluded.sitg_score,
@@ -694,12 +731,21 @@ def upsert_stock_sec_info(
             insider_sell_count_12m=excluded.insider_sell_count_12m,
             insider_net_shares_12m=excluded.insider_net_shares_12m,
             held_percent_insiders=excluded.held_percent_insiders,
+            financial_traction_score=COALESCE(excluded.financial_traction_score, stocks.financial_traction_score),
+            customer_adoption_score=COALESCE(excluded.customer_adoption_score, stocks.customer_adoption_score),
+            management_commitment_score=COALESCE(excluded.management_commitment_score, stocks.management_commitment_score),
+            market_opportunity_score=COALESCE(excluded.market_opportunity_score, stocks.market_opportunity_score),
+            monetization_clarity_score=COALESCE(excluded.monetization_clarity_score, stocks.monetization_clarity_score),
+            execution_capacity_score=COALESCE(excluded.execution_capacity_score, stocks.execution_capacity_score),
+            new_revenue_engine_score=COALESCE(excluded.new_revenue_engine_score, stocks.new_revenue_engine_score),
             updated_at=excluded.updated_at
         """,
         (
             ticker.upper(), ceo_name, sitg_score, ceo_base_salary, sitg_value, sitg_multiple,
             sitg_percentile_tier, insider_buy_count_12m, insider_sell_count_12m,
-            insider_net_shares_12m, held_percent_insiders, time.time()
+            insider_net_shares_12m, held_percent_insiders, financial_traction_score,
+            customer_adoption_score, management_commitment_score, market_opportunity_score,
+            monetization_clarity_score, execution_capacity_score, new_revenue_engine_score, time.time()
         )
     )
     conn.commit()

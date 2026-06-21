@@ -1,0 +1,85 @@
+name: new_revenue_engine_scorer
+kind: prompt
+version: 1.0.0
+description: New Revenue Engine Scorer — Identifies and scores whether a company is opening a new revenue path through new products, services, or segments.
+learnable: true
+metadata:
+  role_tier: heavy
+  methodology: risk_return_ratio
+  step: new_revenue_engine
+schema:
+  type: object
+  required: [financial_traction_score, customer_adoption_score, management_commitment_score, market_opportunity_score, monetization_clarity_score, execution_capacity_score, reasoning]
+  properties:
+    financial_traction_score:
+      type: number
+      minimum: 0
+      maximum: 100
+    customer_adoption_score:
+      type: number
+      minimum: 0
+      maximum: 100
+    management_commitment_score:
+      type: number
+      minimum: 0
+      maximum: 100
+    market_opportunity_score:
+      type: number
+      minimum: 0
+      maximum: 100
+    monetization_clarity_score:
+      type: number
+      minimum: 0
+      maximum: 100
+    execution_capacity_score:
+      type: number
+      minimum: 0
+      maximum: 100
+    reasoning:
+      type: string
+fallback:
+  financial_traction_score: 50
+  customer_adoption_score: 50
+  management_commitment_score: 50
+  market_opportunity_score: 50
+  monetization_clarity_score: 50
+  execution_capacity_score: 50
+  reasoning: "Insufficient qualitative context; defaulting to baseline scores."
+body: |-
+  You are scoring a company on the "New Revenue Engine" framework. You are looking to detect:
+  "Is this company creating a new growth engine that can materially increase future revenue?"
+
+  A new revenue engine can come from new products, services, pricing models, customer segments, or geographies.
+
+  You will evaluate the provided context (10-K, 10-Q excerpts, yfinance data) across 6 categories and score each from 0 to 100.
+
+  1. Financial Traction Score (0-100)
+  Strong signs: New segment growth > 30%, revenue share increasing, backlog/RPO accelerating, management raises guidance, margins stable or improving.
+
+  2. Customer Adoption Score (0-100)
+  Strong signs: Paid customer base growing, existing customers buying more, usage is expanding, big enterprise customers adopting, low churn.
+
+  3. Management Commitment Score (0-100)
+  Strong signs: Management gives actual numbers, product is discussed every quarter, dedicated segment or reporting line created, company invests capex/R&D/sales into the area.
+
+  4. Market Opportunity / TAM Score (0-100)
+  Strong signs: Company expands into a much larger market, product has clear differentiation, pricing power exists, market adoption is accelerating.
+
+  5. Monetization Clarity Score (0-100)
+  Strong signs: Clear pricing page, subscription or usage-based revenue, customers are paying, ARPU is rising, high gross margin potential.
+
+  6. Execution Capacity Score (0-100)
+  Strong signs: Hiring aggressively in new product area, sales/distribution channel already exists, company has cash to scale, partnerships help distribution, infrastructure is ready.
+
+  You will receive a JSON block with the ticker and relevant SEC filings text or financial data. Extract the score out of 100 for each category based on the evidence.
+
+  Respond ONLY with valid JSON matching this schema exactly:
+  {
+    "financial_traction_score": 0-100 (number),
+    "customer_adoption_score": 0-100 (number),
+    "management_commitment_score": 0-100 (number),
+    "market_opportunity_score": 0-100 (number),
+    "monetization_clarity_score": 0-100 (number),
+    "execution_capacity_score": 0-100 (number),
+    "reasoning": "2-3 sentences explaining the highest and lowest scoring areas based on specific signals found in the text."
+  }
