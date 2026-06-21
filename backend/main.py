@@ -155,6 +155,7 @@ from .routers import (
     house_view as house_view_router,
     actionable as actionable_router,
     health as health_router,
+    fund_leaderboard as fund_leaderboard_router,
 )
 
 app.include_router(auth_router.router)
@@ -184,6 +185,7 @@ app.include_router(harness_router.router)
 app.include_router(house_view_router.router)
 app.include_router(actionable_router.router)
 app.include_router(health_router.router)
+app.include_router(fund_leaderboard_router.router)
 
 # ── MCP S&P 500 Market Data Server ────────────────────────────────────────────
 from .mcp_server.router import router as mcp_sp500_router
