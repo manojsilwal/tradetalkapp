@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense, useEffect, useRef } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2, Bell, ChevronRight, MoreHorizontal, BarChart2 } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2, Bell, ChevronRight, MoreHorizontal, BarChart2, Trophy } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -52,6 +52,7 @@ const ROUTE_TO_KEY = {
     '/backtest': 'backtest',
 
     '/daily-brief': 'daily_brief',
+    '/intelligence/funds/leaderboard': 'leaderboard',
     '/observer': 'observer',
     '/swarm-score': 'swarm_score',
     '/ubds': 'ubds',
@@ -289,6 +290,15 @@ function App() {
                         <span>Global Macro</span>
                     </button>
 
+                    <button
+                        className={`nav-btn ${activeTab === 'leaderboard' ? 'active' : ''}`}
+                        onClick={() => { navigate('/intelligence/funds/leaderboard'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/intelligence/funds/leaderboard' ? 'page' : undefined}
+                    >
+                        <Trophy size={20} />
+                        <span>Institutional Leaderboard</span>
+                    </button>
+
 
 
                     {isAdmin && (
@@ -501,6 +511,15 @@ function App() {
                                     </div>
                                 </div>
 
+                                <div className="drawer-divider"></div>
+                                <div className="drawer-menu-content">
+                                    <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/intelligence/funds/leaderboard'); }}>
+                                        <Trophy size={20} className="drawer-item-icon" />
+                                        <span className="drawer-item-label">Institutional Leaderboard</span>
+                                        <ChevronRight className="drawer-chevron-arrow" size={16} />
+                                    </div>
+                                </div>
+
                                 {isAdmin && (
                                     <>
                                         <div className="drawer-divider"></div>
@@ -551,6 +570,14 @@ function App() {
                         ) : (
                             <>
                                 <div className="drawer-guest-label">Guest</div>
+                                <div className="drawer-divider"></div>
+                                <div className="drawer-menu-content">
+                                    <div className="drawer-item" onClick={() => { setMoreMenuOpen(false); navigate('/intelligence/funds/leaderboard'); }}>
+                                        <Trophy size={20} className="drawer-item-icon" />
+                                        <span className="drawer-item-label">Institutional Leaderboard</span>
+                                        <ChevronRight className="drawer-chevron-arrow" size={16} />
+                                    </div>
+                                </div>
                                 <div className="drawer-divider"></div>
                                 <div
                                     className="drawer-item log-out-item"
