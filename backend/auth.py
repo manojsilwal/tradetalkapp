@@ -147,7 +147,10 @@ class UserInfo:
 
 def user_is_admin(user: UserInfo) -> bool:
     """True when the user's email is in the admin allowlist (single admin by default)."""
-    return user.email.strip().lower() in ADMIN_EMAILS
+    email = user.email.strip().lower()
+    if DEV_MODE and email == "dev@tradetalk.local":
+        return True
+    return email in ADMIN_EMAILS
 
 
 # ── Google token verification ─────────────────────────────────────────────────

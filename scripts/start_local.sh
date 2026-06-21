@@ -45,6 +45,7 @@ echo "============================================="
 echo "TradeTalk application is running locally!"
 echo "Backend API: http://127.0.0.1:$PORT"
 echo "Frontend App: http://127.0.0.1:5173"
+echo "Local dev: login bypass + all admin pages (Vite DEV mode only)."
 echo "Press Ctrl+C to terminate both servers."
 echo "============================================="
 

@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL, apiFetch, setToken, getToken, clearToken, GOOGLE_CLIENT_ID } from './api';
-import { AUTH_REQUIRED, GUEST_USER } from './authConfig';
+import { AUTH_REQUIRED, LOCAL_DEV_MODE, defaultAnonymousUser } from './authConfig';
 
 const AuthContext = createContext(null);
 
@@ -16,7 +16,7 @@ function applySession(setUser, data) {
         avatar: data.avatar,
         dev_mode: data.dev_mode,
         has_password: data.has_password,
-        is_admin: Boolean(data.is_admin),
+        is_admin: LOCAL_DEV_MODE ? true : Boolean(data.is_admin),
     });
 }
 
@@ -87,7 +87,7 @@ export function AuthProvider({ children }) {
     useEffect(() => {
         const restore = async () => {
             if (!AUTH_REQUIRED) {
-                setUser(GUEST_USER);
+                setUser(defaultAnonymousUser());
                 setLoading(false);
                 if (!getToken() && IS_DEV_AUTH) {
                     void trySilentDevLogin();
@@ -111,7 +111,10 @@ export function AuthProvider({ children }) {
             }
             try {
                 const data = await apiFetch(`${API_BASE_URL}/auth/me`);
-                setUser({ ...data, is_admin: Boolean(data.is_admin) });
+                setUser({
+                    ...data,
+                    is_admin: LOCAL_DEV_MODE ? true : Boolean(data.is_admin),
+                });
             } catch {
                 clearToken();
                 if (IS_DEV_AUTH) {
@@ -132,7 +135,7 @@ export function AuthProvider({ children }) {
 
     const logout = useCallback(() => {
         clearToken();
-        setUser(AUTH_REQUIRED ? null : GUEST_USER);
+        setUser(AUTH_REQUIRED ? null : defaultAnonymousUser());
     }, []);
 
     useEffect(() => {

@@ -4,6 +4,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { useAuth } from '../AuthContext';
+import { LOCAL_DEV_MODE } from '../authConfig';
 
 export default function AdminGate({ children, featureName = 'this page' }) {
     const { user, loading } = useAuth();
@@ -17,7 +18,7 @@ export default function AdminGate({ children, featureName = 'this page' }) {
         );
     }
 
-    if (!user?.is_admin) {
+    if (!LOCAL_DEV_MODE && !user?.is_admin) {
         return (
             <div style={{
                 display: 'flex',

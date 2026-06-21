@@ -7,7 +7,7 @@ import BadgePopup from './components/BadgePopup'
 import AuthGate from './components/AuthGate'
 import AdminGate from './components/AdminGate'
 import { useAuth } from './AuthContext'
-import { AUTH_REQUIRED } from './authConfig'
+import { AUTH_REQUIRED, LOCAL_DEV_MODE } from './authConfig'
 import OnboardingOverlay from './components/OnboardingOverlay.jsx'
 import { API_BASE_URL, getToken, apiFetch } from './api'
 import AppAssistantPanel from './AppAssistantPanel'
@@ -94,7 +94,7 @@ function resolveDashboardPath(analyses, recentAnalyses = []) {
 
 function App() {
     const { user, login, logout } = useAuth()
-    const isAdmin = Boolean(user?.is_admin)
+    const isAdmin = LOCAL_DEV_MODE || Boolean(user?.is_admin)
     const isSignedIn = Boolean(user && !user.guest)
     const navigate = useNavigate()
     const location = useLocation()

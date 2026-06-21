@@ -84,6 +84,13 @@ class TestDevModeLogin(unittest.TestCase):
         user_id = _decode_jwt(result["token"])
         self.assertEqual(user_id, "dev_user_001")
 
+    @patch("backend.auth.DEV_MODE", True)
+    def test_dev_user_is_admin_in_dev_mode(self) -> None:
+        result = login_with_google("dev")
+        self.assertTrue(result["is_admin"])
+        user = get_user(result["user_id"])
+        self.assertTrue(user_is_admin(user))
+
 
 class TestUserPersistence(unittest.TestCase):
     """User upsert and retrieval."""
