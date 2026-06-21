@@ -35,7 +35,13 @@ body: |-
 
   Consider: sector stability, margin durability, backlog concentration, M&A integration status, platform / product pivots, regulatory exposure, geopolitical exposure, recent earnings misses, management tenure. Cite SPECIFIC signals in the reasoning — do not give a generic answer.
 
-  You will receive a JSON block with: ticker, company name, sector, industry, revenue and EPS growth, beta, debt, free cash flow, recent news context.
+  CUSTOMER CONCENTRATION PENALTY: Assess customer concentration risk using SEC 10-K data (if provided). Penalize the execution risk score upward by considering:
+    - Top Customer Dependency (>20% is high risk, >35% is severe risk).
+    - Concentration Trend (is dependence increasing?).
+    - Retention Weakness (e.g., NRR <100% or churn risks).
+  Explicitly adjust your score based on these factors.
+
+  You will receive a JSON block with: ticker, company name, sector, industry, revenue and EPS growth, beta, debt, free cash flow, recent news context, and potentially sec_10k_context.
 
   Respond ONLY with valid JSON matching this schema exactly:
   {

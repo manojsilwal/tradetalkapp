@@ -26,15 +26,16 @@ def _make_ohlcv(
     noise: float = 0.005,
     volume: float = 1_000_000.0,
 ) -> pd.DataFrame:
-    dates = pd.date_range(end=datetime.now(timezone.utc), periods=n, freq="B")
+    dates = pd.bdate_range(end=pd.Timestamp("2024-06-01"), periods=n)
+    n_actual = len(dates)
     prices = [start_price]
-    for _ in range(n - 1):
+    for _ in range(n_actual - 1):
         prices.append(prices[-1] * (1.0 + daily_drift + np.random.default_rng(42).normal(0, noise)))
     close = np.array(prices)
     high = close * 1.01
     low = close * 0.99
     open_ = close * 0.998
-    vol = np.full(n, volume)
+    vol = np.full(n_actual, volume)
     return pd.DataFrame(
         {"Open": open_, "High": high, "Low": low, "Close": close, "Volume": vol},
         index=dates,

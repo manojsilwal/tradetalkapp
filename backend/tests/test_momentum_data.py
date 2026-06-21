@@ -16,15 +16,15 @@ from backend.data_errors import InsufficientDataError
 
 
 def _fake_hist(n: int = 200) -> pd.DataFrame:
-    dates = pd.date_range(end=datetime.now(timezone.utc), periods=n, freq="B")
-    close = [100.0 + i * 0.1 for i in range(n)]
+    dates = pd.bdate_range(end=pd.Timestamp("2024-06-01"), periods=n)
+    close = [100.0 + i * 0.1 for i in range(len(dates))]
     return pd.DataFrame(
         {
             "Open": close,
             "High": [c * 1.01 for c in close],
             "Low": [c * 0.99 for c in close],
             "Close": close,
-            "Volume": [1_000_000] * n,
+            "Volume": [1_000_000] * len(dates),
         },
         index=dates,
     )

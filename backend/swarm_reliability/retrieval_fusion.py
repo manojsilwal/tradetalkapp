@@ -164,6 +164,8 @@ def fuse_and_cap_hits(
             continue
         collection = str(h.get("collection") or "")
         meta = _allowed_meta(h.get("metadata") or {}, allowed_meta_fields)
+        if "source" not in meta or not meta["source"]:
+            meta["source"] = collection or "database"
         max_chars = _max_text_chars_for_collection(collection)
         if max_chars > 0:
             doc = doc[:max_chars]
@@ -201,6 +203,8 @@ def clean_and_cap_raw_hits(
             continue
         collection = str(h.get("collection") or "")
         meta = _allowed_meta(h.get("metadata") or {}, allowed_meta_fields)
+        if "source" not in meta or not meta["source"]:
+            meta["source"] = collection or "database"
         max_chars = _max_text_chars_for_collection(collection)
         if max_chars > 0:
             doc = doc[:max_chars]
