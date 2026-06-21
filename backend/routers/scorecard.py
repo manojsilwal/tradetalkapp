@@ -532,6 +532,13 @@ async def _fetch_subjective_scores(
 
     async def _score_exec(d: ScorecardData) -> tuple[str, dict]:
         try:
+            sec_10k_context = ""
+            if fc.enabled:
+                try:
+                    sec_10k_context = await fc.get_sec_filing(d.ticker, form="10-K", max_chars=8000)
+                except Exception as e:
+                    logger.warning("[scorecard] failed to fetch 10-K for %s: %s", d.ticker, e)
+
             ctx = {
                 "ticker": d.ticker,
                 "company_name": d.company_name,
@@ -542,6 +549,7 @@ async def _fetch_subjective_scores(
                 "beta": d.beta,
                 "debt_to_equity": d.debt_to_equity,
                 "forward_pe": d.forward_pe,
+                "sec_10k_context": sec_10k_context,
             }
             out = await llm_client.generate_execution_risk_score(d.ticker, ctx)
             score = float(out.get("exec_score", 5.0))

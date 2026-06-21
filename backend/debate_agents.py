@@ -544,6 +544,22 @@ async def run_full_debate(ticker: str, debate_data: dict, macro_state: dict, ks,
 
 async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dict, ks, llm,
                                 swarm_context: str = "") -> DebateResult:
+    from .fincrawler_client import fc
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Inject 10-K data into debate_data for customer concentration analysis
+    sec_10k_context = ""
+    if fc.enabled:
+        try:
+            sec_10k_context = await fc.get_sec_filing(ticker, form="10-K", max_chars=8000)
+        except Exception as e:
+            logger.warning("[Debate] failed to fetch 10-K for %s: %s", ticker, e)
+
+    # Use a copy to avoid mutating the caller's dictionary directly
+    enriched_debate_data = dict(debate_data)
+    enriched_debate_data["sec_10k_context"] = sec_10k_context
+
     # Per-agent retrieval ref sinks (one per role to avoid concurrent mutation
     # of a shared list across asyncio tasks). Merged after gather.
     bull_refs: list = []
@@ -559,13 +575,13 @@ async def _run_full_debate_impl(ticker: str, debate_data: dict, macro_state: dic
     # argument.  Belt-and-suspenders: return_exceptions=True ensures that
     # any *unexpected* exception is caught post-gather rather than aborting
     # the entire coroutine group.
-    role_live = {**debate_data, **macro_state}
+    role_live = {**enriched_debate_data, **macro_state}
     role_configs = [
         ("bull",     role_live),
         ("bear",     role_live),
         ("macro",    macro_state),
-        ("value",    debate_data),
-        ("momentum", debate_data),
+        ("value",    enriched_debate_data),
+        ("momentum", enriched_debate_data),
     ]
     ref_buckets = [bull_refs, bear_refs, macro_refs, value_refs, momentum_refs]
 
