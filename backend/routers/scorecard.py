@@ -121,6 +121,8 @@ class ScorecardRowOut(BaseModel):
     sitg_value: Optional[float] = None
     sitg_multiple: Optional[float] = None
     sitg_percentile_tier: Optional[str] = None
+    new_revenue_engine_score: float = 0.0
+    new_revenue_engine_boost: float = 0.0
 
 
 class ScorecardResponse(BaseModel):
@@ -171,7 +173,7 @@ async def compare_scorecard(
         raise HTTPException(status_code=502, detail=f"data fetch failed: {e}") from e
 
     # Subjective scores (LLM personas) — parallel per ticker.
-    sitg_by_ticker, exec_by_ticker = await _fetch_subjective_scores(
+    sitg_by_ticker, exec_by_ticker, rev_by_ticker = await _fetch_subjective_scores(
         data_rows, skip_llm=req.skip_llm_scores
     )
 
@@ -185,6 +187,7 @@ async def compare_scorecard(
             sitg_value=sitg_by_ticker[d.ticker].get("sitg_value"),
             sitg_multiple=sitg_by_ticker[d.ticker].get("sitg_multiple"),
             sitg_percentile_tier=sitg_by_ticker[d.ticker].get("sitg_percentile_tier"),
+            new_revenue_engine_score=rev_by_ticker[d.ticker].get("new_revenue_engine_score", 50.0),
         )
         for d in data_rows
     ]
@@ -264,6 +267,8 @@ async def compare_scorecard(
                 sitg_value=row.sitg_value,
                 sitg_multiple=row.sitg_multiple,
                 sitg_percentile_tier=row.sitg_percentile_tier,
+                new_revenue_engine_score=row.new_revenue_engine_score,
+                new_revenue_engine_boost=row.new_revenue_engine_boost,
             )
         )
 
@@ -300,7 +305,7 @@ async def single_ticker_scorecard(
         )
 
     data = await fetch_scorecard_data(sym)
-    sitg_by_ticker, exec_by_ticker = await _fetch_subjective_scores(
+    sitg_by_ticker, exec_by_ticker, rev_by_ticker = await _fetch_subjective_scores(
         [data], skip_llm=skip_llm_scores
     )
     inp = _data_to_scorecard_input(
@@ -312,6 +317,7 @@ async def single_ticker_scorecard(
         sitg_value=sitg_by_ticker[data.ticker].get("sitg_value"),
         sitg_multiple=sitg_by_ticker[data.ticker].get("sitg_multiple"),
         sitg_percentile_tier=sitg_by_ticker[data.ticker].get("sitg_percentile_tier"),
+        new_revenue_engine_score=rev_by_ticker[data.ticker].get("new_revenue_engine_score", 50.0),
     )
     row = score_single(inp, preset=preset_key)
 
@@ -368,6 +374,8 @@ async def single_ticker_scorecard(
         sitg_value=row.sitg_value,
         sitg_multiple=row.sitg_multiple,
         sitg_percentile_tier=row.sitg_percentile_tier,
+        new_revenue_engine_score=row.new_revenue_engine_score,
+        new_revenue_engine_boost=row.new_revenue_engine_boost,
     )
 
 
@@ -383,6 +391,7 @@ def _data_to_scorecard_input(
     sitg_value: Optional[float] = None,
     sitg_multiple: Optional[float] = None,
     sitg_percentile_tier: Optional[str] = None,
+    new_revenue_engine_score: float = 0.0,
 ) -> ScorecardInput:
     return ScorecardInput(
         ticker=d.ticker,
@@ -402,6 +411,7 @@ def _data_to_scorecard_input(
         sitg_value=sitg_value,
         sitg_multiple=sitg_multiple,
         sitg_percentile_tier=sitg_percentile_tier,
+        new_revenue_engine_score=float(new_revenue_engine_score),
     )
 
 
@@ -409,7 +419,7 @@ async def _fetch_subjective_scores(
     data_rows: List[ScorecardData],
     *,
     skip_llm: bool,
-) -> tuple[Dict[str, dict], Dict[str, dict]]:
+) -> tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     """
     Fan out SITG + Execution-Risk persona calls in parallel.
 
@@ -430,7 +440,8 @@ async def _fetch_subjective_scores(
             for d in data_rows
         }
         exec_map = {d.ticker: {"exec_score": 5.0, "profile_tier": "mid_growth"} for d in data_rows}
-        return sitg_map, exec_map
+        rev_map = {d.ticker: {"new_revenue_engine_score": 50.0} for d in data_rows}
+        return sitg_map, exec_map, rev_map
 
     async def _score_sitg(d: ScorecardData) -> tuple[str, dict]:
         # Check cache
@@ -530,6 +541,97 @@ async def _fetch_subjective_scores(
                 missing=["sitg_score"],
             ) from e
 
+    async def _score_rev(d: ScorecardData) -> tuple[str, dict]:
+        # Check cache
+        try:
+            cached = get_stock_sec_info(d.ticker)
+            if cached and cached.get("updated_at") and (time.time() - cached["updated_at"] < 30 * 86400):
+                if cached.get("new_revenue_engine_score") is not None:
+                    return d.ticker, {
+                        "new_revenue_engine_score": float(cached["new_revenue_engine_score"]),
+                        "cached": True,
+                    }
+        except Exception as e:
+            logger.warning("[scorecard] failed to read stocks cache for %s (rev): %s", d.ticker, e)
+
+        # Cache miss or stale
+        try:
+            k_context = ""
+            q_context = ""
+            if fc.enabled:
+                try:
+                    k_context = await fc.get_sec_filing(d.ticker, form="10-K", max_chars=8000)
+                except Exception as e:
+                    pass
+                try:
+                    q_context = await fc.get_sec_filing(d.ticker, form="10-Q", max_chars=8000)
+                except Exception as e:
+                    pass
+
+            rev_ctx = {
+                "ticker": d.ticker,
+                "10_k_context": k_context,
+                "10_q_context": q_context,
+            }
+            out_rev = await llm_client.generate_new_revenue_engine_score(d.ticker, rev_ctx)
+
+            financial_traction = out_rev.get("financial_traction_score", 50)
+            customer_adoption = out_rev.get("customer_adoption_score", 50)
+            management_commitment = out_rev.get("management_commitment_score", 50)
+            market_opportunity = out_rev.get("market_opportunity_score", 50)
+            monetization_clarity = out_rev.get("monetization_clarity_score", 50)
+            execution_capacity = out_rev.get("execution_capacity_score", 50)
+
+            new_revenue_engine_score = (
+                0.30 * financial_traction +
+                0.20 * customer_adoption +
+                0.15 * management_commitment +
+                0.15 * market_opportunity +
+                0.10 * monetization_clarity +
+                0.10 * execution_capacity
+            )
+
+            # Save to cache - we just do a partial update. The upsert function handles COALESCE for missing values.
+            try:
+                upsert_stock_sec_info(
+                    ticker=d.ticker,
+                    ceo_name="", # Use empty to trigger exclude ignore
+                    sitg_score=3.0,
+                    ceo_base_salary=None,
+                    sitg_value=None,
+                    sitg_multiple=None,
+                    sitg_percentile_tier=None,
+                    insider_buy_count_12m=0,
+                    insider_sell_count_12m=0,
+                    insider_net_shares_12m=0.0,
+                    held_percent_insiders=0.0,
+                    financial_traction_score=financial_traction,
+                    customer_adoption_score=customer_adoption,
+                    management_commitment_score=management_commitment,
+                    market_opportunity_score=market_opportunity,
+                    monetization_clarity_score=monetization_clarity,
+                    execution_capacity_score=execution_capacity,
+                    new_revenue_engine_score=new_revenue_engine_score,
+                )
+            except Exception as db_err:
+                logger.error("[scorecard] failed to cache rev results in DB: %s", db_err)
+
+            return d.ticker, {
+                "new_revenue_engine_score": new_revenue_engine_score,
+                "raw": out_rev,
+            }
+        except InsufficientDataError:
+            raise
+        except Exception as e:
+            logger.warning("[scorecard] rev scorer failed for %s: %s", d.ticker, e)
+            raise InsufficientDataError(
+                "llm",
+                f"Revenue engine persona scoring failed for {d.ticker}; refusing to "
+                "substitute a default score.",
+                ticker=d.ticker,
+                missing=["new_revenue_engine_score"],
+            ) from e
+
     async def _score_exec(d: ScorecardData) -> tuple[str, dict]:
         try:
             ctx = {
@@ -564,8 +666,9 @@ async def _fetch_subjective_scores(
 
     sitg_task = asyncio.gather(*[_score_sitg(d) for d in data_rows])
     exec_task = asyncio.gather(*[_score_exec(d) for d in data_rows])
-    sitg_results, exec_results = await asyncio.gather(sitg_task, exec_task)
-    return dict(sitg_results), dict(exec_results)
+    rev_task = asyncio.gather(*[_score_rev(d) for d in data_rows])
+    sitg_results, exec_results, rev_results = await asyncio.gather(sitg_task, exec_task, rev_task)
+    return dict(sitg_results), dict(exec_results), dict(rev_results)
 
 
 async def _fetch_verdicts(

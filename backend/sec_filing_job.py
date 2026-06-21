@@ -16,13 +16,13 @@ from .fincrawler_client import fc
 logger = logging.getLogger(__name__)
 
 
-async def fetch_recent_filing_tickers(days: int = 1) -> Set[str]:
+async def fetch_recent_filing_tickers(days: int = 1, form: str = "10-Q") -> Set[str]:
     """
-    Query the SEC Atom feed of the 100 most recent 10-Q filings
+    Query the SEC Atom feed of the 100 most recent filings of type `form`
     and return the uppercase ticker symbols of companies that filed
     within the last `days` days.
     """
-    logger.info("[sec_filing_job] Querying SEC 10-Q Atom feed for recent filings...")
+    logger.info("[sec_filing_job] Querying SEC %s Atom feed for recent filings...", form)
     try:
         _load_cik_map()
         cik_to_ticker = {cik: ticker for ticker, cik in _CIK_MAP.items()}
@@ -30,7 +30,7 @@ async def fetch_recent_filing_tickers(days: int = 1) -> Set[str]:
         logger.error("[sec_filing_job] Failed to load CIK-to-ticker map: %s", e)
         return set()
 
-    url = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=10-Q&count=100&output=atom"
+    url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={form}&count=100&output=atom"
     headers = {"User-Agent": "TradeTalk Backtest contact@tradetalk.app"}
     req = urllib.request.Request(url, headers=headers)
 
@@ -78,7 +78,7 @@ async def fetch_recent_filing_tickers(days: int = 1) -> Set[str]:
                         logger.warning("[sec_filing_job] Error parsing timestamp %s: %s", updated_str, err)
                         recent_tickers.add(ticker.upper())
 
-    logger.info("[sec_filing_job] Found %d tickers with recent 10-Q filings: %s", len(recent_tickers), recent_tickers)
+    logger.info("[sec_filing_job] Found %d tickers with recent %s filings: %s", len(recent_tickers), form, recent_tickers)
     return recent_tickers
 
 
@@ -101,8 +101,10 @@ async def run_sec_filing_job() -> dict:
         logger.info("[sec_filing_job] No active portfolio tickers found. Skipping.")
         return {"ok": True, "processed": 0, "message": "No portfolio tickers found"}
 
-    # Query SEC 10-Q Atom feed for recent filings (last 1 day)
-    recent_filing_tickers = await fetch_recent_filing_tickers(days=1)
+    # Query SEC Atom feed for recent filings (last 1 day)
+    recent_filing_tickers_10q = await fetch_recent_filing_tickers(days=1, form="10-Q")
+    recent_filing_tickers_10k = await fetch_recent_filing_tickers(days=1, form="10-K")
+    recent_filing_tickers = recent_filing_tickers_10q.union(recent_filing_tickers_10k)
 
     processed = 0
     failed = 0
@@ -135,6 +137,19 @@ async def run_sec_filing_job() -> dict:
                     except Exception as e:
                         logger.warning("[sec_filing_job] failed to fetch DEF 14A for %s: %s", data.ticker, e)
 
+                # Fetch 10-K and 10-Q contexts for new revenue engine scoring
+                k_context = ""
+                q_context = ""
+                if fc.enabled:
+                    try:
+                        k_context = await fc.get_sec_filing(data.ticker, form="10-K", max_chars=8000)
+                    except Exception as e:
+                        logger.warning("[sec_filing_job] failed to fetch 10-K for %s: %s", data.ticker, e)
+                    try:
+                        q_context = await fc.get_sec_filing(data.ticker, form="10-Q", max_chars=8000)
+                    except Exception as e:
+                        logger.warning("[sec_filing_job] failed to fetch 10-Q for %s: %s", data.ticker, e)
+
                 ctx = {
                     "ticker": data.ticker,
                     "company_name": data.company_name,
@@ -148,8 +163,17 @@ async def run_sec_filing_job() -> dict:
                     "proxy_context": proxy_context,
                 }
 
+                rev_ctx = {
+                    "ticker": data.ticker,
+                    "10_k_context": k_context,
+                    "10_q_context": q_context,
+                }
+
                 # Trigger LLM estimation
-                out = await llm_client.generate_sitg_score(data.ticker, ctx)
+                out, out_rev = await asyncio.gather(
+                    llm_client.generate_sitg_score(data.ticker, ctx),
+                    llm_client.generate_new_revenue_engine_score(data.ticker, rev_ctx)
+                )
                 
                 # Extract values
                 ceo_name = out.get("ceo_name") or data.ceo_name or ""
@@ -158,6 +182,23 @@ async def run_sec_filing_job() -> dict:
                 value = out.get("sitg_value")
                 multiple = None
                 tier = None
+
+                financial_traction = out_rev.get("financial_traction_score", 50)
+                customer_adoption = out_rev.get("customer_adoption_score", 50)
+                management_commitment = out_rev.get("management_commitment_score", 50)
+                market_opportunity = out_rev.get("market_opportunity_score", 50)
+                monetization_clarity = out_rev.get("monetization_clarity_score", 50)
+                execution_capacity = out_rev.get("execution_capacity_score", 50)
+
+                # Weighted total score calculation
+                new_revenue_engine_score = (
+                    0.30 * financial_traction +
+                    0.20 * customer_adoption +
+                    0.15 * management_commitment +
+                    0.15 * market_opportunity +
+                    0.10 * monetization_clarity +
+                    0.10 * execution_capacity
+                )
 
                 # Enforce Python calculations & threshold tier categorization
                 if salary is not None and value is not None and salary > 0:
@@ -185,6 +226,13 @@ async def run_sec_filing_job() -> dict:
                     insider_sell_count_12m=data.insider_sell_count_12m,
                     insider_net_shares_12m=data.insider_net_shares_12m,
                     held_percent_insiders=data.held_percent_insiders,
+                    financial_traction_score=financial_traction,
+                    customer_adoption_score=customer_adoption,
+                    management_commitment_score=management_commitment,
+                    market_opportunity_score=market_opportunity,
+                    monetization_clarity_score=monetization_clarity,
+                    execution_capacity_score=execution_capacity,
+                    new_revenue_engine_score=new_revenue_engine_score,
                 )
 
                 processed += 1

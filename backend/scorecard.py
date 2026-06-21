@@ -48,16 +48,17 @@ class Weights:
     w7: float  # Execution risk (risk)
     w8: float  # D/E leverage (risk)
     w9: float  # Skin-in-the-game (return amplifier)
+    w10: float # New Revenue Engine Score (return amplifier)
 
     def as_dict(self) -> Dict[str, float]:
         return asdict(self)
 
 
 PRESETS: Dict[str, Weights] = {
-    "growth":   Weights(w1=5, w2=5, w3=3, w4=0, w5=2, w6=2, w7=4, w8=1, w9=4),
-    "value":    Weights(w1=2, w2=2, w3=5, w4=2, w5=5, w6=2, w7=3, w8=3, w9=3),
-    "income":   Weights(w1=1, w2=1, w3=2, w4=5, w5=3, w6=3, w7=2, w8=4, w9=2),
-    "balanced": Weights(w1=3, w2=3, w3=2, w4=1, w5=3, w6=2, w7=3, w8=2, w9=4),
+    "growth":   Weights(w1=5, w2=5, w3=3, w4=0, w5=2, w6=2, w7=4, w8=1, w9=4, w10=3),
+    "value":    Weights(w1=2, w2=2, w3=5, w4=2, w5=5, w6=2, w7=3, w8=3, w9=3, w10=1),
+    "income":   Weights(w1=1, w2=1, w3=2, w4=5, w5=3, w6=3, w7=2, w8=4, w9=2, w10=1),
+    "balanced": Weights(w1=3, w2=3, w3=2, w4=1, w5=3, w6=2, w7=3, w8=2, w9=4, w10=2),
 }
 
 
@@ -164,6 +165,7 @@ class ScorecardInput:
     sitg_value: Optional[float] = None
     sitg_multiple: Optional[float] = None
     sitg_percentile_tier: Optional[str] = None
+    new_revenue_engine_score: float = 0.0 # 0-100
 
 
 @dataclass
@@ -201,6 +203,8 @@ class ScorecardRow:
     sitg_value: Optional[float] = None
     sitg_multiple: Optional[float] = None
     sitg_percentile_tier: Optional[str] = None
+    new_revenue_engine_score: float = 0.0
+    new_revenue_engine_boost: float = 0.0
 
 
 @dataclass
@@ -256,7 +260,7 @@ def resolve_weights(
     merged = base.as_dict()
     for k, v in overrides.items():
         if k not in merged:
-            raise ValueError(f"unknown weight key {k!r}; expected one of w1..w9")
+            raise ValueError(f"unknown weight key {k!r}; expected one of w1..w10")
         merged[k] = float(v)
     return Weights(**merged)
 
@@ -290,6 +294,7 @@ def _score_one(
     weights: Weights,
     *,
     include_sitg: bool = True,
+    include_revenue_engine: bool = True,
 ) -> tuple[ReturnScore, RiskScore, float]:
     """Return (ReturnScore, RiskScore, ratio) using the provided denominators."""
     eps = normalize(row.eps_growth_pct, denom["eps_growth_pct"])
@@ -298,6 +303,8 @@ def _score_one(
     div = normalize(row.dividend_yield_pct, denom["dividend_yield_pct"])
     # SITG is scored 0-10 directly by the LLM persona — no further normalization.
     sitg = max(0.0, min(10.0, float(row.sitg_score))) if include_sitg else 0.0
+    # New Revenue Engine is 0-100, we normalize it to 0-10 scale for the weights.
+    revenue_engine = max(0.0, min(10.0, float(row.new_revenue_engine_score) / 10.0)) if include_revenue_engine else 0.0
 
     stretch = compute_pe_stretch(row.forward_pe, row.historical_avg_pe)
     pe_stretch_score = normalize(stretch, denom["pe_stretch"])
@@ -312,8 +319,9 @@ def _score_one(
         + pt * weights.w3
         + div * weights.w4
         + sitg * weights.w9
+        + revenue_engine * weights.w10
     )
-    return_den = weights.w1 + weights.w2 + weights.w3 + weights.w4 + weights.w9
+    return_den = weights.w1 + weights.w2 + weights.w3 + weights.w4 + weights.w9 + weights.w10
     return_weighted = return_num / return_den if return_den > 0 else 0.0
 
     risk_num = (
@@ -373,11 +381,15 @@ def score_basket(
 
     result_rows: List[ScorecardRow] = []
     for row in rows:
-        ret, risk, ratio = _score_one(row, denom, weights, include_sitg=True)
+        ret, risk, ratio = _score_one(row, denom, weights, include_sitg=True, include_revenue_engine=True)
         _ret_no_sitg, _risk_no_sitg, ratio_no_sitg = _score_one(
-            row, denom, weights, include_sitg=False
+            row, denom, weights, include_sitg=False, include_revenue_engine=True
         )
-        boost = round(ratio - ratio_no_sitg, 4)
+        _ret_no_rev, _risk_no_rev, ratio_no_rev = _score_one(
+            row, denom, weights, include_sitg=True, include_revenue_engine=False
+        )
+        sitg_boost = round(ratio - ratio_no_sitg, 4)
+        rev_boost = round(ratio - ratio_no_rev, 4)
         interp = interpret_ratio(ratio)
         quadrant = classify_quadrant(ret.weighted, risk.weighted)
         result_rows.append(
@@ -388,7 +400,7 @@ def score_basket(
                 return_score=ret,
                 risk_score=risk,
                 ratio=ratio,
-                sitg_boost=boost,
+                sitg_boost=sitg_boost,
                 signal=interp["signal"],
                 action=interp["action"],
                 quadrant=quadrant,
@@ -396,6 +408,8 @@ def score_basket(
                 sitg_value=row.sitg_value,
                 sitg_multiple=row.sitg_multiple,
                 sitg_percentile_tier=row.sitg_percentile_tier,
+                new_revenue_engine_score=row.new_revenue_engine_score,
+                new_revenue_engine_boost=rev_boost,
             )
         )
     return BasketResult(
@@ -438,8 +452,10 @@ def score_single(
     }
     weights = resolve_weights(preset, weights_override)
     weights = apply_situational_adjustments(weights, situational_flags or {})
-    ret, risk, ratio = _score_one(row, denom, weights, include_sitg=True)
-    _ret0, _risk0, ratio_no_sitg = _score_one(row, denom, weights, include_sitg=False)
+    ret, risk, ratio = _score_one(row, denom, weights, include_sitg=True, include_revenue_engine=True)
+    _ret0, _risk0, ratio_no_sitg = _score_one(row, denom, weights, include_sitg=False, include_revenue_engine=True)
+    _ret_no_rev, _risk_no_rev, ratio_no_rev = _score_one(row, denom, weights, include_sitg=True, include_revenue_engine=False)
+
     interp = interpret_ratio(ratio)
     quadrant = classify_quadrant(ret.weighted, risk.weighted)
     return ScorecardRow(
@@ -457,6 +473,8 @@ def score_single(
         sitg_value=row.sitg_value,
         sitg_multiple=row.sitg_multiple,
         sitg_percentile_tier=row.sitg_percentile_tier,
+        new_revenue_engine_score=row.new_revenue_engine_score,
+        new_revenue_engine_boost=round(ratio - ratio_no_rev, 4),
     )
 
 

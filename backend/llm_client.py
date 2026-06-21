@@ -380,6 +380,7 @@ VERDICT_ROLES = frozenset({
     "gold_advisor",
     "sitg_scorer",
     "execution_risk_scorer",
+    "new_revenue_engine_scorer",
 })
 
 # ── Rule-based fallback templates ─────────────────────────────────────────────
@@ -468,6 +469,15 @@ FALLBACK_TEMPLATES = {
         "exec_score": 5,
         "profile_tier": "mid_growth",
         "reasoning": "Insufficient qualitative context; defaulting to mid-stage-growth tier.",
+    },
+    "new_revenue_engine_scorer": {
+        "financial_traction_score": 50,
+        "customer_adoption_score": 50,
+        "management_commitment_score": 50,
+        "market_opportunity_score": 50,
+        "monetization_clarity_score": 50,
+        "execution_capacity_score": 50,
+        "reasoning": "Insufficient qualitative context; defaulting to baseline scores.",
     },
     "scorecard_verdict": {
         "verdict": "Balanced",
@@ -1742,6 +1752,17 @@ class LLMClient:
             "Score execution risk on the 1-10 rubric."
         )
         return await self.generate("execution_risk_scorer", prompt)
+
+    async def generate_new_revenue_engine_score(self, ticker: str, context: dict) -> dict:
+        """Risk-Return-Ratio Step — score new revenue engine components."""
+        ctx = json.dumps(context, indent=2, default=str)
+        if len(ctx) > 12000:
+            ctx = ctx[:12000] + "\n…(truncated)"
+        prompt = (
+            f"Ticker: {ticker.upper()}\n\nContext JSON:\n{ctx}\n\n"
+            "Score the new revenue engine factors based on the framework."
+        )
+        return await self.generate("new_revenue_engine_scorer", prompt)
 
     async def generate_scorecard_verdict(self, ticker: str, verdict_context: dict) -> dict:
         """Risk-Return-Ratio Step 8 — one-sentence verdict per ticker."""

@@ -273,6 +273,12 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
                 value: row.sitg_boost > 0 ? `+${formatNum(row.sitg_boost)}` : formatNum(row.sitg_boost ?? 0),
                 tooltip: "Skin In The Game (SITG) boost. An extra credit added to the score when corporate executives or founders own a significant amount of the company's stock, aligning their interests with yours."
               },
+              {
+                label: 'Rev Engine boost',
+                displayLabel: 'New Revenue Engine Boost',
+                value: row.new_revenue_engine_boost > 0 ? `+${formatNum(row.new_revenue_engine_boost)}` : formatNum(row.new_revenue_engine_boost ?? 0),
+                tooltip: "New Revenue Engine boost. Extra credit given if the company shows strong evidence of opening a new revenue path through new products, services, or segments."
+              },
             ].map((m) => (
               <div
                 key={m.label}
@@ -414,6 +420,11 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                       SITG Profile: {row.sitg_archetype}
                     </div>
+                  )}
+                  {row.new_revenue_engine_score != null && row.new_revenue_engine_score > 0 && (
+                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                       Revenue Engine Score: <strong style={{ color: '#10b981' }}>{formatNum(row.new_revenue_engine_score)}/100</strong>
+                     </div>
                   )}
                 </div>
               )}
