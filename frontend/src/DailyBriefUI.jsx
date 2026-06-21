@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, RefreshCw, TrendingDown, Shield, List, Plus, AlertTriangle } from 'lucide-react'
+import { Loader2, TrendingDown, Shield, List, Plus, AlertTriangle } from 'lucide-react'
 import { API_BASE_URL, apiFetch } from './api'
 import { useAnalysisHistory } from './AnalysisContext'
 import { DataTrustBanner } from './components/Freshness'
-import ActionableCompaniesPanel, { ActionableCompaniesButton, useActionableCompanies } from './components/ActionableCompaniesPanel'
+import ActionableCompaniesPanel, { useActionableCompanies } from './components/ActionableCompaniesPanel'
 import { envelopeIsStale, FRESHNESS_STATES, isBriefSessionTrustworthy, isSessionDateStale, parseFreshness } from './freshness'
 
 function formatTradeDateLabel(isoDateStr) {
@@ -389,42 +389,18 @@ export default function DailyBriefUI() {
   return (
     <div className="dt-wrap fade-in" data-testid="home-page" style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 4px 48px' }}>
       {/* Header section */}
-      <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'flex-end' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={() => load(true)}
-              disabled={loading || extraLoading}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '10px 16px',
-                borderRadius: 10,
-                border: '1px solid rgba(148,163,184,0.25)',
-                background: 'rgba(255,255,255,0.04)',
-                color: '#e2e8f0',
-                cursor: loading || extraLoading ? 'wait' : 'pointer',
-              }}
-            >
-              {loading || extraLoading || refreshing || extraRefreshing
-                ? <Loader2 size={16} className="spinner" />
-                : <RefreshCw size={16} />}
-              Refresh
-            </button>
-            <ActionableCompaniesButton busy={actionableState.busy} onClick={actionableState.startScan} />
-          </div>
-          {syncStatusText ? (
+      {syncStatusText ? (
+        <header style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start', flexDirection: 'column' }}>
             <span
               style={{ fontSize: '0.75rem', color: '#64748b', paddingLeft: 2 }}
               data-testid="brief-sync-status"
             >
               {syncStatusText}
             </span>
-          ) : null}
-        </div>
-      </header>
+          </div>
+        </header>
+      ) : null}
 
       {error && (
         <div className="glass-panel" style={{ padding: 16, marginBottom: 20, borderColor: 'rgba(239,68,68,0.4)', color: '#fca5a5' }}>
