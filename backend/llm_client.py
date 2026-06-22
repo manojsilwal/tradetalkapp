@@ -22,7 +22,10 @@ from .agent_policy_guardrails import (
     workload_scope,
 )
 from .openrouter_pool import (
+    collect_nvidia_llm_api_keys,
+    collect_openrouter_api_keys,
     get_or_create_openrouter_pool,
+    get_or_create_llm_openai_compatible_pool,
     is_openrouter_rate_limit_error,
     rate_limit_sleep_seconds,
     resolve_llm_http_provider,
@@ -47,10 +50,15 @@ from .gemini_llm import (
 logger = logging.getLogger(__name__)
 
 # ── Env config ────────────────────────────────────────────────────────────────
+NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
+NVIDIA_BASE_URL = os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "minimax/minimax-m3")
+NVIDIA_MODEL_LIGHT = os.environ.get("NVIDIA_MODEL_LIGHT", "minimax/minimax-m3")
+
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "minimax/minimax-m3")
-OPENROUTER_MODEL_LIGHT = os.environ.get("OPENROUTER_MODEL_LIGHT", "minimax/minimax-m3")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
+OPENROUTER_MODEL_LIGHT = os.environ.get("OPENROUTER_MODEL_LIGHT", "google/gemma-4-31b-it:free")
 OPENROUTER_HTTP_REFERER = os.environ.get("OPENROUTER_HTTP_REFERER", "")
 OPENROUTER_X_TITLE = os.environ.get("OPENROUTER_X_TITLE", "TradeTalk App")
 
@@ -559,6 +567,7 @@ class LLMClient:
         self._llm_http_provider = "fallback"
         self._model = ""
         self._endpoint = ""
+        self._nvidia_pool = None
         self._openrouter_pool = None
         # One semaphore per running event loop — ``asyncio.run`` in tests closes loops;
         # Starlette uses a different loop for TestClient/production requests.
@@ -596,9 +605,44 @@ class LLMClient:
         if cf_secret:
             headers["CF-Access-Client-Secret"] = cf_secret
 
-        provider = resolve_llm_http_provider()
         try:
-            if provider == "none":
+            nv_keys = collect_nvidia_llm_api_keys()
+            if nv_keys:
+                try:
+                    self._nvidia_pool = get_or_create_llm_openai_compatible_pool(NVIDIA_BASE_URL, headers, nv_keys)
+                    if self._nvidia_pool:
+                        if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                            guard_host("llm", NVIDIA_BASE_URL)
+                        logger.info("[LLMClient] NVIDIA pool initialized with model: %s", NVIDIA_MODEL)
+                except Exception as e:
+                    logger.warning("[LLMClient] NVIDIA pool init failed: %s", redact_secrets_in_text(str(e)))
+
+            or_keys = collect_openrouter_api_keys()
+            if or_keys:
+                try:
+                    self._openrouter_pool = get_or_create_openrouter_pool(OPENROUTER_BASE_URL, headers)
+                    if self._openrouter_pool:
+                        if GUARDRAILS_ENABLE and policy_guardrails_enabled():
+                            guard_host("llm", OPENROUTER_BASE_URL)
+                        logger.info("[LLMClient] OpenRouter pool initialized with model: %s", OPENROUTER_MODEL)
+                except Exception as e:
+                    logger.warning("[LLMClient] OpenRouter pool init failed: %s", redact_secrets_in_text(str(e)))
+
+            # Resolve primary HTTP provider
+            if self._nvidia_pool is not None:
+                self._llm_http_provider = "nvidia"
+                self._provider = "nvidia"
+                self._backend = "nvidia"
+                self._model = NVIDIA_MODEL
+                self._endpoint = NVIDIA_BASE_URL
+            elif self._openrouter_pool is not None:
+                self._llm_http_provider = "openrouter"
+                self._provider = "openrouter"
+                self._backend = "openrouter"
+                self._model = OPENROUTER_MODEL
+                self._endpoint = OPENROUTER_BASE_URL
+
+            if self._llm_http_provider == "fallback":
                 if gemini_primary_enabled():
                     logger.info(
                         "[LLMClient] No HTTP LLM key; streaming chat uses Gemini primary — model=%s",
@@ -606,33 +650,14 @@ class LLMClient:
                     )
                 else:
                     logger.warning(
-                        "[LLMClient] No OPENROUTER_API_KEY. Using rule-based fallback."
+                        "[LLMClient] No API keys configured. Using rule-based fallback."
                     )
-                return
-
-            pool = get_or_create_openrouter_pool(OPENROUTER_BASE_URL, headers)
-            if pool is None:
+            else:
+                logger.info("[LLMClient] Primary Backend: %s — model: %s", self._provider, self._model)
                 if gemini_primary_enabled():
-                    logger.info(
-                        "[LLMClient] No OpenRouter key; streaming chat uses Gemini primary — model=%s",
-                        GEMINI_FALLBACK_MODEL,
-                    )
-                else:
-                    logger.warning("[LLMClient] No OPENROUTER_API_KEY configured. Using rule-based fallback.")
-                return
-            if GUARDRAILS_ENABLE and policy_guardrails_enabled():
-                guard_host("llm", OPENROUTER_BASE_URL)
-            self._openrouter_pool = pool
-            self._llm_http_provider = "openrouter"
-            self._provider = "openrouter"
-            self._backend = "openrouter"
-            self._model = OPENROUTER_MODEL
-            self._endpoint = OPENROUTER_BASE_URL
-            logger.info("[LLMClient] Backend: OpenRouter direct — model: %s", OPENROUTER_MODEL)
-            if gemini_primary_enabled():
-                logger.info("[LLMClient] Gemini primary for chat — model=%s", GEMINI_FALLBACK_MODEL)
-            elif gemini_llm_fallback_enabled():
-                logger.info("[LLMClient] Gemini LLM fallback enabled — model=%s", GEMINI_FALLBACK_MODEL)
+                    logger.info("[LLMClient] Gemini primary for chat — model=%s", GEMINI_FALLBACK_MODEL)
+                elif gemini_llm_fallback_enabled():
+                    logger.info("[LLMClient] Gemini LLM fallback enabled — model=%s", GEMINI_FALLBACK_MODEL)
         except Exception as e:
             logger.warning("[LLMClient] LLM HTTP init failed: %s", redact_secrets_in_text(str(e)))
 
@@ -793,29 +818,21 @@ class LLMClient:
         version_override: Optional[str] = None,
     ) -> tuple[dict, str]:
         """
-        Call OpenRouter synchronously — run in a thread.
+        Call OpenRouter/NVIDIA synchronously — run in a thread.
 
         Returns ``(result, prompt_version)``. Callers that only need the result
         (e.g. the legacy ``generate`` entry point) should discard the version.
-
-        When ``body_override`` is supplied, the registry is NOT consulted and the
-        given body is used as the system prompt. This path exists solely for the
-        SEPL Evaluate operator (AGP §3.2 eps), which needs to run a candidate
-        prompt body without registering it. ``version_override`` (defaults to
-        ``"candidate"``) is stamped into the returned meta so lineage can tell
-        inference-with-override apart from real active versions.
         """
         if body_override is not None:
             system = body_override
             prompt_version = version_override or "candidate"
         else:
             system, prompt_version = self._resolve_system_prompt(role)
+
         def fallback():
             return (_fallback_template_or_raise(role), prompt_version)
-        http_models = [_http_openai_model_for_role(self._provider, role)]
 
-        # Gemini-primary (GEMINI_PRIMARY=1): try Gemini first, then OpenRouter,
-        # then InsufficientDataError for verdict roles — never a fabricated verdict.
+        # Gemini-primary (GEMINI_PRIMARY=1): try Gemini first, then HTTP providers
         gemini_primary_first = gemini_primary_enabled()
         if gemini_primary_first:
             g = self._gemini_try_json_role(system, prompt, role)
@@ -826,29 +843,36 @@ class LLMClient:
                 )
                 return g, prompt_version
             logger.info(
-                "[LLMClient] role=%s Gemini-primary failed — trying OpenRouter",
+                "[LLMClient] role=%s Gemini-primary failed — trying HTTP cascade",
                 role,
             )
 
         try:
-            if self._openrouter_pool is None:
-                if not gemini_primary_first:
-                    g = self._gemini_try_json_role(system, prompt, role)
-                    if g is not None:
-                        g = self._enforce_contract(
-                            g, role=role, prompt_version=prompt_version,
-                            model=_gemini_model_for_role(role),
-                        )
-                        return g, prompt_version
-                return fallback()
-            clients = self._openrouter_pool.sync_clients_for_request(
-                should_try_other_openrouter_keys_on_429()
-            )
+            # Build list of HTTP pools to try in order
+            http_cascades = []
+            if self._nvidia_pool is not None:
+                http_cascades.append(("nvidia", self._nvidia_pool))
+            if self._openrouter_pool is not None:
+                http_cascades.append(("openrouter", self._openrouter_pool))
 
-            last_err: Optional[Exception] = None
-            for model in http_models:
+            for prov_name, pool in http_cascades:
+                if prov_name == "nvidia":
+                    model = NVIDIA_MODEL_LIGHT if _tier_for_role(role) == "light" else NVIDIA_MODEL
+                    endpoint = NVIDIA_BASE_URL
+                else:
+                    model = OPENROUTER_MODEL_LIGHT if _tier_for_role(role) == "light" else OPENROUTER_MODEL
+                    endpoint = OPENROUTER_BASE_URL
+
+                clients = pool.sync_clients_for_request(
+                    should_try_other_openrouter_keys_on_429()
+                )
+
+                # Exit instantly on 429 if we have a subsequent option in the cascade
+                has_subsequent = (prov_name == "nvidia" and self._openrouter_pool is not None) or gemini_usable_for_chat()
+                exit_immediately = gemini_instant_openrouter_failover() if has_subsequent else False
+
+                last_err: Optional[Exception] = None
                 for attempt in range(2):
-
                     def _call_role(sync_client, _model=model):
                         if GUARDRAILS_ENABLE and policy_guardrails_enabled():
                             with workload_scope("llm", "llm_inference"):
@@ -875,15 +899,16 @@ class LLMClient:
                     completion, err = sync_failover_execute(
                         clients,
                         _call_role,
-                        exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
+                        exit_immediately_on_rate_limit=exit_immediately,
                     )
                     latency = time.time() - start_time
                     if completion is not None:
                         content = (completion.choices[0].message.content or "").strip()
                         if not content:
                             logger.warning(
-                                "[LLMClient] role=%s model=%s empty response",
+                                "[LLMClient] role=%s provider=%s model=%s empty response",
                                 role,
+                                prov_name,
                                 model,
                             )
                             break
@@ -905,14 +930,15 @@ class LLMClient:
                             response_text=content,
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
-                            api_url=self._endpoint,
+                            api_url=endpoint,
                         )
 
                         parsed = self._parse_json_response(content, role)
                         if parsed is None:
                             logger.warning(
-                                "[LLMClient] role=%s model=%s unparseable JSON — trying fallback provider",
+                                "[LLMClient] role=%s provider=%s model=%s unparseable JSON",
                                 role,
+                                prov_name,
                                 model,
                             )
                             break
@@ -924,24 +950,29 @@ class LLMClient:
                         )
                         return parsed, prompt_version
                     last_err = err
-                    if err is not None and is_openrouter_rate_limit_error(err) and attempt == 0:
+                    if err is not None and is_openrouter_rate_limit_error(err) and attempt == 0 and not exit_immediately:
                         wait = rate_limit_sleep_seconds(err, 2.5)
                         logger.warning(
-                            "[LLMClient] role=%s model=%s rate limited, retry in %.1fs",
+                            "[LLMClient] role=%s provider=%s model=%s rate limited, retry in %.1fs",
                             role,
+                            prov_name,
                             model,
                             wait,
                         )
                         time.sleep(wait)
                         continue
                     break
+
                 if last_err is not None:
                     logger.warning(
-                        "[LLMClient] OpenRouter call failed role=%s model=%s err=%s",
+                        "[LLMClient] Provider %s call failed role=%s model=%s err=%s",
+                        prov_name,
                         role,
                         model,
                         redact_secrets_in_text(str(last_err)),
                     )
+
+            # Gemini fallback (if not primary first)
             if not gemini_primary_first:
                 g = self._gemini_try_json_role(system, prompt, role)
                 if g is not None:
@@ -950,6 +981,7 @@ class LLMClient:
                         model=_gemini_model_for_role(role),
                     )
                     return g, prompt_version
+
             return fallback()
         except InsufficientDataError:
             raise
@@ -1301,10 +1333,8 @@ class LLMClient:
 
         When ``GEMINI_PRIMARY=1``, this routes through Gemini (light model) and
         on any Gemini failure returns the untouched ``user`` string — same local
-        fallback contract as the JSON inference path. OpenRouter is never called.
+        fallback contract as the JSON inference path. OpenRouter/NVIDIA is never called.
         """
-        http_models = [OPENROUTER_MODEL_LIGHT]
-
         if gemini_primary_enabled():
             g = self._gemini_try_plain_text(system, user)
             if g is not None:
@@ -1312,15 +1342,30 @@ class LLMClient:
             return user
 
         try:
-            if self._openrouter_pool is None:
-                return user
-            clients = self._openrouter_pool.sync_clients_for_request(
-                should_try_other_openrouter_keys_on_429()
-            )
+            # Build list of HTTP pools to try in order
+            http_cascades = []
+            if self._nvidia_pool is not None:
+                http_cascades.append(("nvidia", self._nvidia_pool))
+            if self._openrouter_pool is not None:
+                http_cascades.append(("openrouter", self._openrouter_pool))
 
-            for model in http_models:
+            for prov_name, pool in http_cascades:
+                if prov_name == "nvidia":
+                    model = NVIDIA_MODEL_LIGHT
+                    endpoint = NVIDIA_BASE_URL
+                else:
+                    model = OPENROUTER_MODEL_LIGHT
+                    endpoint = OPENROUTER_BASE_URL
+
+                clients = pool.sync_clients_for_request(
+                    should_try_other_openrouter_keys_on_429()
+                )
+
+                # Exit instantly on 429 if we have a subsequent option in the cascade
+                has_subsequent = (prov_name == "nvidia" and self._openrouter_pool is not None) or gemini_usable_for_chat()
+                exit_immediately = gemini_instant_openrouter_failover() if has_subsequent else False
+
                 for attempt in range(2):
-
                     def _call_plain(sync_client, _model=model):
                         if GUARDRAILS_ENABLE and policy_guardrails_enabled():
                             with workload_scope("llm", "llm_inference"):
@@ -1347,7 +1392,7 @@ class LLMClient:
                     completion, err = sync_failover_execute(
                         clients,
                         _call_plain,
-                        exit_immediately_on_rate_limit=gemini_instant_openrouter_failover(),
+                        exit_immediately_on_rate_limit=exit_immediately,
                     )
                     latency = time.time() - start_time
                     if completion is not None:
@@ -1370,20 +1415,23 @@ class LLMClient:
                                 response_text=out,
                                 prompt_tokens=prompt_tokens,
                                 completion_tokens=completion_tokens,
-                                api_url=self._endpoint,
+                                api_url=endpoint,
                             )
                             return out
                         break
-                    if err is not None and is_openrouter_rate_limit_error(err) and attempt == 0:
+
+                    if err is not None and is_openrouter_rate_limit_error(err) and attempt == 0 and not exit_immediately:
                         time.sleep(rate_limit_sleep_seconds(err, 2.5))
                         continue
                     if err is not None:
                         logger.warning(
-                            "[LLMClient] plain_text_generate model=%s failed: %s",
+                            "[LLMClient] plain_text_generate provider=%s model=%s failed: %s",
+                            prov_name,
                             model,
                             redact_secrets_in_text(str(err)),
                         )
                     break
+
             g = self._gemini_try_plain_text(system, user)
             if g is not None:
                 return g
@@ -1414,14 +1462,6 @@ class LLMClient:
         """
         Stream assistant text tokens (plain prose, not JSON). Used by TradeTalk chat.
         Yields incremental text chunks; transparently handles autonomous tool execution if provided.
-        If ``tool_trace_out`` is a list, each executed tool appends an enriched
-        ``TrajectoryStep v2`` row (see :mod:`backend.chat_tool_telemetry`):
-        canonical ``tool_family``, ``execution_status`` vs ``evidence_quality``,
-        per-step ``source_refs``, and the running fatal counters
-        (``consecutive_tool_errors_after_step``,
-        ``fatal_streak_start_step_index``, ``fatal_trigger_step_index``). The
-        legacy keys ``name``/``arguments``/``outcome``/``error`` are preserved
-        for backward compatibility with existing consumers.
         """
         # Phase A1: per-turn trajectory accumulator (only when caller wants traces).
         trajectory_acc = None
@@ -1436,20 +1476,13 @@ class LLMClient:
         mt = max_tokens if max_tokens is not None else LLM_MAX_TOKENS
         _429_same_delay = float(os.environ.get("OPENROUTER_429_SAME_KEY_DELAY_SEC", "2.5"))
         _429_key_delay = float(os.environ.get("OPENROUTER_429_KEY_FAILOVER_DELAY_SEC", "1.0"))
-        if self._openrouter_pool is None and not gemini_usable_for_chat():
+        
+        if self._nvidia_pool is None and self._openrouter_pool is None and not gemini_usable_for_chat():
             yield (
-                "Chat requires OPENROUTER_API_KEY or a Gemini key "
-                "(GEMINI_API_KEY with GEMINI_PRIMARY or GEMINI_LLM_FALLBACK)."
+                "Chat requires a model provider: set NVIDIA_API_KEY, OPENROUTER_API_KEY, "
+                "or GEMINI_API_KEY (with GEMINI_PRIMARY or GEMINI_LLM_FALLBACK)."
             )
             return
-
-        async_clients = (
-            self._openrouter_pool.async_clients_for_request(
-                should_try_other_openrouter_keys_on_429()
-            )
-            if self._openrouter_pool is not None
-            else []
-        )
 
         msgs = [{"role": "system", "content": system}]
         for m in messages:
@@ -1470,25 +1503,22 @@ class LLMClient:
             stream_ok = False
             gemini_error_only = False
             chat_phases: list[str] = []
-            has_http = self._openrouter_pool is not None
             gemini_ok = gemini_usable_for_chat()
 
-            if has_http:
-                if gemini_primary_enabled() and gemini_ok:
-                    chat_phases.append("gemini_chat")
-                chat_phases.append("openrouter")
-            elif gemini_primary_enabled() and gemini_ok:
+            if gemini_primary_enabled() and gemini_ok:
                 chat_phases.append("gemini_chat")
 
+            if self._nvidia_pool is not None:
+                chat_phases.append("nvidia_chat")
+            if self._openrouter_pool is not None:
+                chat_phases.append("openrouter_chat")
+
             if gemini_ok and "gemini_chat" not in chat_phases:
-                if has_http and not gemini_primary_enabled():
-                    chat_phases.append("gemini_chat")
-                elif not has_http and gemini_llm_fallback_enabled():
-                    chat_phases.append("gemini_chat")
+                chat_phases.append("gemini_chat")
 
             if not chat_phases:
                 yield (
-                    "Chat requires a model provider: set OPENROUTER_API_KEY "
+                    "Chat requires a model provider: set NVIDIA_API_KEY, OPENROUTER_API_KEY, "
                     "or GEMINI_API_KEY (with GEMINI_PRIMARY or GEMINI_LLM_FALLBACK)."
                 )
                 return
@@ -1496,13 +1526,35 @@ class LLMClient:
             for phase in chat_phases:
                 if stream_ok:
                     break
-                if phase == "openrouter":
+                
+                if phase in ("nvidia_chat", "openrouter_chat"):
                     gemini_error_only = False
-                    phase_model = OPENROUTER_MODEL_LIGHT
+                    if phase == "nvidia_chat":
+                        pool = self._nvidia_pool
+                        phase_model = NVIDIA_MODEL_LIGHT
+                        endpoint = NVIDIA_BASE_URL
+                        prov_label = "NVIDIA"
+                    else:
+                        pool = self._openrouter_pool
+                        phase_model = OPENROUTER_MODEL_LIGHT
+                        endpoint = OPENROUTER_BASE_URL
+                        prov_label = "OpenRouter"
+
+                    if pool is None:
+                        continue
+
+                    async_clients = pool.async_clients_for_request(
+                        should_try_other_openrouter_keys_on_429()
+                    )
                     ci = 0
                     n_clients = len(async_clients)
-                    abort_http_for_gemini = False
-                    while ci < n_clients and not stream_ok and not abort_http_for_gemini:
+                    abort_http_for_fallback = False
+                    
+                    # Check if there is any subsequent fallback in the cascade
+                    current_phase_index = chat_phases.index(phase)
+                    has_subsequent_fallback = len(chat_phases) > current_phase_index + 1
+
+                    while ci < n_clients and not stream_ok and not abort_http_for_fallback:
                         async_client = async_clients[ci]
                         for attempt in range(2):
                             try:
@@ -1551,28 +1603,36 @@ class LLMClient:
                                     model=phase_model,
                                     latency=latency,
                                     response_text=f"Tool call: {tool_name}" if is_tool_call else "".join(accumulated_response),
-                                    api_url=self._endpoint,
+                                    api_url=endpoint,
                                 )
                                 break
                             except Exception as e:
                                 if not is_openrouter_rate_limit_error(e):
                                     logger.warning(
-                                        "[LLMClient] stream_chat_plain model=%s failed: %s",
+                                        "[LLMClient] stream_chat_plain %s model=%s failed: %s",
+                                        prov_label,
                                         phase_model,
                                         redact_secrets_in_text(str(e)),
                                     )
+                                    if has_subsequent_fallback:
+                                        abort_http_for_fallback = True
+                                        break
                                     yield f"\n\n[Chat error: {redact_secrets_in_text(str(e))[:200]}]"
                                     return
-                                if gemini_instant_openrouter_failover():
+
+                                if gemini_instant_openrouter_failover() and has_subsequent_fallback:
                                     logger.info(
-                                        "[LLMClient] HTTP LLM 429 — skipping backoff, immediate Gemini failover"
+                                        "[LLMClient] %s LLM 429 — skipping backoff, immediate cascade failover",
+                                        prov_label
                                     )
-                                    abort_http_for_gemini = True
+                                    abort_http_for_fallback = True
                                     break
+
                                 wait = rate_limit_sleep_seconds(e, _429_same_delay)
                                 if attempt == 0:
                                     logger.warning(
-                                        "[LLMClient] rate limited (429) key=%s attempt=0, sleeping %.1fs then retry same key",
+                                        "[LLMClient] %s rate limited (429) key=%s attempt=0, sleeping %.1fs then retry same key",
+                                        prov_label,
                                         ci,
                                         wait,
                                     )
@@ -1581,13 +1641,19 @@ class LLMClient:
                                 if ci < n_clients - 1:
                                     extra = _429_key_delay
                                     logger.warning(
-                                        "[LLMClient] rate limited (429) key=%s after retry, sleeping %.1fs then other key",
+                                        "[LLMClient] %s rate limited (429) key=%s after retry, sleeping %.1fs then other key",
+                                        prov_label,
                                         ci,
                                         extra,
                                     )
                                     await asyncio.sleep(extra)
                                     break
-                                if self._llm_http_provider == "openrouter":
+
+                                if has_subsequent_fallback:
+                                    abort_http_for_fallback = True
+                                    break
+
+                                if prov_label == "OpenRouter":
                                     msg = (
                                         "[Chat error: OpenRouter rate limit (429) on all configured keys. "
                                         "Free models (e.g. `:free`) share strict upstream quotas — two API keys may both hit the same limit. "
@@ -1595,10 +1661,10 @@ class LLMClient:
                                         "or try another model.]"
                                     )
                                 else:
-                                    msg = "[Chat error: LLM API rate limit (429) on all configured keys. Wait and retry.]"
+                                    msg = f"[Chat error: {prov_label} API rate limit (429) on all configured keys. Wait and retry.]"
                                 yield f"\n\n{msg}\n"
                                 return
-                        if abort_http_for_gemini:
+                        if abort_http_for_fallback:
                             break
                         if stream_ok:
                             break
@@ -1648,8 +1714,8 @@ class LLMClient:
 
             if not stream_ok and not gemini_error_only:
                 yield (
-                    "\n\n[Chat error: All OpenRouter keys failed for this request. "
-                    "If you see 429, free-tier limits may apply — try a paid model or wait.]\n"
+                    "\n\n[Chat error: All configured model providers failed for this request. "
+                    "Please check your API key configuration or try again later.]\n"
                 )
                 return
 
