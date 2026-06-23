@@ -796,11 +796,42 @@ The LLM:         explain outputs, generate memos, debate bull/bear, summarize fi
     "drivers": { "supporting": ["..."], "detracting": ["..."] }
   },
 
+  "business": {                           // soft classifier; routes valuation methods
+    "business_type": "wide_moat_compounder",
+    "type_scores": { "wide_moat_compounder": 0.82, "profitable_growth": 0.61 },
+    "classification_confidence": 0.74,
+    "classification_reason": ["high ROIC", "positive durable FCF margin"]
+  },
+
   "valuation": {                          // stored anchors + live recompute
+    "status": "ok",
+    "business_type": "wide_moat_compounder",
     "base_price": 125.00, "live_price": 156.25,
+    "intrinsic_value_low": 132.00,
     "intrinsic_value_mid": 160.00,
+    "intrinsic_value_high": 196.00,
+    "method_breakdown": [
+      { "method": "owner_earnings_dcf", "weight": 0.69, "intrinsic_value_mid": 162.0 },
+      { "method": "peer_multiples", "weight": 0.31, "intrinsic_value_mid": 156.0 }
+    ],
+    "reverse_dcf": { "implied_growth": 0.09, "discount_rate": 0.09 },
+    "margin_of_safety_base": 0.28,
+    "valuation_score": 78.0,
     "dcf_upside_at_base": 0.28,           // 160/125 - 1
-    "dcf_upside_live": 0.024              // 160/156.25 - 1  (collapsed!)
+    "dcf_upside_live": 0.024,             // 160/156.25 - 1  (collapsed!)
+    "valuation_score_live": 52.4
+  },
+
+  "reconciliation": {                      // primary value-vs-price view
+    "quadrant": "undervalued_opportunity",
+    "valuation_score": 78.0,
+    "pricing_score": 65.0,
+    "reason": "Business value appears above market price, but pricing confirmation is limited."
+  },
+  "reconciliation_live": {
+    "quadrant": "fair_value",
+    "valuation_score": 52.4,
+    "reason": "Valuation and pricing are not sending a strong asymmetric signal."
   },
 
   "timeseries": {                         // TimesFM head: USD quantile bands as anchors
@@ -1016,15 +1047,21 @@ Reflex design:   intrinsic fixed -> DCF upside = 160/156.25 - 1 = +2.4%
       </table>
 
       <h3>Implemented in <code>backend/brain/</code></h3>
-      <pre><code>valuation.py       # DCF / reverse-DCF -> intrinsic_value range (anchors)
-snapshot_store.py  # BrainSnapshot (scores + anchors + base feature row) via StoragePort
-reflex.py          # LiveInputs, InvalidationPolicy, ReflexEngine:
-                   #   _adjusted_price (split + sanity), _invalidation_reasons,
-                   #   _recompute_row (price-sensitive features), model re-run,
-                   #   freshness->confidence, hysteresis verdict, waterfall, ledger hook
-agent_explainer.py # generate_reflex_explanation (grounded base->current narrative)
+      <pre><code>business_classifier.py # Soft business-type classifier + hysteresis; financials are routed away from normal DCF
+valuation.py           # DCF / reverse-DCF -> intrinsic_value range (anchors)
+sector_multiples.py    # Sector-median PE / EV-EBITDA / EV-sales helper for peer comps
+valuation_router.py    # Business-type-aware method routing:
+                       #   owner-earnings DCF, high-growth revenue DCF,
+                       #   peer multiples, financial residual-income, reverse DCF
+reconciliation.py       # Value-vs-price quadrant (primary view, not another magic final score)
+snapshot_store.py      # BrainSnapshot (scores + business/valuation anchors + base feature row) via StoragePort
+reflex.py              # LiveInputs, InvalidationPolicy, ReflexEngine:
+                       #   _adjusted_price (split + sanity), _invalidation_reasons,
+                       #   _recompute_row (price-sensitive features), model re-run,
+                       #   freshness->confidence, hysteresis verdict, waterfall, ledger hook
+agent_explainer.py     # generate_reflex_explanation (grounded base->current narrative)
 
-Tests: backend/tests/test_brain_{valuation,snapshot_store,reflex}.py  (offline)</code></pre>
+Tests: backend/tests/test_brain_{business_classifier,valuation_router,reconciliation,valuation,snapshot_store,reflex}.py  (offline)</code></pre>
     </section>
 
     <!-- ═══════════════════ PLAN B: DATA PIPELINE ═══════════════════ -->

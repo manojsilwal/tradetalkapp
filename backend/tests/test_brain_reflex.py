@@ -47,9 +47,15 @@ class TestReflex(unittest.TestCase):
         out = self.rfx.reflex(self.snap, LiveInputs(price=125.0 * 1.25,
                                                     as_of="2026-06-22T15:00:00Z"))
         self.assertEqual(out["status"], STATUS_LIVE)
+        self.assertIn("business_type", out["business"])
+        self.assertEqual(out["valuation"]["business_type"], self.snap.business_type)
+        self.assertTrue(out["valuation"]["method_breakdown"])
+        self.assertIsNotNone(out["reconciliation_live"])
         # DCF upside collapses because intrinsic is fixed and price rose.
         self.assertLess(out["valuation"]["dcf_upside_live"],
                         out["valuation"]["dcf_upside_at_base"])
+        self.assertLess(out["valuation"]["valuation_score_live"],
+                        out["valuation"]["valuation_score"])
         # Valuation attractiveness signal falls.
         self.assertLess(out["live"]["signal_scores"]["valuation"],
                         out["base"]["signal_scores"]["valuation"])
@@ -85,6 +91,11 @@ class TestReflex(unittest.TestCase):
         self.assertIsNone(out["live"])
         self.assertTrue(out["recompute_requested"])
         self.assertTrue(any("guidance_cut" in r for r in out["reasons"]))
+
+    def test_positioning_event_does_not_invalidate(self):
+        out = self.rfx.reflex(self.snap, LiveInputs(price=126.0, event_flags=["analyst_upgrade"],
+                                                    as_of="2026-06-22T15:00:00Z"))
+        self.assertEqual(out["status"], STATUS_LIVE)
 
     def test_rate_move_invalidates_dcf_anchor(self):
         out = self.rfx.reflex(self.snap, LiveInputs(price=126.0, rate_move_bps=80,

@@ -15,9 +15,14 @@ from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional
 
 from . import finance_math as fm
+from . import rule_baseline
 from . import features as feat
 from . import timeseries as ts
 from . import valuation as val
+from . import business_classifier as bc
+from . import reconciliation as rec
+from . import valuation_router as vr
+from . import SIGNAL_GROUPS
 from .inference import InferenceEngine
 from .ports.base import StoragePort
 from .ports.factory import get_storage
@@ -64,6 +69,24 @@ class BrainSnapshot:
     timesfm_model_version: Optional[str] = None
     timeseries_forecast: Optional[Dict] = None
 
+    # --- Business valuation intelligence (value != price) -------------------
+    business_type: Optional[str] = None
+    business_type_scores: Dict[str, float] = field(default_factory=dict)
+    business_classification_confidence: Optional[float] = None
+    business_classification_reason: List[str] = field(default_factory=list)
+    valuation_status: Optional[str] = None
+    valuation_method_breakdown: List[Dict] = field(default_factory=list)
+    margin_of_safety_base: Optional[float] = None
+    valuation_score: Optional[float] = None
+    reverse_dcf: Optional[Dict] = None
+    reconciliation: Optional[Dict] = None
+    shares_outstanding: Optional[float] = None
+    net_debt: Optional[float] = None
+    fcf_ttm: Optional[float] = None
+    revenue_ttm: Optional[float] = None
+    net_income_ttm: Optional[float] = None
+    book_value: Optional[float] = None
+
     def to_dict(self) -> Dict:
         return asdict(self)
 
@@ -102,6 +125,9 @@ def build_base_snapshot(engine: InferenceEngine, ticker: str, as_of_date: str,
                         dcf_inputs: Optional[Dict] = None,
                         timesfm_bands: Optional[List[Dict]] = None,
                         timesfm_model_version: Optional[str] = None,
+                        sector_medians: Optional[Dict[str, Dict[str, float]]] = None,
+                        pricing_snapshot: Optional[Dict] = None,
+                        prior_business_type: Optional[str] = None,
                         sector: Optional[str] = None,
                         fundamentals_as_of: Optional[str] = None,
                         tail_len: int = 260) -> BrainSnapshot:
@@ -130,17 +156,41 @@ def build_base_snapshot(engine: InferenceEngine, ticker: str, as_of_date: str,
     dcf_up = None
     discount_rate = None
     equity_to_ev = 1.0
+    enriched_fundamentals = dict(fundamentals or {})
+    if sector and not enriched_fundamentals.get("sector"):
+        enriched_fundamentals["sector"] = sector
     if dcf_inputs:
-        rng = val.intrinsic_range(
-            fcf0=dcf_inputs["fcf0"], growth=dcf_inputs["growth"],
-            years=dcf_inputs.get("years", 5),
-            terminal_growth=dcf_inputs.get("terminal_growth", 0.025),
-            discount_rate=dcf_inputs.get("discount_rate", 0.09),
-        )
-        intrinsic = rng
-        discount_rate = dcf_inputs.get("discount_rate", 0.09)
+        # Backward-compatible bridge from the original DCF-only snapshot path to
+        # the new valuation router.
+        enriched_fundamentals.setdefault("fcf_per_share", dcf_inputs.get("fcf0"))
+        enriched_fundamentals.setdefault("revenue_growth_yoy", dcf_inputs.get("growth"))
+        enriched_fundamentals.setdefault("fcf_growth", dcf_inputs.get("growth"))
+        enriched_fundamentals.setdefault("valuation_years", dcf_inputs.get("years", 5))
+        enriched_fundamentals.setdefault("terminal_growth", dcf_inputs.get("terminal_growth", 0.025))
+        enriched_fundamentals.setdefault("discount_rate", dcf_inputs.get("discount_rate", 0.09))
         equity_to_ev = float(dcf_inputs.get("equity_to_ev", 1.0))
-        dcf_up = val.dcf_upside(rng["intrinsic_value_mid"], base_price)
+
+    classification = bc.classify_business(
+        enriched_fundamentals, sector=sector, prior_type=prior_business_type
+    )
+    valuation_result = vr.value_company(
+        enriched_fundamentals,
+        classification["business_type"],
+        current_price=base_price,
+        sector_medians=sector_medians,
+    )
+    if valuation_result.get("status") == "ok":
+        intrinsic = {
+            "intrinsic_value_low": valuation_result["intrinsic_value_low"],
+            "intrinsic_value_mid": valuation_result["intrinsic_value_mid"],
+            "intrinsic_value_high": valuation_result["intrinsic_value_high"],
+        }
+        dcf_up = val.dcf_upside(intrinsic["intrinsic_value_mid"], base_price)
+        _apply_valuation_score(base_contract, valuation_result.get("valuation_score"))
+    discount_rate = enriched_fundamentals.get("discount_rate")
+    recon = rec.reconcile_value_price(
+        valuation_result, pricing_snapshot, risk_score=base_contract.get("risk_score")
+    )
 
     return BrainSnapshot(
         ticker=ticker, as_of_date=as_of_date, computed_at=_now_iso(),
@@ -161,4 +211,51 @@ def build_base_snapshot(engine: InferenceEngine, ticker: str, as_of_date: str,
         timesfm_model_version=timesfm_model_version,
         timeseries_forecast=ts.forecast_block(timesfm_bands, base_price,
                                               timesfm_model_version) if timesfm_bands else None,
+        business_type=classification["business_type"],
+        business_type_scores=classification["type_scores"],
+        business_classification_confidence=classification["classification_confidence"],
+        business_classification_reason=classification["classification_reason"],
+        valuation_status=valuation_result.get("status"),
+        valuation_method_breakdown=valuation_result.get("method_breakdown", []),
+        margin_of_safety_base=valuation_result.get("margin_of_safety_base"),
+        valuation_score=valuation_result.get("valuation_score"),
+        reverse_dcf=valuation_result.get("reverse_dcf"),
+        reconciliation=recon,
+        shares_outstanding=_maybe_float(enriched_fundamentals.get("shares_outstanding")),
+        net_debt=_net_debt(enriched_fundamentals),
+        fcf_ttm=_maybe_float(enriched_fundamentals.get("fcf_ttm") or enriched_fundamentals.get("free_cash_flow")),
+        revenue_ttm=_maybe_float(enriched_fundamentals.get("revenue_ttm") or enriched_fundamentals.get("total_revenue")),
+        net_income_ttm=_maybe_float(enriched_fundamentals.get("net_income_ttm") or enriched_fundamentals.get("net_income")),
+        book_value=_maybe_float(enriched_fundamentals.get("book_value") or enriched_fundamentals.get("book_value_per_share")),
     )
+
+
+def _maybe_float(v) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _net_debt(fundamentals: Dict) -> Optional[float]:
+    debt = _maybe_float(fundamentals.get("total_debt"))
+    cash = _maybe_float(fundamentals.get("cash") or fundamentals.get("total_cash"))
+    if debt is None and cash is None:
+        return None
+    return float(debt or 0.0) - float(cash or 0.0)
+
+
+def _apply_valuation_score(contract: Dict, valuation_score: Optional[float]) -> None:
+    """Override the UI valuation signal without changing model probability."""
+    if valuation_score is None:
+        return
+    signal_scores = contract.setdefault("signal_scores", {})
+    signal_scores["valuation"] = round(float(valuation_score), 2)
+    composite = sum(
+        rule_baseline.COMPOSITE_WEIGHTS[g] * signal_scores.get(g, 50.0)
+        for g in SIGNAL_GROUPS
+    )
+    signal_scores["composite_score"] = round(composite, 2)
+    contract["composite_score"] = round(composite, 2)

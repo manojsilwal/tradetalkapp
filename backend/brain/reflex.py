@@ -32,8 +32,9 @@ from . import finance_math as fm
 from . import features as feat
 from . import timeseries as ts
 from . import valuation as val
+from . import reconciliation as rec
 from .inference import InferenceEngine
-from .snapshot_store import BrainSnapshot
+from .snapshot_store import BrainSnapshot, _apply_valuation_score
 
 
 # --- Live inputs & policy ---------------------------------------------------
@@ -54,7 +55,8 @@ class InvalidationPolicy:
     # Anchor-breaking thresholds (NOT triggered by price alone).
     invalidating_event_types: frozenset = frozenset({
         "earnings", "guidance_cut", "guidance_change", "8-K_material",
-        "mna", "bankruptcy", "restatement",
+        "mna", "bankruptcy", "restatement", "fraud", "going_concern",
+        "sec_investigation", "accounting_issue",
     })
     max_rate_move_bps: float = 50.0
     max_age_hours: float = 168.0           # 7 days -> stale, queue recompute
@@ -272,9 +274,24 @@ class ReflexEngine:
             "valuation": {
                 "base_price": snapshot.base_price,
                 "live_price": round(adj_price, 4),
+                "status": snapshot.valuation_status,
+                "business_type": snapshot.business_type,
+                "intrinsic_value_low": snapshot.intrinsic_value_low,
                 "intrinsic_value_mid": snapshot.intrinsic_value_mid,
+                "intrinsic_value_high": snapshot.intrinsic_value_high,
                 "dcf_upside_at_base": snapshot.dcf_upside_at_base,
+                "margin_of_safety_base": snapshot.margin_of_safety_base,
+                "valuation_score": snapshot.valuation_score,
+                "method_breakdown": snapshot.valuation_method_breakdown,
+                "reverse_dcf": snapshot.reverse_dcf,
             },
+            "business": {
+                "business_type": snapshot.business_type,
+                "type_scores": snapshot.business_type_scores,
+                "classification_confidence": snapshot.business_classification_confidence,
+                "classification_reason": snapshot.business_classification_reason,
+            },
+            "reconciliation": snapshot.reconciliation,
             "disclaimer": DISCLAIMER,
         }
 
@@ -305,6 +322,8 @@ class ReflexEngine:
                                                     now_iso or snapshot.as_of_date)
         dcf_live = val.dcf_upside(snapshot.intrinsic_value_mid, adj_price) \
             if snapshot.intrinsic_value_mid is not None else None
+        live_valuation_score = None if dcf_live is None else max(0.0, min(100.0, 50.0 + dcf_live * 100.0))
+        _apply_valuation_score(live_contract, live_valuation_score)
         # TimesFM forward forecast recomputed vs the live price (bands fixed).
         tsfm_live_block = ts.forecast_block(snapshot.timesfm_bands, adj_price,
                                             snapshot.timesfm_model_version) \
@@ -331,6 +350,17 @@ class ReflexEngine:
             "drivers": live_contract["drivers"],
         }
         result["valuation"]["dcf_upside_live"] = round(dcf_live, 4) if dcf_live is not None else None
+        result["valuation"]["valuation_score_live"] = round(live_valuation_score, 2) \
+            if live_valuation_score is not None else None
+        result["reconciliation_live"] = rec.reconcile_value_price(
+            {
+                "status": snapshot.valuation_status,
+                "margin_of_safety_base": dcf_live,
+                "valuation_score": live_valuation_score,
+            },
+            None,
+            risk_score=live_contract.get("risk_score"),
+        )
         result["timeseries"] = {
             "base": snapshot.timeseries_forecast,
             "live": tsfm_live_block,

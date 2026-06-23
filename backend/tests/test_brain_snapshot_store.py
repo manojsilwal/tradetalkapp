@@ -42,6 +42,13 @@ class TestSnapshotStore(unittest.TestCase):
         self.assertIsNotNone(snap.dcf_upside_at_base)
         self.assertAlmostEqual(snap.discount_rate, 0.09)
         self.assertEqual(snap.sector, "Tech")
+        self.assertIsNotNone(snap.business_type)
+        self.assertEqual(snap.valuation_status, "ok")
+        self.assertTrue(snap.valuation_method_breakdown)
+        self.assertIsNotNone(snap.margin_of_safety_base)
+        self.assertIsNotNone(snap.valuation_score)
+        self.assertIsNotNone(snap.reverse_dcf)
+        self.assertIsNotNone(snap.reconciliation)
         # base contract carries the non-negotiable stamps
         self.assertEqual(snap.base_contract["model_version"], "v1")
         self.assertIn("disclaimer", snap.base_contract)
@@ -58,12 +65,27 @@ class TestSnapshotStore(unittest.TestCase):
         self.assertEqual(loaded.intrinsic_value_mid, snap.intrinsic_value_mid)
         self.assertEqual(loaded.price_tail, snap.price_tail)
         self.assertEqual(loaded.base_feature_row, snap.base_feature_row)
+        self.assertEqual(loaded.business_type, snap.business_type)
+        self.assertEqual(loaded.valuation_method_breakdown, snap.valuation_method_breakdown)
 
     def test_no_dcf_inputs_leaves_valuation_none(self):
         snap = build_base_snapshot(self.engine, "X", "2026-06-21", self.prices,
                                    self.sector, self.fund)
         self.assertIsNone(snap.intrinsic_value_mid)
         self.assertIsNone(snap.dcf_upside_at_base)
+        self.assertEqual(snap.valuation_status, "insufficient_data")
+
+    def test_router_uses_fundamentals_without_legacy_dcf_inputs(self):
+        fund = dict(self.fund)
+        fund.update({"fcf_per_share": 5.0, "fcf_growth": 0.08,
+                     "discount_rate": 0.09, "market_cap": 250e9,
+                     "fcf_margin": 0.22, "gross_margin": 0.55})
+        snap = build_base_snapshot(self.engine, "MSFT", "2026-06-21", self.prices,
+                                   self.sector, fund, sector="Tech")
+        self.assertEqual(snap.valuation_status, "ok")
+        self.assertIsNotNone(snap.intrinsic_value_mid)
+        self.assertTrue(any(m["method"] == "owner_earnings_dcf"
+                            for m in snap.valuation_method_breakdown))
 
     def test_timesfm_bands_anchor_and_features(self):
         bands = [{"horizon": "63d", "q10": 118.0, "q50": 140.0, "q90": 165.0}]
