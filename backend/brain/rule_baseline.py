@@ -1,0 +1,132 @@
+"""Transparent rule-based composite score (the floor any model must beat).
+
+Produces 0-100 scores per signal group plus a weighted composite, from a
+cross-section of feature rows (percentile-ranked within the cross-section). This
+is intentionally simple and explainable; if a trained model cannot beat it under
+purged CV + backtest, the model is not trusted (docs Rule 07).
+"""
+from __future__ import annotations
+
+from typing import Dict, List, Optional
+
+import numpy as np
+
+from . import SIGNAL_GROUPS
+
+# Composite weights (sum to 1.0).
+COMPOSITE_WEIGHTS = {
+    "momentum": 0.18,
+    "quality": 0.18,
+    "valuation": 0.14,
+    "capital_flow": 0.12,
+    "filing_intelligence": 0.10,
+    "sentiment": 0.08,
+    "risk": 0.10,
+    "timeseries": 0.10,
+}
+
+# Each group is a list of (feature, weight, invert). ``invert`` means lower raw
+# value is better (e.g. volatility, debt) so we use 1 - percentile.
+_GROUP_DEFS = {
+    "momentum": [
+        ("return_3m", 0.30, False),
+        ("return_6m", 0.25, False),
+        ("return_12m", 0.20, False),
+        ("relative_strength_3m", 0.15, False),
+        ("price_vs_200dma", 0.10, False),
+    ],
+    "quality": [
+        ("roic", 0.25, False),
+        ("operating_margin", 0.20, False),
+        ("fcf_margin", 0.20, False),
+        ("revenue_growth_yoy", 0.15, False),
+        ("net_margin", 0.10, False),
+        ("debt_to_equity", 0.10, True),
+    ],
+    "valuation": [
+        ("fcf_yield", 0.35, False),
+        ("pe_ratio", 0.30, True),
+        ("ev_ebitda", 0.20, True),
+        ("valuation_percentile_5y", 0.15, True),
+    ],
+    "capital_flow": [
+        ("capital_flow_score", 0.6, False),
+        ("institutional_accumulation_score", 0.4, False),
+    ],
+    "filing_intelligence": [
+        ("new_product_expansion_score", 0.4, False),
+        ("management_tone_score", 0.3, False),
+        ("filing_risk_score", 0.3, True),
+    ],
+    "sentiment": [
+        ("sentiment_score", 1.0, False),
+    ],
+    "timeseries": [
+        # TimesFM forward view: higher expected return is better; a wider
+        # (more uncertain) forecast band is worse.
+        ("tsfm_expected_return", 0.7, False),
+        ("tsfm_band_width", 0.3, True),
+    ],
+    "risk": [
+        ("volatility_3m", 0.35, True),
+        # max_drawdown_6m is negative; a value closer to 0 (shallower) is safer,
+        # so higher raw value is better -> do NOT invert.
+        ("max_drawdown_6m", 0.25, False),
+        ("filing_risk_score", 0.20, True),
+        ("customer_concentration_score", 0.20, True),
+    ],
+}
+
+
+def _percentile_matrix(rows: List[Dict[str, Optional[float]]], feature: str) -> np.ndarray:
+    """Cross-sectional percentile (0-1) of ``feature`` across rows; NaN where missing.
+
+    ``max_drawdown_6m`` is negative (closer to 0 is better); percentile handles it
+    naturally because we percentile the raw value then optionally invert.
+    """
+    vals = np.array([
+        (r.get(feature) if r.get(feature) is not None else np.nan) for r in rows
+    ], dtype=float)
+    out = np.full(vals.shape, np.nan)
+    mask = ~np.isnan(vals)
+    if mask.sum() == 0:
+        return out
+    valid = vals[mask]
+    # percentile rank of each valid value within the valid population
+    order = valid.argsort()
+    ranks = np.empty_like(order, dtype=float)
+    ranks[order] = np.arange(1, valid.size + 1)
+    pct = ranks / valid.size
+    out[mask] = pct
+    return out
+
+
+def score_cross_section(rows: List[Dict[str, Optional[float]]]) -> List[Dict[str, float]]:
+    """Return per-row dict of {group: 0-100, ..., 'composite_score': 0-100}."""
+    n = len(rows)
+    if n == 0:
+        return []
+
+    # Precompute percentile vectors per feature used by any group.
+    feats = {f for defs in _GROUP_DEFS.values() for (f, _, _) in defs}
+    pct = {f: _percentile_matrix(rows, f) for f in feats}
+
+    results: List[Dict[str, float]] = [dict() for _ in range(n)]
+    for group, defs in _GROUP_DEFS.items():
+        for i in range(n):
+            num = 0.0
+            wsum = 0.0
+            for feature, w, invert in defs:
+                v = pct[feature][i]
+                if np.isnan(v):
+                    continue
+                score = (1.0 - v) if invert else v
+                num += w * score
+                wsum += w
+            group_score = (num / wsum) if wsum > 0 else 0.5  # neutral if no data
+            results[i][group] = round(100.0 * group_score, 2)
+
+    for i in range(n):
+        composite = sum(COMPOSITE_WEIGHTS[g] * results[i].get(g, 50.0) for g in SIGNAL_GROUPS)
+        results[i]["composite_score"] = round(composite, 2)
+    return results
