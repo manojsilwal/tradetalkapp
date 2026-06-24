@@ -27,6 +27,11 @@ def serving_enabled() -> bool:
     return os.environ.get("BRAIN_SERVE_ENABLE", "0") == "1"
 
 
+def investment_surface_enabled() -> bool:
+    """The long-horizon investment surface requires brain serving + its own flag."""
+    return serving_enabled() and os.environ.get("INVESTMENT_SURFACE", "0") == "1"
+
+
 def _engine(registry: ModelRegistry, model_name: str, version: str) -> InferenceEngine:
     key = f"{model_name}-{version}"
     eng = _engine_cache.get(key)
@@ -89,6 +94,25 @@ def serve_ticker(ticker: str, *, as_of_date: Optional[str] = None,
     result = reflex_engine.reflex(snapshot, LiveInputs(price=float(price)))
     result["price_source"] = source
     return result
+
+
+def serve_investment_analysis(ticker: str, *, as_of_date: Optional[str] = None,
+                              knowledge_store: Any = None, user_id: str = "",
+                              emit: bool = False) -> Dict:
+    """Long-horizon investment surface: run the brain, then re-frame for 1-5y.
+
+    Reuses :func:`serve_ticker` (snapshot + Reflex live re-inference) and wraps it
+    with :mod:`backend.brain.investment_stance`. ``emit`` defaults to False so the
+    investment surface does not double-emit the brain verdict that ``serve_ticker``
+    already records at the 63-day learning horizon.
+    """
+    base = serve_ticker(ticker, as_of_date=as_of_date, knowledge_store=knowledge_store,
+                        user_id=user_id, emit=emit)
+    status = base.get("status")
+    if status in ("no_snapshot", "error") or not status:
+        return base
+    from .investment_stance import build_investment_analysis
+    return build_investment_analysis(base)
 
 
 def _live_price(ticker: str):
