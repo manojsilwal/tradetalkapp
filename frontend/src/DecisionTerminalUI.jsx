@@ -191,6 +191,7 @@ export default function DecisionTerminalUI() {
   const q = payload?.quality;
   const z = payload?.verdict;
   const r = payload?.roadmap;
+  const brain = payload?.brain;
   const hasData = !!payload;
 
   const pmFill = useMemo(
@@ -381,6 +382,62 @@ export default function DecisionTerminalUI() {
                       Debate {z.debate_verdict} · Swarm {z.swarm_verdict}
                     </span>
                     {z.fusion_note && <p>{z.fusion_note}</p>}
+                  </div>
+                )}
+                {hasData && brain && (
+                  <div style={{
+                    marginTop: 10,
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    background: 'rgba(99,102,241,0.1)',
+                    border: '1px solid rgba(99,102,241,0.3)',
+                    fontSize: '0.78rem',
+                    color: '#c7d2fe',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '6px 16px',
+                    alignItems: 'center',
+                  }}>
+                    <span style={{ fontWeight: 700, color: '#818cf8' }}>Brain Engine</span>
+                    {brain.outperform_probability != null && (
+                      <span>
+                        Outperform prob: <strong style={{ color: '#a5b4fc' }}>
+                          {(brain.outperform_probability * 100).toFixed(1)}%
+                        </strong>
+                      </span>
+                    )}
+                    {brain.composite_score != null && (
+                      <span>
+                        Score: <strong style={{ color: '#a5b4fc' }}>
+                          {brain.composite_score.toFixed(3)}
+                        </strong>
+                      </span>
+                    )}
+                    {brain.confidence_score != null && (
+                      <span>
+                        Confidence: <strong>{(brain.confidence_score * 100).toFixed(0)}%</strong>
+                      </span>
+                    )}
+                    {brain.live_price != null && (
+                      <span>
+                        Live: <strong>${brain.live_price.toFixed(2)}</strong>
+                        {brain.price_source && (
+                          <span style={{ opacity: 0.6, marginLeft: 4 }}>({brain.price_source})</span>
+                        )}
+                      </span>
+                    )}
+                    {brain.status && (
+                      <span style={{
+                        padding: '1px 7px',
+                        borderRadius: 6,
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        background: brain.status === 'LIVE' ? 'rgba(16,185,129,0.2)' : 'rgba(148,163,184,0.15)',
+                        color: brain.status === 'LIVE' ? '#34d399' : '#94a3b8',
+                      }}>
+                        {brain.status}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

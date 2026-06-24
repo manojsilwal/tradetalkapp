@@ -92,10 +92,15 @@ def serve_ticker(ticker: str, *, as_of_date: Optional[str] = None,
 
 
 def _live_price(ticker: str):
+    """Return (price, source_str) using the 60-second TTL spot cache."""
     try:
-        from ..connectors.spot import get_spot_with_freshness
-        price, _freshness = get_spot_with_freshness(ticker)
-        return (float(price) if price else None), "spot"
+        from ..connectors.spot import resolve_spot
+        q = resolve_spot(ticker)
+        if q is not None and q.price:
+            src = q.source or "spot"
+            src = src if not q.degraded else f"{src}(degraded)"
+            return float(q.price), src
+        return None, "unavailable"
     except Exception as e:  # noqa: BLE001
         logger.debug("[brain.serving] spot fetch failed for %s: %s", ticker, e)
         return None, "unavailable"

@@ -232,10 +232,12 @@ async def _execute_swarm_trace(
 
         # Brain cutover: the brain owns the consensus verdict + a grounded memo;
         # per-factor cards are preserved for display. Flag-gated, fully fallback.
+        _brain_verdict_block = None
         try:
             from ..brain.cutover import aserve_for_surface
             from ..brain import adapters as _ba
             from ..brain.memo import build_memo
+            from ..schemas import BrainVerdict
             _br = await aserve_for_surface(ticker.upper(), "swarm",
                                            knowledge_store=knowledge_store)
             if _br:
@@ -244,6 +246,20 @@ async def _execute_swarm_trace(
                                  "SELL": -1, "STRONG SELL": -2}.get(global_verdict, 0)
                 _memo = build_memo(_br)
                 consensus_rationale = _memo["summary"]
+                # Surface the live-blended brain block so the frontend can render
+                # outperform_probability, signal_scores, and the waterfall chart.
+                _live = _br.get("live") or _br.get("base") or {}
+                _brain_verdict_block = BrainVerdict(
+                    outperform_probability=_live.get("outperform_probability"),
+                    composite_score=_live.get("composite_score"),
+                    recommendation=_live.get("recommendation"),
+                    confidence_score=_br.get("confidence_score"),
+                    live_price=_live.get("live_price"),
+                    price_source=_br.get("price_source"),
+                    signal_scores=_live.get("signal_scores"),
+                    status=_br.get("status"),
+                    waterfall=_br.get("waterfall"),
+                )
         except Exception as _e:  # noqa: BLE001 - keep legacy synthesis
             print(f"[BrainCutover] swarm skipped: {_e}")
 
@@ -254,6 +270,7 @@ async def _execute_swarm_trace(
             global_verdict=global_verdict,
             confidence=avg_confidence,
             consensus_rationale=consensus_rationale,
+            brain=_brain_verdict_block,
             factors={
                 "short_interest": short_res,
                 "social_sentiment": social_res,

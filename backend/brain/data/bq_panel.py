@@ -1,5 +1,11 @@
 """Build brain feature rows and training panels from the BigQuery data lake.
 
+Fundamentals (ROIC, PE, EV/EBITDA, FCF yield, margins, etc.) are loaded from
+the connectors / yfinance cache so the brain model sees the full feature set,
+not just price-derived momentum+risk. This runs once per nightly pipeline run
+and is expensive, so results are cached on the module for reuse across all tickers
+processed in a single job run.
+
 Reads ``daily_prices`` (the shared ingestion substrate) via the existing
 ``mcp_server.backend`` dual backend (BigQuery in prod, DuckDB locally) and
 assembles:
@@ -26,6 +32,82 @@ from .. import labels as lbl
 logger = logging.getLogger(__name__)
 
 _BENCHMARK_CANDIDATES = ("SPY", "^GSPC", "VOO", "IVV")
+
+# Module-level fundamentals cache — populated once per job run by
+# load_fundamentals_bulk() and reused across all tickers.
+_fundamentals_cache: Optional[Dict[str, Dict]] = None
+
+
+def _map_yf_fundamentals(info: Dict) -> Dict:
+    """Map yfinance .info dict → brain feature passthrough keys."""
+    def _pct(v):
+        return float(v) * 100.0 if v is not None else None
+
+    trailing_pe = info.get("trailingPE")
+    forward_pe = info.get("forwardPE")
+    pe = trailing_pe if trailing_pe is not None else forward_pe
+    ev = info.get("enterpriseValue") or 0
+    ebitda = info.get("ebitda") or 0
+    ev_ebitda = (ev / ebitda) if (ev and ebitda and ebitda > 0) else None
+    market_cap = info.get("marketCap") or 0
+    fcf = info.get("freeCashflow") or 0
+    fcf_yield = (fcf / market_cap) if (fcf and market_cap > 0) else None
+    rev = info.get("totalRevenue") or 0
+    fcf_margin = (fcf / rev) if (fcf and rev > 0) else None
+    return {
+        "revenue_growth_yoy": _pct(info.get("revenueGrowth")),
+        "gross_margin": _pct(info.get("grossMargins")),
+        "operating_margin": _pct(info.get("operatingMargins")),
+        "net_margin": _pct(info.get("profitMargins")),
+        "fcf_margin": fcf_margin,
+        "roic": _pct(info.get("returnOnAssets")),  # best proxy from yf.info
+        "debt_to_equity": info.get("debtToEquity"),
+        "fcf_yield": fcf_yield,
+        "pe_ratio": pe,
+        "ev_ebitda": ev_ebitda,
+    }
+
+
+def load_fundamentals_bulk(tickers: Optional[Sequence[str]] = None,
+                           max_workers: int = 8) -> Dict[str, Dict]:
+    """Return {ticker: fundamentals_dict} for all tickers in one batched yfinance call.
+
+    Cached at the module level so the nightly job calls this once and reuses it.
+    Falls back gracefully to an empty dict per ticker on any per-ticker error.
+    """
+    global _fundamentals_cache
+    if _fundamentals_cache is not None:
+        return _fundamentals_cache
+
+    if not tickers:
+        _fundamentals_cache = {}
+        return _fundamentals_cache
+
+    import concurrent.futures
+    result: Dict[str, Dict] = {}
+
+    def _fetch_one(sym: str) -> tuple:
+        try:
+            import yfinance as yf
+            info = yf.Ticker(sym).info or {}
+            return sym, _map_yf_fundamentals(info)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[bq_panel] fundamentals failed for %s: %s", sym, e)
+            return sym, {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for sym, fund in pool.map(_fetch_one, tickers):
+            result[sym] = fund
+
+    _fundamentals_cache = result
+    logger.info("[bq_panel] loaded fundamentals for %d tickers", len(result))
+    return result
+
+
+def reset_fundamentals_cache() -> None:
+    """Call between job runs to force a fresh fundamentals load."""
+    global _fundamentals_cache
+    _fundamentals_cache = None
 
 
 def _query(sql: str) -> List[Dict]:
@@ -97,7 +179,8 @@ def _benchmark_for(symbol_dates: Sequence[str], series: Dict[str, Dict[str, list
 def build_inference_rows(lookback_days: int = 420,
                          symbols: Optional[Sequence[str]] = None,
                          min_history: int = 130,
-                         fundamentals_by_symbol: Optional[Dict[str, Dict]] = None
+                         fundamentals_by_symbol: Optional[Dict[str, Dict]] = None,
+                         load_fundamentals: bool = True,
                          ) -> List[Dict]:
     """Per-ticker payloads for snapshotting as of the latest available date.
 
@@ -108,6 +191,8 @@ def build_inference_rows(lookback_days: int = 420,
     if not series:
         return []
     index_by_date = _index_by_date(series)
+    if fundamentals_by_symbol is None and load_fundamentals:
+        fundamentals_by_symbol = load_fundamentals_bulk(list(series.keys()))
     fundamentals_by_symbol = fundamentals_by_symbol or {}
 
     out: List[Dict] = []

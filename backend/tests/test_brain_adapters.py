@@ -60,6 +60,13 @@ class TestAdapters(unittest.TestCase):
         v = adapters.to_daily_brief_verdict(_result(0.30))
         self.assertEqual(v["verdict"], "Sell")
         self.assertEqual(v["verdict_tier"], "brain")
+        # Numeric blend fields must be present so the frontend can show scores.
+        self.assertIsNotNone(v["outperform_probability"])
+        self.assertIsNotNone(v["composite_score"])
+        self.assertIsNotNone(v["signal_scores"])
+        self.assertAlmostEqual(v["outperform_probability"], 0.30)
+        self.assertEqual(v["composite_score"], 70.0)
+        self.assertEqual(v["confidence_score"], 0.7)
 
     def test_decision_terminal_headline(self):
         h = adapters.to_decision_terminal_headline(_result(0.80))

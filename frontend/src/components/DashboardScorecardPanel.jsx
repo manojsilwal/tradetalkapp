@@ -192,7 +192,7 @@ function mergeScorecardData(apiRow, embeddedSummary) {
   };
 }
 
-export default function DashboardScorecardPanel({ data, embeddedSummary, ticker, loading, error }) {
+export default function DashboardScorecardPanel({ data, embeddedSummary, ticker, loading, error, brain }) {
   const navigate = useNavigate();
   const row = mergeScorecardData(data, embeddedSummary);
   const isPreview = row && row.is_comparative === false;
@@ -200,6 +200,7 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
     ? PREVIEW_NEUTRAL
     : (SIGNAL_COLORS_COMPARATIVE[row?.signal] || PREVIEW_NEUTRAL);
   const verdictColor = isPreview ? PREVIEW_NEUTRAL : signalColor;
+  const brainActive = !!(brain?.outperform_probability != null || brain?.composite_score != null);
 
   return (
     <section className="dt-panel" data-testid="dashboard-scorecard" style={{ gridColumn: '1 / -1' }}>
@@ -262,10 +263,12 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
               },
               {
                 label: 'Ratio',
-                displayLabel: 'Reward-to-Risk Ratio',
+                displayLabel: brainActive ? 'Outperform Probability' : 'Reward-to-Risk Ratio',
                 value: formatNum(row.ratio),
                 bold: true,
-                tooltip: 'Reward divided by Risk. A ratio above 1.0 indicates that the potential reward outweighs the risk.'
+                tooltip: brainActive
+                  ? 'Brain Engine score (0–1): probability this ticker outperforms the equal-weight market index over the next quarter. Replaces the legacy Sharpe-style ratio when the Brain Engine is active.'
+                  : 'Reward divided by Risk. A ratio above 1.0 indicates that the potential reward outweighs the risk.'
               },
               {
                 label: 'SITG boost',
@@ -432,6 +435,58 @@ export default function DashboardScorecardPanel({ data, embeddedSummary, ticker,
                 <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.5, color: '#e2e8f0' }}>
                   {row.one_line_reason}
                 </p>
+              )}
+            </div>
+          )}
+
+          {brainActive && (
+            <div style={{
+              gridColumn: '1 / -1',
+              marginTop: 8,
+              padding: '8px 14px',
+              borderRadius: 8,
+              background: 'rgba(99,102,241,0.08)',
+              border: '1px solid rgba(99,102,241,0.22)',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '4px 16px',
+              alignItems: 'center',
+              fontSize: '0.77rem',
+              color: '#c7d2fe',
+            }}>
+              <span style={{ fontWeight: 700, color: '#818cf8' }}>Brain Engine</span>
+              {brain.outperform_probability != null && (
+                <span>
+                  Outperform: <strong style={{ color: '#a5b4fc' }}>
+                    {(brain.outperform_probability * 100).toFixed(1)}%
+                  </strong>
+                </span>
+              )}
+              {brain.composite_score != null && (
+                <span>Score: <strong style={{ color: '#a5b4fc' }}>{brain.composite_score.toFixed(3)}</strong></span>
+              )}
+              {brain.confidence_score != null && (
+                <span>Confidence: <strong>{(brain.confidence_score * 100).toFixed(0)}%</strong></span>
+              )}
+              {brain.live_price != null && (
+                <span>
+                  Live price: <strong>${brain.live_price.toFixed(2)}</strong>
+                  {brain.price_source && (
+                    <span style={{ opacity: 0.55, marginLeft: 4 }}>({brain.price_source})</span>
+                  )}
+                </span>
+              )}
+              {brain.status && (
+                <span style={{
+                  padding: '1px 7px',
+                  borderRadius: 6,
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  background: brain.status === 'LIVE' ? 'rgba(16,185,129,0.18)' : 'rgba(148,163,184,0.12)',
+                  color: brain.status === 'LIVE' ? '#34d399' : '#94a3b8',
+                }}>
+                  {brain.status}
+                </span>
               )}
             </div>
           )}

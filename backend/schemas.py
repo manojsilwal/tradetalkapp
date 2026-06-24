@@ -70,6 +70,52 @@ class FactorResult(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional debug or trace info")
     history: List[Dict[str, str]] = Field(default_factory=list, description="Debate trace between Analyst and QA")
 
+class BrainVerdict(BaseModel):
+    """Slim brain block surfaced on trace/debate/decision-terminal for UI display.
+
+    Populated only when BRAIN_SERVE_ENABLE=1 and a snapshot exists.
+    All fields are optional so the schema is forward-compatible; consumers
+    must treat None as 'brain not available for this request'.
+    """
+
+    outperform_probability: Optional[float] = Field(
+        default=None,
+        description="0-1 probability the ticker outperforms the equal-weight market index.",
+    )
+    composite_score: Optional[float] = Field(
+        default=None,
+        description="0-1 aggregate brain model score.",
+    )
+    recommendation: Optional[str] = Field(
+        default=None,
+        description="Strong Buy / Buy / Hold / Sell / Strong Sell",
+    )
+    confidence_score: Optional[float] = Field(
+        default=None,
+        description="Live-adjusted model confidence (0-1).",
+    )
+    live_price: Optional[float] = Field(
+        default=None,
+        description="Live spot price used for Reflex re-inference.",
+    )
+    price_source: Optional[str] = Field(
+        default=None,
+        description="Source of the live price: 'spot', 'snapshot_base', 'unavailable', etc.",
+    )
+    signal_scores: Optional[Dict[str, float]] = Field(
+        default=None,
+        description="Per-signal sub-scores from the brain model.",
+    )
+    status: Optional[str] = Field(
+        default=None,
+        description="LIVE | BASE | STALE",
+    )
+    waterfall: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Base-vs-live explanation rows for UI waterfall chart.",
+    )
+
+
 class SwarmConsensus(BaseModel):
     """
     The aggregated result from the Swarm Backend containing individual Factor traces
@@ -82,6 +128,10 @@ class SwarmConsensus(BaseModel):
     confidence: float
     consensus_rationale: str = ""
     factors: Dict[str, FactorResult]
+    brain: Optional["BrainVerdict"] = Field(
+        default=None,
+        description="Brain live-blend block; None when brain serving is disabled.",
+    )
 
 class SectorData(BaseModel):
     symbol: str
@@ -702,3 +752,10 @@ class DecisionTerminalPayload(BaseModel):
     )
     scorecard_summary: Optional[TerminalScorecardSummary] = None
     reconciliation: Optional[TerminalReconciliationPanel] = None
+    brain: Optional["BrainVerdict"] = Field(
+        default=None,
+        description=(
+            "Brain live-blend block for the decision terminal; None when brain serving "
+            "is disabled (BRAIN_SERVE_ENABLE=0) or no snapshot exists for this ticker."
+        ),
+    )

@@ -334,6 +334,11 @@ async def single_ticker_scorecard(
             row.signal = _sc["signal"]
             row.action = _sc["action"]
             row.quadrant = _sc["quadrant"]
+            # Replace the Sharpe-style ratio with outperform_probability from the
+            # brain's live-blended block so the numeric score is consistent with verdict.
+            _op = _sc.get("ratio")  # already set by to_scorecard_fields
+            if _op is not None:
+                row.ratio = float(_op)
             v = {"verdict": _sc["verdict"], "one_line_reason": _sc["one_line_reason"]}
     except Exception as _e:  # noqa: BLE001 - never break the legacy path
         logger.debug("[scorecard] brain cutover skipped: %s", _e)

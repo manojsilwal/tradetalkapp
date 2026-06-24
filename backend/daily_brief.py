@@ -350,8 +350,16 @@ def _normalize_row(raw: Dict[str, Any], bucket: str, rank: int) -> Dict[str, Any
         "verdict": verdict_info["verdict"],
         "one_line_reason": verdict_info["one_line_reason"],
         "adjustment_note": verdict_info.get("adjustment_note"),
-        "verdict_tier": "heuristic",
+        "verdict_tier": verdict_info.get("verdict_tier", "heuristic"),
         "is_compelling": _is_compelling(raw),
+        # Brain live-blend fields — present only when verdict_tier == "brain".
+        "outperform_probability": verdict_info.get("outperform_probability"),
+        "composite_score": verdict_info.get("composite_score"),
+        "signal_scores": verdict_info.get("signal_scores"),
+        "confidence_score": verdict_info.get("confidence_score"),
+        "live_price": verdict_info.get("live_price"),
+        "price_source": verdict_info.get("price_source"),
+        "brain_status": verdict_info.get("brain_status"),
     }
     return out
 

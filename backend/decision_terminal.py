@@ -851,11 +851,13 @@ async def build_decision_terminal_payload(
         fusion_note = (fusion_note + " One or more swarm factors were REJECTED.").strip()
 
     # Brain cutover: the brain owns the headline verdict for the decision terminal.
+    _terminal_brain_result: Optional[dict] = None
     try:
         from .brain.cutover import aserve_for_surface
         from .brain import adapters as _ba
         _br = await aserve_for_surface(ticker.upper(), "decision_terminal")
         if _br:
+            _terminal_brain_result = _br
             _head = _ba.to_decision_terminal_headline(_br)
             headline = _head["headline_verdict"]
             fusion_note = _head["fusion_note"]
@@ -1037,6 +1039,26 @@ async def build_decision_terminal_payload(
             scorecard_summary=scorecard_summary,
         )
 
+    # Build slim BrainVerdict block for the terminal payload.
+    _terminal_brain_block = None
+    if _terminal_brain_result:
+        try:
+            from .schemas import BrainVerdict as _BV
+            _live = _terminal_brain_result.get("live") or _terminal_brain_result.get("base") or {}
+            _terminal_brain_block = _BV(
+                outperform_probability=_live.get("outperform_probability"),
+                composite_score=_live.get("composite_score"),
+                recommendation=_live.get("recommendation"),
+                confidence_score=_terminal_brain_result.get("confidence_score"),
+                live_price=_live.get("live_price"),
+                price_source=_terminal_brain_result.get("price_source"),
+                signal_scores=_live.get("signal_scores"),
+                status=_terminal_brain_result.get("status"),
+                waterfall=_terminal_brain_result.get("waterfall"),
+            )
+        except Exception as _be:  # noqa: BLE001
+            logger.debug("[decision_terminal] brain block assembly failed: %s", _be)
+
     return _decision_terminal_payload_json_safe(
         DecisionTerminalPayload(
             ticker=t,
@@ -1059,6 +1081,7 @@ async def build_decision_terminal_payload(
             spot=spot_envelope,
             scorecard_summary=scorecard_summary,
             reconciliation=reconciliation,
+            brain=_terminal_brain_block,
         )
     )
 

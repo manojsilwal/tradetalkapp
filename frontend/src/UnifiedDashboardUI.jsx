@@ -1073,6 +1073,7 @@ export default function UnifiedDashboardUI() {
                     ticker={searchUpper}
                     loading={scorecardLoading || (isAnalyzing && !scorecardData && !embeddedScorecard)}
                     error={scorecardError}
+                    brain={decisionData?.brain}
                   />
                 </div>
               </div>

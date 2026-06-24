@@ -82,11 +82,20 @@ def to_actionable_row(brain_result: Dict) -> Dict[str, Any]:
     }
 
 
-def to_daily_brief_verdict(brain_result: Dict) -> Dict[str, str]:
+def to_daily_brief_verdict(brain_result: Dict) -> Dict[str, Any]:
+    block = _block(brain_result)
     return {
         "verdict": verdict_4(brain_result),
         "one_line_reason": one_line_reason(brain_result),
         "verdict_tier": "brain",
+        # Numeric fields so the UI can display the brain score alongside the verdict.
+        "outperform_probability": block.get("outperform_probability"),
+        "composite_score": block.get("composite_score"),
+        "signal_scores": block.get("signal_scores"),
+        "confidence_score": brain_result.get("confidence_score"),
+        "live_price": block.get("live_price"),
+        "price_source": brain_result.get("price_source"),
+        "brain_status": brain_result.get("status"),
     }
 
 
