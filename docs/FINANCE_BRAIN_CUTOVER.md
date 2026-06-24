@@ -35,6 +35,32 @@ flowchart LR
 | `STORAGE_BACKEND=gcp` | Brain artifacts in GCS (else local dir). |
 | `BRAIN_GCS_BUCKET` / `BRAIN_GCS_PREFIX` | Bucket/prefix (default `tradetalk-data-lake` / `brain`). |
 | `BRAIN_TIMESFM_ENABLE=1` | Nightly job fetches TimesFM bands per ticker. |
+| `INVESTMENT_SURFACE=1` | Enables the long-horizon investment surface (`/investment/*`). Requires `BRAIN_SERVE_ENABLE=1`. |
+
+## Long-horizon investment surface (`/investment/*`)
+
+An **additive** re-framing of the brain for a 1-5 year investment horizon
+(minimum 12 months). It does **not** fork the architecture, retrain, or mutate
+the existing quarterly surfaces — it re-weights the *same* brain contract and
+reuses the Reflex freshness layer:
+
+- `backend/brain/investment_stance.py` maps the `serve_ticker`/Reflex contract
+  into an investment stance (investment-language vocabulary, no trading verbs),
+  a long-horizon `investment_score` (re-weighted via
+  `rule_baseline.LONG_HORIZON_COMPOSITE_WEIGHTS` — valuation/quality dominate;
+  momentum+sentiment capped at 5% each as "pricing context"), a
+  **Valuation Freshness Monitor** (the Reflex invalidation result verbatim), and
+  a pricing-context block.
+- **Invariant (value-investing):** a pure price move — even a large drop — never
+  caps the stance; it is read as a margin-of-safety change. Only an
+  anchor-breaking event (earnings/guidance/management/accounting/rate move)
+  forces `Pending Valuation Refresh`. Freshness lowers confidence, never score.
+- Endpoints (`backend/routers/investment.py`): `GET /investment/analyze-company`,
+  `GET /investment/valuation-freshness`, `GET /investment/health`. Gated by
+  `INVESTMENT_SURFACE` on top of `BRAIN_SERVE_ENABLE`; 503 when off.
+- Horizons: the 63-day learning label is unchanged; `backend/brain/labels.py`
+  adds `1y/3y/5y` label helpers and `outcome_grader.HORIZONS` adds additive
+  `252d`/`756d` grades (the short horizons remain the fast learning heartbeat).
 
 A surface only switches when its flag is on **and** a snapshot exists for the
 ticker; otherwise it transparently falls back to the legacy engine. This is why

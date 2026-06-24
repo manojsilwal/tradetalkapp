@@ -113,6 +113,7 @@ At runtime, the **React** app (built with Vite) calls the **FastAPI** backend us
 | Knowledge / pipelines | `backend/routers/knowledge.py` | `GET /knowledge/stats`, `POST /knowledge/pipeline-run`, `POST /knowledge/sp500-ingest` |
 | Chat | `backend/routers/chat.py` | `/chat/*` |
 | Risk-Return Scorecard | `backend/routers/scorecard.py` | `GET /scorecard/presets`, `POST /scorecard/compare`, `GET /scorecard/{ticker}` |
+| Investment surface (long-horizon) | `backend/routers/investment.py` | `GET /investment/analyze-company`, `GET /investment/valuation-freshness`, `GET /investment/health` (gated by `INVESTMENT_SURFACE` + `BRAIN_SERVE_ENABLE`; see [FINANCE_BRAIN_CUTOVER.md](./FINANCE_BRAIN_CUTOVER.md)) |
 
 **Naming note:** `GET /trace` (analysis router) runs the **swarm** and returns a `SwarmConsensus`. `GET /notifications/trace` returns the **last background news-scan trace** from memory — different purpose, different path.
 
