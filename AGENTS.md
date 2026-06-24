@@ -124,3 +124,17 @@ FaultHunter labels cases by **feature** and HTTP path. Use this to find TradeTal
 **Tests must be offline.** New producers need a unit or integration test that seeds a temporary `DECISIONS_DB_PATH`, calls the producer, and asserts that a row appeared in `decision_events` (+ evidence + features). See [`backend/tests/test_decision_ledger_producers.py`](backend/tests/test_decision_ledger_producers.py) and [`backend/tests/test_model_swap_replay.py`](backend/tests/test_model_swap_replay.py) for the reference shape.
 
 **Off switch.** If the ledger misbehaves in production, flip `DECISION_LEDGER_ENABLE=0` (or `DECISION_BACKEND=none`) and redeploy. All producers and the `outcome_grader` scheduler hook become no-ops; nothing else in the platform depends on ledger return values for user-facing behavior.
+
+---
+
+## Cursor Cloud specific instructions
+
+The startup update script already installs all dependencies (Python venv at `.venv`, root + `frontend/` npm packages, Playwright Chromium). System build deps (`python3.12-venv`, `python3.12-dev`, `build-essential` — needed to compile `chroma-hnswlib`) are baked into the VM snapshot. Notes below are the non-obvious bits for running/testing.
+
+- **Python env:** Backend runs under `.venv` (Python 3.12). The repo has **no committed `pyproject.toml`/`requirements` at root** — backend deps live in [`backend/requirements.txt`](backend/requirements.txt). Always run backend Python via `.venv/bin/python` or with the venv activated.
+- **`./scripts/run_backend_tests.sh` gotcha:** the script's `pick_python` resolves `python3.12` from `PATH`, and the **system** `python3.12` has no project deps. **Activate the venv first** (`source .venv/bin/activate`) so `python3.12` resolves into `.venv`; otherwise every test errors with `ModuleNotFoundError`. Full suite is ~1350 tests / ~4 min and is fully offline.
+- **Local env file:** [`backend/.env`](backend/.env) is gitignored (treated as secrets) but persists in the VM snapshot. It sets `VECTOR_BACKEND=chroma` (local file vector store, no Supabase creds needed) and `DEV_MODE=true` (auth bypass). If it is ever missing, recreate it with at least `VECTOR_BACKEND=chroma` and `DEV_MODE=true`; the backend also auto-falls back to Chroma when Supabase creds are absent.
+- **Run the app:** `./scripts/start_local.sh` (backend uvicorn on **:8000**, Vite on **:5173**), or start them separately: `PYTHONPATH=. .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000` and `npm run dev` in `frontend/`. The API has **no `/health` route** — use `/openapi.json` or any real route to confirm it is up. Frontend dev server proxies API path prefixes to `:8000` (see [`frontend/vite.config.js`](frontend/vite.config.js)).
+- **External data is rate-limited from datacenter IPs.** Yahoo/yfinance and FRED calls (e.g. `/macro/fred-snapshot`, S&P 500 scans) often time out or log `possibly delisted` / read-timeout warnings here. This is an environment limitation, **not** an app bug — quote/portfolio paths still resolve via fallbacks. Keep `SP500_INGEST_ON_STARTUP=0` locally to avoid a heavy startup scan.
+- **LLM surfaces need a key.** Chat, debate, and decision-terminal require `OPENROUTER_API_KEY` (or `GEMINI_API_KEY` with `GEMINI_PRIMARY=1`); without it they return a "configure key" notice while non-LLM surfaces (paper portfolio, navigation, macro graphs) work fully.
+- **E2E smoke:** with both servers up, `npm run e2e:smoke` (3 tests) is the quick check; Playwright `baseURL` defaults to `http://localhost:5173`.
