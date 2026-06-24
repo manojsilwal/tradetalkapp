@@ -75,6 +75,12 @@ HORIZONS: Dict[str, Tuple[int, int]] = {
     "5d": (8, 21),
     "21d": (32, 42),
     "63d": (95, 90),
+    # Long-horizon investment grades (additive — the short horizons above remain
+    # the fast learning-loop heartbeat). These rarely fire in practice but let
+    # the investment surface accrue 1y/3y forward outcomes when decisions are
+    # stamped with a matching horizon_hint. ~252 trading days ≈ 1 calendar year.
+    "252d": (380, 252),   # ~1 year forward
+    "756d": (1140, 252),  # ~3 years forward
 }
 
 DEFAULT_BENCHMARK = "SPY"
@@ -333,7 +339,7 @@ class OutcomeGrader:
 
         # Map horizon label back to trading-day count for the exit timestamp.
         # Using ~1.4x multiplier to convert trading days to calendar days.
-        td_map = {"1d": 1, "5d": 5, "21d": 21, "63d": 63}
+        td_map = {"1d": 1, "5d": 5, "21d": 21, "63d": 63, "252d": 252, "756d": 756}
         td = td_map.get(horizon, 5)
         cal_days = int(round(td * 1.45))
 

@@ -15,7 +15,29 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Sequence
 
-from . import DEFAULT_HORIZON_DAYS
+from . import DEFAULT_HORIZON_DAYS, INVESTMENT_HORIZON_DAYS
+
+
+def horizon_days_for(name: str) -> int:
+    """Resolve a horizon name (``"1y"``/``"3y"``/``"5y"``) to trading days.
+
+    Falls back to the default 63-day quarter label for unknown names so callers
+    never silently train on a wrong window.
+    """
+    return INVESTMENT_HORIZON_DAYS.get(str(name), DEFAULT_HORIZON_DAYS)
+
+
+def build_multi_horizon_labels(
+    price_panel: "Sequence[dict]",
+    horizon_days: "Sequence[int]" = (DEFAULT_HORIZON_DAYS,),
+) -> Dict[int, List[Optional[Dict[str, float]]]]:
+    """Build labels for several horizons at once (one panel per horizon).
+
+    Used to train both the fast 63-day learning model and the long-horizon
+    investment models from the same point-in-time price panel without re-reading
+    the data lake per horizon.
+    """
+    return {int(h): build_labels_panel(price_panel, int(h)) for h in horizon_days}
 
 
 def forward_label(prices: Sequence[float], benchmark_prices: Sequence[float],

@@ -23,7 +23,21 @@ DISCLAIMER = (
 )
 
 # Default prediction horizon (trading days) and the canonical feature contract.
+# 63 trading days (~1 quarter) stays the fast self-learning-loop label so graded
+# outcomes accrue in weeks (SEPL fixtures, conformal recalibration, learned
+# weights all depend on this cadence — see docs/PHASE_HARNESS_SUPERINVESTOR.md).
 DEFAULT_HORIZON_DAYS = 63
+
+# Investment-surface horizons (trading days). These power the long-horizon
+# investment surface (1/3/5-year reasoning) WITHOUT replacing the 63-day learning
+# label — they are additive. ~252 trading days ≈ 1 calendar year.
+TRADING_DAYS_PER_YEAR = 252
+MIN_INVESTMENT_HORIZON_MONTHS = 12
+INVESTMENT_HORIZON_DAYS = {
+    "1y": 252,
+    "3y": 756,
+    "5y": 1260,
+}
 
 # The ordered feature list the v1 brain trains/serves on. Immutable per model
 # version (the model registry stores the exact list it was trained with).
@@ -78,6 +92,9 @@ SIGNAL_GROUPS = (
 __all__ = [
     "DISCLAIMER",
     "DEFAULT_HORIZON_DAYS",
+    "TRADING_DAYS_PER_YEAR",
+    "MIN_INVESTMENT_HORIZON_MONTHS",
+    "INVESTMENT_HORIZON_DAYS",
     "FEATURE_LIST",
     "SIGNAL_GROUPS",
 ]

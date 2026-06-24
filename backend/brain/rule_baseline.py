@@ -25,6 +25,56 @@ COMPOSITE_WEIGHTS = {
     "timeseries": 0.10,
 }
 
+# Long-horizon (investment-surface) weight profile. For a 1-5 year horizon,
+# short-term price behaviour (momentum + sentiment) has weak predictive power, so
+# it is intentionally capped at a small total weight; valuation and durable
+# business quality dominate. This profile re-weights the SAME transparency group
+# scores (no model retrain) and is applied only on the investment surface so the
+# existing quarterly surfaces are unchanged. Sums to 1.0 over SIGNAL_GROUPS.
+#   valuation 0.30  -> business value vs price (margin of safety)
+#   quality   0.25  -> ROIC / margins / growth / leverage (moat + durability)
+#   risk      0.10  -> balance-sheet / drawdown resilience
+#   capital_flow 0.10 -> institutional accumulation (long-horizon smart money)
+#   filing_intelligence 0.10 -> filing-risk / going-concern language
+#   timeseries 0.05 -> forward forecast context
+#   momentum  0.05  -> pricing context only (NOT a trading signal)
+#   sentiment 0.05  -> short-term sentiment context only
+LONG_HORIZON_COMPOSITE_WEIGHTS = {
+    "valuation": 0.30,
+    "quality": 0.25,
+    "risk": 0.10,
+    "capital_flow": 0.10,
+    "filing_intelligence": 0.10,
+    "timeseries": 0.05,
+    "momentum": 0.05,
+    "sentiment": 0.05,
+}
+
+
+def composite_from_group_scores(
+    group_scores: "Dict[str, float]",
+    weights: "Optional[Dict[str, float]]" = None,
+) -> "Optional[float]":
+    """Recombine existing 0-100 group scores with a weight profile.
+
+    Pure and side-effect free: it does NOT touch the trained model — it only
+    re-weights the already-computed transparency group scores. Returns ``None``
+    when no group score is available (so callers surface ``insufficient_data``
+    rather than a fabricated number).
+    """
+    w = weights or COMPOSITE_WEIGHTS
+    num = wsum = 0.0
+    for g in SIGNAL_GROUPS:
+        s = group_scores.get(g)
+        if s is None:
+            continue
+        gw = float(w.get(g, 0.0))
+        num += gw * float(s)
+        wsum += gw
+    if wsum <= 0:
+        return None
+    return round(num / wsum, 2)
+
 # Each group is a list of (feature, weight, invert). ``invert`` means lower raw
 # value is better (e.g. volatility, debt) so we use 1 - percentile.
 _GROUP_DEFS = {
