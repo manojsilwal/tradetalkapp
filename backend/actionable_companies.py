@@ -759,6 +759,16 @@ async def _process_chunk(chunk: List[str]) -> List[Dict[str, Any]]:
         scored = score_company(fund, momo)
         if scored.get("insufficient_data"):
             return None
+        # Brain cutover: replace the deterministic score/verdict when enabled.
+        try:
+            from .brain.cutover import serve_for_surface
+            from .brain import adapters as _ba
+            _br = await asyncio.to_thread(serve_for_surface, ticker, "actionable")
+            if _br:
+                _row = _ba.to_actionable_row(_br)
+                scored = {**scored, **_row}
+        except Exception as _e:  # noqa: BLE001 - keep deterministic score
+            logger.debug("[Actionable] brain cutover skipped for %s: %s", ticker, _e)
         return {
             "ticker": ticker,
             "company_name": fund.get("company_name"),

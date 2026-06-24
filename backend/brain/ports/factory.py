@@ -4,6 +4,8 @@
     STORAGE_BACKEND  = local | gcp | aws | azure    (overrides for storage)
     CACHE_BACKEND    = memory | supabase | redis     (default: memory)
     BRAIN_STORAGE_ROOT = path for local storage (default: ./brain_storage)
+    BRAIN_GCS_BUCKET = GCS bucket for STORAGE_BACKEND=gcp (default: tradetalk-data-lake)
+    BRAIN_GCS_PREFIX = key prefix within the bucket (default: brain)
 
 Only the local/memory/env adapters are implemented here; cloud adapters are
 declared in docs/CLOUD_PORTABILITY.md and plug in without touching callers.
@@ -32,7 +34,12 @@ def get_storage(root: str | None = None) -> StoragePort:
     backend = os.environ.get("STORAGE_BACKEND", _provider()).lower()
     if backend in ("local", "file"):
         return LocalStorage(root or _storage_root())
-    # Cloud adapters declared in docs/CLOUD_PORTABILITY.md.
+    if backend in ("gcp", "gcs"):
+        from .gcs_adapter import GCSStorage
+        bucket = os.environ.get("BRAIN_GCS_BUCKET", "tradetalk-data-lake")
+        prefix = os.environ.get("BRAIN_GCS_PREFIX", "brain")
+        return GCSStorage(bucket=bucket, prefix=prefix)
+    # Remaining cloud adapters declared in docs/CLOUD_PORTABILITY.md.
     raise NotImplementedError(
         f"STORAGE_BACKEND={backend!r} adapter not bundled; see docs/CLOUD_PORTABILITY.md"
     )

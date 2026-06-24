@@ -33,6 +33,7 @@ const ChatUI = React.lazy(() => import('./ChatUI'))
 
 const LlmCallsUI = React.lazy(() => import('./LlmCallsUI'))
 const FundLeaderboardUI = React.lazy(() => import('./intelligence/funds/FundLeaderboardUI'))
+const PipelineOpsUI = React.lazy(() => import('./PipelineOpsUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when auth is required and user is not signed in.
@@ -64,10 +65,12 @@ const ROUTE_TO_KEY = {
     '/chat': 'chat',
     '/llm-calls': 'llm_calls',
     '/system-diagrams': 'systemdiagrams',
+    '/pipeline-ops': 'pipeline_ops',
 }
 
 const DEVELOPER_ROUTES = [
     { path: '/observer', key: 'observer', label: 'Developer Trace', icon: Terminal },
+    { path: '/pipeline-ops', key: 'pipeline_ops', label: 'Pipeline Ops', icon: Activity },
     { path: '/llm-calls', key: 'llm_calls', label: 'LLM Call Log', icon: Cpu },
     { path: '/swarm-score', key: 'swarm_score', label: 'SwarmScore Eval', icon: Sparkles },
     { path: '/ubds', key: 'ubds', label: 'UBDS Benchmark', icon: Gauge },
@@ -432,6 +435,11 @@ function App() {
                             <Route path="/llm-calls" element={
                                 <AdminGate featureName="LLM Call Log">
                                     <LlmCallsUI />
+                                </AdminGate>
+                            } />
+                            <Route path="/pipeline-ops" element={
+                                <AdminGate featureName="Pipeline Ops">
+                                    <PipelineOpsUI />
                                 </AdminGate>
                             } />
                             <Route path="/login" element={<AuthGate featureName="Your Account" featureIcon="👤" />} />

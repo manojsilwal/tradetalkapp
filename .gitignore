@@ -19,6 +19,9 @@ chroma_db/chroma.sqlite3
 data_lake_output/
 output.json
 
+# Local brain artifacts (GCS is the production store)
+brain_storage/
+
 # Environment secrets
 .env
 .env.local

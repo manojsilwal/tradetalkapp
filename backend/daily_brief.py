@@ -248,7 +248,23 @@ def _build_one_line_reason(
 
 
 def heuristic_verdict(row: Dict[str, Any], bucket: str) -> Dict[str, str]:
-    """Fast verdict from precomputed movement fields (no LLM)."""
+    """Fast verdict from precomputed movement fields (no LLM).
+
+    When the daily-brief brain cutover is enabled and a snapshot exists for the
+    symbol, the brain verdict replaces the heuristic; otherwise we fall back to
+    the deterministic rules below.
+    """
+    symbol = row.get("symbol") or row.get("ticker")
+    if symbol:
+        try:
+            from .brain.cutover import serve_for_surface
+            from .brain import adapters as _ba
+            _br = serve_for_surface(str(symbol), "daily_brief")
+            if _br:
+                return _ba.to_daily_brief_verdict(_br)
+        except Exception:  # noqa: BLE001 - fall back to heuristic
+            pass
+
     ret = float(row.get("daily_return_pct") or 0)
     cat = row.get("catalyst_status") or "no_catalyst"
     headline = row.get("primary_cause_headline") or ""

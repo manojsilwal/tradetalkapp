@@ -156,6 +156,8 @@ from .routers import (
     actionable as actionable_router,
     health as health_router,
     fund_leaderboard as fund_leaderboard_router,
+    brain as brain_router,
+    pipeline_ops as pipeline_ops_router,
 )
 
 app.include_router(auth_router.router)
@@ -186,6 +188,8 @@ app.include_router(house_view_router.router)
 app.include_router(actionable_router.router)
 app.include_router(health_router.router)
 app.include_router(fund_leaderboard_router.router)
+app.include_router(brain_router.router)
+app.include_router(pipeline_ops_router.router)
 
 # ── MCP S&P 500 Market Data Server ────────────────────────────────────────────
 from .mcp_server.router import router as mcp_sp500_router

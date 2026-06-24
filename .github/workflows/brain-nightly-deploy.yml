@@ -1,0 +1,60 @@
+# Deploy and schedule the brain-nightly Cloud Run Job.
+# Runs on any push that touches the brain pipeline code so the job image stays
+# current with backend changes.
+#
+# Required GitHub secrets (same as gcp-api-deploy.yml):
+#   GCP_WORKLOAD_IDENTITY_PROVIDER
+#   GCP_DEPLOY_SA_EMAIL
+name: Deploy brain-nightly job
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/brain/**'
+      - 'backend/requirements.txt'
+      - 'Dockerfile.data-lake'
+      - 'cloudbuild.sp500-ingest.yaml'
+      - 'scripts/run_brain_job.sh'
+      - 'scripts/deploy_brain_job.sh'
+  workflow_dispatch:
+    inputs:
+      execute_now:
+        description: 'Execute job immediately after deploy'
+        required: false
+        default: 'false'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+        continue-on-error: true
+
+      - name: Set up Cloud SDK
+        if: steps.auth.outcome == 'success'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy brain-nightly Cloud Run Job + Scheduler
+        if: steps.auth.outcome == 'success'
+        run: |
+          EXECUTE_FLAG=""
+          if [ "${{ github.event.inputs.execute_now }}" = "true" ]; then
+            EXECUTE_FLAG="--execute"
+          fi
+          bash scripts/deploy_brain_job.sh --skip-build $EXECUTE_FLAG
+
+      - name: Skip (no GCP auth in CI)
+        if: steps.auth.outcome != 'success'
+        run: |
+          echo "GCP Workload Identity not configured — deploy locally:"
+          echo "  bash scripts/deploy_brain_job.sh"

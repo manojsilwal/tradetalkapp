@@ -850,6 +850,18 @@ async def build_decision_terminal_payload(
     if _swarm_rejection_present(swarm) and "capped" not in fusion_note.lower():
         fusion_note = (fusion_note + " One or more swarm factors were REJECTED.").strip()
 
+    # Brain cutover: the brain owns the headline verdict for the decision terminal.
+    try:
+        from .brain.cutover import aserve_for_surface
+        from .brain import adapters as _ba
+        _br = await aserve_for_surface(ticker.upper(), "decision_terminal")
+        if _br:
+            _head = _ba.to_decision_terminal_headline(_br)
+            headline = _head["headline_verdict"]
+            fusion_note = _head["fusion_note"]
+    except Exception as _e:  # noqa: BLE001 - keep legacy fusion
+        logger.debug("[decision_terminal] brain cutover skipped: %s", _e)
+
     verdict = TerminalVerdictPanel(
         headline_verdict=headline,
         debate_verdict=debate.verdict,

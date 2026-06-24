@@ -324,6 +324,20 @@ async def single_ticker_scorecard(
     verdicts = await _fetch_verdicts_single(row, preset_key, skip_llm=skip_llm_scores)
     v = verdicts.get(row.ticker, {"verdict": "Balanced", "one_line_reason": ""})
 
+    # Brain cutover: when enabled + a snapshot exists, the brain owns the verdict.
+    try:
+        from ..brain.cutover import aserve_for_surface
+        from ..brain import adapters as _ba
+        _br = await aserve_for_surface(sym, "scorecard")
+        if _br:
+            _sc = _ba.to_scorecard_fields(_br)
+            row.signal = _sc["signal"]
+            row.action = _sc["action"]
+            row.quadrant = _sc["quadrant"]
+            v = {"verdict": _sc["verdict"], "one_line_reason": _sc["one_line_reason"]}
+    except Exception as _e:  # noqa: BLE001 - never break the legacy path
+        logger.debug("[scorecard] brain cutover skipped: %s", _e)
+
     try:
         from .. import decision_ledger as _dl
         from ..decision_ledger_registry import registry_attribution

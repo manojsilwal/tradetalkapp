@@ -230,6 +230,23 @@ async def _execute_swarm_trace(
             except Exception:
                 pass
 
+        # Brain cutover: the brain owns the consensus verdict + a grounded memo;
+        # per-factor cards are preserved for display. Flag-gated, fully fallback.
+        try:
+            from ..brain.cutover import aserve_for_surface
+            from ..brain import adapters as _ba
+            from ..brain.memo import build_memo
+            _br = await aserve_for_surface(ticker.upper(), "swarm",
+                                           knowledge_store=knowledge_store)
+            if _br:
+                global_verdict = _ba.swarm_verdict(_br)
+                global_signal = {"STRONG BUY": 2, "BUY": 1, "NEUTRAL": 0,
+                                 "SELL": -1, "STRONG SELL": -2}.get(global_verdict, 0)
+                _memo = build_memo(_br)
+                consensus_rationale = _memo["summary"]
+        except Exception as _e:  # noqa: BLE001 - keep legacy synthesis
+            print(f"[BrainCutover] swarm skipped: {_e}")
+
         consensus = SwarmConsensus(
             ticker=ticker.upper(),
             macro_state=market_state,
@@ -345,6 +362,20 @@ async def _execute_debate(
     macro_state = _macro_state_from_indicators(ind)
 
     result = await run_full_debate(ticker, debate_data, macro_state, knowledge_store, llm_client, swarm_context=swarm_context)
+
+    # Brain cutover: brain owns the debate verdict + a grounded moderator memo.
+    try:
+        from ..brain.cutover import aserve_for_surface
+        from ..brain import adapters as _ba
+        from ..brain.memo import build_memo
+        _br = await aserve_for_surface(ticker.upper(), "debate",
+                                       knowledge_store=knowledge_store)
+        if _br:
+            result.verdict = _ba.swarm_verdict(_br)
+            _memo = build_memo(_br)
+            result.moderator_summary = _memo["summary"]
+    except Exception as _e:  # noqa: BLE001 - keep legacy debate
+        print(f"[BrainCutover] debate skipped: {_e}")
 
     try:
         ensure_capability("debate", "knowledge_write")

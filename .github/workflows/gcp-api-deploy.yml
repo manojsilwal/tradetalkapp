@@ -9,6 +9,7 @@ on:
       - 'backend/**'
       - 'cloudbuild.api.yaml'
       - 'scripts/deploy_api_cloudrun.sh'
+      - 'scripts/run_brain_job.sh'
   workflow_dispatch:
 
 jobs:

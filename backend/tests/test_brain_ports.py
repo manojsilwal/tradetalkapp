@@ -54,11 +54,24 @@ class TestFactory(unittest.TestCase):
         self.assertIsInstance(factory.get_secrets(), base.SecretsPort)
 
     def test_unbundled_cloud_backend_raises(self):
-        os.environ["STORAGE_BACKEND"] = "gcp"
+        # aws/azure adapters are still not bundled (gcp now is — see gcs_adapter).
+        os.environ["STORAGE_BACKEND"] = "aws"
         try:
             factory = self._reload_factory()
             with self.assertRaises(NotImplementedError):
                 factory.get_storage()
+        finally:
+            os.environ.pop("STORAGE_BACKEND", None)
+            self._reload_factory()
+
+    def test_gcp_backend_returns_gcs_storage(self):
+        os.environ["STORAGE_BACKEND"] = "gcp"
+        try:
+            factory = self._reload_factory()
+            from backend.brain.ports.gcs_adapter import GCSStorage
+            store = factory.get_storage()
+            self.assertIsInstance(store, GCSStorage)
+            self.assertIsInstance(store, base.StoragePort)
         finally:
             os.environ.pop("STORAGE_BACKEND", None)
             self._reload_factory()
