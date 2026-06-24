@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { Activity, RefreshCw, Loader2, Database, Cpu, Clock, CheckCircle2, XCircle, AlertTriangle, Server } from 'lucide-react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { Activity, RefreshCw, Loader2, Database, Cpu, Clock, CheckCircle2, XCircle, AlertTriangle, Server, Zap, TrendingUp } from 'lucide-react'
 import { API_BASE_URL, apiFetch } from './api'
 
 const CARD = {
@@ -47,10 +47,115 @@ function Section({ title, icon: Icon, children }) {
     )
 }
 
+function LiveSpotTable({ activity }) {
+    if (!activity?.available) return <Unavailable reason={activity?.reason} />
+    const fetches = activity.recent_fetches || []
+    const cache = activity.cache_entries || []
+    return (
+        <div>
+            <div style={{ display: 'flex', gap: 20, marginBottom: 12, flexWrap: 'wrap' }}>
+                <span style={{ ...MUTED, fontSize: 12 }}>
+                    Cache entries: <strong style={{ color: '#e2e8f0' }}>{activity.cache_size ?? 0}</strong>
+                </span>
+                <span style={{ ...MUTED, fontSize: 12 }}>
+                    Total fetches logged: <strong style={{ color: '#e2e8f0' }}>{fetches.length}</strong>
+                </span>
+                {fetches.length > 0 && (
+                    <span style={{ ...MUTED, fontSize: 12 }}>
+                        Last: <strong style={{ color: '#e2e8f0' }}>{fetches[0]?.ticker}</strong>
+                        {' '}@ <strong style={{ color: '#e2e8f0' }}>${fetches[0]?.price?.toFixed(2) ?? '—'}</strong>
+                        {' '}<span style={{ color: fetches[0]?.cache_hit ? '#94a3b8' : '#34d399' }}>
+                            {fetches[0]?.cache_hit ? '(cache)' : '(live)'}
+                        </span>
+                    </span>
+                )}
+            </div>
+
+            {/* Recent fetch log */}
+            <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', marginBottom: 6 }}>
+                    Recent fetch log (newest first)
+                </div>
+                <div style={{ maxHeight: 220, overflowY: 'auto', fontSize: 12 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ color: '#64748b', textAlign: 'left' }}>
+                                <th style={{ padding: '3px 8px', fontWeight: 600 }}>Time</th>
+                                <th style={{ padding: '3px 8px', fontWeight: 600 }}>Ticker</th>
+                                <th style={{ padding: '3px 8px', fontWeight: 600 }}>Price</th>
+                                <th style={{ padding: '3px 8px', fontWeight: 600 }}>Source</th>
+                                <th style={{ padding: '3px 8px', fontWeight: 600 }}>Type</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {fetches.slice(0, 40).map((f, i) => (
+                                <tr key={i} style={{ borderTop: '1px solid rgba(255,255,255,0.04)', color: '#e2e8f0' }}>
+                                    <td style={{ padding: '3px 8px', color: '#64748b' }}>
+                                        {f.ts_utc ? f.ts_utc.slice(11, 19) : '—'}
+                                    </td>
+                                    <td style={{ padding: '3px 8px', fontWeight: 700, color: '#a5b4fc' }}>{f.ticker}</td>
+                                    <td style={{ padding: '3px 8px' }}>
+                                        {f.price != null ? `$${Number(f.price).toFixed(2)}` : <span style={{ color: '#ef4444' }}>fail</span>}
+                                    </td>
+                                    <td style={{ padding: '3px 8px', color: f.degraded ? '#f59e0b' : '#94a3b8' }}>
+                                        {f.source}{f.degraded ? ' ⚠' : ''}
+                                    </td>
+                                    <td style={{ padding: '3px 8px' }}>
+                                        <span style={{
+                                            padding: '1px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                                            background: f.cache_hit ? 'rgba(148,163,184,0.12)' : 'rgba(52,211,153,0.15)',
+                                            color: f.cache_hit ? '#94a3b8' : '#34d399',
+                                        }}>
+                                            {f.cache_hit ? 'cache' : 'live'}
+                                        </span>
+                                    </td>
+                                </tr>
+                            ))}
+                            {fetches.length === 0 && (
+                                <tr><td colSpan={5} style={{ padding: '12px 8px', color: '#64748b', textAlign: 'center' }}>
+                                    No spot fetches yet — run an analyze or load a ticker
+                                </td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Live cache state */}
+            {cache.length > 0 && (
+                <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', marginBottom: 6 }}>
+                        Warm cache ({cache.length} tickers)
+                    </div>
+                    <div style={{ maxHeight: 160, overflowY: 'auto', fontSize: 12 }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {cache.map((c) => (
+                                <div key={c.ticker} style={{
+                                    padding: '3px 8px', borderRadius: 6,
+                                    background: 'rgba(99,102,241,0.1)',
+                                    border: '1px solid rgba(99,102,241,0.2)',
+                                    display: 'flex', gap: 6, alignItems: 'center',
+                                }}>
+                                    <span style={{ fontWeight: 700, color: '#a5b4fc' }}>{c.ticker}</span>
+                                    <span style={{ color: '#e2e8f0' }}>${Number(c.price).toFixed(2)}</span>
+                                    <span style={{ color: '#64748b' }}>{c.ttl_remaining_s}s</span>
+                                    {c.degraded && <span style={{ color: '#f59e0b' }}>⚠</span>}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
 export default function PipelineOpsUI() {
     const [data, setData] = useState(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
+    const [spotActivity, setSpotActivity] = useState(null)
+    const spotIntervalRef = useRef(null)
 
     const fetchStatus = useCallback(async () => {
         setLoading(true)
@@ -58,6 +163,7 @@ export default function PipelineOpsUI() {
         try {
             const d = await apiFetch(`${API_BASE_URL}/pipeline-ops/status`)
             setData(d)
+            setSpotActivity(d.live_spot_activity)
         } catch (e) {
             setError(e.message || 'Failed to load pipeline status')
         } finally {
@@ -65,11 +171,29 @@ export default function PipelineOpsUI() {
         }
     }, [])
 
+    // Poll spot activity every 5 s independently (much lighter than full status)
+    const pollSpotActivity = useCallback(async () => {
+        try {
+            const d = await apiFetch(`${API_BASE_URL}/pipeline-ops/spot-activity`)
+            setSpotActivity(d)
+        } catch {
+            // silent — don't disturb the page on transient errors
+        }
+    }, [])
+
     useEffect(() => {
         fetchStatus()
-        const id = setInterval(fetchStatus, 60000)
-        return () => clearInterval(id)
-    }, [fetchStatus])
+        const statusId = setInterval(fetchStatus, 60000)
+        // start spot poll after initial load settles
+        const startDelay = setTimeout(() => {
+            spotIntervalRef.current = setInterval(pollSpotActivity, 5000)
+        }, 3000)
+        return () => {
+            clearInterval(statusId)
+            clearTimeout(startDelay)
+            if (spotIntervalRef.current) clearInterval(spotIntervalRef.current)
+        }
+    }, [fetchStatus, pollSpotActivity])
 
     const jobs = data?.cloud_run_jobs
     const sched = data?.cloud_scheduler
@@ -129,27 +253,67 @@ export default function PipelineOpsUI() {
                 )}
             </Section>
 
-            <Section title="BigQuery Freshness" icon={Database}>
+            <Section title="BigQuery Data Freshness" icon={Database}>
                 {!bq?.available ? <Unavailable reason={bq?.reason} /> : (
-                    <div style={{ display: 'grid', gap: 8 }}>
-                        {(bq.tables || []).map((t) => (
-                            <div key={t.table} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#e2e8f0', padding: '4px 0' }}>
-                                <span>{t.table}</span>
-                                <span style={MUTED}>{t.error ? `error: ${t.error}` : `${t.rows ?? '?'} rows · latest ${t.latest ?? '—'}`}</span>
-                            </div>
-                        ))}
+                    <div style={{ display: 'grid', gap: 6 }}>
+                        {(bq.tables || []).map((t) => {
+                            const isStale = t.latest && new Date(t.latest) < new Date(Date.now() - 2 * 86400000)
+                            return (
+                                <div key={t.table} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: '#e2e8f0', padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    <span style={{ fontWeight: 600 }}>{t.table}</span>
+                                    {t.error
+                                        ? <span style={{ color: '#fca5a5', fontSize: 12 }}>error: {t.error}</span>
+                                        : <span style={MUTED}>
+                                            {Number(t.rows ?? 0).toLocaleString()} rows ·{' '}
+                                            <span style={{ color: isStale ? '#f59e0b' : '#34d399', fontWeight: 600 }}>
+                                                {t.latest ?? '—'}
+                                            </span>
+                                        </span>
+                                    }
+                                </div>
+                            )
+                        })}
                     </div>
                 )}
             </Section>
 
-            <Section title="Finance Brain" icon={Cpu}>
+            <Section title="Live Stock Price Fetches" icon={Zap}>
+                <LiveSpotTable activity={spotActivity} />
+            </Section>
+
+            <Section title="Finance Brain Snapshots" icon={Cpu}>
                 {!brain?.available ? <Unavailable reason={brain?.reason} /> : (
-                    <div style={{ fontSize: 13, color: '#e2e8f0', display: 'grid', gap: 6 }}>
-                        <div>Serving enabled: <b>{String(brain.serving_enabled)}</b></div>
-                        <div style={MUTED}>as_of {brain.last_run?.as_of_date || '—'} · model {brain.last_run?.model_name}-{brain.last_run?.model_version}</div>
-                        <div style={MUTED}>snapshots {brain.last_run?.tickers_done ?? 0}/{brain.last_run?.tickers_total ?? 0} · finished {brain.last_run?.finished_at || '—'}</div>
-                        {brain.last_run?.errors?.length > 0 && (
-                            <div style={{ color: '#fca5a5' }}>{brain.last_run.errors.length} errors</div>
+                    <div style={{ fontSize: 13, color: '#e2e8f0', display: 'grid', gap: 8 }}>
+                        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+                            <div>
+                                Serving: {' '}
+                                <span style={{ fontWeight: 700, color: brain.serving_enabled ? '#34d399' : '#f59e0b' }}>
+                                    {brain.serving_enabled ? 'ENABLED' : 'DISABLED'}
+                                </span>
+                            </div>
+                            <div style={MUTED}>
+                                as_of <strong style={{ color: '#e2e8f0' }}>{brain.last_run?.as_of_date || '—'}</strong>
+                            </div>
+                            <div style={MUTED}>
+                                model <strong style={{ color: '#e2e8f0' }}>{brain.last_run?.model_name}-{brain.last_run?.model_version || '—'}</strong>
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                            <div style={MUTED}>
+                                Snapshots: {' '}
+                                <strong style={{ color: brain.last_run?.tickers_done === brain.last_run?.tickers_total ? '#34d399' : '#f59e0b' }}>
+                                    {brain.last_run?.tickers_done ?? 0}/{brain.last_run?.tickers_total ?? 0}
+                                </strong>
+                            </div>
+                            <div style={MUTED}>
+                                Storage: <strong style={{ color: '#e2e8f0' }}>{brain.last_run?.storage_backend || '—'}</strong>
+                            </div>
+                            <div style={MUTED}>
+                                Finished: <strong style={{ color: '#e2e8f0' }}>{brain.last_run?.finished_at?.slice(0,19).replace('T',' ') || '—'} UTC</strong>
+                            </div>
+                        </div>
+                        {(brain.last_run?.errors?.length ?? 0) > 0 && (
+                            <div style={{ color: '#fca5a5', fontSize: 12 }}>{brain.last_run.errors.length} errors: {brain.last_run.errors.join(', ')}</div>
                         )}
                     </div>
                 )}

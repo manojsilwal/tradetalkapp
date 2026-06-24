@@ -27,8 +27,34 @@ from ..freshness import LIVE_SPOT_PROVIDERS, spot_provider_degraded
 _LIVE_PROVIDERS = LIVE_SPOT_PROVIDERS
 
 SPOT_CACHE_TTL_S = float(os.environ.get("SPOT_CACHE_TTL_S", "60"))
+_ACTIVITY_MAX = int(os.environ.get("SPOT_ACTIVITY_LOG_SIZE", "200"))
 
 _spot_cache: Dict[str, Tuple["SpotQuote", float]] = {}
+
+# Ring buffer of recent fetch events — consumed by Pipeline Ops page.
+# Each entry: {ticker, price, source, degraded, cache_hit, ts_utc}
+_spot_activity: list = []
+
+
+def record_spot_fetch(ticker: str, price: Optional[float], source: str,
+                      degraded: bool, cache_hit: bool) -> None:
+    """Append a fetch event to the in-memory activity ring buffer."""
+    global _spot_activity
+    _spot_activity.append({
+        "ticker": ticker,
+        "price": price,
+        "source": source,
+        "degraded": degraded,
+        "cache_hit": cache_hit,
+        "ts_utc": datetime.now(timezone.utc).isoformat(),
+    })
+    if len(_spot_activity) > _ACTIVITY_MAX:
+        _spot_activity = _spot_activity[-_ACTIVITY_MAX:]
+
+
+def get_spot_activity(limit: int = 50) -> list:
+    """Return the most recent spot fetch events, newest first."""
+    return list(reversed(_spot_activity[-limit:]))
 
 
 def _env_flag(name: str, default: str = "1") -> bool:
@@ -157,6 +183,7 @@ def resolve_spot(
     if cached is not None:
         quote, expires = cached
         if now < expires:
+            record_spot_fetch(sym, quote.price, quote.source, quote.degraded, cache_hit=True)
             if momentum_anchor_usd is not None and quote.momentum_anchor_usd != momentum_anchor_usd:
                 return SpotQuote(
                     price=quote.price,
@@ -169,6 +196,7 @@ def resolve_spot(
 
     price, fresh = get_spot_with_freshness(sym, strict_when_open=strict_when_open)
     if price is None:
+        record_spot_fetch(sym, None, "unavailable", True, cache_hit=False)
         return None
 
     captured = fresh.captured_at or datetime.now(timezone.utc).isoformat()
@@ -180,4 +208,5 @@ def resolve_spot(
         momentum_anchor_usd=momentum_anchor_usd,
     )
     _spot_cache[sym] = (quote, now + SPOT_CACHE_TTL_S)
+    record_spot_fetch(sym, quote.price, quote.source, quote.degraded, cache_hit=False)
     return quote

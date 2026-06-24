@@ -24,8 +24,9 @@ REGION = os.environ.get("GCP_REGION", "us-central1")
 CLOUD_RUN_JOBS = ["sp500-ingest", "sp500-daily-update", "brain-nightly"]
 BQ_FRESHNESS_TABLES = {
     "daily_prices": "trade_date",
+    "daily_movement_features": "trade_date",
+    "daily_brief_snapshot": "trade_date",
     "events_curated": "published_at",
-    "movement_event_links": "move_date",
 }
 
 
@@ -134,6 +135,33 @@ def _in_process_pipeline() -> Dict[str, Any]:
         return {"available": False, "reason": str(e)}
 
 
+def _live_spot_activity(limit: int = 50) -> Dict[str, Any]:
+    """Recent spot-price fetch events from the in-process ring buffer."""
+    try:
+        from ..connectors.spot import get_spot_activity, _spot_cache
+        import time as _time
+        now = _time.monotonic()
+        cache_state = [
+            {
+                "ticker": sym,
+                "price": q.price,
+                "source": q.source,
+                "degraded": q.degraded,
+                "ttl_remaining_s": round(max(0.0, expires - now), 1),
+            }
+            for sym, (q, expires) in sorted(_spot_cache.items())
+            if expires > now
+        ]
+        return {
+            "available": True,
+            "recent_fetches": get_spot_activity(limit),
+            "cache_size": len(cache_state),
+            "cache_entries": cache_state,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"available": False, "reason": str(e)}
+
+
 def _ledger_health() -> Dict[str, Any]:
     try:
         from .. import decision_ledger as dl
@@ -160,6 +188,13 @@ def pipeline_ops_status() -> Dict[str, Any]:
         "cloud_scheduler": _scheduler(),
         "bigquery_freshness": _bigquery_freshness(),
         "brain": _brain_freshness(),
+        "live_spot_activity": _live_spot_activity(),
         "in_process_pipeline": _in_process_pipeline(),
         "ledger": _ledger_health(),
     }
+
+
+@router.get("/spot-activity", dependencies=[Depends(get_current_admin_user)])
+def spot_activity_only() -> Dict[str, Any]:
+    """Lightweight endpoint — poll this frequently without loading the whole status."""
+    return _live_spot_activity(limit=100)
