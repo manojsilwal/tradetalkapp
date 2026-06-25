@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -50,6 +51,44 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scorecard", tags=["scorecard"])
 
 _rl_expensive = rate_limit("expensive")
+
+
+def _scorecard_fetch_timeout_s(ticker_count: int = 1) -> float:
+    """Wall-clock budget for Yahoo-backed scorecard data (under client 30s abort)."""
+    base = float(os.environ.get("SCORECARD_FETCH_TIMEOUT_S", "22"))
+    if ticker_count <= 1:
+        return base
+    return min(base * ticker_count, float(os.environ.get("SCORECARD_FETCH_TIMEOUT_MAX_S", "90")))
+
+
+async def _bounded_fetch_scorecard_data(ticker: str) -> ScorecardData:
+    try:
+        return await asyncio.wait_for(
+            fetch_scorecard_data(ticker),
+            timeout=_scorecard_fetch_timeout_s(1),
+        )
+    except asyncio.TimeoutError as exc:
+        raise InsufficientDataError(
+            "yfinance",
+            f"Market data fetch timed out after {_scorecard_fetch_timeout_s(1):.0f}s; please retry.",
+            ticker=ticker,
+            missing=["scorecard_fetch_timeout"],
+        ) from exc
+
+
+async def _bounded_fetch_basket(tickers: List[str]) -> List[ScorecardData]:
+    n = max(1, len(tickers))
+    try:
+        return await asyncio.wait_for(
+            fetch_basket(tickers),
+            timeout=_scorecard_fetch_timeout_s(n),
+        )
+    except asyncio.TimeoutError as exc:
+        raise InsufficientDataError(
+            "yfinance",
+            f"Basket market data fetch timed out after {_scorecard_fetch_timeout_s(n):.0f}s; please retry.",
+            missing=["scorecard_fetch_timeout"],
+        ) from exc
 
 
 # ── Ingress / egress models ──────────────────────────────────────────────────
@@ -165,7 +204,7 @@ async def compare_scorecard(
 ) -> ScorecardResponse:
     """Score a basket of tickers under the chosen investor-type preset."""
     try:
-        data_rows = await fetch_basket(req.tickers)
+        data_rows = await _bounded_fetch_basket(req.tickers)
     except InsufficientDataError:
         raise
     except Exception as e:
@@ -304,7 +343,7 @@ async def single_ticker_scorecard(
             detail=f"unknown preset {preset!r}; expected one of {sorted(PRESETS.keys())}",
         )
 
-    data = await fetch_scorecard_data(sym)
+    data = await _bounded_fetch_scorecard_data(sym)
     sitg_by_ticker, exec_by_ticker, rev_by_ticker = await _fetch_subjective_scores(
         [data], skip_llm=skip_llm_scores
     )

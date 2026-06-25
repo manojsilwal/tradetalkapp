@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Activity, RefreshCw, Loader2, Database, Cpu, Clock, CheckCircle2, XCircle, AlertTriangle, Server, Zap, TrendingUp } from 'lucide-react'
+import { Activity, RefreshCw, Loader2, Database, Cpu, Clock, CheckCircle2, XCircle, AlertTriangle, Server, Zap } from 'lucide-react'
 import { API_BASE_URL, apiFetch } from './api'
 
 const CARD = {
@@ -204,6 +204,7 @@ export default function PipelineOpsUI() {
 
     return (
         <div style={{ padding: '24px 28px', maxWidth: 980, margin: '0 auto' }}>
+            <style>{`@keyframes pipelineOpsSpin { to { transform: rotate(360deg); } } .pipeline-ops-spin { animation: pipelineOpsSpin 1s linear infinite; }`}</style>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <Activity size={22} color="#a78bfa" />
@@ -211,7 +212,7 @@ export default function PipelineOpsUI() {
                 </div>
                 <button onClick={fetchStatus} disabled={loading}
                     style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: '#e2e8f0', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                    {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Refresh
+                    {loading ? <Loader2 size={14} className="pipeline-ops-spin" /> : <RefreshCw size={14} />} Refresh
                 </button>
             </div>
 
@@ -222,6 +223,12 @@ export default function PipelineOpsUI() {
             )}
             {error && (
                 <div style={{ ...CARD, borderColor: 'rgba(239,68,68,0.3)', color: '#fca5a5' }}>{error}</div>
+            )}
+            {loading && !data && !error && (
+                <div style={{ ...CARD, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Loader2 size={18} className="pipeline-ops-spin" />
+                    Loading pipeline status…
+                </div>
             )}
 
             <Section title="Cloud Run Jobs" icon={Server}>

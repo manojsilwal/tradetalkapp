@@ -15,25 +15,27 @@ import { useAnalysisHistory, analysisStillRunning } from './AnalysisContext.jsx'
 import SessionsTray from './components/SessionsTray'
 import * as sessionStore from './store/sessionStore'
 import DailyBriefUI from './DailyBriefUI'
+import ErrorBoundary from './components/ErrorBoundary'
+import { lazyWithRetry } from './lazyWithRetry'
 
-const ConsumerUI = React.lazy(() => import('./UnifiedDashboardUI'))
-const DecisionTerminalUI = React.lazy(() => import('./DecisionTerminalUI'))
-const MacroUI = React.lazy(() => import('./MacroUI'))
+const ConsumerUI = lazyWithRetry(() => import('./UnifiedDashboardUI'))
+const DecisionTerminalUI = lazyWithRetry(() => import('./DecisionTerminalUI'))
+const MacroUI = lazyWithRetry(() => import('./MacroUI'))
 
-const BacktestUI = React.lazy(() => import('./BacktestUI'))
-const ObserverUI = React.lazy(() => import('./ObserverUI'))
-const SwarmScoreUI = React.lazy(() => import('./SwarmScoreUI'))
-const UbdsBenchmarkUI = React.lazy(() => import('./UbdsBenchmarkUI'))
-const SystemMapUI = React.lazy(() => import('./SystemMapUI'))
-const SystemDiagramsUI = React.lazy(() => import('./SystemDiagramsUI'))
-const ApiCatalogUI = React.lazy(() => import('./ApiCatalogUI'))
-const AcademyUI = React.lazy(() => import('./AcademyUI'))
-const PaperPortfolioUI = React.lazy(() => import('./PaperPortfolioUI'))
-const ChatUI = React.lazy(() => import('./ChatUI'))
+const BacktestUI = lazyWithRetry(() => import('./BacktestUI'))
+const ObserverUI = lazyWithRetry(() => import('./ObserverUI'))
+const SwarmScoreUI = lazyWithRetry(() => import('./SwarmScoreUI'))
+const UbdsBenchmarkUI = lazyWithRetry(() => import('./UbdsBenchmarkUI'))
+const SystemMapUI = lazyWithRetry(() => import('./SystemMapUI'))
+const SystemDiagramsUI = lazyWithRetry(() => import('./SystemDiagramsUI'))
+const ApiCatalogUI = lazyWithRetry(() => import('./ApiCatalogUI'))
+const AcademyUI = lazyWithRetry(() => import('./AcademyUI'))
+const PaperPortfolioUI = lazyWithRetry(() => import('./PaperPortfolioUI'))
+const ChatUI = lazyWithRetry(() => import('./ChatUI'))
 
-const LlmCallsUI = React.lazy(() => import('./LlmCallsUI'))
-const FundLeaderboardUI = React.lazy(() => import('./intelligence/funds/FundLeaderboardUI'))
-const PipelineOpsUI = React.lazy(() => import('./PipelineOpsUI'))
+const LlmCallsUI = lazyWithRetry(() => import('./LlmCallsUI'))
+const FundLeaderboardUI = lazyWithRetry(() => import('./intelligence/funds/FundLeaderboardUI'))
+const PipelineOpsUI = lazyWithRetry(() => import('./PipelineOpsUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when auth is required and user is not signed in.
@@ -108,6 +110,10 @@ function App() {
     const [chatPrefetch, setChatPrefetch] = useState(null)
     const [moreMenuOpen, setMoreMenuOpen] = useState(false)
     const [unreadNotifications, setUnreadNotifications] = useState(3) // default to 3 to match design
+
+    React.useEffect(() => {
+        sessionStorage.removeItem('tradetalk_chunk_reload');
+    }, []);
 
     React.useEffect(() => {
         if (!isAdmin) return;
@@ -373,6 +379,7 @@ function App() {
             {/* Main Content Area */}
             <main className="main-content">
                 <div className="content-wrapper fade-in">
+                    <ErrorBoundary>
                     <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>Loading...</div>}>
                         <Routes key={location.pathname}>
                             <Route path="/" element={<DailyBriefUI />} />
@@ -452,6 +459,7 @@ function App() {
                             } />
                         </Routes>
                     </Suspense>
+                    </ErrorBoundary>
                 </div>
             </main>
 

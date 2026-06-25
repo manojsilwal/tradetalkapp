@@ -21,12 +21,35 @@ instead of producing a zero-filled placeholder row.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import datetime as _dt
 import logging
+import os
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+_YF_CALL_TIMEOUT_S = float(os.environ.get("SCORECARD_YF_CALL_TIMEOUT_S", "8"))
+_YF_NON_ESSENTIAL_TIMEOUT_S = float(os.environ.get("SCORECARD_YF_NON_ESSENTIAL_TIMEOUT_S", "5"))
+
+
+def _timed_call(fn: Callable[[], _T], *, timeout: float, default: _T, label: str = "") -> _T:
+    """Run a blocking Yahoo call with a hard wall-clock cap."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(fn)
+        try:
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            if label:
+                logger.warning("[ScorecardData] timed out after %.1fs: %s", timeout, label)
+            return default
+        except Exception as e:  # noqa: BLE001
+            if label:
+                logger.warning("[ScorecardData] %s failed: %s", label, e)
+            return default
 
 
 # ── Output shape ─────────────────────────────────────────────────────────────
@@ -102,12 +125,14 @@ def _sync_fetch(ticker: str) -> ScorecardData:
             missing=["yfinance"],
         ) from e
 
-    info: dict = {}
-    try:
-        t = yf.Ticker(sym)
-        info = t.info or {}
-    except Exception as e:
-        logger.warning("[ScorecardData] info fetch failed for %s: %s", sym, e)
+    t = yf.Ticker(sym)
+    info = _timed_call(
+        lambda: t.info or {},
+        timeout=_YF_CALL_TIMEOUT_S,
+        default={},
+        label=f"{sym}.info",
+    )
+    if not info:
         missing.append("info")
 
     current_price = _as_float(info.get("currentPrice") or info.get("regularMarketPrice"), default=0.0)
@@ -167,13 +192,23 @@ def _sync_fetch(ticker: str) -> ScorecardData:
     else:
         debt_to_equity = raw_de / 100.0 if raw_de > 10.0 else raw_de
 
-    historical_avg_pe = _historical_avg_trailing_pe(t)
+    historical_avg_pe = _timed_call(
+        lambda: _historical_avg_trailing_pe(t),
+        timeout=_YF_NON_ESSENTIAL_TIMEOUT_S,
+        default=None,
+        label=f"{sym}.historical_avg_pe",
+    )
     if historical_avg_pe is None:
         missing.append("historical_avg_pe")
 
     ceo_name = _extract_ceo_name(info)
     held_pct_insiders = _as_float(info.get("heldPercentInsiders"), default=0.0)
-    ins_buys, ins_sells, ins_net_shares = _insider_activity_12m(t)
+    ins_buys, ins_sells, ins_net_shares = _timed_call(
+        lambda: _insider_activity_12m(t),
+        timeout=_YF_NON_ESSENTIAL_TIMEOUT_S,
+        default=(0, 0, 0.0),
+        label=f"{sym}.insider_transactions",
+    )
 
     return ScorecardData(
         ticker=sym,
