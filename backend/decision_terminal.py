@@ -183,6 +183,8 @@ def _multiples_heuristic_fair_price(
     roe_pct: float,
     current_price: float,
     trailing_pe: Optional[float],
+    business_type: str = "other",
+    revenue_growth: Optional[float] = None,
 ) -> Optional[float]:
     """
     Growth- and quality-adjusted target P/E × EPS — heuristic, not peer medians.
@@ -191,7 +193,15 @@ def _multiples_heuristic_fair_price(
         return None
     base_pe = 12.0
     adj = min(14.0, max(0.0, roe_pct / 3.0))
-    target_pe = min(28.0, max(10.0, base_pe + adj))
+    
+    if business_type in ("profitable_growth", "high_growth_unprofitable"):
+        growth_bonus = max(0.0, (revenue_growth or 0.0) * 100.0 * 0.4)
+        max_pe = 45.0
+        target_pe = min(max_pe, max(10.0, base_pe + adj + growth_bonus))
+    else:
+        max_pe = 28.0
+        target_pe = min(max_pe, max(10.0, base_pe + adj))
+
     if trailing_pe and trailing_pe > 0 and current_price > 0:
         pe_norm = min(1.15, max(0.85, 18.0 / trailing_pe))
         target_pe *= pe_norm
@@ -498,10 +508,6 @@ def _build_valuation_panel(
     pe_f = float(pe) if pe is not None else None
     momentum_available = momentum_readout is not None
 
-    mfv = None
-    if price_f:
-        mfv = _multiples_heuristic_fair_price(trailing_eps, roe_pct, price_f, pe_f)
-
     from .valuation_inputs import compute_dcf_scenarios, owner_earnings_fcf
 
     dcf_result = compute_dcf_scenarios(
@@ -511,6 +517,22 @@ def _build_valuation_panel(
     )
     dcf_price = dcf_result.get("base_fair_value_usd")
     dcf_scenarios = dcf_result.get("scenarios") or {}
+    business_type = dcf_result.get("business_type", "other")
+    
+    revenue_growth = dcf_result.get("revenue_growth")
+    if revenue_growth is None and ext.get("revenueGrowth") is not None:
+        try:
+            revenue_growth = float(ext.get("revenueGrowth"))
+        except (TypeError, ValueError):
+            pass
+
+    mfv = None
+    if price_f:
+        mfv = _multiples_heuristic_fair_price(
+            trailing_eps, roe_pct, price_f, pe_f,
+            business_type=business_type,
+            revenue_growth=revenue_growth
+        )
 
     def _dcf_provenance_note() -> str:
         if not dcf_result.get("available"):
@@ -571,7 +593,7 @@ def _build_valuation_panel(
             scenarios={k: float(v) for k, v in dcf_scenarios.items() if v is not None} or None,
             provenance=TerminalFieldProvenance(
                 source="owner_earnings_dcf",
-                confidence=0.55,
+                confidence=round((dcf_result.get("dcf_confidence_score", 55) or 55) / 100.0, 2),
                 missing_reason=(
                     None
                     if dcf_result.get("available")
@@ -605,7 +627,7 @@ def _build_valuation_panel(
             provenance=TerminalFieldProvenance(
                 source="heuristic",
                 confidence=0.45,
-                formula_or_note="Target P/E anchored at 12–28 from ROE, scaled by trailing P/E vs ~18 — illustrative only.",
+                formula_or_note="Target P/E based on ROE and business type (max 28–45), scaled by trailing P/E vs ~18 — illustrative only.",
                 missing_reason=None if mfv is not None else "Insufficient EPS for multiples fair value.",
             ),
         ),
@@ -622,11 +644,17 @@ def _build_valuation_panel(
 
     valuation_models = [m for m in models if m.name != "Momentum"]
     usable = [
-        m.fair_value_usd
-        for m in valuation_models
+        m for m in valuation_models
         if m.available and m.fair_value_usd is not None
     ]
-    avg_fair = round(sum(usable) / len(usable), 2) if usable else None
+    
+    if usable:
+        weighted_sum = sum(m.fair_value_usd * (m.provenance.confidence or 0.5) for m in usable)
+        total_weight = sum(m.provenance.confidence or 0.5 for m in usable)
+        avg_fair = round(weighted_sum / total_weight, 2) if total_weight > 0 else None
+    else:
+        avg_fair = None
+
     pct_vs = gap_pct = downside_pct = None
     signal_label = confidence_label = bull_assessment = bear_assessment = ""
     dcf_low = dcf_scenarios.get("bear")
@@ -643,7 +671,7 @@ def _build_valuation_panel(
             dcf_low,
             dcf_high,
             dcf_price,
-            usable,
+            [m.fair_value_usd for m in usable],
         )
 
     gauge_label = signal_label or ("N/A" if price_f is None else "INSUFFICIENT MODEL INPUTS")
@@ -663,7 +691,7 @@ def _build_valuation_panel(
         gauge_label=gauge_label,
         models=models,
         panel_note=(
-            "Base fair value averages DCF (base case) and Multiples when available. "
+            "Base fair value is a confidence-weighted average of DCF (base case) and Multiples when available. "
             "Momentum is shown separately (0–100 score, not blended into fair value). "
             "Valuation gap and implied downside use distinct denominators."
         ),

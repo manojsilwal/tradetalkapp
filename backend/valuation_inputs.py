@@ -9,6 +9,7 @@ import logging
 import math
 import statistics
 from typing import Any, Dict, List, Optional, Tuple
+from backend.brain.business_classifier import classify_business
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +328,7 @@ def calculate_blended_growth_anchor(
 def build_base_growth_path(
     anchor_pct: float,
     terminal_growth: float = BASE_TERMINAL_G,
+    business_type: str = "other",
 ) -> List[float]:
     """
     Maps the anchor into a gradual 5-year path.
@@ -337,7 +339,11 @@ def build_base_growth_path(
     g5 = 0.25 * anchor + 0.75 * terminal
     """
     anchor = anchor_pct / 100.0
-    anchor = max(0.02, min(0.15, anchor)) # Clamp between 2% and 15%
+    if business_type in ("profitable_growth", "high_growth_unprofitable", "wide_moat_compounder"):
+        max_g = 0.35
+    else:
+        max_g = 0.15
+    anchor = max(0.02, min(max_g, anchor)) # Clamp between 2% and dynamic max growth (15% or 35%)
 
     return [
         anchor,
@@ -373,19 +379,46 @@ def compute_dcf_scenarios(
 
     positive_fcf_years = sum(1 for r in annual_rows if _num(r.get("ocf")) is not None and _num(r.get("ocf")) > 0)
 
-    # Mature Owner-Earnings DCF: FCF margin > 5% and FCF positive for 3 of last 5 years
-    if current_fcf_margin is not None and current_fcf_margin > 0.05 and positive_fcf_years >= 3:
+    # Run the soft business classifier to determine business type
+    fcf_margin_val = current_fcf_margin if current_fcf_margin is not None else 0.0
+    gross_margin_val = gross_margin or 0.0
+    operating_margin_val = _num(snapshot.get("operatingMargins")) or ((_num(snapshot.get("operatingIncome")) or 0.0) / rev_0 if rev_0 else 0.0)
+    market_cap_val = _num(snapshot.get("marketCap")) or 0.0
+    revenue_growth_yoy_val = rev_g or 0.0
+    roe_val = _num(snapshot.get("returnOnEquity")) or 0.0
+    debt_to_equity_val = (_num(snapshot.get("debtToEquity")) / 100.0) if snapshot.get("debtToEquity") else 0.0
+    capex_val = _num(snapshot.get("capitalExpenditures")) or 0.0
+    capex_intensity_val = (abs(capex_val) / rev_0) if (capex_val and rev_0 and rev_0 > 0) else 0.0
+
+    fundamentals_dict = {
+        "market_cap": market_cap_val,
+        "revenue_growth_yoy": revenue_growth_yoy_val,
+        "gross_margin": gross_margin_val,
+        "operating_margin": operating_margin_val,
+        "fcf_margin": fcf_margin_val,
+        "roic": roe_val,  # ROIC proxy
+        "debt_to_equity": debt_to_equity_val,
+        "capex_intensity": capex_intensity_val,
+        "sector": snapshot.get("sector"),
+    }
+    classification = classify_business(fundamentals_dict)
+    business_type = classification["business_type"]
+
+    # Route based on classified business type
+    if business_type in ("high_growth_unprofitable", "profitable_growth"):
+        model_type = "High-Growth"
+    elif current_fcf_margin is not None and current_fcf_margin > 0.05 and positive_fcf_years >= 3:
         model_type = "Owner-Earnings"
-    # High-Growth Revenue-to-FCF DCF: revenue growth > 20% and gross margin > 40%
     elif rev_g is not None and rev_g > 0.20 and gross_margin is not None and gross_margin > 0.40:
         model_type = "High-Growth"
     else:
         model_type = "Owner-Earnings" # Fallback to standard owner-earnings DCF
 
     if model_type == "High-Growth":
-        res = compute_high_growth_dcf_scenarios(snapshot, price_usd=price_usd)
-        res["model_name"] = "High-Growth Revenue-to-FCF DCF"
-        return res
+        res = compute_high_growth_dcf_scenarios(snapshot, price_usd=price_usd, business_type=business_type)
+        if res.get("available"):
+            res["model_name"] = "High-Growth Revenue-to-FCF DCF"
+            return res
 
     # Standard Owner-Earnings execution continues here...
     net_cash, net_cash_source = net_cash_equity(snapshot)
@@ -409,10 +442,8 @@ def compute_dcf_scenarios(
     wacc_bear = min(0.14, wacc_base + 0.015)
     wacc_bull = max(rf + 0.02, wacc_base - 0.010)
 
-    rev_g = snapshot.get("revenueGrowth")
     rev_g_num = _num(rev_g) if rev_g is not None else None
 
-    annual_rows = snapshot.get("annual_cashflow_5y") or []
     median_ocf_usd: Optional[float] = None
     median_yoy_growth_pct: Optional[float] = None
     fcf_years_used = 0
@@ -452,7 +483,7 @@ def compute_dcf_scenarios(
         ocf_cagr=ocf_cagr_pct,
     )
     growth_anchor_source = "blended_growth_anchor"
-    base_path = build_base_growth_path(blended_anchor_pct, BASE_TERMINAL_G)
+    base_path = build_base_growth_path(blended_anchor_pct, BASE_TERMINAL_G, business_type=business_type)
 
     out: Dict[str, Any] = {
         "fcf_usd": fcf,
@@ -470,21 +501,26 @@ def compute_dcf_scenarios(
         "scenarios": {},
         "base_fair_value_usd": None,
         "available": False,
+        "business_type": business_type,
     }
 
     if fcf is None or fcf <= 0 or not shares or shares <= 0:
         out["missing_reason"] = "Insufficient owner-earnings FCF or shares outstanding."
         return out
 
+    # Dynamic bear/bull growth paths
+    bear_path = [max(0.01, g * 0.5) for g in base_path]
+    bull_path = [min(0.40, g * 1.3) for g in base_path]
+
     scenarios = {
         "bear": dcf_fair_value_per_share(
-            fcf, shares, net_cash, BEAR_GROWTH_PATH, wacc_bear, BEAR_TERMINAL_G
+            fcf, shares, net_cash, bear_path, wacc_bear, BEAR_TERMINAL_G
         ),
         "base": dcf_fair_value_per_share(
             fcf, shares, net_cash, base_path, wacc_base, BASE_TERMINAL_G
         ),
         "bull": dcf_fair_value_per_share(
-            fcf, shares, net_cash, BULL_GROWTH_PATH, wacc_bull, BULL_TERMINAL_G
+            fcf, shares, net_cash, bull_path, wacc_bull, BULL_TERMINAL_G
         ),
     }
     out["scenarios"] = {k: round(v, 2) if v is not None else None for k, v in scenarios.items()}
@@ -662,6 +698,7 @@ def compute_high_growth_dcf_scenarios(
     snapshot: Dict[str, Any],
     *,
     price_usd: Optional[float] = None,
+    business_type: str = "other",
 ) -> Dict[str, Any]:
     """
     Bear / base / bull high-growth revenue-to-FCF scenarios.
@@ -778,6 +815,7 @@ def compute_high_growth_dcf_scenarios(
         "current_fcf_margin": round(current_fcf_margin, 4),
         "target_fcf_margin_base": round(target_fcf_margin_base, 4),
         "revenue_growth": round(rev_g_num, 4),
+        "business_type": business_type,
     }
 
     warning_flags = ["high_growth_sensitivity"]
@@ -796,6 +834,6 @@ def compute_high_growth_dcf_scenarios(
     if len(warning_flags) > 1:
         confidence -= 15 * (len(warning_flags) - 1)
     out["dcf_confidence_score"] = max(0, min(100, confidence))
-    out["model_name"] = "Mature Owner-Earnings DCF"
+    out["model_name"] = "High-Growth Revenue-to-FCF DCF"
 
     return out
