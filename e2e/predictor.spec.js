@@ -30,20 +30,38 @@ test.describe('Predictor', () => {
     expect(String(json.disclaimer || '').length).toBeGreaterThan(10);
   });
 
-  test('openapi exposes predictor route', async ({ request }) => {
+  test('openapi exposes predictor and decision-terminal slice routes', async ({ request }) => {
     const res = await request.get(`${API_BASE}/openapi.json`, { timeout: 60000 });
     expect(res.ok()).toBeTruthy();
     const spec = await res.json();
     const paths = spec.paths || {};
     expect(paths['/predictor/forecast']).toBeDefined();
+    // Progressive decision-terminal slices used by DecisionTerminalUI.
+    expect(paths['/decision-terminal/snapshot']).toBeDefined();
+    expect(paths['/decision-terminal/verdict']).toBeDefined();
+    expect(paths['/decision-terminal/roadmap']).toBeDefined();
   });
 
-  test('decision-terminal UI shows roadmap after run', async ({ page }) => {
+  test('GET /decision-terminal/roadmap returns predictor-anchored scenarios', async ({ request }) => {
+    const res = await request.get(`${API_BASE}/decision-terminal/roadmap`, {
+      params: { ticker: 'AAPL' },
+      timeout: 240000,
+    });
+    expect(res.ok()).toBeTruthy();
+    const json = await res.json();
+    expect(json.ticker).toBe('AAPL');
+    expect(json.roadmap).toBeDefined();
+    expect(json.roadmap.provenance).toBeDefined();
+  });
+
+  test('decision-terminal UI shows roadmap after run (progressive)', async ({ page }) => {
     await page.goto('/decision-terminal', { waitUntil: 'domcontentloaded' });
     await dismissOnboarding(page);
     await waitForDecisionTerminalReady(page);
     await page.locator('.dt-ticker-input').fill('AAPL');
     await page.getByRole('button', { name: 'Run analysis' }).click();
+    // Snapshot slice fills valuation first; roadmap slice resolves independently.
+    await expect(page.getByText('Consensus valuation signal')).toBeVisible({ timeout: 120000 });
     await expect(page.getByRole('heading', { name: /Future price roadmap/i })).toBeVisible({
       timeout: 240000,
     });

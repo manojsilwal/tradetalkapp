@@ -43,8 +43,14 @@ async def run_verdict_prewarm(
     poly_connector,
     llm_client,
 ) -> Dict[str, Any]:
-    from .decision_terminal import run_decision_terminal_request
+    from .decision_terminal import (
+        run_decision_roadmap_request,
+        run_decision_snapshot_request,
+        run_decision_verdict_request,
+    )
+    from .verdict_cache import SLICE_ROADMAP, SLICE_SNAPSHOT, SLICE_VERDICT
 
+    _ = llm_client
     raw = tickers if tickers else PREWARM_DEFAULT_TICKERS
     syms = [validate_ticker_query(t) for t in raw if (t or "").strip()]
     results: List[Dict[str, Any]] = []
@@ -52,7 +58,6 @@ async def run_verdict_prewarm(
     cold_runs = 0
     brain_prewarm_ok = 0
 
-    # Brain snapshot prewarm — warms serve_ticker caches when brain serving is on.
     try:
         from .brain.serving import serving_enabled, serve_ticker
 
@@ -71,18 +76,25 @@ async def run_verdict_prewarm(
         t0 = time.perf_counter()
         row: Dict[str, Any] = {"ticker": sym}
         try:
-            payload = await run_decision_terminal_request(
-                sym,
-                None,
-                None,
-                execute_analyze=execute_analyze,
-                tool_registry=tool_registry,
-                poly_connector=poly_connector,
-                llm_client=llm_client,
-                force=False,
+            snapshot, verdict, roadmap = await asyncio.gather(
+                run_decision_snapshot_request(sym, tool_registry=tool_registry, force=False),
+                run_decision_verdict_request(
+                    sym,
+                    None,
+                    None,
+                    execute_analyze=execute_analyze,
+                    tool_registry=tool_registry,
+                    poly_connector=poly_connector,
+                    force=False,
+                ),
+                run_decision_roadmap_request(sym, tool_registry=tool_registry, force=False),
             )
             dur = round(time.perf_counter() - t0, 2)
-            from_cache = bool(getattr(payload, "verdict_from_cache", False))
+            from_cache = bool(
+                snapshot.slice_from_cache
+                or verdict.slice_from_cache
+                or roadmap.slice_from_cache
+            )
             if from_cache:
                 cache_hits += 1
             else:
@@ -92,6 +104,11 @@ async def run_verdict_prewarm(
                     "ok": True,
                     "duration_s": dur,
                     "verdict_from_cache": from_cache,
+                    "slices": {
+                        SLICE_SNAPSHOT: snapshot.slice_from_cache,
+                        SLICE_VERDICT: verdict.slice_from_cache,
+                        SLICE_ROADMAP: roadmap.slice_from_cache,
+                    },
                 }
             )
             logger.info(

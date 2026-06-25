@@ -759,3 +759,49 @@ class DecisionTerminalPayload(BaseModel):
             "is disabled (BRAIN_SERVE_ENABLE=0) or no snapshot exists for this ticker."
         ),
     )
+
+
+class DecisionSnapshotPayload(BaseModel):
+    """Fast slice: valuation + quality + spot (no swarm/debate/roadmap LLM)."""
+
+    ticker: str
+    disclaimer: str
+    generated_at_utc: str
+    cache_ttl_seconds: int = 300
+    slice_from_cache: bool = False
+    valuation: TerminalValuationPanel
+    quality: TerminalQualityPanel
+    market_data_degraded: bool = False
+    spot_price_source: Optional[str] = None
+    data_freshness: Optional["DataFreshness"] = None
+    spot: Optional[SpotEnvelope] = None
+    scorecard_summary: Optional[TerminalScorecardSummary] = None
+
+
+class DecisionVerdictPayload(BaseModel):
+    """Slow slice: fused verdict + embedded swarm/debate for Trace/Debate tabs."""
+
+    ticker: str
+    generated_at_utc: str
+    cache_ttl_seconds: int = 300
+    slice_from_cache: bool = False
+    verdict_captured_at_utc: Optional[str] = None
+    macro_fetched_at_utc: Optional[str] = None
+    verdict: TerminalVerdictPanel
+    swarm: SwarmConsensus
+    debate: DebateResult
+    brain: Optional["BrainVerdict"] = None
+
+
+class DecisionRoadmapPayload(BaseModel):
+    """Roadmap slice: 3Y scenario prices (predictor-first, heuristic fallback)."""
+
+    ticker: str
+    generated_at_utc: str
+    cache_ttl_seconds: int = 300
+    slice_from_cache: bool = False
+    roadmap: TerminalRoadmapPanel
+    current_price_usd: Optional[float] = Field(
+        default=None,
+        description="Spot used to anchor roadmap scenarios (may differ from live overlay).",
+    )

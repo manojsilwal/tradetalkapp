@@ -231,6 +231,94 @@ class TestDebateEmitsDecision(_LedgerTestBase):
         self.assertIn("bull_score", names)
 
 
+# ── Decision-terminal verdict slice producer ────────────────────────────────
+
+
+class TestVerdictSliceEmitsDecision(_LedgerTestBase):
+    """run_decision_verdict_request must emit a `decision_terminal` ledger row.
+
+    The verdict slice is the user-facing producer for the Decision Terminal page
+    after the endpoint split, so per AGENTS.md it owns the ledger emit.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        # Keep the slice cache out of the way so the runner always re-computes
+        # and emits (a cache hit short-circuits before the ledger emit).
+        os.environ["VERDICT_CACHE_ENABLE"] = "0"
+        self.addCleanup(lambda: os.environ.pop("VERDICT_CACHE_ENABLE", None))
+
+    def test_verdict_slice_lands_in_ledger(self) -> None:
+        from backend.decision_terminal import run_decision_verdict_request
+        from backend.schemas import (
+            DebateResult,
+            MarketState,
+            MarketRegime,
+            SwarmConsensus,
+        )
+
+        swarm = SwarmConsensus(
+            ticker="AAPL",
+            macro_state=MarketState(market_regime=MarketRegime.BULL_NORMAL),
+            global_signal=1,
+            global_verdict="BUY",
+            confidence=0.7,
+            factors={},
+        )
+        debate = DebateResult(
+            ticker="AAPL",
+            arguments=[],
+            verdict="BUY",
+            consensus_confidence=0.8,
+            moderator_summary="summary",
+            bull_score=3,
+            bear_score=1,
+            neutral_score=1,
+        )
+        analysis = SimpleNamespace(
+            swarm=swarm, debate=debate, macro_fetched_at_utc="2026-06-25T00:00:00Z"
+        )
+
+        async def _execute_analyze(ticker, credit_stress, auth_user, **kwargs):
+            # Drain the injected debate-data task so it is not left pending.
+            task = kwargs.get("debate_data_task")
+            if task is not None:
+                await task
+            return analysis
+
+        class _ToolRegistry:
+            async def invoke(self, name, args, timeout_s=None):
+                return {"ticker": "AAPL", "company_name": "Apple Inc", "current_price": 150.0}
+
+        class _PolyConnector:
+            async def fetch_data(self, ticker):
+                return {"events": [], "source": "test", "has_relevant_data": False}
+
+        payload = asyncio.run(
+            run_decision_verdict_request(
+                "aapl",
+                None,
+                None,
+                execute_analyze=_execute_analyze,
+                tool_registry=_ToolRegistry(),
+                poly_connector=_PolyConnector(),
+                force=True,
+            )
+        )
+
+        self.assertEqual(payload.ticker, "AAPL")
+        self.assertIsNotNone(payload.verdict)
+
+        decisions = dl.get_ledger().list_decisions_since(0.0, decision_type="decision_terminal")
+        self.assertEqual(len(decisions), 1)
+        d = decisions[0]
+        self.assertEqual(d.symbol, "AAPL")
+        self.assertEqual(d.horizon_hint, "21d")
+        self.assertEqual(d.verdict, payload.verdict.headline_verdict)
+        self.assertIn("headline_verdict", d.output)
+        self.assertEqual(d.source_route, "backend/decision_terminal.py::run_decision_verdict_request")
+
+
 # ── Chat producer ──────────────────────────────────────────────────────────
 
 

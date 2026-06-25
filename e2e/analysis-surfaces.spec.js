@@ -44,7 +44,9 @@ test.describe('Analysis Surfaces', () => {
     await waitForDecisionTerminalReady(page);
     await page.locator('.dt-ticker-input').fill('AAPL');
     await page.getByRole('button', { name: 'Run analysis' }).click();
-    await expectOneOf(page, ['Verdict & sentiment hub', 'Aggregate verdict', 'Future price roadmap'], 120000);
+    // Fast snapshot slice should populate valuation/quality before slow verdict finishes.
+    await expect(page.getByText('Consensus valuation signal')).toBeVisible({ timeout: 120000 });
+    await expectOneOf(page, ['Verdict & sentiment hub', 'Aggregate verdict', 'Future price roadmap'], 240000);
     await expectNoGenericFetchFailure(page);
   });
 });

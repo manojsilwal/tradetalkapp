@@ -13,7 +13,10 @@ from ..connectors.stock_fundamentals import fetch_stock_fundamentals
 
 from ..schemas import (
     MarketState, MarketRegime, SwarmConsensus, DebateResult,
+    DecisionSnapshotPayload,
     DecisionTerminalPayload,
+    DecisionVerdictPayload,
+    DecisionRoadmapPayload,
 )
 from ..predictor.schemas import PredictorForecastResponse, PredictorForecastToolInput
 from ..agents import (
@@ -543,6 +546,54 @@ async def analyze_ticker_post(body: AnalyzeIngressRequest, _auth_user=Depends(ge
     return await _execute_analyze(body.ticker, body.credit_stress, _auth_user)
 
 
+@router.get("/decision-terminal/snapshot", response_model=DecisionSnapshotPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_snapshot_get(
+    ticker: str = Query("AAPL", description="Stock ticker for the decision terminal snapshot."),
+    force: bool = Query(False, description="Bypass per-trading-day snapshot cache."),
+    _auth_user=Depends(get_optional_user),
+):
+    """Fast slice: valuation, quality, spot, and scorecard summary."""
+    from ..decision_terminal import run_decision_snapshot_request
+
+    t = validate_ticker_query(ticker)
+    return await run_decision_snapshot_request(t, tool_registry=tool_registry, force=force)
+
+
+@router.get("/decision-terminal/verdict", response_model=DecisionVerdictPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_verdict_get(
+    ticker: str = Query("AAPL", description="Stock ticker for the decision terminal verdict."),
+    credit_stress: float = Query(None, description="Optional credit stress override (same as /analyze)."),
+    force: bool = Query(False, description="Bypass per-trading-day verdict cache."),
+    _auth_user=Depends(get_optional_user),
+):
+    """Slow slice: swarm + debate fused verdict with embedded trace/debate payloads."""
+    from ..decision_terminal import run_decision_verdict_request
+
+    t = validate_ticker_query(ticker)
+    return await run_decision_verdict_request(
+        t,
+        credit_stress,
+        _auth_user,
+        execute_analyze=_execute_analyze,
+        tool_registry=tool_registry,
+        poly_connector=poly_connector,
+        force=force,
+    )
+
+
+@router.get("/decision-terminal/roadmap", response_model=DecisionRoadmapPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_roadmap_get(
+    ticker: str = Query("AAPL", description="Stock ticker for the decision terminal roadmap."),
+    force: bool = Query(False, description="Bypass per-trading-day roadmap cache."),
+    _auth_user=Depends(get_optional_user),
+):
+    """Roadmap slice: 3Y scenario prices (predictor-first, heuristic fallback)."""
+    from ..decision_terminal import run_decision_roadmap_request
+
+    t = validate_ticker_query(ticker)
+    return await run_decision_roadmap_request(t, tool_registry=tool_registry, force=force)
+
+
 @router.get("/decision-terminal", response_model=DecisionTerminalPayload, dependencies=[Depends(_rl_expensive)])
 async def decision_terminal_get(
     ticker: str = Query("AAPL", description="Stock ticker for the decision terminal."),
@@ -563,7 +614,7 @@ async def decision_terminal_get(
 ):
     """
     Glanceable four-panel terminal: valuation heuristics, quality snapshot, fused verdict/sentiment,
-    and 3Y scenario prices. Runs full swarm + debate once. Does not award deep_analysis XP.
+    and 3Y scenario prices. Aggregates snapshot + verdict + roadmap slices in parallel.
     """
     from ..decision_terminal import run_decision_terminal_request
 
@@ -605,6 +656,38 @@ async def decision_terminal_prewarm(
         poly_connector=poly_connector,
         llm_client=llm_client,
     )
+
+
+@router.post("/decision-terminal/snapshot", response_model=DecisionSnapshotPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_snapshot_post(body: AnalyzeIngressRequest, _auth_user=Depends(get_optional_user)):
+    from ..decision_terminal import run_decision_snapshot_request
+
+    t = validate_ticker_query(body.ticker)
+    return await run_decision_snapshot_request(t, tool_registry=tool_registry, force=bool(body.force))
+
+
+@router.post("/decision-terminal/verdict", response_model=DecisionVerdictPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_verdict_post(body: AnalyzeIngressRequest, _auth_user=Depends(get_optional_user)):
+    from ..decision_terminal import run_decision_verdict_request
+
+    t = validate_ticker_query(body.ticker)
+    return await run_decision_verdict_request(
+        t,
+        body.credit_stress,
+        _auth_user,
+        execute_analyze=_execute_analyze,
+        tool_registry=tool_registry,
+        poly_connector=poly_connector,
+        force=bool(body.force),
+    )
+
+
+@router.post("/decision-terminal/roadmap", response_model=DecisionRoadmapPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_roadmap_post(body: AnalyzeIngressRequest, _auth_user=Depends(get_optional_user)):
+    from ..decision_terminal import run_decision_roadmap_request
+
+    t = validate_ticker_query(body.ticker)
+    return await run_decision_roadmap_request(t, tool_registry=tool_registry, force=bool(body.force))
 
 
 @router.post("/decision-terminal", response_model=DecisionTerminalPayload, dependencies=[Depends(_rl_expensive)])

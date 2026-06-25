@@ -85,7 +85,77 @@ const API_CATALOG = [
                         'disclaimer, generated_at_utc, market_data_degraded?, spot_price_source?',
                     ],
                 },
-                architecture: 'React → GET /decision-terminal → orchestrates metrics + swarm + LLM synthesis → 4 structured panels → DecisionTerminalUI gauges & roadmap timeline',
+                architecture: 'React → GET /decision-terminal → aggregates snapshot + verdict + roadmap slices in parallel → merged DecisionTerminalPayload (used by the dashboard). The standalone Decision Terminal page calls the three slices below directly for progressive rendering.',
+            },
+            {
+                method: 'GET',
+                path: '/decision-terminal/snapshot',
+                summary: 'Fast slice: valuation + quality + spot + scorecard (no swarm/debate/LLM)',
+                uiSurfaces: ['Decision Terminal'],
+                uiComponent: 'DecisionTerminalUI.jsx',
+                backendFile: 'backend/routers/analysis.py',
+                auth: 'optional',
+                request: {
+                    query: [
+                        { name: 'ticker', type: 'string', required: true, example: 'AAPL' },
+                        { name: 'force', type: 'bool', required: false, description: 'Bypass per-trading-day snapshot cache' },
+                    ],
+                },
+                response: {
+                    type: 'DecisionSnapshotPayload',
+                    fields: [
+                        'valuation, quality (panel objects)',
+                        'spot, spot_price_source?, market_data_degraded?, scorecard_summary?',
+                    ],
+                },
+                architecture: 'React → GET /decision-terminal/snapshot → market data + DCF/multiples/momentum + quality → renders Consensus Valuation + Business Quality panels first (seconds)',
+            },
+            {
+                method: 'GET',
+                path: '/decision-terminal/verdict',
+                summary: 'Slow slice: fused swarm + debate verdict (+ embedded swarm/debate, brain block)',
+                uiSurfaces: ['Decision Terminal'],
+                uiComponent: 'DecisionTerminalUI.jsx',
+                backendFile: 'backend/routers/analysis.py',
+                auth: 'optional',
+                request: {
+                    query: [
+                        { name: 'ticker', type: 'string', required: true, example: 'AAPL' },
+                        { name: 'credit_stress', type: 'float', required: false },
+                        { name: 'force', type: 'bool', required: false, description: 'Bypass per-trading-day verdict cache' },
+                    ],
+                },
+                response: {
+                    type: 'DecisionVerdictPayload',
+                    fields: [
+                        'verdict (panel), swarm, debate (for Trace/Debate tabs)',
+                        'brain?, macro_fetched_at_utc?, verdict_captured_at_utc?',
+                    ],
+                },
+                architecture: 'React → GET /decision-terminal/verdict → swarm factor agents + 5-agent debate + Polymarket gating + brain cutover → Verdict & Sentiment Hub (emits Decision-Outcome Ledger)',
+            },
+            {
+                method: 'GET',
+                path: '/decision-terminal/roadmap',
+                summary: 'Roadmap slice: 3Y scenario prices (predictor-first, heuristic fallback)',
+                uiSurfaces: ['Decision Terminal'],
+                uiComponent: 'DecisionTerminalUI.jsx',
+                backendFile: 'backend/routers/analysis.py',
+                auth: 'optional',
+                request: {
+                    query: [
+                        { name: 'ticker', type: 'string', required: true, example: 'AAPL' },
+                        { name: 'force', type: 'bool', required: false, description: 'Bypass per-trading-day roadmap cache' },
+                    ],
+                },
+                response: {
+                    type: 'DecisionRoadmapPayload',
+                    fields: [
+                        'roadmap (bull/base/bear + horizon bands + provenance)',
+                        'current_price_usd?',
+                    ],
+                },
+                architecture: 'React → GET /decision-terminal/roadmap → probabilistic predictor (TimesFM path) or historical-CAGR heuristic → Future Price Roadmap chart',
             },
             {
                 method: 'GET',

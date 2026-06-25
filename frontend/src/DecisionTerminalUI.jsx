@@ -149,9 +149,16 @@ function sliderPosition(price, bear, bull) {
 
 export default function DecisionTerminalUI() {
   const [ticker, setTicker] = useState('AAPL');
-  const [payload, setPayload] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [snapshot, setSnapshot] = useState(null);
+  const [verdictSlice, setVerdictSlice] = useState(null);
+  const [roadmapSlice, setRoadmapSlice] = useState(null);
+  const [loadingSnapshot, setLoadingSnapshot] = useState(false);
+  const [loadingVerdict, setLoadingVerdict] = useState(false);
+  const [loadingRoadmap, setLoadingRoadmap] = useState(false);
+  const [errorSnapshot, setErrorSnapshot] = useState(null);
+  const [errorVerdict, setErrorVerdict] = useState(null);
+  const [errorRoadmap, setErrorRoadmap] = useState(null);
+  const [hasRun, setHasRun] = useState(false);
 
   // Sync page context so the app-level assistant knows which ticker is being analyzed
   useEffect(() => {
@@ -172,27 +179,56 @@ export default function DecisionTerminalUI() {
 
 
   const run = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setPayload(null);
-    try {
-      const data = await apiFetch(
-        `${API_BASE_URL}/decision-terminal?ticker=${encodeURIComponent(ticker.trim())}${payload ? '&force=true' : ''}`,
-      );
-      setPayload(data);
-    } catch (e) {
-      setError(e.message || String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [ticker]);
+    const sym = ticker.trim();
+    if (!sym) return;
+    const force = hasRun ? '&force=true' : '';
+    const base = `${API_BASE_URL}/decision-terminal`;
+    const q = `?ticker=${encodeURIComponent(sym)}${force}`;
 
-  const v = payload?.valuation;
-  const q = payload?.quality;
-  const z = payload?.verdict;
-  const r = payload?.roadmap;
-  const brain = payload?.brain;
-  const hasData = !!payload;
+    setHasRun(true);
+    setSnapshot(null);
+    setVerdictSlice(null);
+    setRoadmapSlice(null);
+    setErrorSnapshot(null);
+    setErrorVerdict(null);
+    setErrorRoadmap(null);
+    setLoadingSnapshot(true);
+    setLoadingVerdict(true);
+    setLoadingRoadmap(true);
+
+    apiFetch(`${base}/snapshot${q}`)
+      .then((data) => setSnapshot(data))
+      .catch((e) => setErrorSnapshot(e.message || String(e)))
+      .finally(() => setLoadingSnapshot(false));
+
+    apiFetch(`${base}/verdict${q}`)
+      .then((data) => setVerdictSlice(data))
+      .catch((e) => setErrorVerdict(e.message || String(e)))
+      .finally(() => setLoadingVerdict(false));
+
+    apiFetch(`${base}/roadmap${q}`)
+      .then((data) => setRoadmapSlice(data))
+      .catch((e) => setErrorRoadmap(e.message || String(e)))
+      .finally(() => setLoadingRoadmap(false));
+  }, [ticker, hasRun]);
+
+  const loading = loadingSnapshot || loadingVerdict || loadingRoadmap;
+  const v = snapshot?.valuation;
+  const q = snapshot?.quality;
+  const z = verdictSlice?.verdict;
+  const r = roadmapSlice?.roadmap;
+  const brain = verdictSlice?.brain;
+  const hasSnapshot = !!snapshot;
+  const hasVerdict = !!verdictSlice;
+  const hasRoadmap = !!roadmapSlice;
+  const hasData = hasSnapshot || hasVerdict || hasRoadmap;
+  const disclaimer = snapshot?.disclaimer;
+  const dataFreshness = snapshot?.data_freshness;
+  const marketDataDegraded = snapshot?.market_data_degraded;
+  const spotPriceSource = snapshot?.spot_price_source;
+  const scorecardSummary = snapshot?.scorecard_summary;
+  const generatedAtUtc = snapshot?.generated_at_utc || verdictSlice?.generated_at_utc || roadmapSlice?.generated_at_utc;
+  const cacheTtlSeconds = snapshot?.cache_ttl_seconds || verdictSlice?.cache_ttl_seconds || roadmapSlice?.cache_ttl_seconds;
 
   const pmFill = useMemo(
     () => (z?.polymarket_gated_out ? 0.35 : polymarketArcRatio(z?.prediction_market_bullish_pct)),
@@ -260,21 +296,26 @@ export default function DecisionTerminalUI() {
           </div>
         )}
 
-        {payload?.disclaimer && <div className="dt-disclaimer">{payload.disclaimer}</div>}
-        {payload?.data_freshness && <DataTrustBanner envelope={payload.data_freshness} />}
-        {(payload?.market_data_degraded ||
-          (payload?.spot_price_source &&
-            payload.spot_price_source !== 'yfinance_history')) && (
+        {disclaimer && <div className="dt-disclaimer">{disclaimer}</div>}
+        {dataFreshness && <DataTrustBanner envelope={dataFreshness} />}
+        {(marketDataDegraded ||
+          (spotPriceSource && spotPriceSource !== 'yfinance_history')) && (
           <div className="dt-disclaimer dt-market-degraded">
-            Spot price uses a fallback source ({payload?.spot_price_source || 'unknown'}). Momentum and
+            Spot price uses a fallback source ({spotPriceSource || 'unknown'}). Momentum and
             some metrics may be incomplete versus a full Yahoo history pull.
           </div>
         )}
-        {error && <div className="dt-error-banner">{error}</div>}
+        {(errorSnapshot || errorVerdict || errorRoadmap) && (
+          <div className="dt-error-banner">
+            {[errorSnapshot && `Snapshot: ${errorSnapshot}`, errorVerdict && `Verdict: ${errorVerdict}`, errorRoadmap && `Roadmap: ${errorRoadmap}`]
+              .filter(Boolean)
+              .join(' · ')}
+          </div>
+        )}
 
-        {!hasData && !loading && !error && (
+        {!hasData && !loading && !errorSnapshot && !errorVerdict && !errorRoadmap && (
           <div className="dt-prompt-banner">
-            Enter a ticker and run analysis. First load may take a minute (swarm + debate).
+            Enter a ticker and run analysis. Valuation and quality load first; verdict and roadmap follow.
           </div>
         )}
 
@@ -282,13 +323,13 @@ export default function DecisionTerminalUI() {
           {/* —— Consensus valuation —— */}
           <section className="dt-panel">
             <h2 className="dt-panel-title">Consensus valuation signal</h2>
-            <ConsensusValuationPanel valuation={v} hasData={hasData} loading={loading} ticker={ticker} />
+            <ConsensusValuationPanel valuation={v} hasData={hasSnapshot} loading={loadingSnapshot} ticker={ticker} />
           </section>
 
           {/* —— Quality scorecard —— */}
           <section className="dt-panel">
             <h2 className="dt-panel-title">Business quality scorecard</h2>
-            {hasData && q?.fundamental_health && (
+            {hasSnapshot && q?.fundamental_health && (
               <FundamentalHealthBanner health={q.fundamental_health} />
             )}
             <div className="dt-quality-3x2">
@@ -318,7 +359,7 @@ export default function DecisionTerminalUI() {
                   </div>
                 );
               })}
-              {!hasData &&
+              {!hasSnapshot &&
                 ['ROIC', 'Moat', 'FCF', 'Debt', 'Margin', 'Current ratio'].map((label) => (
                   <div key={label} className="dt-q-tile dt-q-tile-empty">
                     <div className="dt-q-tile-icon muted">
@@ -332,10 +373,10 @@ export default function DecisionTerminalUI() {
                   </div>
                 ))}
             </div>
-            {hasData && payload?.scorecard_summary?.one_line_reason && (
+            {hasSnapshot && scorecardSummary?.one_line_reason && (
               <div className="dt-scorecard-verdict">
                 <span className="dt-capsule">
-                  Analysis: {payload.scorecard_summary.one_line_reason}
+                  Analysis: {scorecardSummary.one_line_reason}
                 </span>
               </div>
             )}
@@ -344,20 +385,26 @@ export default function DecisionTerminalUI() {
           {/* —— Verdict & sentiment —— */}
           <section className="dt-panel">
             <h2 className="dt-panel-title">Verdict & sentiment hub</h2>
+            {loadingVerdict && !hasVerdict && (
+              <div className="dt-prompt-banner" style={{ marginBottom: 12 }}>
+                <Loader2 className="spinner" size={16} style={{ display: 'inline', marginRight: 8 }} />
+                Running swarm + debate analysis…
+              </div>
+            )}
             <div className="dt-verdict-split">
               <div className="dt-pm-block">
                 <div className="dt-subblock-title">Prediction market sentiment</div>
                 <div className="dt-pm-gauge-wrap">
-                  <SemiGauge fillRatio={hasData ? pmFill : 0.5} size="small" />
+                  <SemiGauge fillRatio={hasVerdict ? pmFill : 0.5} size="small" />
                   <div className="dt-pm-label">
-                    {hasData && !z?.polymarket_gated_out && z?.prediction_market_bullish_pct != null
+                    {hasVerdict && !z?.polymarket_gated_out && z?.prediction_market_bullish_pct != null
                       ? `${z.prediction_market_bullish_pct}% Bullish`
-                      : hasData
+                      : hasVerdict
                         ? 'No gated market'
                         : '—'}
                   </div>
                 </div>
-                {hasData && z?.prediction_market_event_title && !z?.polymarket_gated_out && (
+                {hasVerdict && z?.prediction_market_event_title && !z?.polymarket_gated_out && (
                   <p className="dt-pm-event">{z.prediction_market_event_title.slice(0, 100)}</p>
                 )}
               </div>
@@ -366,7 +413,7 @@ export default function DecisionTerminalUI() {
                 <div className={`dt-expert-pill ${expertBullish ? 'bull' : 'neutral'}`}>
                   <ArrowUpRight size={18} className="dt-expert-arrow" />
                   <span>
-                    {hasData && expertPct != null
+                    {hasVerdict && expertPct != null
                       ? `${expertBullish ? 'Bullish' : 'Mixed'} — ${expertPct.toFixed(0)}%`
                       : '—'}
                   </span>
@@ -374,9 +421,9 @@ export default function DecisionTerminalUI() {
                 <div className="dt-subblock-title dt-mt">Aggregate verdict</div>
                 <div className={`dt-aggregate ${verdictTone(z?.headline_verdict)}`}>
                   <CheckCircle2 size={28} className="dt-aggregate-check" />
-                  <span>{hasData ? (z?.headline_verdict || '—').toUpperCase() : '—'}</span>
+                  <span>{hasVerdict ? (z?.headline_verdict || '—').toUpperCase() : '—'}</span>
                 </div>
-                {hasData && (z?.fusion_note || z?.debate_verdict) && (
+                {hasVerdict && (z?.fusion_note || z?.debate_verdict) && (
                   <div className="dt-verdict-meta">
                     <span>
                       Debate {z.debate_verdict} · Swarm {z.swarm_verdict}
@@ -384,7 +431,7 @@ export default function DecisionTerminalUI() {
                     {z.fusion_note && <p>{z.fusion_note}</p>}
                   </div>
                 )}
-                {hasData && brain && (
+                {hasVerdict && brain && (
                   <div style={{
                     marginTop: 10,
                     padding: '8px 12px',
@@ -447,6 +494,12 @@ export default function DecisionTerminalUI() {
           {/* —— Roadmap —— */}
           <section className="dt-panel">
             <h2 className="dt-panel-title">Future price roadmap (3-year trajectory)</h2>
+            {loadingRoadmap && !hasRoadmap && (
+              <div className="dt-prompt-banner" style={{ marginBottom: 12 }}>
+                <Loader2 className="spinner" size={16} style={{ display: 'inline', marginRight: 8 }} />
+                Building scenario roadmap…
+              </div>
+            )}
             <div className="dt-roadmap-head">
               <span className="dt-roadmap-legend">
                 <span className="dot bull" /> Bull
@@ -461,7 +514,7 @@ export default function DecisionTerminalUI() {
                 {scenarioPrices?.bear != null && ` ($${Number(scenarioPrices.bear).toFixed(0)})`}
               </span>
             </div>
-            {hasData && predictedCagrPct != null && (
+            {hasRoadmap && predictedCagrPct != null && (
               <div className="dt-cagr-chip">Predicted CAGR: {predictedCagrPct}%</div>
             )}
             <div className="dt-chart-box">
@@ -529,13 +582,13 @@ export default function DecisionTerminalUI() {
                   title="Vs bear–bull scenario band"
                 />
               </div>
-              {hasData && spot != null && (
+              {hasRoadmap && spot != null && (
                 <div className="dt-slider-price" style={{ left: `${dotLeft}%` }}>
                   Current price: ${Number(spot).toFixed(2)}
                 </div>
               )}
             </div>
-            {hasData && r?.provenance && (
+            {hasRoadmap && r?.provenance && (
               <p className="dt-roadmap-prov">
                 {r.used_heuristic_fallback ? 'Heuristic / fallback scenarios' : 'Model-assisted scenarios'} ·{' '}
                 {r.provenance.source}
@@ -544,9 +597,9 @@ export default function DecisionTerminalUI() {
           </section>
         </div>
 
-        {payload?.generated_at_utc && (
+        {generatedAtUtc && (
           <footer className="dt-footer-meta">
-            UTC {payload.generated_at_utc} · refresh ~{payload.cache_ttl_seconds}s
+            UTC {generatedAtUtc} · refresh ~{cacheTtlSeconds}s
           </footer>
         )}
       </div>

@@ -45,7 +45,7 @@ export default function MomentumLessonExample({ ticker }) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    apiFetch(`${API_BASE_URL}/decision-terminal?ticker=${encodeURIComponent(sym)}`)
+    apiFetch(`${API_BASE_URL}/decision-terminal/snapshot?ticker=${encodeURIComponent(sym)}`)
       .then((payload) => {
         if (cancelled) return;
         setReadout(extractMomentumReadout(payload?.valuation));

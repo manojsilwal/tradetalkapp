@@ -11,15 +11,17 @@ test.describe('Decision Terminal', () => {
     await waitForDecisionTerminalReady(page);
   });
 
-  test('positive: loads and analyzes AAPL', async ({ page }) => {
+  test('positive: progressively loads AAPL panels (snapshot before verdict)', async ({ page }) => {
     const tickerInput = page.locator('.dt-ticker-input');
     await tickerInput.fill('AAPL');
     await page.getByRole('button', { name: 'Run analysis' }).click();
 
-    // Verify loading steps appear and eventually resolve
-    await expect(page.getByText('Verdict & sentiment hub')).toBeVisible({ timeout: 120000 });
+    // Fast snapshot slice fills valuation + quality first.
+    await expect(page.getByText('Consensus valuation signal')).toBeVisible({ timeout: 120000 });
+    await expect(page.getByText('Business quality scorecard')).toBeVisible();
 
-    // Check specific elements of the terminal
+    // Slow verdict + roadmap slices stream in independently afterwards.
+    await expect(page.getByText('Verdict & sentiment hub')).toBeVisible({ timeout: 240000 });
     await expect(page.getByText('Aggregate verdict')).toBeVisible();
     await expect(page.getByText('Future price roadmap')).toBeVisible();
 

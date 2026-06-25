@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,8 +25,12 @@ from .connectors.polymarket_gating import (
 )
 from .metric_reconciliation import build_reconciliation
 from .schemas import (
+    BrainVerdict,
     DebateResult,
+    DecisionRoadmapPayload,
+    DecisionSnapshotPayload,
     DecisionTerminalPayload,
+    DecisionVerdictPayload,
     HorizonQuantileBand,
     SpotEnvelope,
     SwarmConsensus,
@@ -392,26 +397,22 @@ def _build_provider_audit(
     }
 
 
-async def build_decision_terminal_payload(
-    ticker: str,
-    swarm: SwarmConsensus,
-    debate: DebateResult,
-    debate_data: dict,
-    poly_raw: dict,
-    ext: dict,
-    llm_client: Any,
+@dataclass
+class _ResolvedSpot:
+    price_f: Optional[float]
+    spot_price_source: Optional[str]
+    market_data_degraded: bool
+    filled_spot_from_ext: bool
+    spot_envelope: Optional[SpotEnvelope]
+    debate_spot_price_source: Optional[str]
+
+
+def _resolve_terminal_spot(
     *,
-    momentum_readout: Optional[Dict[str, Any]] = None,
-    include_provider_audit: bool = False,
-    tool_registry: Any = None,
-    spot_quote: Any = None,
-    scorecard_summary: Optional[TerminalScorecardSummary] = None,
-    macro_fetched_at_utc: Optional[str] = None,
-    verdict_captured_at_utc: Optional[str] = None,
-    verdict_from_cache: bool = False,
-) -> DecisionTerminalPayload:
-    t = ticker.upper()
-    now = datetime.now(timezone.utc).isoformat()
+    spot_quote: Any,
+    debate_data: dict,
+    ext: dict,
+) -> _ResolvedSpot:
     debate_spot_price_source = debate_data.get("spot_price_source")
     filled_spot_from_ext = False
     price_f: Optional[float] = None
@@ -454,9 +455,30 @@ async def build_decision_terminal_payload(
                         break
                 except (TypeError, ValueError):
                     continue
-    hist_cagr = _get_historical_cagr_3y(t)
-    hist_quality = _get_historical_quality_metrics(t)
 
+    return _ResolvedSpot(
+        price_f=price_f,
+        spot_price_source=spot_price_source if isinstance(spot_price_source, str) else None,
+        market_data_degraded=market_data_degraded,
+        filled_spot_from_ext=filled_spot_from_ext,
+        spot_envelope=spot_envelope,
+        debate_spot_price_source=debate_spot_price_source
+        if isinstance(debate_spot_price_source, str)
+        else None,
+    )
+
+
+def _build_valuation_panel(
+    *,
+    ticker: str,
+    debate_data: dict,
+    ext: dict,
+    resolved: _ResolvedSpot,
+    hist_cagr: Optional[float],
+    hist_quality: dict,
+    momentum_readout: Optional[Dict[str, Any]],
+) -> TerminalValuationPanel:
+    price_f = resolved.price_f
     roe_val = debate_data.get("roe")
     if roe_val is None and hist_quality.get("roe") is not None:
         roe_val = hist_quality.get("roe") * 100.0
@@ -474,7 +496,6 @@ async def build_decision_terminal_payload(
 
     pe = debate_data.get("pe_ratio")
     pe_f = float(pe) if pe is not None else None
-
     momentum_available = momentum_readout is not None
 
     mfv = None
@@ -490,7 +511,6 @@ async def build_decision_terminal_payload(
     )
     dcf_price = dcf_result.get("base_fair_value_usd")
     dcf_scenarios = dcf_result.get("scenarios") or {}
-    fcf_for_quality, _fcf_src = owner_earnings_fcf(ext)
 
     def _dcf_provenance_note() -> str:
         if not dcf_result.get("available"):
@@ -508,7 +528,10 @@ async def build_decision_terminal_payload(
             target_margin = dcf_result.get("target_fcf_margin_base", 0)
             parts.append(f"High-Growth DCF: 10-year fade from {rev_g:.1%} revenue growth.")
             parts.append(f"FCF margin expands to mature target of {target_margin:.1%}.")
-            parts.append("Warning: This valuation is highly sensitive to revenue growth, mature margin, dilution, and WACC assumptions.")
+            parts.append(
+                "Warning: This valuation is highly sensitive to revenue growth, "
+                "mature margin, dilution, and WACC assumptions."
+            )
         else:
             if fcf_years >= 3 and dcf_result.get("fcf_source") == "median_5y_owner_earnings":
                 fcf_desc = f"5Y median owner earnings (OCF−capex across {fcf_years} fiscal years)"
@@ -517,12 +540,23 @@ async def build_decision_terminal_payload(
 
             if growth_src == "median_5y_ocf_yoy":
                 yoy = dcf_result.get("median_yoy_growth_pct")
-                growth_desc = f"base growth anchored to median YoY OCF ({yoy:.1f}%)" if yoy is not None else "base growth anchored to median YoY OCF"
+                growth_desc = (
+                    f"base growth anchored to median YoY OCF ({yoy:.1f}%)"
+                    if yoy is not None
+                    else "base growth anchored to median YoY OCF"
+                )
             else:
                 growth_desc = "declining 5Y FCF growth path"
 
-            parts.append(f"{fcf_desc}; {growth_desc}, CAPM WACC {dcf_result.get('wacc_base', 0):.1%}, terminal 2.5%, net cash added.")
-            parts.append(f"FCF source: {dcf_result.get('fcf_source')}; net cash: ${dcf_result.get('net_cash_usd', 0) / 1e9:.1f}B ({dcf_result.get('net_cash_source')}).")
+            parts.append(
+                f"{fcf_desc}; {growth_desc}, CAPM WACC {dcf_result.get('wacc_base', 0):.1%}, "
+                f"terminal 2.5%, net cash added."
+            )
+            parts.append(
+                f"FCF source: {dcf_result.get('fcf_source')}; "
+                f"net cash: ${dcf_result.get('net_cash_usd', 0) / 1e9:.1f}B "
+                f"({dcf_result.get('net_cash_source')})."
+            )
 
         if bear is not None and bull is not None and dcf_price is not None:
             parts.append(f"Scenario range: bear ${bear:.0f} · base ${dcf_price:.0f} · bull ${bull:.0f}.")
@@ -534,12 +568,7 @@ async def build_decision_terminal_payload(
             name="DCF",
             fair_value_usd=dcf_price,
             available=bool(dcf_result.get("available")),
-            scenarios={
-                k: float(v)
-                for k, v in dcf_scenarios.items()
-                if v is not None
-            }
-            or None,
+            scenarios={k: float(v) for k, v in dcf_scenarios.items() if v is not None} or None,
             provenance=TerminalFieldProvenance(
                 source="owner_earnings_dcf",
                 confidence=0.55,
@@ -598,13 +627,8 @@ async def build_decision_terminal_payload(
         if m.available and m.fair_value_usd is not None
     ]
     avg_fair = round(sum(usable) / len(usable), 2) if usable else None
-    pct_vs = None
-    gap_pct = None
-    downside_pct = None
-    signal_label = ""
-    confidence_label = ""
-    bull_assessment = ""
-    bear_assessment = ""
+    pct_vs = gap_pct = downside_pct = None
+    signal_label = confidence_label = bull_assessment = bear_assessment = ""
     dcf_low = dcf_scenarios.get("bear")
     dcf_high = dcf_scenarios.get("bull")
     if avg_fair and price_f and avg_fair > 0:
@@ -624,7 +648,7 @@ async def build_decision_terminal_payload(
 
     gauge_label = signal_label or ("N/A" if price_f is None else "INSUFFICIENT MODEL INPUTS")
 
-    valuation = TerminalValuationPanel(
+    return TerminalValuationPanel(
         current_price_usd=price_f,
         average_fair_value_usd=avg_fair,
         pct_vs_average=pct_vs,
@@ -645,7 +669,35 @@ async def build_decision_terminal_payload(
         ),
     )
 
-    fcf = fcf_for_quality or ext.get("freeCashflow") or debate_data.get("free_cashflow") or hist_quality.get("freeCashflow")
+
+def _build_quality_panel(
+    *,
+    ticker: str,
+    debate_data: dict,
+    ext: dict,
+    hist_quality: dict,
+    market_regime: str = "BULL_NORMAL",
+) -> TerminalQualityPanel:
+    roe_val = debate_data.get("roe")
+    if roe_val is None and hist_quality.get("roe") is not None:
+        roe_val = hist_quality.get("roe") * 100.0
+    roe_pct = float(roe_val or 0.0)
+
+    gross_m_val = debate_data.get("gross_margins")
+    if gross_m_val is None and hist_quality.get("gross_margin") is not None:
+        gross_m_val = hist_quality.get("gross_margin") * 100.0
+    gm = normalize_gross_margin(gross_m_val)
+    gross_m = gm.percent if gm else 0.0
+
+    from .valuation_inputs import owner_earnings_fcf
+
+    fcf_for_quality, _fcf_src = owner_earnings_fcf(ext)
+    fcf = (
+        fcf_for_quality
+        or ext.get("freeCashflow")
+        or debate_data.get("free_cash_flow")
+        or hist_quality.get("freeCashflow")
+    )
     debt = ext.get("totalDebt") or hist_quality.get("totalDebt")
     ebitda = ext.get("ebitda") or hist_quality.get("ebitda")
     cr = ext.get("currentRatio")
@@ -661,46 +713,46 @@ async def build_decision_terminal_payload(
 
     gm_ratio = gm.ratio if gm else 0.0
     moat_lab, moat_st = _moat_heuristic(roe_pct, gm_ratio)
-
     roic_proxy_val = roic_proxy(roe_pct)
 
-    # FinCrawler extra fundamental data for High-Growth metrics
     if not isinstance(ext, dict):
         ext = {}
     if "totalRevenue" not in ext or "revenueGrowth" not in ext:
         try:
             from backend.fincrawler_client import FinCrawlerClient
+
             fc_client = FinCrawlerClient()
             fund = fc_client.get_fundamentals_sync(ticker)
             if fund:
-                if "totalRevenue" not in ext: ext["totalRevenue"] = fund.get("totalRevenue")
-                if "revenueGrowth" not in ext: ext["revenueGrowth"] = fund.get("revenueGrowth")
-                if "freeCashflow" not in ext: ext["freeCashflow"] = fund.get("freeCashflow")
-                if "totalCash" not in ext: ext["totalCash"] = fund.get("totalCash")
-                if "stockBasedCompensation" not in ext: ext["stockBasedCompensation"] = fund.get("stockBasedCompensation")
-                if "grossMargins" not in ext: ext["grossMargins"] = fund.get("grossMargins")
+                if "totalRevenue" not in ext:
+                    ext["totalRevenue"] = fund.get("totalRevenue")
+                if "revenueGrowth" not in ext:
+                    ext["revenueGrowth"] = fund.get("revenueGrowth")
+                if "freeCashflow" not in ext:
+                    ext["freeCashflow"] = fund.get("freeCashflow")
+                if "totalCash" not in ext:
+                    ext["totalCash"] = fund.get("totalCash")
+                if "stockBasedCompensation" not in ext:
+                    ext["stockBasedCompensation"] = fund.get("stockBasedCompensation")
+                if "grossMargins" not in ext:
+                    ext["grossMargins"] = fund.get("grossMargins")
         except Exception:
             pass
 
-    # Calculate High-Growth Metrics
     rev_g = ext.get("revenueGrowth")
     fcf = ext.get("freeCashflow") or ext.get("operatingCashflow") or 0.0
     rev_0 = ext.get("totalRevenue")
-
     fcf_margin_val = (fcf / rev_0) * 100.0 if rev_0 and rev_0 > 0 else None
     rev_g_pct = rev_g * 100.0 if rev_g is not None else None
-
     rule_of_40_val = None
     if rev_g_pct is not None and fcf_margin_val is not None:
         rule_of_40_val = rev_g_pct + fcf_margin_val
-
     total_cash = ext.get("totalCash")
     sbc = ext.get("stockBasedCompensation") or 0.0
     cash_burn_months = None
     if total_cash and fcf < 0:
         cash_burn_months = (total_cash / abs(fcf)) * 12.0
 
-    # We will append these inside TerminalQualityPanel rows construction
     quality = TerminalQualityPanel(
         rows=[
             TerminalQualityRow(
@@ -763,7 +815,11 @@ async def build_decision_terminal_payload(
                 id="revenue_growth",
                 label="Revenue Growth (TTM)",
                 value_label=f"{rev_g_pct:.1f}%" if rev_g_pct is not None else "N/A",
-                status_label="High Growth" if rev_g_pct and rev_g_pct > 20 else ("Moderate" if rev_g_pct and rev_g_pct > 5 else "Slow"),
+                status_label=(
+                    "High Growth"
+                    if rev_g_pct and rev_g_pct > 20
+                    else ("Moderate" if rev_g_pct and rev_g_pct > 5 else "Slow")
+                ),
                 provenance=TerminalFieldProvenance(
                     source="yfinance/statements",
                     formula_or_note="YoY Revenue Growth %",
@@ -782,8 +838,16 @@ async def build_decision_terminal_payload(
             TerminalQualityRow(
                 id="cash_runway",
                 label="Cash Runway",
-                value_label=f"{cash_burn_months:.1f} months" if cash_burn_months is not None else ("Profitable" if fcf > 0 else "N/A"),
-                status_label="Healthy" if cash_burn_months and cash_burn_months > 24 else ("Warning" if cash_burn_months and cash_burn_months < 12 else "Stable"),
+                value_label=(
+                    f"{cash_burn_months:.1f} months"
+                    if cash_burn_months is not None
+                    else ("Profitable" if fcf > 0 else "N/A")
+                ),
+                status_label=(
+                    "Healthy"
+                    if cash_burn_months and cash_burn_months > 24
+                    else ("Warning" if cash_burn_months and cash_burn_months < 12 else "Stable")
+                ),
                 provenance=TerminalFieldProvenance(
                     source="yfinance/statements",
                     formula_or_note="Total Cash / Absolute Negative FCF (annualized)",
@@ -792,11 +856,6 @@ async def build_decision_terminal_payload(
         ]
     )
 
-    market_regime = (
-        swarm.macro_state.market_regime.value
-        if swarm.macro_state and swarm.macro_state.market_regime
-        else "BULL_NORMAL"
-    )
     market_cap_raw = ext.get("marketCap")
     market_cap_f: Optional[float] = None
     if market_cap_raw is not None:
@@ -821,7 +880,7 @@ async def build_decision_terminal_payload(
         except (TypeError, ValueError):
             cr_float = None
 
-    quality = enrich_quality_panel(
+    return enrich_quality_panel(
         quality,
         market_regime=market_regime,
         roic_pct=roic_proxy_val if roe_pct else None,
@@ -833,9 +892,17 @@ async def build_decision_terminal_payload(
         current_ratio=cr_float,
     )
 
+
+async def _build_verdict_panel_and_brain(
+    ticker: str,
+    swarm: SwarmConsensus,
+    debate: DebateResult,
+    poly_raw: dict,
+    debate_data: dict,
+) -> Tuple[TerminalVerdictPanel, Optional[BrainVerdict]]:
     tokens = _company_tokens_from_debate_data(debate_data)
     events = poly_raw.get("events") or []
-    gated = select_gated_polymarket_event(events, t, tokens + [t])
+    gated = select_gated_polymarket_event(events, ticker, tokens + [ticker])
     best_score = gated.relevance_score if gated else 0.0
 
     pm_pct = None
@@ -850,18 +917,32 @@ async def build_decision_terminal_payload(
     if _swarm_rejection_present(swarm) and "capped" not in fusion_note.lower():
         fusion_note = (fusion_note + " One or more swarm factors were REJECTED.").strip()
 
-    # Brain cutover: the brain owns the headline verdict for the decision terminal.
-    _terminal_brain_result: Optional[dict] = None
+    brain_block: Optional[BrainVerdict] = None
     try:
         from .brain.cutover import aserve_for_surface
         from .brain import adapters as _ba
+
         _br = await aserve_for_surface(ticker.upper(), "decision_terminal")
         if _br:
-            _terminal_brain_result = _br
             _head = _ba.to_decision_terminal_headline(_br)
             headline = _head["headline_verdict"]
             fusion_note = _head["fusion_note"]
-    except Exception as _e:  # noqa: BLE001 - keep legacy fusion
+            try:
+                _live = _br.get("live") or _br.get("base") or {}
+                brain_block = BrainVerdict(
+                    outperform_probability=_live.get("outperform_probability"),
+                    composite_score=_live.get("composite_score"),
+                    recommendation=_live.get("recommendation"),
+                    confidence_score=_br.get("confidence_score"),
+                    live_price=_live.get("live_price"),
+                    price_source=_br.get("price_source"),
+                    signal_scores=_live.get("signal_scores"),
+                    status=_br.get("status"),
+                    waterfall=_br.get("waterfall"),
+                )
+            except Exception as _be:  # noqa: BLE001
+                logger.debug("[decision_terminal] brain block assembly failed: %s", _be)
+    except Exception as _e:  # noqa: BLE001
         logger.debug("[decision_terminal] brain cutover skipped: %s", _e)
 
     verdict = TerminalVerdictPanel(
@@ -877,8 +958,16 @@ async def build_decision_terminal_payload(
         polymarket_relevance_score=round(best_score, 3) if events else None,
         polymarket_gated_out=gated_out,
     )
+    return verdict, brain_block
 
-    roadmap_prov = TerminalFieldProvenance(source="llm_or_heuristic", confidence=0.35)
+
+async def _build_roadmap_panel(
+    ticker: str,
+    price_f: Optional[float],
+    hist_cagr: Optional[float],
+    tool_registry: Any,
+) -> TerminalRoadmapPanel:
+    roadmap_prov = TerminalFieldProvenance(source="predictor_or_heuristic", confidence=0.35)
     bull_p = base_p = bear_p = None
     cagr_b = None
     assumptions: List[str] = []
@@ -899,14 +988,14 @@ async def build_decision_terminal_payload(
                 if brain_surface_enabled("predictor"):
                     from .brain.predictor_serve import arun_brain_predictor_forecast
 
-                    pred = await arun_brain_predictor_forecast(t, hs)
+                    pred = await arun_brain_predictor_forecast(ticker, hs)
                     if pred.status != "ok":
                         pred = None
                 if pred is None:
                     from .predictor.agent import run_predictor_forecast
 
                     pred = await run_predictor_forecast(
-                        t,
+                        ticker,
                         horizons=hs,
                         tool_registry=tool_registry,
                         emit_ledger=True,
@@ -918,13 +1007,16 @@ async def build_decision_terminal_payload(
                     if base_p and base_p > 0 and price_f > 0:
                         cagr_b = round((pow(base_p / price_f, 1.0 / 3.0) - 1.0) * 100.0, 2)
                     assumptions = list(pred.assumptions or [])[:6]
-                    conf_r = {"high": 0.72, "medium": 0.55, "low": 0.38}.get(pred.model_confidence, 0.55)
+                    conf_r = {"high": 0.72, "medium": 0.55, "low": 0.38}.get(
+                        pred.model_confidence, 0.55
+                    )
                     heuristic_fb = False
                     predictor_filled = True
                     roadmap_prov.source = pred.model_version or "predictor"
                     roadmap_prov.confidence = conf_r
                     roadmap_prov.formula_or_note = (
-                        "Probabilistic predictor (baselines + TimesFM path); 3Y scenarios extrapolated from horizon bands."
+                        "Probabilistic predictor (baselines + TimesFM path); "
+                        "3Y scenarios extrapolated from horizon bands."
                     )
                     horizon_bands = [
                         HorizonQuantileBand(
@@ -942,56 +1034,18 @@ async def build_decision_terminal_payload(
                 logger.warning("[decision_terminal] predictor roadmap failed: %s", e)
 
         if not predictor_filled:
-            from .deps import knowledge_store
-            stock_profile = knowledge_store.query_stock_profile(t)
-            earnings_memory = knowledge_store.query_earnings_memory(t)
-            fundamentals_n = knowledge_store.query_sp500_fundamentals(t)
-
-            ctx = {
-                "ticker": t,
-                "current_price": price_f,
-                "historical_cagr_3y": hist_cagr,
-                "debate_verdict": debate.verdict,
-                "swarm_verdict": swarm.global_verdict,
-                "valuation_avg_fair": avg_fair,
-                "pct_vs_average": pct_vs,
-                "bull_score": debate.bull_score,
-                "bear_score": debate.bear_score,
-                "moderator_summary": debate.moderator_summary,
-                "stock_profile": stock_profile,
-                "earnings_memory": "\n".join(earnings_memory) if isinstance(earnings_memory, list) else earnings_memory,
-                "fundamentals_narrative": fundamentals_n,
-            }
-            try:
-                rm = await llm_client.generate_decision_terminal_roadmap(t, ctx)
-                bull_p = rm.get("bull_price_usd") or rm.get("bull_price")
-                base_p = rm.get("base_price_usd") or rm.get("base_price")
-                bear_p = rm.get("bear_price_usd") or rm.get("bear_price")
-                assumptions = [str(x) for x in (rm.get("assumptions") or [])][:6]
-                conf_r = float(rm.get("confidence_0_1") or 0.0)
-                if bull_p and base_p and bear_p:
-                    bull_p, base_p, bear_p = float(bull_p), float(base_p), float(bear_p)
-                    if base_p > 0 and price_f > 0:
-                        cagr_b = round((pow(base_p / price_f, 1.0 / 3.0) - 1.0) * 100.0, 2)
-                    heuristic_fb = bool(rm.get("used_heuristic_fallback", False))
-                    roadmap_prov.source = "llm_json"
-                    roadmap_prov.confidence = conf_r
-            except Exception as e:
-                logger.warning("[decision_terminal] roadmap LLM failed: %s", e)
-
-            if not (bull_p and base_p and bear_p):
-                u, b, e, cg, asm = _heuristic_roadmap(price_f, hist_cagr)
-                bull_p, base_p, bear_p, cagr_b = u, b, e, cg
-                assumptions = asm
-                heuristic_fb = True
-                if bull_p is not None:
-                    roadmap_prov.source = "heuristic"
-                    roadmap_prov.confidence = 0.25
-                    roadmap_prov.formula_or_note = "Historical 3Y CAGR heuristic when LLM JSON unavailable."
-                else:
-                    roadmap_prov.source = "unavailable"
-                    roadmap_prov.confidence = 0.0
-                    roadmap_prov.formula_or_note = "Insufficient data for any roadmap scenario."
+            u, b, e, cg, asm = _heuristic_roadmap(price_f, hist_cagr)
+            bull_p, base_p, bear_p, cagr_b = u, b, e, cg
+            assumptions = asm
+            heuristic_fb = True
+            if bull_p is not None:
+                roadmap_prov.source = "heuristic"
+                roadmap_prov.confidence = 0.25
+                roadmap_prov.formula_or_note = "Historical 3Y CAGR heuristic when predictor unavailable."
+            else:
+                roadmap_prov.source = "unavailable"
+                roadmap_prov.confidence = 0.0
+                roadmap_prov.formula_or_note = "Insufficient data for any roadmap scenario."
 
     if price_f and price_f > 0 and bull_p and base_p and bear_p:
         bull_p, base_p, bear_p = _sanitize_roadmap_scenarios(price_f, bull_p, base_p, bear_p)
@@ -1004,7 +1058,7 @@ async def build_decision_terminal_payload(
                 "versus spot and is not substituted with fabricated values.",
             ]
 
-    roadmap = TerminalRoadmapPanel(
+    return TerminalRoadmapPanel(
         bull_price_usd=bull_p,
         base_price_usd=base_p,
         bear_price_usd=bear_p,
@@ -1018,82 +1072,250 @@ async def build_decision_terminal_payload(
         predictor_reviewer_excerpt=pred_rev_ex,
     )
 
-    provider_audit: Optional[Dict[str, Any]] = None
-    if include_provider_audit:
-        provider_audit = _build_provider_audit(
-            ticker=t,
-            debate_data=debate_data,
-            poly_raw=poly_raw,
-            debate_spot_price_source=debate_spot_price_source
-            if isinstance(debate_spot_price_source, str)
-            else None,
-            terminal_spot_price_source=spot_price_source
-            if isinstance(spot_price_source, str)
-            else None,
-            market_data_degraded=market_data_degraded,
-            filled_spot_from_ext=filled_spot_from_ext,
-            hist_cagr_present=hist_cagr is not None,
-            hist_quality_nonempty=bool(hist_quality),
-            roadmap=roadmap,
-        )
+
+def build_snapshot_slice(
+    ticker: str,
+    debate_data: dict,
+    ext: dict,
+    *,
+    momentum_readout: Optional[Dict[str, Any]] = None,
+    spot_quote: Any = None,
+    scorecard_summary: Optional[TerminalScorecardSummary] = None,
+    market_regime: str = "BULL_NORMAL",
+    generated_at_utc: Optional[str] = None,
+    slice_from_cache: bool = False,
+) -> DecisionSnapshotPayload:
+    t = ticker.upper()
+    now = generated_at_utc or datetime.now(timezone.utc).isoformat()
+    hist_cagr = _get_historical_cagr_3y(t)
+    hist_quality = _get_historical_quality_metrics(t)
+    resolved = _resolve_terminal_spot(spot_quote=spot_quote, debate_data=debate_data, ext=ext)
+    valuation = _build_valuation_panel(
+        ticker=t,
+        debate_data=debate_data,
+        ext=ext,
+        resolved=resolved,
+        hist_cagr=hist_cagr,
+        hist_quality=hist_quality,
+        momentum_readout=momentum_readout,
+    )
+    quality = _build_quality_panel(
+        ticker=t,
+        debate_data=debate_data,
+        ext=ext,
+        hist_quality=hist_quality,
+        market_regime=market_regime,
+    )
+    return DecisionSnapshotPayload(
+        ticker=t,
+        disclaimer=DISCLAIMER,
+        generated_at_utc=now,
+        slice_from_cache=slice_from_cache,
+        valuation=valuation,
+        quality=quality,
+        market_data_degraded=resolved.market_data_degraded,
+        spot_price_source=resolved.spot_price_source,
+        data_freshness=_terminal_data_freshness(
+            resolved.spot_price_source,
+            resolved.market_data_degraded,
+            now,
+        ),
+        spot=resolved.spot_envelope,
+        scorecard_summary=scorecard_summary,
+    )
+
+
+async def build_verdict_slice(
+    ticker: str,
+    swarm: SwarmConsensus,
+    debate: DebateResult,
+    debate_data: dict,
+    poly_raw: dict,
+    *,
+    macro_fetched_at_utc: Optional[str] = None,
+    generated_at_utc: Optional[str] = None,
+    slice_from_cache: bool = False,
+) -> DecisionVerdictPayload:
+    t = ticker.upper()
+    now = generated_at_utc or datetime.now(timezone.utc).isoformat()
+    verdict, brain = await _build_verdict_panel_and_brain(t, swarm, debate, poly_raw, debate_data)
+    return DecisionVerdictPayload(
+        ticker=t,
+        generated_at_utc=now,
+        verdict_captured_at_utc=now,
+        macro_fetched_at_utc=macro_fetched_at_utc,
+        slice_from_cache=slice_from_cache,
+        verdict=verdict,
+        swarm=swarm,
+        debate=debate,
+        brain=brain,
+    )
+
+
+async def build_roadmap_slice(
+    ticker: str,
+    price_f: Optional[float],
+    *,
+    tool_registry: Any = None,
+    generated_at_utc: Optional[str] = None,
+    slice_from_cache: bool = False,
+) -> DecisionRoadmapPayload:
+    t = ticker.upper()
+    now = generated_at_utc or datetime.now(timezone.utc).isoformat()
+    hist_cagr = _get_historical_cagr_3y(t)
+    roadmap = await _build_roadmap_panel(t, price_f, hist_cagr, tool_registry)
+    return DecisionRoadmapPayload(
+        ticker=t,
+        generated_at_utc=now,
+        slice_from_cache=slice_from_cache,
+        roadmap=roadmap,
+        current_price_usd=price_f,
+    )
+
+
+def assemble_terminal_from_slices(
+    snapshot: DecisionSnapshotPayload,
+    verdict: DecisionVerdictPayload,
+    roadmap: DecisionRoadmapPayload,
+    *,
+    verdict_from_cache: bool = False,
+    include_provider_audit: bool = False,
+    debate_data: Optional[dict] = None,
+    poly_raw: Optional[dict] = None,
+    resolved: Optional[_ResolvedSpot] = None,
+) -> DecisionTerminalPayload:
+    """Merge three progressive slices into the legacy combined payload."""
+    t = snapshot.ticker.upper()
+    now = datetime.now(timezone.utc).isoformat()
+    pct_vs = snapshot.valuation.pct_vs_average if snapshot.valuation else None
+    gap_pct = snapshot.valuation.valuation_gap_pct if snapshot.valuation else None
+    gauge_label = snapshot.valuation.gauge_label if snapshot.valuation else ""
+    cagr_b = roadmap.roadmap.predicted_cagr_base_pct if roadmap.roadmap else None
 
     reconciliation = None
     if os.environ.get("RECONCILIATION_ENABLE", "1").strip().lower() not in ("0", "false", "no"):
         reconciliation = build_reconciliation(
-            headline_verdict=headline,
-            fusion_note=fusion_note,
+            headline_verdict=verdict.verdict.headline_verdict,
+            fusion_note=verdict.verdict.fusion_note,
             pct_vs_average=pct_vs,
             gauge_label=gauge_label,
             valuation_gap_pct=gap_pct,
             predicted_cagr_base_pct=cagr_b,
-            swarm_rejected=_swarm_rejection_present(swarm),
-            scorecard_summary=scorecard_summary,
+            swarm_rejected=_swarm_rejection_present(verdict.swarm),
+            scorecard_summary=snapshot.scorecard_summary,
         )
 
-    # Build slim BrainVerdict block for the terminal payload.
-    _terminal_brain_block = None
-    if _terminal_brain_result:
-        try:
-            from .schemas import BrainVerdict as _BV
-            _live = _terminal_brain_result.get("live") or _terminal_brain_result.get("base") or {}
-            _terminal_brain_block = _BV(
-                outperform_probability=_live.get("outperform_probability"),
-                composite_score=_live.get("composite_score"),
-                recommendation=_live.get("recommendation"),
-                confidence_score=_terminal_brain_result.get("confidence_score"),
-                live_price=_live.get("live_price"),
-                price_source=_terminal_brain_result.get("price_source"),
-                signal_scores=_live.get("signal_scores"),
-                status=_terminal_brain_result.get("status"),
-                waterfall=_terminal_brain_result.get("waterfall"),
+    provider_audit: Optional[Dict[str, Any]] = None
+    if include_provider_audit and debate_data is not None and poly_raw is not None:
+        hist_cagr = _get_historical_cagr_3y(t)
+        hist_quality = _get_historical_quality_metrics(t)
+        if resolved is None:
+            resolved = _resolve_terminal_spot(
+                spot_quote=None,
+                debate_data=debate_data,
+                ext={},
             )
-        except Exception as _be:  # noqa: BLE001
-            logger.debug("[decision_terminal] brain block assembly failed: %s", _be)
+        provider_audit = _build_provider_audit(
+            ticker=t,
+            debate_data=debate_data,
+            poly_raw=poly_raw,
+            debate_spot_price_source=resolved.debate_spot_price_source,
+            terminal_spot_price_source=resolved.spot_price_source,
+            market_data_degraded=snapshot.market_data_degraded,
+            filled_spot_from_ext=resolved.filled_spot_from_ext,
+            hist_cagr_present=hist_cagr is not None,
+            hist_quality_nonempty=bool(hist_quality),
+            roadmap=roadmap.roadmap,
+        )
 
     return _decision_terminal_payload_json_safe(
         DecisionTerminalPayload(
             ticker=t,
-            disclaimer=DISCLAIMER,
+            disclaimer=snapshot.disclaimer,
             generated_at_utc=now,
-            cache_ttl_seconds=300,
-            verdict_captured_at_utc=verdict_captured_at_utc or now,
-            verdict_from_cache=verdict_from_cache,
-            macro_fetched_at_utc=macro_fetched_at_utc,
-            valuation=valuation,
-            quality=quality,
-            verdict=verdict,
-            roadmap=roadmap,
-            market_data_degraded=market_data_degraded,
-            spot_price_source=spot_price_source,
+            verdict_captured_at_utc=verdict.verdict_captured_at_utc or now,
+            verdict_from_cache=verdict_from_cache or verdict.slice_from_cache,
+            macro_fetched_at_utc=verdict.macro_fetched_at_utc,
+            valuation=snapshot.valuation,
+            quality=snapshot.quality,
+            verdict=verdict.verdict,
+            roadmap=roadmap.roadmap,
+            market_data_degraded=snapshot.market_data_degraded,
+            spot_price_source=snapshot.spot_price_source,
             provider_audit=provider_audit,
-            swarm=swarm,
-            debate=debate,
-            data_freshness=_terminal_data_freshness(spot_price_source, market_data_degraded, now),
-            spot=spot_envelope,
-            scorecard_summary=scorecard_summary,
+            swarm=verdict.swarm,
+            debate=verdict.debate,
+            data_freshness=snapshot.data_freshness,
+            spot=snapshot.spot,
+            scorecard_summary=snapshot.scorecard_summary,
             reconciliation=reconciliation,
-            brain=_terminal_brain_block,
+            brain=verdict.brain,
         )
+    )
+
+
+async def build_decision_terminal_payload(
+    ticker: str,
+    swarm: SwarmConsensus,
+    debate: DebateResult,
+    debate_data: dict,
+    poly_raw: dict,
+    ext: dict,
+    llm_client: Any,
+    *,
+    momentum_readout: Optional[Dict[str, Any]] = None,
+    include_provider_audit: bool = False,
+    tool_registry: Any = None,
+    spot_quote: Any = None,
+    scorecard_summary: Optional[TerminalScorecardSummary] = None,
+    macro_fetched_at_utc: Optional[str] = None,
+    verdict_captured_at_utc: Optional[str] = None,
+    verdict_from_cache: bool = False,
+) -> DecisionTerminalPayload:
+    """Compose full payload from slice builders (unit tests + legacy callers)."""
+    _ = llm_client  # roadmap no longer uses LLM fallback in slice path
+    t = ticker.upper()
+    now = verdict_captured_at_utc or datetime.now(timezone.utc).isoformat()
+    market_regime = (
+        swarm.macro_state.market_regime.value
+        if swarm.macro_state and swarm.macro_state.market_regime
+        else "BULL_NORMAL"
+    )
+    resolved = _resolve_terminal_spot(spot_quote=spot_quote, debate_data=debate_data, ext=ext)
+    snapshot = build_snapshot_slice(
+        t,
+        debate_data,
+        ext,
+        momentum_readout=momentum_readout,
+        spot_quote=spot_quote,
+        scorecard_summary=scorecard_summary,
+        market_regime=market_regime,
+        generated_at_utc=now,
+    )
+    verdict = await build_verdict_slice(
+        t,
+        swarm,
+        debate,
+        debate_data,
+        poly_raw,
+        macro_fetched_at_utc=macro_fetched_at_utc,
+        generated_at_utc=now,
+    )
+    roadmap = await build_roadmap_slice(
+        t,
+        resolved.price_f,
+        tool_registry=tool_registry,
+        generated_at_utc=now,
+    )
+    return assemble_terminal_from_slices(
+        snapshot,
+        verdict,
+        roadmap,
+        verdict_from_cache=verdict_from_cache,
+        include_provider_audit=include_provider_audit,
+        debate_data=debate_data,
+        poly_raw=poly_raw,
+        resolved=resolved,
     )
 
 
@@ -1115,6 +1337,201 @@ async def _build_scorecard_for_terminal(ticker: str) -> Optional[TerminalScoreca
         return None
 
 
+async def _safe_poly_fetch(poly_connector: Any, ticker: str) -> dict:
+    from .data_errors import InsufficientDataError
+
+    t = ticker.upper()
+    try:
+        return await poly_connector.fetch_data(ticker=t)
+    except InsufficientDataError:
+        raise
+    except Exception as e:
+        logger.warning("[decision_terminal] polymarket fetch failed: %s", e)
+        raise InsufficientDataError(
+            "polymarket",
+            f"Polymarket fetch failed for {t}: {e}",
+            ticker=t,
+            missing=["polymarket_events"],
+        ) from e
+
+
+async def _safe_momentum_fetch(ticker: str) -> Optional[Dict[str, Any]]:
+    try:
+        from .connectors.momentum_data import fetch_momentum_inputs
+        from .momentum_model import analyze_momentum
+
+        stock_df, spy_df, sector_df, mom_meta = await fetch_momentum_inputs(ticker, None)
+        return analyze_momentum(stock_df, spy_df, sector_df, mom_meta)
+    except Exception as e:
+        logger.warning("[decision_terminal] momentum model unavailable for %s: %s", ticker, e)
+        return None
+
+
+def _emit_verdict_ledger(ticker: str, verdict_payload: DecisionVerdictPayload) -> None:
+    try:
+        from . import decision_ledger as _dl
+        from .decision_ledger_registry import registry_attribution
+
+        _pv, _snap, _model = registry_attribution()
+        verdict_panel = verdict_payload.verdict
+        headline = verdict_panel.headline_verdict if verdict_panel is not None else ""
+        _dl.emit_decision(
+            decision_type="decision_terminal",
+            symbol=ticker.upper(),
+            horizon_hint="21d",
+            verdict=str(headline or ""),
+            confidence=None,
+            output={
+                "headline_verdict": headline,
+                "debate_verdict": getattr(verdict_panel, "debate_verdict", ""),
+                "swarm_verdict": getattr(verdict_panel, "swarm_verdict", ""),
+                "generated_at_utc": verdict_payload.generated_at_utc,
+            },
+            source_route="backend/decision_terminal.py::run_decision_verdict_request",
+            prompt_versions=_pv,
+            registry_snapshot_id=_snap,
+            model=_model,
+        )
+    except Exception as e:
+        logger.debug("[decision_terminal] ledger emit skipped: %s", e)
+
+
+async def run_decision_snapshot_request(
+    ticker: str,
+    *,
+    tool_registry: Any,
+    force: bool = False,
+) -> DecisionSnapshotPayload:
+    from .verdict_cache import (
+        SLICE_SNAPSHOT,
+        get_cached_slice,
+        store_slice_cache,
+        verdict_cache_enabled,
+    )
+
+    t = ticker.upper()
+    if not force and verdict_cache_enabled():
+        cached = get_cached_slice(SLICE_SNAPSHOT, t)
+        if isinstance(cached, DecisionSnapshotPayload):
+            return cached
+
+    debate_data, ext, spot_quote, scorecard_summary, momentum_result = await asyncio.gather(
+        tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0),
+        asyncio.to_thread(_sync_extended_snapshot, t),
+        asyncio.to_thread(_resolve_spot_for_terminal, t),
+        _build_scorecard_for_terminal(t),
+        _safe_momentum_fetch(t),
+    )
+
+    payload = build_snapshot_slice(
+        t,
+        debate_data,
+        ext,
+        momentum_readout=momentum_result,
+        spot_quote=spot_quote,
+        scorecard_summary=scorecard_summary,
+    )
+    if verdict_cache_enabled():
+        store_slice_cache(SLICE_SNAPSHOT, t, payload)
+    return payload
+
+
+async def run_decision_verdict_request(
+    ticker: str,
+    credit_stress: Optional[float],
+    auth_user: Any,
+    *,
+    execute_analyze,
+    tool_registry: Any,
+    poly_connector: Any,
+    force: bool = False,
+) -> DecisionVerdictPayload:
+    from .verdict_cache import (
+        SLICE_VERDICT,
+        get_cached_slice,
+        store_slice_cache,
+        verdict_cache_enabled,
+    )
+
+    t = ticker.upper()
+    if not force and verdict_cache_enabled():
+        cached = get_cached_slice(SLICE_VERDICT, t)
+        if isinstance(cached, DecisionVerdictPayload):
+            return cached
+
+    debate_data_task = asyncio.ensure_future(
+        tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0)
+    )
+    try:
+        analysis, poly_raw, debate_data = await asyncio.gather(
+            execute_analyze(
+                t,
+                credit_stress,
+                auth_user,
+                award_deep_analysis_xp=False,
+                debate_data_task=debate_data_task,
+            ),
+            _safe_poly_fetch(poly_connector, t),
+            debate_data_task,
+        )
+    except BaseException:
+        if not debate_data_task.done():
+            debate_data_task.cancel()
+        else:
+            try:
+                debate_data_task.exception()
+            except BaseException:
+                pass
+        raise
+
+    payload = await build_verdict_slice(
+        t,
+        analysis.swarm,
+        analysis.debate,
+        debate_data,
+        poly_raw,
+        macro_fetched_at_utc=analysis.macro_fetched_at_utc,
+    )
+    if verdict_cache_enabled():
+        store_slice_cache(SLICE_VERDICT, t, payload)
+    _emit_verdict_ledger(t, payload)
+    return payload
+
+
+async def run_decision_roadmap_request(
+    ticker: str,
+    *,
+    tool_registry: Any,
+    force: bool = False,
+) -> DecisionRoadmapPayload:
+    from .verdict_cache import (
+        SLICE_ROADMAP,
+        get_cached_slice,
+        store_slice_cache,
+        verdict_cache_enabled,
+    )
+
+    t = ticker.upper()
+    if not force and verdict_cache_enabled():
+        cached = get_cached_slice(SLICE_ROADMAP, t)
+        if isinstance(cached, DecisionRoadmapPayload):
+            return cached
+
+    debate_data, spot_quote = await asyncio.gather(
+        tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0),
+        asyncio.to_thread(_resolve_spot_for_terminal, t),
+    )
+    resolved = _resolve_terminal_spot(spot_quote=spot_quote, debate_data=debate_data, ext={})
+    payload = await build_roadmap_slice(
+        t,
+        resolved.price_f,
+        tool_registry=tool_registry,
+    )
+    if verdict_cache_enabled():
+        store_slice_cache(SLICE_ROADMAP, t, payload)
+    return payload
+
+
 async def run_decision_terminal_request(
     ticker: str,
     credit_stress: Optional[float],
@@ -1128,154 +1545,54 @@ async def run_decision_terminal_request(
     force: bool = False,
 ) -> DecisionTerminalPayload:
     """
-    Run full analyze (swarm + debate) in parallel with extra market fetches, then assemble payload.
+    Aggregator: run snapshot, verdict, and roadmap slices in parallel, then merge.
 
-    ``execute_analyze`` must be ``_execute_analyze`` from main (injected to avoid cycles).
+    ``execute_analyze`` must be ``_execute_analyze`` from analysis router (injected).
     """
-    from .verdict_cache import get_cached_verdict, store_verdict_cache, verdict_cache_enabled
+    _ = llm_client
+    from .verdict_cache import get_cached_verdict, verdict_cache_enabled
 
     t = ticker.upper()
-
     if not force and verdict_cache_enabled():
         cached = get_cached_verdict(t)
         if cached is not None:
             return cached
 
-    async def _safe_poly():
-        # Truthful-data contract: a failed Polymarket fetch must not be
-        # presented as "no relevant markets" — propagate insufficient data.
-        from .data_errors import InsufficientDataError
-
-        try:
-            return await poly_connector.fetch_data(ticker=t)
-        except InsufficientDataError:
-            raise
-        except Exception as e:
-            logger.warning("[decision_terminal] polymarket fetch failed: %s", e)
-            raise InsufficientDataError(
-                "polymarket",
-                f"Polymarket fetch failed for {t}: {e}",
-                ticker=t,
-                missing=["polymarket_events"],
-            ) from e
-
-    # Fetch debate market data once, then reuse it for both the debate pipeline
-    # (inside execute_analyze) and the payload assembly below — previously this
-    # data was fetched twice per decision-terminal request. Start it as a task
-    # so the network fetch overlaps with the swarm phase, the Polymarket fetch,
-    # and the extended snapshot instead of blocking ahead of them.
-    debate_data_task = asyncio.ensure_future(
-        tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0)
+    snapshot, verdict, roadmap = await asyncio.gather(
+        run_decision_snapshot_request(t, tool_registry=tool_registry, force=force),
+        run_decision_verdict_request(
+            t,
+            credit_stress,
+            auth_user,
+            execute_analyze=execute_analyze,
+            tool_registry=tool_registry,
+            poly_connector=poly_connector,
+            force=force,
+        ),
+        run_decision_roadmap_request(t, tool_registry=tool_registry, force=force),
     )
-    # Start momentum fetch concurrently so it has the full ~90s window
-    async def _safe_momentum() -> Optional[Dict[str, Any]]:
-        try:
-            from .connectors.momentum_data import fetch_momentum_inputs
-            from .momentum_model import analyze_momentum
-            
-            # Use info=None so it fetches what it needs directly from yfinance
-            stock_df, spy_df, sector_df, mom_meta = await fetch_momentum_inputs(t, None)
-            return analyze_momentum(stock_df, spy_df, sector_df, mom_meta)
-        except Exception as e:
-            logger.warning("[decision_terminal] momentum model unavailable for %s: %s", t, e)
-            return None
 
-    momentum_task = asyncio.ensure_future(_safe_momentum())
-
-    try:
-        analysis, poly_raw, ext, spot_quote, scorecard_summary, momentum_result = await asyncio.gather(
-            execute_analyze(
-                t, credit_stress, auth_user,
-                award_deep_analysis_xp=False, debate_data_task=debate_data_task,
-            ),
-            _safe_poly(),
+    debate_data = None
+    poly_raw = None
+    resolved = None
+    if provider_audit:
+        debate_data, ext, spot_quote = await asyncio.gather(
+            tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0),
             asyncio.to_thread(_sync_extended_snapshot, t),
             asyncio.to_thread(_resolve_spot_for_terminal, t),
-            _build_scorecard_for_terminal(t),
-            momentum_task,
         )
-    except BaseException:
-        # Avoid a "Task was destroyed but it is pending" warning if a sibling
-        # (e.g. swarm) fails before the debate phase awaits the fetch; if the
-        # fetch already finished with an error, retrieve it so it is not later
-        # reported as "exception never retrieved".
-        if not debate_data_task.done():
-            debate_data_task.cancel()
-        else:
-            try:
-                debate_data_task.exception()
-            except BaseException:
-                pass
-        raise
+        poly_raw = await _safe_poly_fetch(poly_connector, t)
+        resolved = _resolve_terminal_spot(spot_quote=spot_quote, debate_data=debate_data, ext=ext)
 
-    # execute_analyze's debate phase already awaited this task, so it is done;
-    # awaiting again just returns the cached fetched dict for payload assembly.
-    debate_data = await debate_data_task
-
-    payload = await build_decision_terminal_payload(
-        t,
-        analysis.swarm,
-        analysis.debate,
-        debate_data,
-        poly_raw,
-        ext,
-        llm_client,
-        momentum_readout=momentum_task.result(),
+    return assemble_terminal_from_slices(
+        snapshot,
+        verdict,
+        roadmap,
+        verdict_from_cache=bool(
+            snapshot.slice_from_cache or verdict.slice_from_cache or roadmap.slice_from_cache
+        ),
         include_provider_audit=provider_audit,
-        tool_registry=tool_registry,
-        spot_quote=spot_quote,
-        scorecard_summary=scorecard_summary,
-        macro_fetched_at_utc=analysis.macro_fetched_at_utc,
+        debate_data=debate_data,
+        poly_raw=poly_raw,
+        resolved=resolved,
     )
-
-    if verdict_cache_enabled():
-        store_verdict_cache(t, payload)
-
-    try:
-        from . import decision_ledger as _dl
-        from .decision_ledger_registry import registry_attribution
-
-        _pv, _snap, _model = registry_attribution()
-        verdict_panel = payload.verdict
-        headline = (
-            verdict_panel.headline_verdict if verdict_panel is not None else ""
-        )
-        momentum_out: Dict[str, Any] = {}
-        for m in payload.valuation.models:
-            if m.name == "Momentum" and m.momentum_summary:
-                momentum_out = {
-                    "momentum_pricing_score": m.momentum_summary.get("momentum_pricing_score"),
-                    "momentum_classification": m.momentum_summary.get("classification"),
-                    "downside_exposure_score": m.momentum_summary.get("downside_exposure_score"),
-                    "crash_risk": m.momentum_summary.get("crash_risk"),
-                    "decision_quality_score": m.momentum_summary.get("decision_quality_score"),
-                }
-                break
-        _dl.emit_decision(
-            decision_type="decision_terminal",
-            symbol=t,
-            horizon_hint="21d",
-            verdict=str(headline or ""),
-            confidence=None,
-            output={
-                "headline_verdict": headline,
-                "debate_verdict": getattr(verdict_panel, "debate_verdict", ""),
-                "swarm_verdict": getattr(verdict_panel, "swarm_verdict", ""),
-                "market_data_degraded": payload.market_data_degraded,
-                "reconciliation_note": (
-                    payload.reconciliation.reconciliation_note
-                    if payload.reconciliation
-                    else ""
-                ),
-                "generated_at_utc": payload.generated_at_utc,
-                **momentum_out,
-            },
-            source_route="backend/decision_terminal.py::run_decision_terminal_request",
-            prompt_versions=_pv,
-            registry_snapshot_id=_snap,
-            model=_model,
-        )
-    except Exception as e:
-        logger.debug("[decision_terminal] ledger emit skipped: %s", e)
-
-    return payload

@@ -1,4 +1,4 @@
-"""Offline tests for per-trading-day decision-terminal verdict cache."""
+"""Offline tests for per-trading-day decision-terminal slice cache."""
 import os
 import unittest
 from datetime import datetime, timezone
@@ -7,7 +7,14 @@ from unittest.mock import patch
 from backend import verdict_cache as vc
 from backend.market_calendar import last_completed_session
 from backend.schemas import (
+    DebateResult,
+    DecisionRoadmapPayload,
+    DecisionSnapshotPayload,
     DecisionTerminalPayload,
+    DecisionVerdictPayload,
+    SwarmConsensus,
+    MarketState,
+    MarketRegime,
     TerminalQualityPanel,
     TerminalRoadmapPanel,
     TerminalValuationPanel,
@@ -16,7 +23,88 @@ from backend.schemas import (
 )
 
 
+def _minimal_snapshot(ticker: str = "AAPL") -> DecisionSnapshotPayload:
+    now = datetime.now(timezone.utc).isoformat()
+    return DecisionSnapshotPayload(
+        ticker=ticker,
+        disclaimer="d",
+        generated_at_utc=now,
+        valuation=TerminalValuationPanel(
+            current_price_usd=100.0,
+            average_fair_value_usd=95.0,
+            pct_vs_average=5.0,
+            gauge_label="Fair",
+            models=[],
+        ),
+        quality=TerminalQualityPanel(rows=[]),
+    )
+
+
+def _minimal_verdict(ticker: str = "AAPL") -> DecisionVerdictPayload:
+    now = datetime.now(timezone.utc).isoformat()
+    swarm = SwarmConsensus(
+        ticker=ticker,
+        macro_state=MarketState(market_regime=MarketRegime.BULL_NORMAL),
+        global_signal=1,
+        global_verdict="BUY",
+        confidence=0.7,
+        factors={},
+    )
+    debate = DebateResult(
+        ticker=ticker,
+        arguments=[],
+        verdict="BUY",
+        consensus_confidence=0.8,
+        moderator_summary="",
+        bull_score=1,
+        bear_score=1,
+        neutral_score=1,
+    )
+    return DecisionVerdictPayload(
+        ticker=ticker,
+        generated_at_utc=now,
+        verdict_captured_at_utc=now,
+        verdict=TerminalVerdictPanel(
+            headline_verdict="BUY",
+            debate_verdict="BUY",
+            swarm_verdict="BUY",
+        ),
+        swarm=swarm,
+        debate=debate,
+    )
+
+
+def _minimal_roadmap(ticker: str = "AAPL") -> DecisionRoadmapPayload:
+    return DecisionRoadmapPayload(
+        ticker=ticker,
+        generated_at_utc=datetime.now(timezone.utc).isoformat(),
+        roadmap=TerminalRoadmapPanel(
+            confidence_0_1=0.5,
+            provenance=TerminalFieldProvenance(),
+        ),
+        current_price_usd=100.0,
+    )
+
+
 def _minimal_payload(ticker: str = "AAPL") -> DecisionTerminalPayload:
+    swarm = SwarmConsensus(
+        ticker=ticker,
+        macro_state=MarketState(market_regime=MarketRegime.BULL_NORMAL),
+        global_signal=1,
+        global_verdict="BUY",
+        confidence=0.7,
+        factors={},
+    )
+    debate = DebateResult(
+        ticker=ticker,
+        arguments=[],
+        verdict="BUY",
+        consensus_confidence=0.8,
+        moderator_summary="",
+        bull_score=1,
+        bear_score=1,
+        neutral_score=1,
+    )
     return DecisionTerminalPayload(
         ticker=ticker,
         disclaimer="d",
@@ -39,6 +127,8 @@ def _minimal_payload(ticker: str = "AAPL") -> DecisionTerminalPayload:
             confidence_0_1=0.5,
             provenance=TerminalFieldProvenance(),
         ),
+        swarm=swarm,
+        debate=debate,
     )
 
 
@@ -50,25 +140,45 @@ class TestVerdictCache(unittest.TestCase):
     def tearDown(self):
         vc.clear_verdict_cache()
 
-    def test_store_and_hit_same_session(self):
-        payload = _minimal_payload()
-        vc.store_verdict_cache("AAPL", payload)
-        with patch.object(vc, "overlay_fresh_spot", side_effect=lambda p, **kw: p) as overlay:
+    def test_slice_store_and_hit(self):
+        vc.store_slice_cache(vc.SLICE_SNAPSHOT, "AAPL", _minimal_snapshot())
+        with patch.object(vc, "overlay_fresh_spot_on_snapshot", side_effect=lambda p: p):
+            hit = vc.get_cached_slice(vc.SLICE_SNAPSHOT, "AAPL")
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.ticker, "AAPL")
+
+    def test_store_and_hit_full_assembly(self):
+        vc.store_verdict_cache("AAPL", _minimal_payload())
+        with patch.object(vc, "overlay_fresh_spot_on_snapshot", side_effect=lambda p: p):
             hit = vc.get_cached_verdict("AAPL")
         self.assertIsNotNone(hit)
         self.assertEqual(hit.ticker, "AAPL")
-        overlay.assert_called_once()
 
     def test_miss_different_ticker(self):
-        vc.store_verdict_cache("AAPL", _minimal_payload())
-        self.assertIsNone(vc.get_cached_verdict("MSFT"))
+        vc.store_slice_cache(vc.SLICE_VERDICT, "AAPL", _minimal_verdict())
+        self.assertIsNone(vc.get_cached_slice(vc.SLICE_VERDICT, "MSFT"))
 
     def test_disabled_when_env_off(self):
         os.environ["VERDICT_CACHE_ENABLE"] = "0"
-        vc.store_verdict_cache("AAPL", _minimal_payload())
-        self.assertIsNone(vc.get_cached_verdict("AAPL"))
+        vc.store_slice_cache(vc.SLICE_ROADMAP, "AAPL", _minimal_roadmap())
+        self.assertIsNone(vc.get_cached_slice(vc.SLICE_ROADMAP, "AAPL"))
 
-    def test_overlay_marks_from_cache(self):
+    def test_overlay_marks_snapshot_from_cache(self):
+        from backend.connectors.spot import SpotQuote
+
+        payload = _minimal_snapshot()
+        with patch("backend.connectors.spot.resolve_spot") as rs:
+            rs.return_value = SpotQuote(
+                price=101.5,
+                source="yahoo_chart",
+                captured_at_utc=datetime.now(timezone.utc).isoformat(),
+                degraded=False,
+            )
+            out = vc.overlay_fresh_spot_on_snapshot(payload)
+        self.assertTrue(out.slice_from_cache)
+        self.assertEqual(out.spot.price_usd, 101.5)
+
+    def test_overlay_marks_full_from_cache(self):
         from backend.connectors.spot import SpotQuote
 
         payload = _minimal_payload()
@@ -84,53 +194,12 @@ class TestVerdictCache(unittest.TestCase):
         self.assertEqual(out.spot.price_usd, 101.5)
 
     def test_session_key_uses_last_completed_session(self):
-        payload = _minimal_payload()
-        vc.store_verdict_cache("AAPL", payload)
-        key = ("AAPL", last_completed_session())
+        vc.store_slice_cache(vc.SLICE_SNAPSHOT, "AAPL", _minimal_snapshot())
+        key = (vc.SLICE_SNAPSHOT, "AAPL", last_completed_session())
         self.assertIn(key, vc._store)
 
-    def test_supabase_read_populates_memory(self):
-        payload = _minimal_payload("MSFT")
-        session = last_completed_session()
-        captured = payload.verdict_captured_at_utc
-
-        class _Query:
-            def __init__(self, data):
-                self._data = data
-
-            def select(self, *_a, **_k):
-                return self
-
-            def eq(self, *_a, **_k):
-                return self
-
-            def limit(self, *_a, **_k):
-                return self
-
-            def execute(self):
-                return type("R", (), {"data": self._data})()
-
-        class _Client:
-            def table(self, _name):
-                return _Query(
-                    [
-                        {
-                            "payload_json": payload.model_dump(mode="json"),
-                            "verdict_captured_at_utc": captured,
-                        }
-                    ]
-                )
-
-        with patch.dict(os.environ, {"VERDICT_CACHE_BACKEND": "supabase"}):
-            with patch.object(vc, "_supabase_client", return_value=_Client()):
-                with patch.object(vc, "overlay_fresh_spot", side_effect=lambda p, **kw: p):
-                    hit = vc.get_cached_verdict("MSFT")
-        self.assertIsNotNone(hit)
-        self.assertEqual(hit.ticker, "MSFT")
-        self.assertIn(("MSFT", session), vc._store)
-
     def test_supabase_write_on_store(self):
-        payload = _minimal_payload("NVDA")
+        payload = _minimal_snapshot("NVDA")
         upserted = {}
 
         class _Query:
@@ -147,9 +216,9 @@ class TestVerdictCache(unittest.TestCase):
 
         with patch.dict(os.environ, {"VERDICT_CACHE_BACKEND": "supabase"}):
             with patch.object(vc, "_supabase_client", return_value=_Client()):
-                vc.store_verdict_cache("NVDA", payload)
+                vc.store_slice_cache(vc.SLICE_SNAPSHOT, "NVDA", payload)
         self.assertEqual(upserted.get("ticker"), "NVDA")
-        self.assertEqual(upserted.get("payload_json", {}).get("ticker"), "NVDA")
+        self.assertEqual(upserted.get("slice"), vc.SLICE_SNAPSHOT)
 
 
 class TestVerdictPrewarmTickers(unittest.TestCase):

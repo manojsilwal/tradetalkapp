@@ -2,17 +2,22 @@
 import json
 import unittest
 
+from backend.connectors.polymarket_gating import score_polymarket_relevance
 from backend.decision_terminal import (
-    score_polymarket_relevance,
     _fuse_headline_verdict,
     _strip_non_json_floats,
     _decision_terminal_payload_json_safe,
     _build_provider_audit,
+    assemble_terminal_from_slices,
     build_decision_terminal_payload,
+    build_snapshot_slice,
 )
 from backend.schemas import (
     DebateResult,
+    DecisionRoadmapPayload,
+    DecisionSnapshotPayload,
     DecisionTerminalPayload,
+    DecisionVerdictPayload,
     FactorResult,
     SwarmConsensus,
     MarketState,
@@ -296,6 +301,58 @@ class TestProviderAudit(unittest.TestCase):
         self.assertEqual(audit["valuation"]["fair_value_models"]["Momentum"], "composite_momentum_model")
         self.assertEqual(audit["verdict"]["prediction_market"]["provider"], "polymarket")
         self.assertEqual(audit["roadmap"]["scenario_prices_source"], "heuristic")
+
+
+class TestSliceAssembly(unittest.TestCase):
+    def test_assemble_terminal_from_slices(self):
+        swarm = SwarmConsensus(
+            ticker="AAPL",
+            macro_state=MarketState(market_regime=MarketRegime.BULL_NORMAL),
+            global_signal=1,
+            global_verdict="BUY",
+            confidence=0.7,
+            factors={},
+        )
+        debate = DebateResult(
+            ticker="AAPL",
+            arguments=[],
+            verdict="BUY",
+            consensus_confidence=0.8,
+            moderator_summary="summary",
+            bull_score=3,
+            bear_score=1,
+            neutral_score=1,
+        )
+        snapshot = build_snapshot_slice(
+            "AAPL",
+            {"current_price": 100.0, "roe": 20.0, "pe_ratio": 25.0},
+            {"trailingEps": 5.0},
+        )
+        verdict = DecisionVerdictPayload(
+            ticker="AAPL",
+            generated_at_utc="t",
+            verdict=TerminalVerdictPanel(
+                headline_verdict="BUY",
+                debate_verdict="BUY",
+                swarm_verdict="BUY",
+            ),
+            swarm=swarm,
+            debate=debate,
+        )
+        roadmap = DecisionRoadmapPayload(
+            ticker="AAPL",
+            generated_at_utc="t",
+            roadmap=TerminalRoadmapPanel(
+                confidence_0_1=0.5,
+                provenance=TerminalFieldProvenance(),
+            ),
+        )
+        merged = assemble_terminal_from_slices(snapshot, verdict, roadmap)
+        self.assertEqual(merged.ticker, "AAPL")
+        self.assertEqual(merged.valuation.current_price_usd, 100.0)
+        self.assertEqual(merged.verdict.headline_verdict, "BUY")
+        self.assertIsNotNone(merged.swarm)
+        self.assertIsNotNone(merged.debate)
 
 
 class TestVerdictFusion(unittest.TestCase):
