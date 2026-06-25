@@ -185,27 +185,52 @@ def _multiples_heuristic_fair_price(
     trailing_pe: Optional[float],
     business_type: str = "other",
     revenue_growth: Optional[float] = None,
+    forward_eps: Optional[float] = None,
+    earnings_growth: Optional[float] = None,
 ) -> Optional[float]:
     """
     Growth- and quality-adjusted target P/E × EPS — heuristic, not peer medians.
+    Uses forward EPS when it meaningfully exceeds trailing (e.g. WMT ramp).
     """
-    if not trailing_eps or trailing_eps <= 0:
+    eps = float(trailing_eps) if trailing_eps is not None else None
+    if eps is None or eps <= 0:
         return None
+    fwd = float(forward_eps) if forward_eps is not None else None
+    if fwd is not None and fwd > eps * 1.03:
+        eps = fwd
+
     base_pe = 12.0
     adj = min(14.0, max(0.0, roe_pct / 3.0))
-    
-    if business_type in ("profitable_growth", "high_growth_unprofitable"):
-        growth_bonus = max(0.0, (revenue_growth or 0.0) * 100.0 * 0.4)
+
+    eg = float(earnings_growth) if earnings_growth is not None else None
+    use_growth_pe = business_type in (
+        "profitable_growth",
+        "high_growth_unprofitable",
+        "ai_accelerator_platform_leader",
+    ) or (
+        business_type == "wide_moat_compounder"
+        and eg is not None
+        and eg > 0.12
+    )
+
+    if use_growth_pe:
+        growth_input = max(revenue_growth or 0.0, eg or 0.0)
+        growth_bonus = max(0.0, growth_input * 100.0 * 0.4)
         max_pe = 45.0
         target_pe = min(max_pe, max(10.0, base_pe + adj + growth_bonus))
+        if business_type == "wide_moat_compounder" and eg is not None and eg > 0.12 and roe_pct >= 18:
+            quality_pe = min(max_pe, 18.0 + roe_pct / 2.0 + eg * 100.0 * 0.6)
+            target_pe = max(target_pe, quality_pe)
     else:
         max_pe = 28.0
         target_pe = min(max_pe, max(10.0, base_pe + adj))
 
     if trailing_pe and trailing_pe > 0 and current_price > 0:
         pe_norm = min(1.15, max(0.85, 18.0 / trailing_pe))
+        if use_growth_pe and business_type == "wide_moat_compounder" and eg is not None and eg > 0.12:
+            pe_norm = max(pe_norm, 1.0)
         target_pe *= pe_norm
-    return round(trailing_eps * target_pe, 2)
+    return round(eps * target_pe, 2)
 
 
 def _moat_heuristic(roe_pct: float, gross_margin_pct: float) -> Tuple[str, str]:
@@ -478,6 +503,22 @@ def _resolve_terminal_spot(
     )
 
 
+def _dcf_sensitivity_weight_factor(
+    bear: Optional[float], base: Optional[float], bull: Optional[float]
+) -> float:
+    """Blend weight multiplier for DCF based on how wide its sensitivity range is.
+
+    ``width_pct = (bull − bear)/base``. The factor decays linearly from 1.0 at a
+    60%-wide range down to a 0.3 floor, so a very wide DCF (e.g. NVDA's ~213%)
+    contributes far less to the consensus fair value and weight shifts to
+    multiples. Returns 1.0 when the range is unavailable.
+    """
+    if bear is None or bull is None or not base or base <= 0:
+        return 1.0
+    width_pct = (bull - bear) / base
+    return max(0.3, min(1.0, 1.0 - max(0.0, width_pct - 0.6) / 2.0))
+
+
 def _build_valuation_panel(
     *,
     ticker: str,
@@ -528,10 +569,24 @@ def _build_valuation_panel(
 
     mfv = None
     if price_f:
+        forward_eps = ext.get("forwardEps")
+        if forward_eps is not None:
+            try:
+                forward_eps = float(forward_eps)
+            except (TypeError, ValueError):
+                forward_eps = None
+        eg = ext.get("earningsGrowth")
+        if eg is not None:
+            try:
+                eg = float(eg)
+            except (TypeError, ValueError):
+                eg = None
         mfv = _multiples_heuristic_fair_price(
             trailing_eps, roe_pct, price_f, pe_f,
             business_type=business_type,
-            revenue_growth=revenue_growth
+            revenue_growth=revenue_growth,
+            forward_eps=forward_eps,
+            earnings_growth=eg,
         )
 
     def _dcf_provenance_note() -> str:
@@ -593,8 +648,11 @@ def _build_valuation_panel(
             scenarios={k: float(v) for k, v in dcf_scenarios.items() if v is not None} or None,
             classification=dcf_result.get("classification"),
             implied_growth=dcf_result.get("implied_growth"),
+            implied_growth_3y=dcf_result.get("implied_growth_3y"),
+            implied_growth_5y=dcf_result.get("implied_growth_5y"),
             implied_margin=dcf_result.get("implied_margin"),
             implied_roic=dcf_result.get("implied_roic"),
+            dcf_tiers=dcf_result.get("dcf_tiers"),
             valuation_range=dcf_result.get("valuation_range"),
             margin_of_safety_pct=dcf_result.get("margin_of_safety_pct"),
             market_expectation=dcf_result.get("market_expectation"),
@@ -643,6 +701,7 @@ def _build_valuation_panel(
 
     from .valuation_signal import (
         case_assessments,
+        composite_signal_label,
         implied_downside_pct,
         margin_of_safety_pct,
         valuation_confidence_label,
@@ -655,10 +714,23 @@ def _build_valuation_panel(
         m for m in valuation_models
         if m.available and m.fair_value_usd is not None
     ]
-    
+
+    # Down-weight DCF when its sensitivity range is very wide: a $67–$722 span
+    # (≈213% of base for NVDA) is too imprecise to anchor the blend, so weight
+    # shifts to multiples.
+    dcf_width_factor = _dcf_sensitivity_weight_factor(
+        dcf_scenarios.get("bear"), dcf_scenarios.get("base"), dcf_scenarios.get("bull")
+    )
+
+    def _effective_weight(m: TerminalValuationModel) -> float:
+        w = m.provenance.confidence or 0.5
+        if "DCF" in (m.name or ""):
+            w *= dcf_width_factor
+        return w
+
     if usable:
-        weighted_sum = sum(m.fair_value_usd * (m.provenance.confidence or 0.5) for m in usable)
-        total_weight = sum(m.provenance.confidence or 0.5 for m in usable)
+        weighted_sum = sum(m.fair_value_usd * _effective_weight(m) for m in usable)
+        total_weight = sum(_effective_weight(m) for m in usable)
         avg_fair = round(weighted_sum / total_weight, 2) if total_weight > 0 else None
     else:
         avg_fair = None
@@ -684,6 +756,10 @@ def _build_valuation_panel(
 
     gauge_label = signal_label or ("N/A" if price_f is None else "INSUFFICIENT MODEL INPUTS")
 
+    momentum_model = next((m for m in models if m.name == "Momentum"), None)
+    momentum_score_val = getattr(momentum_model, "momentum_score", None) if momentum_model else None
+    composite = composite_signal_label(signal_label, momentum_score_val) if signal_label else ""
+
     return TerminalValuationPanel(
         current_price_usd=price_f,
         average_fair_value_usd=avg_fair,
@@ -692,19 +768,24 @@ def _build_valuation_panel(
         implied_downside_pct=downside_pct,
         valuation_signal=signal_label,
         valuation_confidence=confidence_label,
+        composite_signal=composite,
         dcf_range_low_usd=float(dcf_low) if dcf_low is not None else None,
         dcf_range_high_usd=float(dcf_high) if dcf_high is not None else None,
+        dcf_tiers=dcf_result.get("dcf_tiers"),
         bull_case_assessment=bull_assessment,
         bear_case_assessment=bear_assessment,
         gauge_label=gauge_label,
         business_classification=business_type,
         market_expectation=dcf_result.get("market_expectation"),
+        implied_growth_3y=dcf_result.get("implied_growth_3y"),
+        implied_growth_5y=dcf_result.get("implied_growth_5y"),
         risk_flags=dcf_result.get("risk_flags") or [],
         models=models,
         panel_note=(
-            "Base fair value is a confidence-weighted average of DCF (base case) and Multiples when available. "
+            "Base fair value is a confidence-weighted average of DCF (base case) and Multiples; "
+            "DCF is down-weighted when its sensitivity range is very wide. "
             "Momentum is shown separately (0–100 score, not blended into fair value). "
-            "Valuation gap and implied downside use distinct denominators."
+            "Valuation gap and implied move use distinct denominators."
         ),
     )
 

@@ -91,6 +91,42 @@ def valuation_signal_label(
     return "Slightly Undervalued"
 
 
+def composite_signal_label(
+    valuation_signal: Optional[str],
+    momentum_score: Optional[float],
+) -> str:
+    """Reconcile the valuation signal with the momentum score into one verdict.
+
+    A cheap stock with weak price action is not a "back up the truck" call — it is
+    a watchlist/accumulate-on-confirmation. Conversely an expensive stock with
+    strong momentum is a "valuation rich, trend strong" caution. Keeps the two
+    axes explicit instead of letting an undervalued label imply low risk.
+    """
+    if not valuation_signal or valuation_signal == "Insufficient data":
+        return ""
+
+    sig = valuation_signal.lower()
+    undervalued = "undervalued" in sig
+    overvalued = "overvalued" in sig
+    mom = momentum_score if momentum_score is not None else None
+    mom_strong = mom is not None and mom >= 60
+    mom_weak = mom is not None and mom < 50
+
+    if undervalued:
+        if mom_weak:
+            return "Valuation attractive; momentum weak — watchlist / accumulate on confirmation"
+        if mom_strong:
+            return "Valuation attractive and momentum confirming"
+        return "Valuation attractive; momentum neutral"
+    if overvalued:
+        if mom_strong:
+            return "Valuation rich; momentum strong — trend trade only, not value"
+        return "Valuation rich; wait for a better entry"
+    if mom_strong:
+        return "Near fair value; momentum strong"
+    return "Near fair value; no edge"
+
+
 def valuation_confidence_label(
     fair_model_count: int,
     dcf_available: bool,

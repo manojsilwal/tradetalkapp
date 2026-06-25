@@ -100,8 +100,17 @@ function fmtDecimalPct(v) {
   return `${(Number(v) * 100).toFixed(1)}%`;
 }
 
+const CLASSIFICATION_LABELS = {
+  ai_accelerator_platform_leader: 'AI Accelerator Platform Leader',
+  platform_reinvestment_supercycle: 'Platform Reinvestment Supercycle',
+  asic_substitution_risk: 'ASIC Substitution Risk',
+  capex_cycle_dependency: 'Capex-Cycle Dependency',
+  roic_normalization_risk: 'ROIC Normalization Risk',
+};
+
 function prettyClassification(raw) {
   if (!raw) return null;
+  if (CLASSIFICATION_LABELS[raw]) return CLASSIFICATION_LABELS[raw];
   return String(raw)
     .split('_')
     .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
@@ -131,10 +140,27 @@ export default function ConsensusValuationPanel({
   );
   const marketExpectation = v?.market_expectation || dcfModel?.market_expectation;
   const impliedGrowth = fmtDecimalPct(dcfModel?.implied_growth);
+  const impliedGrowth3y = fmtDecimalPct(dcfModel?.implied_growth_3y);
+  const impliedGrowth5y = fmtDecimalPct(dcfModel?.implied_growth_5y);
   const impliedMargin = fmtDecimalPct(dcfModel?.implied_margin);
   const impliedRoic = fmtDecimalPct(dcfModel?.implied_roic);
-  const hasImplied = impliedGrowth || impliedMargin || impliedRoic;
+  const impliedGrowthText = impliedGrowth3y && impliedGrowth5y
+    ? `growth ~${impliedGrowth3y} for 3y, or ~${impliedGrowth5y} for 5y, then fade required`
+    : impliedGrowth
+      ? `growth ${impliedGrowth} (10y flat)`
+      : null;
+  const hasImplied = impliedGrowthText || impliedMargin || impliedRoic;
   const riskFlags = (v?.risk_flags && v.risk_flags.length ? v.risk_flags : dcfModel?.risk_flags) || [];
+  const dcfTiers = v?.dcf_tiers || dcfModel?.dcf_tiers;
+  const compositeSignal = v?.composite_signal;
+  const impliedMove = Number(v?.implied_downside_pct);
+  const impliedMoveLabel = Number.isNaN(impliedMove)
+    ? 'Implied move'
+    : impliedMove > 0
+      ? 'Implied upside'
+      : impliedMove < 0
+        ? 'Implied downside'
+        : 'Implied move';
 
   if (loading) {
     return loadingFallback;
@@ -147,6 +173,9 @@ export default function ConsensusValuationPanel({
         <div className="dt-gauge-caption">{hasData ? signal : '—'}</div>
         {hasData && v?.valuation_confidence && (
           <div className="dt-gauge-sub">Confidence: {v.valuation_confidence}</div>
+        )}
+        {hasData && compositeSignal && (
+          <div className="dt-gauge-composite" data-testid="composite-signal">{compositeSignal}</div>
         )}
       </div>
       <div className="dt-valuation-detail">
@@ -164,12 +193,43 @@ export default function ConsensusValuationPanel({
             <dd>{hasData ? fmtGapPct(v?.valuation_gap_pct) : '—'}</dd>
           </div>
           <div className="dt-valuation-metrics-row">
-            <dt>Implied downside</dt>
+            <dt>{impliedMoveLabel}</dt>
             <dd>{hasData ? fmtDownside(v?.implied_downside_pct) : '—'}</dd>
           </div>
-          {hasData && v?.dcf_range_low_usd != null && v?.dcf_range_high_usd != null && (
+          {hasData && dcfTiers && (
+            <div className="dt-valuation-metrics-row dt-valuation-tiers-row">
+              <dt>
+                <ProvenanceTip
+                  provenance={{
+                    formula_or_note:
+                      'DCF sensitivity range (not a confidence interval): fair value under progressively more optimistic growth/margin assumptions.',
+                  }}
+                  label="DCF sensitivity range"
+                />
+              </dt>
+              <dd>
+                <ul className="dt-dcf-tiers" data-testid="dcf-tiers">
+                  {[
+                    ['Bear', dcfTiers.bear],
+                    ['Conservative', dcfTiers.conservative_base],
+                    ['Base', dcfTiers.base],
+                    ['Bull', dcfTiers.bull],
+                    ['Extreme bull', dcfTiers.extreme_bull],
+                  ]
+                    .filter(([, val]) => val != null)
+                    .map(([label, val]) => (
+                      <li key={label} className="dt-dcf-tier">
+                        <span className="dt-dcf-tier-label">{label}</span>
+                        <span className="dt-dcf-tier-val">${fmtUsdPlainInt(val)}</span>
+                      </li>
+                    ))}
+                </ul>
+              </dd>
+            </div>
+          )}
+          {hasData && !dcfTiers && v?.dcf_range_low_usd != null && v?.dcf_range_high_usd != null && (
             <div className="dt-valuation-metrics-row">
-              <dt>DCF range</dt>
+              <dt>DCF sensitivity range</dt>
               <dd>
                 ${fmtUsdPlainInt(v.dcf_range_low_usd)}–${fmtUsdPlainInt(v.dcf_range_high_usd)}
               </dd>
@@ -206,14 +266,14 @@ export default function ConsensusValuationPanel({
                   provenance={{
                     source: 'reverse_dcf',
                     formula_or_note:
-                      'Reverse DCF: the growth / operating margin / ROIC the current price implies, solved one at a time.',
+                      'Reverse DCF: the growth / operating margin / ROIC the current price implies, solved one at a time. Growth is read as a high-growth phase (held, then faded), not a flat 10-year rate.',
                   }}
                   label="Market-implied"
                 />
               </dt>
               <dd>
                 {[
-                  impliedGrowth && `growth ${impliedGrowth}`,
+                  impliedGrowthText,
                   impliedMargin && `margin ${impliedMargin}`,
                   impliedRoic && `ROIC ${impliedRoic}`,
                 ]

@@ -44,6 +44,29 @@ class TestCoreMath(unittest.TestCase):
         assert implied is not None
         self.assertAlmostEqual(implied, g0, places=3)
 
+    def test_reverse_dcf_phase_growth_round_trip(self) -> None:
+        anchor = 0.30
+        path = eng.multi_stage_path(anchor, 0.025, 10, high_years=3, fade_end_year=7)
+        target = eng.discounted_value(10.0, path, 0.025, 0.10)
+        solved = eng.reverse_dcf_phase_growth(
+            target, 10.0, phase_years=3, total_years=10,
+            terminal_growth=0.025, discount_rate=0.10,
+        )
+        self.assertIsNotNone(solved)
+        assert solved is not None
+        self.assertAlmostEqual(solved, anchor, places=3)
+
+    def test_phase_growth_ordering(self) -> None:
+        """For the same target, a shorter high-growth phase needs a higher rate;
+        a flat rate held the whole horizon needs the lowest: 3y > 5y > flat."""
+        target, fcf0 = 300.0, 10.0
+        g3 = eng.reverse_dcf_phase_growth(target, fcf0, phase_years=3, total_years=10, terminal_growth=0.025, discount_rate=0.10)
+        g5 = eng.reverse_dcf_phase_growth(target, fcf0, phase_years=5, total_years=10, terminal_growth=0.025, discount_rate=0.10)
+        gf = eng.reverse_dcf_growth(target, fcf0, years=10, terminal_growth=0.025, discount_rate=0.10)
+        assert g3 is not None and g5 is not None and gf is not None
+        self.assertGreater(g3, g5)
+        self.assertGreater(g5, gf)
+
 
 class TestFcffReinvestment(unittest.TestCase):
     def test_fcff_identity_first_year(self) -> None:
@@ -173,25 +196,74 @@ class TestSupercycle(unittest.TestCase):
         self.assertIn("classification", res)
 
     def test_routing_sends_supercycle_to_fcff(self) -> None:
+        # A genuine capex SPENDER (hyperscaler) — in the seed, NOT in the
+        # AI-accelerator supplier list — routes to the FCFF supercycle engine.
+        # (NVDA is now correctly the supplier archetype, see TestAiAcceleratorRouting.)
         snapshot = {
+            "ticker": "META",
+            "totalRevenue": 165_000_000_000,
+            "revenueGrowth": 0.50,
+            "grossMargins": 0.80,
+            "operatingMargins": 0.40,
+            "returnOnEquity": 0.30,
+            "sharesOutstanding": 2_500_000_000,
+            "marketCap": 1_500_000_000_000,
+            "beta": 1.3,
+            "totalCash": 40_000_000_000,
+            "totalDebt": 30_000_000_000,
+            "capitalExpenditures": -28_000_000_000,
+            "capex_history_5y": [5e9, 7e9, 10e9, 15e9, 28e9],
+            "operatingCashflow": 90_000_000_000,
+        }
+        res = compute_dcf_scenarios(snapshot, price_usd=600.0)
+        self.assertEqual(res.get("model_name"), "AI Supercycle FCFF DCF")
+        self.assertEqual(res["business_type"], "platform_reinvestment_supercycle")
+
+
+class TestAiAcceleratorRouting(unittest.TestCase):
+    def _nvda_snapshot(self) -> dict:
+        return {
             "ticker": "NVDA",
-            "totalRevenue": 131_000_000_000,
+            "totalRevenue": 130_000_000_000,
             "revenueGrowth": 0.50,
             "grossMargins": 0.75,
-            "operatingMargins": 0.48,
-            "returnOnEquity": 0.45,
+            "operatingMargins": 0.60,
+            "returnOnEquity": 1.2,
             "sharesOutstanding": 24_000_000_000,
-            "marketCap": 3_000_000_000_000,
+            "marketCap": 4_500_000_000_000,
             "beta": 1.6,
             "totalCash": 40_000_000_000,
             "totalDebt": 10_000_000_000,
-            "capitalExpenditures": -20_000_000_000,
-            "capex_history_5y": [5e9, 7e9, 10e9, 15e9, 20e9],
-            "operatingCashflow": 60_000_000_000,
+            # Light capex intensity -> supplier, not a capex spender/supercycle.
+            "capitalExpenditures": -4_000_000_000,
+            "operatingCashflow": 70_000_000_000,
+            "freeCashflow": 66_000_000_000,
         }
-        res = compute_dcf_scenarios(snapshot, price_usd=130.0)
-        self.assertEqual(res.get("model_name"), "AI Supercycle FCFF DCF")
-        self.assertEqual(res["business_type"], "platform_reinvestment_supercycle")
+
+    def test_routes_to_high_growth_with_ai_flags(self) -> None:
+        res = compute_dcf_scenarios(self._nvda_snapshot(), price_usd=195.0)
+        self.assertEqual(res["business_type"], "ai_accelerator_platform_leader")
+        self.assertEqual(res.get("model_name"), "High-Growth Revenue-to-FCF DCF")
+        flags = res.get("risk_flags") or []
+        for f in ("asic_substitution_risk", "customer_concentration", "capex_cycle_dependency", "margin_normalization_risk"):
+            self.assertIn(f, flags)
+
+    def test_emits_phase_growth_equivalences(self) -> None:
+        res = compute_dcf_scenarios(self._nvda_snapshot(), price_usd=195.0)
+        self.assertIn("implied_growth_3y", res)
+        self.assertIn("implied_growth_5y", res)
+        if res["implied_growth_3y"] is not None and res["implied_growth_5y"] is not None:
+            self.assertGreaterEqual(res["implied_growth_3y"], res["implied_growth_5y"])
+        self.assertEqual(res.get("implied_growth_phase_default"), 3)
+
+    def test_emits_five_tier_ladder(self) -> None:
+        res = compute_dcf_scenarios(self._nvda_snapshot(), price_usd=195.0)
+        tiers = res.get("dcf_tiers")
+        self.assertIsNotNone(tiers)
+        self.assertEqual(
+            list(tiers.keys()),
+            ["bear", "conservative_base", "base", "bull", "extreme_bull"],
+        )
 
 
 class TestLedgerFeatureExtraction(unittest.TestCase):

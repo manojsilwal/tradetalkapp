@@ -48,6 +48,32 @@ class TestValuationBusinessTypes(unittest.TestCase):
         # 5.0 * 37.8 = 189.0.
         self.assertAlmostEqual(pe_hg, 189.0)
 
+        # AI accelerator supplier -> same growth-multiples band as profitable_growth
+        pe_accel = _multiples_heuristic_fair_price(
+            trailing_eps=5.0,
+            roe_pct=30.0,
+            current_price=100.0,
+            trailing_pe=20.0,
+            business_type="ai_accelerator_platform_leader",
+            revenue_growth=0.50,
+        )
+        self.assertAlmostEqual(pe_accel, pe_hg)
+
+        # Wide moat with strong forward earnings growth uses growth P/E band
+        pe_wmt = _multiples_heuristic_fair_price(
+            trailing_eps=2.84,
+            roe_pct=24.0,
+            current_price=116.0,
+            trailing_pe=40.0,
+            business_type="wide_moat_compounder",
+            revenue_growth=0.073,
+            forward_eps=3.29,
+            earnings_growth=0.194,
+        )
+        self.assertIsNotNone(pe_wmt)
+        assert pe_wmt is not None
+        self.assertGreater(pe_wmt, 120.0)
+
     def test_compute_dcf_scenarios_routing(self):
         # NVIDIA style: High growth + profitable -> High-Growth DCF
         snapshot_nvda = {

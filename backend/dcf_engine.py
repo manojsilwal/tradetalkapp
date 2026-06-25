@@ -203,6 +203,43 @@ def reverse_dcf_growth(
     return 0.5 * (lo + hi)
 
 
+def reverse_dcf_phase_growth(
+    target_value: float,
+    fcf0: float,
+    *,
+    phase_years: int = 3,
+    total_years: int = 10,
+    terminal_growth: float = 0.025,
+    discount_rate: float = 0.09,
+    fade_end_year: Optional[int] = None,
+    lo: float = -0.5,
+    hi: float = 1.5,
+    iters: int = 100,
+) -> Optional[float]:
+    """Solve for the high-growth-PHASE rate the price implies (bisection).
+
+    Unlike :func:`reverse_dcf_growth` (a flat rate held the whole horizon), this
+    holds the solved rate for ``phase_years`` then fades it to ``terminal_growth``
+    over ``total_years`` using :func:`multi_stage_path`. Concentrating growth into
+    a short phase means a *higher* implied rate than the flat number, which is the
+    realistic reading for AI names: "~X% for 3 years, then fade".
+
+    Monotone-increasing in the anchor growth, so bisection converges. Returns the
+    implied phase rate, or ``None`` if the target is outside the reachable bracket.
+    """
+    if fcf0 is None or fcf0 <= 0 or discount_rate <= terminal_growth:
+        return None
+    fey = fade_end_year if fade_end_year is not None else min(total_years, phase_years + 4)
+
+    def value_for(anchor: float) -> float:
+        path = multi_stage_path(
+            anchor, terminal_growth, total_years, high_years=phase_years, fade_end_year=fey
+        )
+        return discounted_value(fcf0, path, terminal_growth, discount_rate)
+
+    return _bisect(value_for, target_value, lo, hi, iters)
+
+
 def _bisect(fn, target: float, lo: float, hi: float, iters: int = 100) -> Optional[float]:
     """Generic monotone bisection: find x s.t. fn(x) == target on [lo, hi]."""
     try:

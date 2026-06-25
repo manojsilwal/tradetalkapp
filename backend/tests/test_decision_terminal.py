@@ -4,6 +4,7 @@ import unittest
 
 from backend.connectors.polymarket_gating import score_polymarket_relevance
 from backend.decision_terminal import (
+    _dcf_sensitivity_weight_factor,
     _fuse_headline_verdict,
     _strip_non_json_floats,
     _decision_terminal_payload_json_safe,
@@ -12,6 +13,7 @@ from backend.decision_terminal import (
     build_decision_terminal_payload,
     build_snapshot_slice,
 )
+from backend.valuation_signal import composite_signal_label
 from backend.schemas import (
     DebateResult,
     DecisionRoadmapPayload,
@@ -271,6 +273,43 @@ class TestMomentumValuationPanel(unittest.IsolatedAsyncioTestCase):
         self.assertIn("bull", dcf.scenarios)
         self.assertLess(dcf.scenarios["bear"], dcf.fair_value_usd)
         self.assertGreater(dcf.scenarios["bull"], dcf.fair_value_usd)
+
+
+class TestDcfSensitivityWeighting(unittest.TestCase):
+    def test_tight_range_keeps_full_weight(self):
+        # (110-90)/100 = 20% wide -> below the 60% threshold -> factor 1.0
+        self.assertAlmostEqual(_dcf_sensitivity_weight_factor(90.0, 100.0, 110.0), 1.0)
+
+    def test_wide_range_shrinks_to_floor(self):
+        # NVDA-like: (722-67)/308 ≈ 213% wide -> floored at 0.3
+        self.assertAlmostEqual(_dcf_sensitivity_weight_factor(67.0, 308.0, 722.0), 0.3)
+
+    def test_monotonic_decreasing_with_width(self):
+        narrow = _dcf_sensitivity_weight_factor(80.0, 100.0, 160.0)   # 80% wide
+        wider = _dcf_sensitivity_weight_factor(60.0, 100.0, 200.0)    # 140% wide
+        self.assertGreater(narrow, wider)
+
+    def test_missing_range_is_neutral(self):
+        self.assertEqual(_dcf_sensitivity_weight_factor(None, 100.0, 200.0), 1.0)
+        self.assertEqual(_dcf_sensitivity_weight_factor(50.0, 0.0, 200.0), 1.0)
+
+
+class TestCompositeSignal(unittest.TestCase):
+    def test_undervalued_weak_momentum_is_watchlist(self):
+        out = composite_signal_label("Moderately Undervalued", 46)
+        self.assertIn("watchlist", out.lower())
+        self.assertIn("momentum weak", out.lower())
+
+    def test_undervalued_strong_momentum_confirms(self):
+        out = composite_signal_label("Significantly Undervalued", 75)
+        self.assertIn("confirming", out.lower())
+
+    def test_overvalued_strong_momentum_is_trend_only(self):
+        out = composite_signal_label("Moderately Overvalued", 80)
+        self.assertIn("trend", out.lower())
+
+    def test_blank_when_no_signal(self):
+        self.assertEqual(composite_signal_label("", 50), "")
 
 
 class TestProviderAudit(unittest.TestCase):

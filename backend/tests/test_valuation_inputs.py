@@ -4,6 +4,9 @@ from __future__ import annotations
 import unittest
 
 from backend.valuation_inputs import (
+    _market_expectation_label,
+    _mature_compounder_fcf_anchor,
+    _sanitize_forward_growth_estimate,
     build_base_growth_path,
     capm_wacc,
     compute_dcf_scenarios,
@@ -14,6 +17,87 @@ from backend.valuation_inputs import (
     net_cash_equity,
     owner_earnings_fcf,
 )
+
+
+class TestMatureCompounderCalibration(unittest.TestCase):
+    def test_sanitize_forward_growth_drops_jnj_style_outlier(self) -> None:
+        self.assertIsNone(_sanitize_forward_growth_estimate(-0.529, 0.099))
+        self.assertAlmostEqual(
+            _sanitize_forward_growth_estimate(0.194, 0.073), 0.194
+        )
+
+    def test_median_owner_earnings_4y_blend(self) -> None:
+        rows = [
+            {"year": 2022, "ocf": 100.0, "capex": -20.0},
+            {"year": 2023, "ocf": 110.0, "capex": -22.0},
+            {"year": 2024, "ocf": 120.0, "capex": -24.0},
+            {"year": 2025, "ocf": 130.0, "capex": -26.0},
+        ]
+        fcf, src = median_owner_earnings_fcf(rows)
+        self.assertEqual(src, "weighted_4y_fcf")
+        # latest OE=104; 3y avg OE=(88+96+104)/3=96; blend=100
+        self.assertAlmostEqual(fcf, 100.0, places=1)
+
+    def test_mature_fcf_anchor_uses_maintenance_normalized(self) -> None:
+        snapshot = {
+            "totalRevenue": 100_000_000_000,
+            "operatingCashflow": 40_000_000_000,
+            "capitalExpenditures": -24_000_000_000,
+            "depreciation": 15_000_000_000,
+            "capex_history_5y": [20e9, 21e9, 22e9, 23e9, 24e9],
+        }
+        fcf, src = _mature_compounder_fcf_anchor(
+            snapshot, 5_000_000_000, "latest_fcf_fallback", "wide_moat_compounder"
+        )
+        self.assertIn("maintenance_normalized", src)
+        self.assertGreater(fcf, 16_000_000_000)
+
+    def test_jnj_style_snapshot_not_crushed_by_forward_earnings(self) -> None:
+        snapshot = {
+            "ticker": "JNJ",
+            "sharesOutstanding": 2_400_000_000,
+            "marketCap": 580_000_000_000,
+            "beta": 0.6,
+            "totalDebt": 40_000_000_000,
+            "totalCash": 20_000_000_000,
+            "totalRevenue": 96_000_000_000,
+            "revenueGrowth": 0.099,
+            "earningsGrowth": -0.529,
+            "grossMargins": 0.68,
+            "operatingMargins": 0.27,
+            "returnOnEquity": 0.26,
+            "operatingCashflow": 22_000_000_000,
+            "capitalExpenditures": -5_000_000_000,
+            "depreciation": 7_500_000_000,
+            "annual_cashflow_5y": [
+                {"year": 2022, "ocf": 21_000_000_000, "capex": -4_000_000_000},
+                {"year": 2023, "ocf": 22_000_000_000, "capex": -5_000_000_000},
+                {"year": 2024, "ocf": 24_000_000_000, "capex": -6_000_000_000},
+                {"year": 2025, "ocf": 22_000_000_000, "capex": -5_000_000_000},
+            ],
+        }
+        result = compute_dcf_scenarios(snapshot, price_usd=245.0)
+        self.assertTrue(result["available"])
+        base = result["scenarios"]["base"]
+        assert base is not None
+        # Synthetic snapshot is conservative vs live JNJ (~$235); main guard is no forward-crush.
+        self.assertGreater(base, 160.0)
+        self.assertLess(base, 280.0)
+
+
+class TestMarketExpectationLabel(unittest.TestCase):
+    def test_no_deep_value_wording(self):
+        # Large undervaluation no longer reads as "deep value".
+        label = _market_expectation_label(60.0)
+        self.assertEqual(label, "well below base case")
+        self.assertNotIn("deep value", label)
+
+    def test_buckets(self):
+        self.assertEqual(_market_expectation_label(None), "unknown")
+        self.assertEqual(_market_expectation_label(-40.0), "high optimism priced in")
+        self.assertEqual(_market_expectation_label(0.0), "near base case")
+        self.assertEqual(_market_expectation_label(25.0), "below base case")
+        self.assertEqual(_market_expectation_label(45.0), "well below base case")
 
 
 def _sample_annual_rows() -> list[dict]:

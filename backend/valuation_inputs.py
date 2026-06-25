@@ -105,8 +105,9 @@ def _annual_cashflow_rows(cashflow_df: Any, *, max_years: int = MAX_ANNUAL_OCF_Y
 
 def median_owner_earnings_fcf(rows: List[Dict[str, Any]]) -> Tuple[Optional[float], str]:
     """
-    Weighted normalized FCF: 50% latest + 30% 3y avg + 20% 5y median (if >=5 years available).
-    If <5 years, falls back entirely to the latest FCF.
+    Weighted normalized FCF: 50% latest + 30% 3y avg + 20% 5y median (if >=5 years).
+    With exactly 4 years: 50% latest + 50% 3y average (avoids lumpy single-year capex).
+    If <4 years, falls back to the latest owner-earnings FCF.
     Includes negative FCF years.
     """
     earnings: List[float] = []
@@ -127,6 +128,11 @@ def median_owner_earnings_fcf(rows: List[Dict[str, Any]]) -> Tuple[Optional[floa
         median_5y_fcf = float(statistics.median(earnings[-5:]))
         normalized = 0.50 * latest_fcf + 0.30 * avg_3y_fcf + 0.20 * median_5y_fcf
         return normalized, "weighted_normalized_fcf"
+
+    if len(earnings) >= 4:
+        avg_3y_fcf = sum(earnings[-3:]) / 3.0
+        normalized = 0.50 * latest_fcf + 0.50 * avg_3y_fcf
+        return normalized, "weighted_4y_fcf"
 
     return latest_fcf, "latest_fcf_fallback"
 
@@ -317,6 +323,76 @@ def dcf_fair_value_per_share(
         return None
 
 
+def _sanitize_forward_growth_estimate(
+    forward_growth: Optional[float],
+    revenue_growth: Optional[float],
+) -> Optional[float]:
+    """Drop distorted forward growth estimates that wreck the blended anchor.
+
+    yfinance ``earningsGrowth`` can be a one-off (e.g. JNJ talc charges → −53%) while
+    revenue still grows. Exclude when |forward| > 40%, or forward is deeply negative
+    while revenue growth remains positive.
+    """
+    if forward_growth is None:
+        return None
+    fg = forward_growth * 100.0 if abs(forward_growth) < 1.0 else forward_growth
+    rev_pct = None
+    if revenue_growth is not None:
+        rev_pct = revenue_growth * 100.0 if abs(revenue_growth) < 1.0 else revenue_growth
+    if abs(fg) > 40.0:
+        return None
+    if rev_pct is not None and rev_pct > 0 and fg < -20.0:
+        return None
+    return forward_growth
+
+
+def _cap_ocf_growth_for_mature_moat(
+    ocf_cagr_pct: Optional[float],
+    revenue_growth: Optional[float],
+    business_type: str,
+) -> Optional[float]:
+    """Cap volatile OCF YoY when a mature wide-moat name has modest revenue growth."""
+    if ocf_cagr_pct is None or revenue_growth is None:
+        return ocf_cagr_pct
+    if business_type not in ("wide_moat_compounder", "mature_cash_flow"):
+        return ocf_cagr_pct
+    rev_pct = revenue_growth * 100.0 if abs(revenue_growth) < 1.0 else revenue_growth
+    if rev_pct >= 12.0:
+        return ocf_cagr_pct
+    cap = rev_pct + 4.0
+    return min(ocf_cagr_pct, cap)
+
+
+def _mature_compounder_fcf_anchor(
+    snapshot: Dict[str, Any],
+    fcf: Optional[float],
+    fcf_source: str,
+    business_type: str,
+) -> Tuple[Optional[float], str]:
+    """Maintenance-normalized FCF for capital-intensive mature compounders.
+
+    Low FCF/revenue (<8%) often reflects growth capex at mega-cap retailers and
+    healthcare — not weak economics. Use OCF − maintenance capex when it yields a
+    higher, more durable cash-power anchor (Damodaran-style maintenance vs growth).
+    """
+    if fcf is None or business_type not in ("wide_moat_compounder", "mature_cash_flow"):
+        return fcf, fcf_source
+    rev = _num(snapshot.get("totalRevenue"))
+    if not rev or rev <= 0 or fcf / rev >= 0.08:
+        return fcf, fcf_source
+    ocf = _num(snapshot.get("operatingCashflow"))
+    if ocf is None:
+        return fcf, fcf_source
+    split = _capex_split_diagnostics(snapshot)
+    maint = split.get("maintenance_capex")
+    if maint is None:
+        return fcf, fcf_source
+    normalized = ocf - maint
+    if normalized > fcf * 1.05:
+        return normalized, f"{fcf_source}+maintenance_normalized"
+    return fcf, fcf_source
+
+
 def calculate_blended_growth_anchor(
     fcf_cagr: Optional[float],
     revenue_growth: Optional[float],
@@ -355,6 +431,27 @@ def calculate_blended_growth_anchor(
     total_weight = sum(w for _, w in components)
     blended_cagr = sum(val * (w / total_weight) for val, w in components)
     return blended_cagr
+
+
+def _floor_blended_growth_for_mature_moat(
+    blended_pct: float,
+    *,
+    business_type: str,
+    revenue_growth: Optional[float],
+    forward_raw: Optional[float],
+    forward_sanitized: Optional[float],
+) -> float:
+    """When a distorted forward estimate is dropped, lean on revenue for mature moats."""
+    if business_type not in ("wide_moat_compounder", "mature_cash_flow"):
+        return blended_pct
+    if forward_raw is None or forward_sanitized is not None:
+        return blended_pct
+    if revenue_growth is None:
+        return blended_pct
+    rev_pct = revenue_growth * 100.0 if abs(revenue_growth) < 1.0 else revenue_growth
+    if rev_pct <= 0:
+        return blended_pct
+    return max(blended_pct, rev_pct * 0.90)
 
 
 def build_base_growth_path(
@@ -410,9 +507,9 @@ def _market_expectation_label(margin_of_safety_pct: Optional[float]) -> str:
         return "above base case"
     if margin_of_safety_pct <= 8:
         return "near base case"
-    if margin_of_safety_pct <= 25:
+    if margin_of_safety_pct <= 40:
         return "below base case"
-    return "deep value vs base case"
+    return "well below base case"
 
 
 def _enrich_valuation_output(
@@ -453,8 +550,14 @@ def _enrich_valuation_output(
     out["margin_of_safety_pct"] = margin_of_safety
     out["market_expectation"] = _market_expectation_label(margin_of_safety)
 
-    # Reverse DCF: implied constant growth the current price embeds (one unknown).
+    # Reverse DCF: the growth the current price embeds.
+    #   * implied_growth: flat rate held the whole horizon (legacy / ledger).
+    #   * implied_growth_3y / _5y: rate held for a short high-growth PHASE then
+    #     faded to terminal — the realistic reading ("~X% for 3y, then fade").
+    # The phase rates are higher than the flat rate because growth is concentrated.
     implied_growth = None
+    implied_growth_3y = None
+    implied_growth_5y = None
     if price_usd and price_usd > 0 and fcf_per_share and fcf_per_share > 0:
         net_cash = _num(out.get("net_cash_usd"), 0.0) or 0.0
         shares = _num(out.get("shares")) or 0.0
@@ -468,7 +571,26 @@ def _enrich_valuation_output(
                 terminal_growth=terminal_growth,
                 discount_rate=wacc,
             )
+            implied_growth_3y = dcf_engine.reverse_dcf_phase_growth(
+                target_dcf_ps,
+                fcf_per_share,
+                phase_years=3,
+                total_years=years,
+                terminal_growth=terminal_growth,
+                discount_rate=wacc,
+            )
+            implied_growth_5y = dcf_engine.reverse_dcf_phase_growth(
+                target_dcf_ps,
+                fcf_per_share,
+                phase_years=5,
+                total_years=years,
+                terminal_growth=terminal_growth,
+                discount_rate=wacc,
+            )
     out["implied_growth"] = round(implied_growth, 4) if implied_growth is not None else None
+    out["implied_growth_3y"] = round(implied_growth_3y, 4) if implied_growth_3y is not None else None
+    out["implied_growth_5y"] = round(implied_growth_5y, 4) if implied_growth_5y is not None else None
+    out["implied_growth_phase_default"] = 3
 
     if price_usd and price_usd > 0:
         scenarios = dict(scenarios)
@@ -490,6 +612,20 @@ def _enrich_valuation_output(
         and roic < 0.10
     ):
         flags.append("capex_inefficiency")
+
+    # AI accelerator suppliers carry a distinct risk profile (not generic growth
+    # sensitivity): substitution by custom silicon, customer concentration among a
+    # handful of hyperscalers, dependence on the hyperscaler capex cycle, and
+    # eventual margin/ROIC normalization from today's exceptional levels.
+    if classification.get("business_type") == "ai_accelerator_platform_leader":
+        for f in (
+            "asic_substitution_risk",
+            "customer_concentration",
+            "capex_cycle_dependency",
+            "margin_normalization_risk",
+        ):
+            if f not in flags:
+                flags.append(f)
     out["valuation_warning_flags"] = flags
     out["risk_flags"] = flags
     return out
@@ -536,6 +672,7 @@ def compute_dcf_scenarios(
     ai_exposure_val = 1.0 if ai_seed else 0.0
 
     fundamentals_dict = {
+        "ticker": snapshot.get("ticker"),
         "market_cap": market_cap_val,
         "revenue_growth_yoy": revenue_growth_yoy_val,
         "gross_margin": gross_margin_val,
@@ -563,7 +700,7 @@ def compute_dcf_scenarios(
             return res
 
     # Route based on classified business type
-    if business_type in ("high_growth_unprofitable", "profitable_growth"):
+    if business_type in ("high_growth_unprofitable", "profitable_growth", "ai_accelerator_platform_leader"):
         model_type = "High-Growth"
     elif current_fcf_margin is not None and current_fcf_margin > 0.05 and positive_fcf_years >= 3:
         model_type = "Owner-Earnings"
@@ -637,7 +774,13 @@ def compute_dcf_scenarios(
             growth_anchor_source = "hist_cagr_fallback"
 
     fcf_cagr_pct = hist_cagr_pct # Use the provided hist_cagr_pct as FCF CAGR proxy if available
-    ocf_cagr_pct = median_yoy_growth_pct
+    ocf_cagr_pct = _cap_ocf_growth_for_mature_moat(
+        median_yoy_growth_pct, rev_g_num, business_type
+    )
+
+    forward_growth_estimate = _sanitize_forward_growth_estimate(
+        forward_growth_estimate, rev_g_num
+    )
 
     blended_anchor_pct = calculate_blended_growth_anchor(
         fcf_cagr=fcf_cagr_pct,
@@ -645,8 +788,28 @@ def compute_dcf_scenarios(
         ocf_cagr=ocf_cagr_pct,
         forward_growth_estimate=forward_growth_estimate,
     )
+    blended_anchor_pct = _floor_blended_growth_for_mature_moat(
+        blended_anchor_pct,
+        business_type=business_type,
+        revenue_growth=rev_g_num,
+        forward_raw=_num(snapshot.get("earningsGrowth")),
+        forward_sanitized=forward_growth_estimate,
+    )
     growth_anchor_source = "blended_growth_anchor"
-    base_path = build_base_growth_path(blended_anchor_pct, BASE_TERMINAL_G, business_type=business_type)
+    path_business_type = (
+        "mature_cash_flow"
+        if business_type == "wide_moat_compounder"
+        and rev_g_num is not None
+        and (rev_g_num * 100.0 if abs(rev_g_num) < 1.0 else rev_g_num) < 12.0
+        else business_type
+    )
+    base_path = build_base_growth_path(
+        blended_anchor_pct, BASE_TERMINAL_G, business_type=path_business_type
+    )
+
+    fcf, fcf_source = _mature_compounder_fcf_anchor(
+        snapshot, fcf, fcf_source, business_type
+    )
 
     out: Dict[str, Any] = {
         "fcf_usd": fcf,
@@ -792,6 +955,7 @@ def fetch_yfinance_valuation_snapshot(ticker: str) -> Dict[str, Any]:
                 "operatingMargins": info.get("operatingMargins"),
                 "beta": info.get("beta"),
                 "trailingEps": info.get("trailingEps"),
+                "forwardEps": info.get("forwardEps"),
                 "currentRatio": info.get("currentRatio"),
                 "ebitda": info.get("ebitda"),
                 "bookValue": info.get("bookValue"),
@@ -950,6 +1114,12 @@ def compute_high_growth_dcf_scenarios(
     target_fcf_margin_base = base_target_margin
     target_fcf_margin_bull = min(0.35, base_target_margin * 1.5)
 
+    # Hold-then-fade growth shape: a high-growth company holds its initial
+    # growth for ~3 years (competitive advantage period), then fades hard toward
+    # terminal. Replaces the old single linear decay, which left 24.8% running too
+    # long and implied an implausible ~9x revenue by year 10 for names like NVDA.
+    HG_HOLD_YEARS = 3
+
     def calculate_hg_dcf(
         rev_g_initial: float,
         wacc: float,
@@ -957,19 +1127,21 @@ def compute_high_growth_dcf_scenarios(
         target_margin: float,
         years: int = 10
     ) -> float:
+        if wacc <= term_g:
+            return 0.0  # Invalid
+        growth_path = dcf_engine.multi_stage_path(
+            rev_g_initial, term_g, years, high_years=HG_HOLD_YEARS, fade_end_year=7
+        )
         revenue = rev_0
         fcfs = []
-        for i in range(1, years + 1):
-            g = rev_g_initial - (rev_g_initial - term_g) * (i / years)
-            m = current_fcf_margin + (target_margin - current_fcf_margin) * (i / years)
+        for i in range(years):
+            g = growth_path[i]
+            m = current_fcf_margin + (target_margin - current_fcf_margin) * ((i + 1) / years)
             revenue *= (1.0 + g)
-            fcf_val = revenue * m
-            fcfs.append(fcf_val)
+            fcfs.append(revenue * m)
 
         pv = sum(fcfs[i] / ((1.0 + wacc) ** (i + 1)) for i in range(years))
         terminal_fcf = fcfs[-1] * (1.0 + term_g)
-        if wacc <= term_g:
-            return 0.0 # Invalid
         tv = terminal_fcf / (wacc - term_g)
         tv_pv = tv / ((1.0 + wacc) ** years)
 
@@ -978,13 +1150,32 @@ def compute_high_growth_dcf_scenarios(
             return 0.0
         return float(equity_value / shares)
 
+    # Five-tier sensitivity ladder (NOT a confidence interval). Growth and margin
+    # assumptions widen symmetrically around the base; bear/extreme_bull are the
+    # tails, conservative_base/bull are the inner band.
     rev_g_bear = max(0.0, rev_g_num * 0.5)
+    rev_g_conservative = max(0.0, rev_g_num * 0.75)
     rev_g_base = rev_g_num
-    rev_g_bull = min(1.0, rev_g_num * 1.5)
+    rev_g_bull = min(1.0, rev_g_num * 1.25)
+    rev_g_extreme = min(1.0, rev_g_num * 1.5)
+
+    target_fcf_margin_conservative = max(0.08, base_target_margin * 0.75)
+    target_fcf_margin_bull_mod = min(0.30, base_target_margin * 1.25)
+    wacc_conservative = (wacc_base + wacc_bear) / 2.0
 
     bear_fv = calculate_hg_dcf(rev_g_bear, wacc_bear, BEAR_TERMINAL_G, target_fcf_margin_bear)
+    conservative_fv = calculate_hg_dcf(rev_g_conservative, wacc_conservative, BASE_TERMINAL_G, target_fcf_margin_conservative)
     base_fv = calculate_hg_dcf(rev_g_base, wacc_base, BASE_TERMINAL_G, target_fcf_margin_base)
-    bull_fv = calculate_hg_dcf(rev_g_bull, wacc_bull, BULL_TERMINAL_G, target_fcf_margin_bull)
+    bull_fv = calculate_hg_dcf(rev_g_bull, wacc_bull, BULL_TERMINAL_G, target_fcf_margin_bull_mod)
+    extreme_fv = calculate_hg_dcf(rev_g_extreme, wacc_bull, BULL_TERMINAL_G, target_fcf_margin_bull)
+
+    dcf_tiers = {
+        "bear": round(bear_fv, 2) if bear_fv else None,
+        "conservative_base": round(conservative_fv, 2) if conservative_fv else None,
+        "base": round(base_fv, 2) if base_fv else None,
+        "bull": round(bull_fv, 2) if bull_fv else None,
+        "extreme_bull": round(extreme_fv, 2) if extreme_fv else None,
+    }
 
     out = {
         "fcf_usd": fcf,
@@ -1002,6 +1193,7 @@ def compute_high_growth_dcf_scenarios(
             "base": round(base_fv, 2) if base_fv else None,
             "bull": round(bull_fv, 2) if bull_fv else None,
         },
+        "dcf_tiers": dcf_tiers,
         "base_fair_value_usd": round(base_fv, 2) if base_fv else None,
         "available": bool(base_fv and base_fv > 0),
         "current_fcf_margin": round(current_fcf_margin, 4),
@@ -1029,12 +1221,14 @@ def compute_high_growth_dcf_scenarios(
     out["model_name"] = "High-Growth Revenue-to-FCF DCF"
 
     classification = classify_business({
+        "ticker": snapshot.get("ticker"),
         "market_cap": _num(snapshot.get("marketCap")) or 0.0,
         "revenue_growth_yoy": rev_g_num or 0.0,
         "gross_margin": gross_margins or 0.0,
         "operating_margin": _num(snapshot.get("operatingMargins")) or 0.0,
         "fcf_margin": current_fcf_margin or 0.0,
         "roic": _num(snapshot.get("returnOnEquity")) or 0.0,
+        "capex_intensity": (abs(_num(snapshot.get("capitalExpenditures")) or 0.0) / rev_0) if rev_0 else 0.0,
         "sector": snapshot.get("sector"),
     }) if business_type else {"business_type": business_type}
     classification.setdefault("business_type", business_type)

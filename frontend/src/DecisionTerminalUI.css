@@ -673,6 +673,44 @@ h4.dt-metrics-section-title {
   color: var(--dt-muted);
 }
 
+.dt-gauge-composite {
+  margin-top: 6px;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  color: var(--dt-muted);
+  font-style: italic;
+  max-width: 220px;
+}
+
+.dt-valuation-tiers-row dd {
+  width: 100%;
+}
+
+.dt-dcf-tiers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dt-dcf-tier {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.72rem;
+}
+
+.dt-dcf-tier-label {
+  color: var(--dt-muted);
+}
+
+.dt-dcf-tier-val {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 .dt-valuation-detail {
   display: flex;
   flex-direction: column;

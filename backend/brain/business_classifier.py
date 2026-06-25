@@ -16,6 +16,7 @@ BUSINESS_TYPES = (
     "profitable_growth",
     "high_growth_unprofitable",
     "platform_reinvestment_supercycle",
+    "ai_accelerator_platform_leader",
     "mature_cash_flow",
     "cyclical",
     "financial",
@@ -26,6 +27,13 @@ BUSINESS_TYPES = (
 FINANCIAL_SECTORS = {"financial", "financials", "banks", "insurance"}
 ASSET_HEAVY_SECTORS = {"energy", "utilities", "real estate", "materials", "industrials"}
 CYCLICAL_SECTORS = {"energy", "materials", "industrials", "consumer cyclical", "autos"}
+
+# Curated AI-accelerator / AI-capex supply-chain suppliers (NOT the capex
+# *spenders* in platform_reinvestment_supercycle). These are picks-and-shovels
+# names: high gross margin, high ROIC, high growth, but light capex intensity.
+# Maintained by hand because "is an AI accelerator supplier" is not reliably
+# derivable from yfinance fundamentals alone.
+AI_ACCELERATOR_TICKERS = {"NVDA", "AVGO", "AMD", "TSM", "MU", "ARM"}
 
 
 def _num(fundamentals: Dict, key: str) -> Optional[float]:
@@ -92,6 +100,7 @@ def classify_business(
     capex_intensity = _num(f, "capex_intensity")
     capex_growth = _num(f, "capex_growth")
     ai_exposure = _num(f, "ai_exposure")  # 0..1, sourced from the curated AI-supercycle seed
+    ticker = str(f.get("ticker") or "").strip().upper()
 
     scores = {t: 0.05 for t in BUSINESS_TYPES}
     reasons: List[str] = []
@@ -158,6 +167,30 @@ def classify_business(
             for t in ("profitable_growth", "wide_moat_compounder", "mature_cash_flow"):
                 scores[t] *= 0.80
             reasons.append("AI/datacenter capex supercycle")
+
+        # AI accelerator platform leader: picks-and-shovels supplier to the AI
+        # capex cycle (NVDA/AVGO). High gross margin + high ROIC + high growth, but
+        # LIGHT capex intensity (it is a supplier, not a spender) — which is exactly
+        # why these names fall through to generic profitable_growth without a
+        # dedicated archetype. Anchored on a curated supplier list because the
+        # "AI accelerator" identity is not reliably inferable from fundamentals.
+        ai_supplier_quality = (
+            0.30 * _ramp(gross_margin, 0.55, 0.75)
+            + 0.25 * _ramp(roic, 0.25, 0.50)
+            + 0.25 * _ramp(revenue_growth, 0.20, 0.40)
+            + 0.20 * _inverse_ramp(capex_intensity, 0.06, 0.18)
+        )
+        is_curated_accel = ticker in AI_ACCELERATOR_TICKERS
+        scores["ai_accelerator_platform_leader"] = (
+            (0.55 + 0.45 * ai_supplier_quality) if is_curated_accel else 0.0
+        )
+        if is_curated_accel:
+            # Definitional gate: a curated AI accelerator supplier is this type, not
+            # a generic compounder. Dampen the look-alikes so the specialized type
+            # wins (mirrors the supercycle and financial gates).
+            for t in ("profitable_growth", "wide_moat_compounder", "platform_reinvestment_supercycle"):
+                scores[t] *= 0.80
+            reasons.append("AI accelerator / capex supply-chain leader")
         if revenue_growth is not None and revenue_growth > 0.20:
             reasons.append("high revenue growth")
         if fcf_margin is not None and fcf_margin < 0:

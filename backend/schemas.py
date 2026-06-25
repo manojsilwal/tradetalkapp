@@ -511,7 +511,15 @@ class TerminalValuationModel(BaseModel):
     )
     implied_growth: Optional[float] = Field(
         default=None,
-        description="Reverse-DCF growth (decimal) the current price embeds",
+        description="Reverse-DCF growth (decimal) the current price embeds (flat over horizon)",
+    )
+    implied_growth_3y: Optional[float] = Field(
+        default=None,
+        description="Reverse-DCF high-growth-phase rate (decimal) if held ~3y then faded",
+    )
+    implied_growth_5y: Optional[float] = Field(
+        default=None,
+        description="Reverse-DCF high-growth-phase rate (decimal) if held ~5y then faded",
     )
     implied_margin: Optional[float] = Field(
         default=None,
@@ -520,6 +528,10 @@ class TerminalValuationModel(BaseModel):
     implied_roic: Optional[float] = Field(
         default=None,
         description="Reverse-DCF ROIC (decimal) implied by price (FCFF models)",
+    )
+    dcf_tiers: Optional[Dict[str, Optional[float]]] = Field(
+        default=None,
+        description="Five-tier DCF sensitivity ladder (bear/conservative_base/base/bull/extreme_bull)",
     )
     valuation_range: Optional[List[float]] = Field(
         default=None,
@@ -586,8 +598,16 @@ class TerminalValuationPanel(BaseModel):
         default="",
         description="Low / Medium / High model agreement and coverage",
     )
+    composite_signal: str = Field(
+        default="",
+        description="Reconciled valuation + momentum verdict (e.g. attractive but momentum weak)",
+    )
     dcf_range_low_usd: Optional[float] = None
     dcf_range_high_usd: Optional[float] = None
+    dcf_tiers: Optional[Dict[str, Optional[float]]] = Field(
+        default=None,
+        description="Five-tier DCF sensitivity ladder (bear/conservative_base/base/bull/extreme_bull)",
+    )
     bull_case_assessment: str = ""
     bear_case_assessment: str = ""
     gauge_label: str = ""
@@ -598,6 +618,14 @@ class TerminalValuationPanel(BaseModel):
     market_expectation: Optional[str] = Field(
         default=None,
         description="Plain-language read of what the price implies vs the DCF base case",
+    )
+    implied_growth_3y: Optional[float] = Field(
+        default=None,
+        description="Reverse-DCF high-growth-phase rate (decimal) if held ~3y then faded",
+    )
+    implied_growth_5y: Optional[float] = Field(
+        default=None,
+        description="Reverse-DCF high-growth-phase rate (decimal) if held ~5y then faded",
     )
     risk_flags: List[str] = Field(
         default_factory=list,
