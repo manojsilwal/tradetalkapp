@@ -591,6 +591,14 @@ def _build_valuation_panel(
             fair_value_usd=dcf_price,
             available=bool(dcf_result.get("available")),
             scenarios={k: float(v) for k, v in dcf_scenarios.items() if v is not None} or None,
+            classification=dcf_result.get("classification"),
+            implied_growth=dcf_result.get("implied_growth"),
+            implied_margin=dcf_result.get("implied_margin"),
+            implied_roic=dcf_result.get("implied_roic"),
+            valuation_range=dcf_result.get("valuation_range"),
+            margin_of_safety_pct=dcf_result.get("margin_of_safety_pct"),
+            market_expectation=dcf_result.get("market_expectation"),
+            risk_flags=dcf_result.get("risk_flags") or [],
             provenance=TerminalFieldProvenance(
                 source="owner_earnings_dcf",
                 confidence=round((dcf_result.get("dcf_confidence_score", 55) or 55) / 100.0, 2),
@@ -689,6 +697,9 @@ def _build_valuation_panel(
         bull_case_assessment=bull_assessment,
         bear_case_assessment=bear_assessment,
         gauge_label=gauge_label,
+        business_classification=business_type,
+        market_expectation=dcf_result.get("market_expectation"),
+        risk_flags=dcf_result.get("risk_flags") or [],
         models=models,
         panel_note=(
             "Base fair value is a confidence-weighted average of DCF (base case) and Multiples when available. "
@@ -1395,6 +1406,31 @@ async def _safe_momentum_fetch(ticker: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _valuation_ledger_features(verdict_payload: DecisionVerdictPayload) -> list:
+    """Extract DCF V2 features (classification, implied metrics) for the ledger."""
+    from .decision_ledger import FeatureValue
+
+    feats: list = []
+    panel = getattr(verdict_payload, "valuation", None)
+    if panel is None:
+        return feats
+    classification = getattr(panel, "business_classification", None)
+    if classification:
+        feats.append(FeatureValue(name="business_classification", value_str=str(classification)))
+    expectation = getattr(panel, "market_expectation", None)
+    if expectation:
+        feats.append(FeatureValue(name="market_expectation", value_str=str(expectation)))
+    dcf_model = next((m for m in getattr(panel, "models", []) or [] if m.name == "DCF"), None)
+    if dcf_model is not None:
+        for attr in ("implied_growth", "implied_margin", "implied_roic", "margin_of_safety_pct"):
+            val = getattr(dcf_model, attr, None)
+            if val is not None:
+                feats.append(FeatureValue(name=attr, value_num=float(val)))
+        if dcf_model.fair_value_usd is not None:
+            feats.append(FeatureValue(name="dcf_base_fair_value", value_num=float(dcf_model.fair_value_usd)))
+    return feats
+
+
 def _emit_verdict_ledger(ticker: str, verdict_payload: DecisionVerdictPayload) -> None:
     try:
         from . import decision_ledger as _dl
@@ -1404,6 +1440,7 @@ def _emit_verdict_ledger(ticker: str, verdict_payload: DecisionVerdictPayload) -
         verdict_panel = verdict_payload.verdict
         headline = verdict_panel.headline_verdict if verdict_panel is not None else ""
         _dl.emit_decision(
+            features=_valuation_ledger_features(verdict_payload),
             decision_type="decision_terminal",
             symbol=ticker.upper(),
             horizon_hint="21d",

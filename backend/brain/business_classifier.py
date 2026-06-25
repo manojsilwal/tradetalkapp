@@ -15,6 +15,7 @@ BUSINESS_TYPES = (
     "wide_moat_compounder",
     "profitable_growth",
     "high_growth_unprofitable",
+    "platform_reinvestment_supercycle",
     "mature_cash_flow",
     "cyclical",
     "financial",
@@ -89,6 +90,8 @@ def classify_business(
     debt_to_equity = _num(f, "debt_to_equity")
     revenue_volatility = _num(f, "revenue_volatility")
     capex_intensity = _num(f, "capex_intensity")
+    capex_growth = _num(f, "capex_growth")
+    ai_exposure = _num(f, "ai_exposure")  # 0..1, sourced from the curated AI-supercycle seed
 
     scores = {t: 0.05 for t in BUSINESS_TYPES}
     reasons: List[str] = []
@@ -131,7 +134,30 @@ def classify_business(
             0.35 if any(s in sec for s in ASSET_HEAVY_SECTORS) else 0.0,
             0.60 * _ramp(capex_intensity, 0.08, 0.25) + 0.40 * _ramp(debt_to_equity, 1.0, 3.0),
         )
+        # Platform reinvestment supercycle: large platforms ploughing record
+        # capex into AI/datacenter capacity. Gated on AI exposure so capital-heavy
+        # but non-AI businesses (utilities, telecoms) stay in asset_heavy/cyclical.
+        capex_super = _ramp(capex_intensity, 0.10, 0.20)
+        capex_accel = _ramp(capex_growth, 0.15, 0.40)
+        platform_scale = _ramp(market_cap, 100e9, 500e9)
+        ai_factor = _clamp01(ai_exposure if ai_exposure is not None else 0.0)
+        scores["platform_reinvestment_supercycle"] = (
+            0.30 * capex_super + 0.20 * capex_accel + 0.15 * platform_scale + 0.35 * ai_factor
+        )
 
+        # Definitional gate: a large platform with real AI exposure that is both
+        # capex-intensive AND ramping capex is a reinvestment supercycle, not just
+        # another profitable compounder. Dampen the look-alike archetypes so the
+        # specialized type can win (mirrors how the financial sector is gated).
+        supercycle_gate = (
+            ai_factor > 0
+            and capex_intensity is not None and capex_intensity > 0.12
+            and capex_growth is not None and capex_growth > 0.20
+        )
+        if supercycle_gate:
+            for t in ("profitable_growth", "wide_moat_compounder", "mature_cash_flow"):
+                scores[t] *= 0.80
+            reasons.append("AI/datacenter capex supercycle")
         if revenue_growth is not None and revenue_growth > 0.20:
             reasons.append("high revenue growth")
         if fcf_margin is not None and fcf_margin < 0:

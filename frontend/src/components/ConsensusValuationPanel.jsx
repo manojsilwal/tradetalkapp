@@ -95,6 +95,19 @@ function fmtDownside(pct) {
   return `${sign}${n.toFixed(1)}%`;
 }
 
+function fmtDecimalPct(v) {
+  if (v == null || Number.isNaN(Number(v))) return null;
+  return `${(Number(v) * 100).toFixed(1)}%`;
+}
+
+function prettyClassification(raw) {
+  if (!raw) return null;
+  return String(raw)
+    .split('_')
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ');
+}
+
 /** Valuation models with USD fair values only (excludes Momentum). */
 export function valuationFairValueModels(valuation) {
   return (valuation?.models || []).filter((m) => m.name !== 'Momentum');
@@ -112,6 +125,16 @@ export default function ConsensusValuationPanel({
   const signal = v?.valuation_signal || v?.gauge_label || '—';
   const fairModels = valuationFairValueModels(v);
   const momentumModel = (v?.models || []).find((m) => m.name === 'Momentum');
+  const dcfModel = fairModels.find((m) => m.name?.includes('DCF'));
+  const classificationLabel = prettyClassification(
+    v?.business_classification || dcfModel?.classification?.business_type,
+  );
+  const marketExpectation = v?.market_expectation || dcfModel?.market_expectation;
+  const impliedGrowth = fmtDecimalPct(dcfModel?.implied_growth);
+  const impliedMargin = fmtDecimalPct(dcfModel?.implied_margin);
+  const impliedRoic = fmtDecimalPct(dcfModel?.implied_roic);
+  const hasImplied = impliedGrowth || impliedMargin || impliedRoic;
+  const riskFlags = (v?.risk_flags && v.risk_flags.length ? v.risk_flags : dcfModel?.risk_flags) || [];
 
   if (loading) {
     return loadingFallback;
@@ -164,7 +187,51 @@ export default function ConsensusValuationPanel({
               <dd>{v.bear_case_assessment}</dd>
             </div>
           )}
+          {hasData && classificationLabel && (
+            <div className="dt-valuation-metrics-row">
+              <dt>Business type</dt>
+              <dd>{classificationLabel}</dd>
+            </div>
+          )}
+          {hasData && marketExpectation && (
+            <div className="dt-valuation-metrics-row">
+              <dt>Market is pricing</dt>
+              <dd>{marketExpectation}</dd>
+            </div>
+          )}
+          {hasData && hasImplied && (
+            <div className="dt-valuation-metrics-row">
+              <dt>
+                <ProvenanceTip
+                  provenance={{
+                    source: 'reverse_dcf',
+                    formula_or_note:
+                      'Reverse DCF: the growth / operating margin / ROIC the current price implies, solved one at a time.',
+                  }}
+                  label="Market-implied"
+                />
+              </dt>
+              <dd>
+                {[
+                  impliedGrowth && `growth ${impliedGrowth}`,
+                  impliedMargin && `margin ${impliedMargin}`,
+                  impliedRoic && `ROIC ${impliedRoic}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </dd>
+            </div>
+          )}
         </dl>
+        {hasData && riskFlags.length > 0 && (
+          <div className="dt-valuation-risk-flags" data-testid="valuation-risk-flags">
+            {riskFlags.map((flag) => (
+              <span key={flag} className="dt-risk-flag-chip">
+                {prettyClassification(flag)}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="dt-valuation-models">
           <div className="dt-models-heading">Valuation models</div>
           <ul className="dt-models-list">

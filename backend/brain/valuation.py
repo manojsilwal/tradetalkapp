@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
+from backend import dcf_engine
+
 
 def dcf_value(fcf0: float, growth: float, years: int, terminal_growth: float,
               discount_rate: float) -> float:
@@ -23,20 +25,14 @@ def dcf_value(fcf0: float, growth: float, years: int, terminal_growth: float,
     Stage 2: Gordon terminal value at ``terminal_growth``.
     Requires ``discount_rate > terminal_growth`` (else the terminal value is
     undefined / negative — a classic DCF foot-gun we refuse to fabricate).
-    """
-    if discount_rate <= terminal_growth:
-        raise ValueError("discount_rate must exceed terminal_growth")
-    if years <= 0:
-        raise ValueError("years must be positive")
 
-    pv = 0.0
-    fcf = float(fcf0)
-    for t in range(1, years + 1):
-        fcf *= (1.0 + growth)
-        pv += fcf / (1.0 + discount_rate) ** t
-    terminal = fcf * (1.0 + terminal_growth) / (discount_rate - terminal_growth)
-    pv += terminal / (1.0 + discount_rate) ** years
-    return float(pv)
+    Delegates to the shared :mod:`backend.dcf_engine` so the Brain and the
+    Decision Terminal share one cash-flow core (the flat-growth case is just a
+    constant ``growth_path``).
+    """
+    return dcf_engine.constant_growth_value(
+        fcf0, growth, years, terminal_growth, discount_rate
+    )
 
 
 def intrinsic_range(fcf0: float, growth: float, years: int = 5,
@@ -67,24 +63,13 @@ def reverse_dcf(target_value: float, fcf0: float, years: int = 5,
 
     ``dcf_value`` is monotonically increasing in growth, so bisection converges.
     Returns the implied growth, or None if ``target_value`` is outside the
-    bracket's reachable range.
+    bracket's reachable range. Delegates to the shared engine.
     """
-    f_lo = dcf_value(fcf0, lo, years, terminal_growth, discount_rate) - target_value
-    f_hi = dcf_value(fcf0, hi, years, terminal_growth, discount_rate) - target_value
-    if f_lo > 0 and f_hi > 0:
-        return None  # even lowest growth overvalues -> unreachable
-    if f_lo < 0 and f_hi < 0:
-        return None  # even highest growth undervalues -> unreachable
-    for _ in range(iters):
-        mid = 0.5 * (lo + hi)
-        f_mid = dcf_value(fcf0, mid, years, terminal_growth, discount_rate) - target_value
-        if abs(f_mid) < 1e-9:
-            return mid
-        if (f_mid > 0) == (f_hi > 0):
-            hi = mid
-        else:
-            lo = mid
-    return 0.5 * (lo + hi)
+    return dcf_engine.reverse_dcf_growth(
+        target_value, fcf0,
+        years=years, terminal_growth=terminal_growth, discount_rate=discount_rate,
+        lo=lo, hi=hi, iters=iters,
+    )
 
 
 def dcf_upside(intrinsic_value: float, price: float) -> Optional[float]:

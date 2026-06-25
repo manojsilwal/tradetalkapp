@@ -503,7 +503,39 @@ class TerminalValuationModel(BaseModel):
     )
     scenarios: Optional[Dict[str, float]] = Field(
         default=None,
-        description="Optional bear/base/bull fair values (e.g. DCF scenario range)",
+        description="Optional bear/base/bull (+market_implied) fair values (e.g. DCF scenario range)",
+    )
+    classification: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Business archetype classification driving the DCF model (V2)",
+    )
+    implied_growth: Optional[float] = Field(
+        default=None,
+        description="Reverse-DCF growth (decimal) the current price embeds",
+    )
+    implied_margin: Optional[float] = Field(
+        default=None,
+        description="Reverse-DCF operating margin (decimal) implied by price (FCFF models)",
+    )
+    implied_roic: Optional[float] = Field(
+        default=None,
+        description="Reverse-DCF ROIC (decimal) implied by price (FCFF models)",
+    )
+    valuation_range: Optional[List[float]] = Field(
+        default=None,
+        description="[low, high] fair-value range across scenarios",
+    )
+    margin_of_safety_pct: Optional[float] = Field(
+        default=None,
+        description="(base − price) / base × 100; positive = undervalued",
+    )
+    market_expectation: Optional[str] = Field(
+        default=None,
+        description="Plain-language read of what the price implies vs base case",
+    )
+    risk_flags: List[str] = Field(
+        default_factory=list,
+        description="Model risk flags (e.g. capex_inefficiency, terminal_value_high)",
     )
 
 
@@ -559,6 +591,18 @@ class TerminalValuationPanel(BaseModel):
     bull_case_assessment: str = ""
     bear_case_assessment: str = ""
     gauge_label: str = ""
+    business_classification: Optional[str] = Field(
+        default=None,
+        description="Top business archetype (e.g. platform_reinvestment_supercycle)",
+    )
+    market_expectation: Optional[str] = Field(
+        default=None,
+        description="Plain-language read of what the price implies vs the DCF base case",
+    )
+    risk_flags: List[str] = Field(
+        default_factory=list,
+        description="Aggregated DCF model risk flags",
+    )
     models: List[TerminalValuationModel] = Field(default_factory=list)
     panel_note: str = ""
 

@@ -1,0 +1,90 @@
+{
+  "as_of": "2026-06-25",
+  "note": "Curated AI capex-supercycle inputs. There is no clean public API for per-segment AI/datacenter revenue and capex, so these are hand-maintained approximations refreshed roughly quarterly. Revenue figures are absolute USD (trailing-ish). core_margin/ai_margin are segment operating margins (decimal) used to build a mix-weighted margin path so high-margin cloud/AI is not buried under a consolidated margin. sales_to_capital is the Damodaran reinvestment-efficiency ratio (revenue generated per $1 of reinvested capital); capex_lag_years is how long capital leads the revenue it produces. Missing tickers fall back to the total-revenue FCFF path. Not investment advice.",
+  "tickers": {
+    "NVDA": {
+      "company": "NVIDIA",
+      "core_revenue": 16000000000,
+      "ai_revenue": 115000000000,
+      "core_growth": 0.08,
+      "ai_growth": 0.32,
+      "core_margin": 0.35,
+      "ai_margin": 0.65,
+      "sales_to_capital": 3.5,
+      "capex_lag_years": 1,
+      "horizon_years": 13
+    },
+    "MSFT": {
+      "company": "Microsoft",
+      "core_revenue": 160000000000,
+      "ai_revenue": 85000000000,
+      "core_growth": 0.08,
+      "ai_growth": 0.25,
+      "core_margin": 0.42,
+      "ai_margin": 0.45,
+      "sales_to_capital": 2.2,
+      "capex_lag_years": 2,
+      "horizon_years": 13
+    },
+    "GOOGL": {
+      "company": "Alphabet",
+      "core_revenue": 300000000000,
+      "ai_revenue": 52000000000,
+      "core_growth": 0.09,
+      "ai_growth": 0.28,
+      "core_margin": 0.35,
+      "ai_margin": 0.20,
+      "sales_to_capital": 2.5,
+      "capex_lag_years": 2,
+      "horizon_years": 13
+    },
+    "GOOG": {
+      "company": "Alphabet",
+      "core_revenue": 300000000000,
+      "ai_revenue": 52000000000,
+      "core_growth": 0.09,
+      "ai_growth": 0.28,
+      "core_margin": 0.35,
+      "ai_margin": 0.20,
+      "sales_to_capital": 2.5,
+      "capex_lag_years": 2,
+      "horizon_years": 13
+    },
+    "META": {
+      "company": "Meta Platforms",
+      "core_revenue": 150000000000,
+      "ai_revenue": 15000000000,
+      "core_growth": 0.10,
+      "ai_growth": 0.30,
+      "core_margin": 0.45,
+      "ai_margin": 0.25,
+      "sales_to_capital": 1.8,
+      "capex_lag_years": 2,
+      "horizon_years": 13
+    },
+    "AMZN": {
+      "company": "Amazon",
+      "core_revenue": 530000000000,
+      "ai_revenue": 115000000000,
+      "core_growth": 0.08,
+      "ai_growth": 0.20,
+      "core_margin": 0.05,
+      "ai_margin": 0.35,
+      "sales_to_capital": 2.0,
+      "capex_lag_years": 2,
+      "horizon_years": 13
+    },
+    "AVGO": {
+      "company": "Broadcom",
+      "core_revenue": 27000000000,
+      "ai_revenue": 28000000000,
+      "core_growth": 0.05,
+      "ai_growth": 0.35,
+      "core_margin": 0.30,
+      "ai_margin": 0.55,
+      "sales_to_capital": 3.0,
+      "capex_lag_years": 1,
+      "horizon_years": 13
+    }
+  }
+}

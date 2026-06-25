@@ -711,6 +711,25 @@ h4.dt-metrics-section-title {
   text-align: right;
 }
 
+.dt-valuation-risk-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+
+.dt-risk-flag-chip {
+  font-size: 0.6rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(234, 179, 8, 0.14);
+  color: #b45309;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  white-space: nowrap;
+}
+
 .dt-valuation-models {
   padding-top: 4px;
 }

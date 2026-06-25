@@ -9,6 +9,7 @@ import logging
 import math
 import statistics
 from typing import Any, Dict, List, Optional, Tuple
+from backend import dcf_engine
 from backend.brain.business_classifier import classify_business
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,25 @@ def median_ocf_yoy_growth_pct(rows: List[Dict[str, Any]]) -> Optional[float]:
     if not rates:
         return None
     return round(float(statistics.median(rates)), 2)
+
+
+def _capex_growth_5y(capex_history: Optional[List[Any]]) -> Optional[float]:
+    """CAGR of capex magnitude across available fiscal years (decimal).
+
+    Used by the classifier to detect a reinvestment supercycle (capex ramping
+    faster than revenue). Returns None when there is not enough history.
+    """
+    vals = [abs(v) for v in (capex_history or []) if _num(v) is not None and abs(_num(v)) > 0]
+    if len(vals) < 2:
+        return None
+    first, last = vals[0], vals[-1]
+    n = len(vals) - 1
+    if first <= 0:
+        return None
+    try:
+        return float((last / first) ** (1.0 / n) - 1.0)
+    except (ValueError, ZeroDivisionError):
+        return None
 
 
 def risk_free_rate() -> float:
@@ -301,21 +321,33 @@ def calculate_blended_growth_anchor(
     fcf_cagr: Optional[float],
     revenue_growth: Optional[float],
     ocf_cagr: Optional[float],
+    forward_growth_estimate: Optional[float] = None,
 ) -> float:
     """
-    Blended growth anchor:
-    35% FCF CAGR + 30% revenue CAGR + 15% OCF CAGR.
-    Normalized based on available metrics.
+    Blended growth anchor (percent units):
+    40% FCF CAGR + 25% revenue CAGR + 20% OCF CAGR + 15% forward estimate.
+
+    Weights sum to 1.0. When a component is missing the remaining weights are
+    renormalized so the anchor is always a proper convex blend of the metrics we
+    actually have. (The legacy version declared 35/30/15 = 80%; the missing 20%
+    was a forward-looking analyst estimate that is now wired in here.)
     """
     components = []
     if fcf_cagr is not None:
-        components.append((fcf_cagr, 0.35))
+        components.append((fcf_cagr, 0.40))
     if revenue_growth is not None:
         # Convert revenue growth to percentage if it's not already
         rg = revenue_growth * 100.0 if abs(revenue_growth) < 1.0 else revenue_growth
-        components.append((rg, 0.30))
+        components.append((rg, 0.25))
     if ocf_cagr is not None:
-        components.append((ocf_cagr, 0.15))
+        components.append((ocf_cagr, 0.20))
+    if forward_growth_estimate is not None:
+        fg = (
+            forward_growth_estimate * 100.0
+            if abs(forward_growth_estimate) < 1.0
+            else forward_growth_estimate
+        )
+        components.append((fg, 0.15))
 
     if not components:
         return 0.05 * 100.0 # Default 5%
@@ -354,6 +386,115 @@ def build_base_growth_path(
     ]
 
 
+def _capex_split_diagnostics(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """Maintenance vs growth capex for display + risk flags (never inflates FCF)."""
+    capex = _num(snapshot.get("capitalExpenditures"))
+    dep = _num(snapshot.get("depreciation"))
+    hist = [abs(v) for v in (snapshot.get("capex_history_5y") or []) if _num(v) is not None]
+    avg_capex_5y = (sum(hist) / len(hist)) if hist else None
+    stable = len(hist) >= 4
+    return dcf_engine.split_capex(
+        capex=capex,
+        depreciation=dep,
+        avg_capex_5y=avg_capex_5y,
+        stable_history=stable,
+    )
+
+
+def _market_expectation_label(margin_of_safety_pct: Optional[float]) -> str:
+    if margin_of_safety_pct is None:
+        return "unknown"
+    if margin_of_safety_pct <= -25:
+        return "high optimism priced in"
+    if margin_of_safety_pct < -8:
+        return "above base case"
+    if margin_of_safety_pct <= 8:
+        return "near base case"
+    if margin_of_safety_pct <= 25:
+        return "below base case"
+    return "deep value vs base case"
+
+
+def _enrich_valuation_output(
+    out: Dict[str, Any],
+    *,
+    snapshot: Dict[str, Any],
+    classification: Dict[str, Any],
+    price_usd: Optional[float],
+    fcf_per_share: Optional[float],
+    wacc: float,
+    terminal_growth: float,
+    years: int,
+) -> Dict[str, Any]:
+    """Attach classification, reverse-DCF implied growth, a market-implied scenario,
+    capex diagnostics, valuation range, margin of safety and risk flags.
+
+    Shared by the owner-earnings and supercycle paths so every surface emits the
+    same V2 fields.
+    """
+    out["classification"] = {
+        "business_type": classification.get("business_type"),
+        "confidence": classification.get("classification_confidence"),
+        "reasons": classification.get("classification_reason", []),
+        "type_scores": classification.get("type_scores", {}),
+    }
+
+    scenarios = out.get("scenarios") or {}
+    bear = scenarios.get("bear")
+    base = scenarios.get("base")
+    bull = scenarios.get("bull")
+    rng = [v for v in (bear, bull) if v is not None]
+    if rng:
+        out["valuation_range"] = [round(min(rng), 2), round(max(rng), 2)]
+
+    margin_of_safety = None
+    if base is not None and price_usd and base > 0:
+        margin_of_safety = round((base - price_usd) / base * 100.0, 1)
+    out["margin_of_safety_pct"] = margin_of_safety
+    out["market_expectation"] = _market_expectation_label(margin_of_safety)
+
+    # Reverse DCF: implied constant growth the current price embeds (one unknown).
+    implied_growth = None
+    if price_usd and price_usd > 0 and fcf_per_share and fcf_per_share > 0:
+        net_cash = _num(out.get("net_cash_usd"), 0.0) or 0.0
+        shares = _num(out.get("shares")) or 0.0
+        net_cash_ps = (net_cash / shares) if shares > 0 else 0.0
+        target_dcf_ps = price_usd - net_cash_ps
+        if target_dcf_ps > 0 and wacc > terminal_growth:
+            implied_growth = dcf_engine.reverse_dcf_growth(
+                target_dcf_ps,
+                fcf_per_share,
+                years=years,
+                terminal_growth=terminal_growth,
+                discount_rate=wacc,
+            )
+    out["implied_growth"] = round(implied_growth, 4) if implied_growth is not None else None
+
+    if price_usd and price_usd > 0:
+        scenarios = dict(scenarios)
+        scenarios["market_implied"] = round(float(price_usd), 2)
+        out["scenarios"] = scenarios
+
+    # Capex split (diagnostics only) + capex-inefficiency risk flag.
+    capex_split = _capex_split_diagnostics(snapshot)
+    out["capex_split"] = capex_split
+    flags = list(out.get("valuation_warning_flags", []))
+    growth_capex = capex_split.get("growth_capex")
+    roic = _num(snapshot.get("returnOnEquity"))
+    capex_growth = _capex_growth_5y(snapshot.get("capex_history_5y"))
+    if (
+        growth_capex
+        and capex_growth is not None
+        and capex_growth > 0.20
+        and roic is not None
+        and roic < 0.10
+    ):
+        flags.append("capex_inefficiency")
+    out["valuation_warning_flags"] = flags
+    out["risk_flags"] = flags
+    return out
+
+
 def compute_dcf_scenarios(
     snapshot: Dict[str, Any],
     *,
@@ -390,6 +531,10 @@ def compute_dcf_scenarios(
     capex_val = _num(snapshot.get("capitalExpenditures")) or 0.0
     capex_intensity_val = (abs(capex_val) / rev_0) if (capex_val and rev_0 and rev_0 > 0) else 0.0
 
+    capex_growth_val = _capex_growth_5y(snapshot.get("capex_history_5y"))
+    ai_seed = dcf_engine.ai_supercycle_seed_for(snapshot.get("ticker") or "")
+    ai_exposure_val = 1.0 if ai_seed else 0.0
+
     fundamentals_dict = {
         "market_cap": market_cap_val,
         "revenue_growth_yoy": revenue_growth_yoy_val,
@@ -399,10 +544,23 @@ def compute_dcf_scenarios(
         "roic": roe_val,  # ROIC proxy
         "debt_to_equity": debt_to_equity_val,
         "capex_intensity": capex_intensity_val,
+        "capex_growth": capex_growth_val,
+        "ai_exposure": ai_exposure_val,
         "sector": snapshot.get("sector"),
     }
     classification = classify_business(fundamentals_dict)
     business_type = classification["business_type"]
+
+    # Route AI capex-supercycle platforms to the FCFF segment engine first.
+    if business_type == "platform_reinvestment_supercycle" and ai_seed:
+        res = compute_supercycle_dcf_scenarios(
+            snapshot,
+            seed=ai_seed,
+            classification=classification,
+            price_usd=price_usd,
+        )
+        if res.get("available"):
+            return res
 
     # Route based on classified business type
     if business_type in ("high_growth_unprofitable", "profitable_growth"):
@@ -433,16 +591,20 @@ def compute_dcf_scenarios(
 
     beta = _num(snapshot.get("beta"), DEFAULT_BETA)
     rf = risk_free_rate()
-    ke = capm_wacc(beta, risk_free=rf, equity_premium=DEFAULT_EQUITY_PREMIUM)
+    exec_risk = dcf_engine.execution_risk_for(business_type)
+    ke = dcf_engine.cost_of_equity(
+        beta, risk_free=rf, equity_premium=DEFAULT_EQUITY_PREMIUM, execution_risk=exec_risk
+    )
 
     total_debt = _num(snapshot.get("totalDebt")) or _num(snapshot.get("balance_total_debt")) or 0.0
     mc_val = mc if mc is not None else ((shares * price_usd) if shares and price_usd else 0.0)
     wacc_base = compute_true_wacc(ke, mc_val, total_debt, rf)
 
-    wacc_bear = min(0.14, wacc_base + 0.015)
+    wacc_bear = min(dcf_engine.KE_CAP, wacc_base + 0.015)
     wacc_bull = max(rf + 0.02, wacc_base - 0.010)
 
     rev_g_num = _num(rev_g) if rev_g is not None else None
+    forward_growth_estimate = _num(snapshot.get("earningsGrowth"))
 
     median_ocf_usd: Optional[float] = None
     median_yoy_growth_pct: Optional[float] = None
@@ -481,6 +643,7 @@ def compute_dcf_scenarios(
         fcf_cagr=fcf_cagr_pct,
         revenue_growth=rev_g_num,
         ocf_cagr=ocf_cagr_pct,
+        forward_growth_estimate=forward_growth_estimate,
     )
     growth_anchor_source = "blended_growth_anchor"
     base_path = build_base_growth_path(blended_anchor_pct, BASE_TERMINAL_G, business_type=business_type)
@@ -587,6 +750,18 @@ def compute_dcf_scenarios(
     out["dcf_confidence_score"] = max(0, min(100, confidence))
     out["model_name"] = "Mature Owner-Earnings DCF"
 
+    fcf_per_share = (fcf / shares) if (fcf and shares and shares > 0) else None
+    _enrich_valuation_output(
+        out,
+        snapshot=snapshot,
+        classification=classification,
+        price_usd=price_usd,
+        fcf_per_share=fcf_per_share,
+        wacc=wacc_base,
+        terminal_growth=BASE_TERMINAL_G,
+        years=DCF_YEARS,
+    )
+
     return out
 
 
@@ -613,6 +788,8 @@ def fetch_yfinance_valuation_snapshot(ticker: str) -> Dict[str, Any]:
                 "sharesOutstanding": info.get("sharesOutstanding"),
                 "marketCap": info.get("marketCap"),
                 "revenueGrowth": info.get("revenueGrowth"),
+                "earningsGrowth": info.get("earningsGrowth"),
+                "operatingMargins": info.get("operatingMargins"),
                 "beta": info.get("beta"),
                 "trailingEps": info.get("trailingEps"),
                 "currentRatio": info.get("currentRatio"),
@@ -652,6 +829,21 @@ def fetch_yfinance_valuation_snapshot(ticker: str) -> Dict[str, Any]:
                 cf,
                 ("Stock Based Compensation", "Share Based Compensation"),
             )
+            out["depreciation"] = _first_row_value(
+                cf,
+                (
+                    "Depreciation And Amortization",
+                    "Depreciation Amortization Depletion",
+                    "Depreciation",
+                ),
+            )
+            # Up to 5 fiscal years of capex magnitude for capex-growth / maintenance-capex.
+            capex_hist = []
+            for r in out.get("annual_cashflow_5y") or []:
+                c = _num(r.get("capex"))
+                if c is not None:
+                    capex_hist.append(abs(c))
+            out["capex_history_5y"] = capex_hist
         except Exception as exc:
             logger.debug("[valuation_inputs] cashflow statement failed %s: %s", t_up, exc)
 
@@ -836,4 +1028,177 @@ def compute_high_growth_dcf_scenarios(
     out["dcf_confidence_score"] = max(0, min(100, confidence))
     out["model_name"] = "High-Growth Revenue-to-FCF DCF"
 
+    classification = classify_business({
+        "market_cap": _num(snapshot.get("marketCap")) or 0.0,
+        "revenue_growth_yoy": rev_g_num or 0.0,
+        "gross_margin": gross_margins or 0.0,
+        "operating_margin": _num(snapshot.get("operatingMargins")) or 0.0,
+        "fcf_margin": current_fcf_margin or 0.0,
+        "roic": _num(snapshot.get("returnOnEquity")) or 0.0,
+        "sector": snapshot.get("sector"),
+    }) if business_type else {"business_type": business_type}
+    classification.setdefault("business_type", business_type)
+    fcf_per_share = (fcf / shares) if (fcf and shares and shares > 0) else None
+    _enrich_valuation_output(
+        out,
+        snapshot=snapshot,
+        classification=classification,
+        price_usd=price_usd,
+        fcf_per_share=fcf_per_share,
+        wacc=wacc_base,
+        terminal_growth=BASE_TERMINAL_G,
+        years=10,
+    )
+
+    return out
+
+
+def compute_supercycle_dcf_scenarios(
+    snapshot: Dict[str, Any],
+    *,
+    seed: Dict[str, Any],
+    classification: Dict[str, Any],
+    price_usd: Optional[float] = None,
+) -> Dict[str, Any]:
+    """AI capex-supercycle FCFF valuation (segment revenue + reinvestment via
+    sales-to-capital). Returns the standard scenario dict shape plus V2 fields.
+    """
+    business_type = classification.get("business_type", "platform_reinvestment_supercycle")
+    net_cash, net_cash_source = net_cash_equity(snapshot)
+    if net_cash is None:
+        net_cash = 0.0
+
+    shares = _num(snapshot.get("sharesOutstanding"))
+    mc = _num(snapshot.get("marketCap"))
+    if not shares and price_usd and price_usd > 0 and mc:
+        shares = mc / price_usd
+
+    rev_0 = _num(snapshot.get("totalRevenue"))
+    if rev_0 is None or rev_0 <= 0 or not shares or shares <= 0:
+        return {"available": False, "missing_reason": "Insufficient revenue/shares for supercycle DCF."}
+
+    beta = _num(snapshot.get("beta"), DEFAULT_BETA)
+    rf = risk_free_rate()
+    exec_risk = dcf_engine.execution_risk_for(business_type)
+    ke = dcf_engine.cost_of_equity(
+        beta, risk_free=rf, equity_premium=DEFAULT_EQUITY_PREMIUM, execution_risk=exec_risk
+    )
+    total_debt = _num(snapshot.get("totalDebt")) or _num(snapshot.get("balance_total_debt")) or 0.0
+    wacc_base = compute_true_wacc(ke, mc or (shares * (price_usd or 0.0)), total_debt, rf)
+    wacc_bear = min(dcf_engine.KE_CAP, wacc_base + 0.015)
+    wacc_bull = max(rf + 0.02, wacc_base - 0.010)
+
+    op_margin = _num(snapshot.get("operatingMargins"))
+    if op_margin is None:
+        oi = _num(snapshot.get("operatingIncome"))
+        op_margin = (oi / rev_0) if oi else 0.30
+    roic = _num(snapshot.get("returnOnEquity")) or 0.20
+
+    tg_base = dcf_engine.dynamic_terminal_growth(business_type, rf)
+    tg_bear = max(0.0, tg_base - 0.005)
+    tg_bull = min(rf - 0.005, tg_base + 0.003)
+
+    def _scenario(growth_mult: float, wacc: float, tg: float, margin_delta: float) -> Optional[Dict[str, Any]]:
+        s = dict(seed)
+        s["ai_growth"] = (_num(seed.get("ai_growth"), 0.30) or 0.30) * growth_mult
+        s["core_growth"] = (_num(seed.get("core_growth"), 0.07) or 0.07) * growth_mult
+        return dcf_engine.supercycle_value_per_share(
+            revenue0=rev_0,
+            seed=s,
+            operating_margin=op_margin,
+            tax_rate=DEFAULT_TAX_RATE,
+            roic=roic,
+            discount_rate=wacc,
+            terminal_growth=tg,
+            net_cash=net_cash,
+            shares=shares,
+            margin_trend=0.0,  # data-driven: no fabricated compression
+            margin_target=max(op_margin, op_margin + margin_delta),
+        )
+
+    base = _scenario(1.0, wacc_base, tg_base, 0.05)
+    bear = _scenario(0.6, wacc_bear, tg_bear, 0.0)
+    bull = _scenario(1.3, wacc_bull, tg_bull, 0.10)
+
+    base_fv = base.get("fair_value_per_share") if base else None
+    out: Dict[str, Any] = {
+        "fcf_usd": None,
+        "fcf_source": "fcff_segment_model",
+        "fcf_years_used": base.get("years") if base else None,
+        "growth_anchor_source": "ai_supercycle_seed",
+        "net_cash_usd": net_cash,
+        "net_cash_source": net_cash_source,
+        "shares": shares,
+        "beta": beta,
+        "risk_free_rate": round(rf, 4),
+        "wacc_base": round(wacc_base, 4),
+        "scenarios": {
+            "bear": round(bear["fair_value_per_share"], 2) if bear else None,
+            "base": round(base_fv, 2) if base_fv else None,
+            "bull": round(bull["fair_value_per_share"], 2) if bull else None,
+        },
+        "base_fair_value_usd": round(base_fv, 2) if base_fv else None,
+        "available": bool(base_fv and base_fv > 0),
+        "business_type": business_type,
+        "operating_margin": round(op_margin, 4),
+        "roic": round(roic, 4),
+        "terminal_growth_base": round(tg_base, 4),
+        "supercycle_detail": base,
+        "model_name": "AI Supercycle FCFF DCF",
+        "dcf_confidence_score": 60,
+        "sector_dcf_suitability": "high",
+        "valuation_warning_flags": ["ai_monetization_uncertainty", "long_horizon_sensitivity"],
+    }
+
+    if not out["available"]:
+        out["missing_reason"] = "Supercycle FCFF produced no positive base value."
+        return out
+
+    # Reverse DCF implied margin / ROIC (one unknown at a time) on a flat-margin
+    # FCFF representation using the base growth path.
+    base_path = [g for g in (base.get("growth_path") or [])] or dcf_engine.multi_stage_path(
+        _num(seed.get("ai_growth"), 0.30) or 0.30, tg_base, base.get("years", 13)
+    )
+    years = len(base_path)
+    implied_margin = implied_roic = None
+    if price_usd and price_usd > 0:
+        def _val_for_margin(m: float) -> float:
+            v = dcf_engine.fcff_equity_value_per_share(
+                revenue0=rev_0, growth_path=base_path,
+                operating_margin_path=[m] * years, tax_rate=DEFAULT_TAX_RATE,
+                roic=roic, discount_rate=wacc_base, terminal_growth=tg_base,
+                net_cash=net_cash, shares=shares,
+            )
+            return v if v is not None else 0.0
+
+        def _val_for_roic(r: float) -> float:
+            v = dcf_engine.fcff_equity_value_per_share(
+                revenue0=rev_0, growth_path=base_path,
+                operating_margin_path=[op_margin] * years, tax_rate=DEFAULT_TAX_RATE,
+                roic=r, discount_rate=wacc_base, terminal_growth=tg_base,
+                net_cash=net_cash, shares=shares,
+            )
+            return v if v is not None else 0.0
+
+        implied_margin = dcf_engine._bisect(_val_for_margin, price_usd, 0.02, 0.70)
+        implied_roic = dcf_engine._bisect(_val_for_roic, price_usd, dcf_engine.ROIC_FLOOR, 0.80)
+
+    fcff_year1_ps = None
+    detail_path = base.get("growth_path") or []
+    if detail_path:
+        # Approximate per-share FCFF0 for implied-growth reverse DCF.
+        fcff_year1_ps = (rev_0 * (1.0 + detail_path[0]) * op_margin * (1.0 - DEFAULT_TAX_RATE)) / shares
+
+    _enrich_valuation_output(
+        out,
+        snapshot=snapshot,
+        classification=classification,
+        price_usd=price_usd,
+        fcf_per_share=fcff_year1_ps,
+        wacc=wacc_base,
+        terminal_growth=tg_base,
+        years=years,
+    )
+    out["implied_margin"] = round(implied_margin, 4) if implied_margin is not None else None
+    out["implied_roic"] = round(implied_roic, 4) if implied_roic is not None else None
     return out
