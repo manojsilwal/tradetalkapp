@@ -55,14 +55,8 @@ async def run_daily_pipeline(knowledge_store, llm_client=None) -> dict:
         elif isinstance(result, dict):
             summary.update(result)
 
-    # Outcome tracking runs after ingestion so price data is fresh
-    try:
-        from .outcome_grader import run_grader_pass
-        grader_result = await run_grader_pass(knowledge_store, llm_client)
-        summary["swarm_outcomes_tracked"] = grader_result.get("total_graded", 0)
-    except Exception as e:
-        summary["errors"].append(f"swarm_outcomes: {e}")
-        logger.warning(f"[DailyPipeline] outcome grader pass failed: {e}")
+    # Outcome grader runs on the dedicated 02:10 UTC scheduler job (see below).
+    # Keeping it out of the midnight ingest pass avoids grading the same decisions twice.
 
     knowledge_store.update_pipeline_status(**summary)
 
@@ -291,12 +285,18 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
             )
             grader_msg = " + outcome grader 02:10 UTC"
 
-            # Predictor self-learning (Phase 3) — 02:40 UTC, after the grader
-            # so conformal scales / learned weights / market fixtures always
-            # see tonight's freshly-graded outcomes. No-op without the ledger.
-            if os.environ.get("PREDICTOR_SELF_LEARNING_ENABLE", "1").strip().lower() in (
+            # Predictor self-learning is retired once the brain owns the predictor surface.
+            _predictor_learning_on = os.environ.get("PREDICTOR_SELF_LEARNING_ENABLE", "1").strip().lower() in (
                 "1", "true", "yes", "on",
-            ):
+            )
+            try:
+                from .brain.flags import brain_surface_enabled
+
+                if brain_surface_enabled("predictor"):
+                    _predictor_learning_on = False
+            except Exception:
+                pass
+            if _predictor_learning_on:
                 scheduler.add_job(
                     _predictor_self_learning_job,
                     trigger="cron",

@@ -892,14 +892,25 @@ async def build_decision_terminal_payload(
         predictor_filled = False
         if tool_registry is not None:
             try:
-                from .predictor.agent import run_predictor_forecast
+                from .brain.flags import brain_surface_enabled
 
-                pred = await run_predictor_forecast(
-                    t,
-                    horizons=["1d", "5d", "21d", "63d"],
-                    tool_registry=tool_registry,
-                    emit_ledger=True,
-                )
+                hs = ["1d", "5d", "21d", "63d"]
+                pred = None
+                if brain_surface_enabled("predictor"):
+                    from .brain.predictor_serve import arun_brain_predictor_forecast
+
+                    pred = await arun_brain_predictor_forecast(t, hs)
+                    if pred.status != "ok":
+                        pred = None
+                if pred is None:
+                    from .predictor.agent import run_predictor_forecast
+
+                    pred = await run_predictor_forecast(
+                        t,
+                        horizons=hs,
+                        tool_registry=tool_registry,
+                        emit_ledger=True,
+                    )
                 if pred.status == "ok" and pred.base_price_usd_3y_scenario is not None:
                     bull_p = pred.bull_price_usd_3y_scenario
                     base_p = pred.base_price_usd_3y_scenario

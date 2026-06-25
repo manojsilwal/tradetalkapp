@@ -32,6 +32,7 @@ flowchart LR
 | `BRAIN_CUTOVER_DECISION_TERMINAL=1` | Decision-terminal headline verdict from brain. |
 | `BRAIN_CUTOVER_SWARM=1` | Swarm consensus verdict + grounded memo from brain. |
 | `BRAIN_CUTOVER_DEBATE=1` | Debate verdict + grounded moderator memo from brain. |
+| `BRAIN_CUTOVER_PREDICTOR=1` | `/predictor/forecast` + decision-terminal roadmap from brain snapshot TimesFM bands. |
 | `STORAGE_BACKEND=gcp` | Brain artifacts in GCS (else local dir). |
 | `BRAIN_GCS_BUCKET` / `BRAIN_GCS_PREFIX` | Bucket/prefix (default `tradetalk-data-lake` / `brain`). |
 | `BRAIN_TIMESFM_ENABLE=1` | Nightly job fetches TimesFM bands per ticker. |

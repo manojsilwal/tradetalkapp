@@ -4,7 +4,7 @@ import logging
 import os
 import time as _time
 from datetime import datetime as _dt2, timezone as _tz2
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Query, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -647,6 +647,36 @@ def _stamp_forecast_freshness(res) -> None:
         pass
 
 
+async def _run_predictor_forecast(
+    ticker: str,
+    horizons: List[str],
+    *,
+    emit_ledger: bool = True,
+) -> PredictorForecastResponse:
+    """Brain cutover when ``BRAIN_CUTOVER_PREDICTOR=1``; else legacy predictor."""
+    from ..brain.flags import brain_surface_enabled
+
+    hs = horizons or ["1d", "5d", "21d", "63d"]
+    if brain_surface_enabled("predictor"):
+        from ..brain.predictor_serve import arun_brain_predictor_forecast
+
+        res = await arun_brain_predictor_forecast(ticker, hs)
+        if res.status == "ok":
+            _stamp_forecast_freshness(res)
+            return res
+
+    from ..predictor.agent import run_predictor_forecast
+
+    res = await run_predictor_forecast(
+        ticker,
+        horizons=hs,
+        tool_registry=tool_registry,
+        emit_ledger=emit_ledger,
+    )
+    _stamp_forecast_freshness(res)
+    return res
+
+
 @router.get("/predictor/forecast", response_model=PredictorForecastResponse, dependencies=[Depends(_rl_expensive)])
 async def predictor_forecast_get(
     ticker: str = Query("AAPL", description="Stock ticker."),
@@ -656,19 +686,14 @@ async def predictor_forecast_get(
     ),
     _auth_user=Depends(get_optional_user),
 ):
-    """Probabilistic price forecast — requires the TimesFM service (or explicit
-    baselines-only mode); otherwise answers with status "insufficient_data"."""
-    from ..predictor.agent import run_predictor_forecast
-
+    """Probabilistic price forecast — brain snapshot bands when cut over, else
+    the legacy TimesFM predictor path."""
     hs = [h.strip() for h in horizon.split(",") if h.strip()]
-    res = await run_predictor_forecast(
+    return await _run_predictor_forecast(
         ticker,
-        horizons=hs or ["1d", "5d", "21d", "63d"],
-        tool_registry=tool_registry,
+        hs or ["1d", "5d", "21d", "63d"],
         emit_ledger=True,
     )
-    _stamp_forecast_freshness(res)
-    return res
 
 
 @router.post("/predictor/forecast", response_model=PredictorForecastResponse, dependencies=[Depends(_rl_expensive)])
@@ -676,17 +701,12 @@ async def predictor_forecast_post(
     body: PredictorForecastToolInput,
     _auth_user=Depends(get_optional_user),
 ):
-    from ..predictor.agent import run_predictor_forecast
-
     t = validate_ticker_query(body.ticker)
-    res = await run_predictor_forecast(
+    return await _run_predictor_forecast(
         t,
-        horizons=body.horizons or ["1d", "5d", "21d", "63d"],
-        tool_registry=tool_registry,
+        body.horizons or ["1d", "5d", "21d", "63d"],
         emit_ledger=True,
     )
-    _stamp_forecast_freshness(res)
-    return res
 
 
 @router.get("/prediction-markets")

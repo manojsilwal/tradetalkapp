@@ -1,6 +1,7 @@
 """Sequential decision-terminal prewarm for cron / GitHub Actions."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -49,6 +50,22 @@ async def run_verdict_prewarm(
     results: List[Dict[str, Any]] = []
     cache_hits = 0
     cold_runs = 0
+    brain_prewarm_ok = 0
+
+    # Brain snapshot prewarm — warms serve_ticker caches when brain serving is on.
+    try:
+        from .brain.serving import serving_enabled, serve_ticker
+
+        if serving_enabled():
+            for sym in syms:
+                try:
+                    br = await asyncio.to_thread(serve_ticker, sym, emit=False)
+                    if br.get("status") not in ("no_snapshot", "error", None):
+                        brain_prewarm_ok += 1
+                except Exception as exc:
+                    logger.debug("[verdict_prewarm] brain prewarm %s skipped: %s", sym, exc)
+    except Exception as exc:
+        logger.debug("[verdict_prewarm] brain prewarm block skipped: %s", exc)
 
     for sym in syms:
         t0 = time.perf_counter()
@@ -90,6 +107,7 @@ async def run_verdict_prewarm(
 
     return {
         "tickers_requested": len(syms),
+        "brain_prewarm_ok": brain_prewarm_ok,
         "cache_hits": cache_hits,
         "cold_runs": cold_runs,
         "results": results,
