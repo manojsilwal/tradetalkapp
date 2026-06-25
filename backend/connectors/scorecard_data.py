@@ -138,13 +138,23 @@ def _sync_fetch(ticker: str) -> ScorecardData:
     current_price = _as_float(info.get("currentPrice") or info.get("regularMarketPrice"), default=0.0)
     from .spot import resolve_spot
 
-    spot_q = resolve_spot(sym)
+    spot_q = _timed_call(
+        lambda: resolve_spot(sym),
+        timeout=_YF_CALL_TIMEOUT_S,
+        default=None,
+        label=f"{sym}.resolve_spot",
+    )
     if spot_q is not None:
         current_price = spot_q.price
     elif current_price <= 0:
         from .quote_fallbacks import fetch_us_equity_spot
 
-        fb = fetch_us_equity_spot(sym)
+        fb = _timed_call(
+            lambda: fetch_us_equity_spot(sym),
+            timeout=_YF_CALL_TIMEOUT_S,
+            default=None,
+            label=f"{sym}.fetch_us_equity_spot",
+        )
         if fb:
             current_price = fb[0]
         elif "info" in missing:
