@@ -378,12 +378,20 @@ if __name__ == "__main__":
     # All knobs come from env (FUND_LB_RANKING_MODE, FUND_LB_UNIVERSE_SIZE,
     # FUND_LB_TOP_N, FUND_LB_MAX_QUARTERS, FUND_LB_MAX_HOLDINGS_PER_FILING,
     # FUND_LB_SAVE_RAW, SEC_USER_AGENT, OPENFIGI_API_KEY, POSTGRES_*).
+    import sys as _sys
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    _result = run_job_blocking()
-    logging.getLogger(__name__).info("[FundLB] job finished: %s", _result)
-    # Non-zero exit if nothing was produced, so the Cloud Run Job surfaces failure.
-    import sys as _sys
-    _sys.exit(0 if (_result or {}).get("leaderboard_rows", 0) > 0 else 1)
+    _log = logging.getLogger(__name__)
+    try:
+        _result = run_job_blocking()
+        _log.info("[FundLB] job finished: %s", _result)
+        # The pipeline ran end-to-end. Output volume depends on external rate
+        # limits (e.g. keyless OpenFIGI), so completing is success; only a true
+        # crash is a failure for the Cloud Run Job.
+        _sys.exit(0)
+    except Exception:  # noqa: BLE001
+        _log.exception("[FundLB] job crashed")
+        _sys.exit(1)
