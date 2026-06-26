@@ -54,10 +54,15 @@ class TestEngine(unittest.TestCase):
         dl._reset_singleton_for_tests()
         self._tmp.cleanup()
 
-    def _run(self, universe, fundamentals, history, **kwargs):
+    def _run(self, universe, fundamentals, history, *, evidence=None, operating=None, **kwargs):
+        # Phase-3 fetchers do network I/O — patch them off by default so tests stay offline.
+        evidence = evidence or (lambda t, name="": {"available": False})
+        operating = operating or (lambda t: {"available": False})
         with patch.object(ps_engine, "get_universe", return_value=universe), \
              patch.object(ps_data, "fetch_fundamentals_extended", side_effect=fundamentals), \
-             patch.object(ps_data, "fetch_price_series", side_effect=history):
+             patch.object(ps_data, "fetch_price_series", side_effect=history), \
+             patch.object(ps_data, "fetch_evidence", side_effect=evidence), \
+             patch.object(ps_data, "fetch_operating_metrics", side_effect=operating):
             return asyncio.run(ps_engine.run_scan("job-test", **kwargs))
 
     def test_full_scan_persists_ranks_and_emits(self):
@@ -99,6 +104,45 @@ class TestEngine(unittest.TestCase):
         decisions = dl.get_ledger().list_decisions_since(0.0, decision_type="picks_shovels_momentum")
         self.assertGreaterEqual(len(decisions), 1)
         self.assertEqual(decisions[0].horizon_hint, "21d")
+
+    def test_phase3_evidence_threads_into_rows(self):
+        universe = ["NVDA", "MU"]
+        closes = {"NVDA": _uptrend_closes(slope=0.004), "MU": _uptrend_closes(slope=0.002)}
+
+        def fundamentals(t):
+            return _fund(t, rev={"NVDA": 50.0, "MU": 30.0}[t],
+                         gm={"NVDA": 70.0, "MU": 50.0}[t],
+                         mcap={"NVDA": 2e12, "MU": 1e11}[t])
+
+        def evidence(t, name=""):
+            if t == "NVDA":
+                return {
+                    "available": True, "positive_keyword_score": 24.0,
+                    "negative_keyword_penalty": 0.0, "news_catalyst_score": 10.0,
+                    "filing_evidence_score": 0.0,
+                    "demand_evidence": ["NVDA record AI demand — Reuters"],
+                    "headlines": [{"title": "NVDA record AI demand", "link": "http://x", "source": "Reuters"}],
+                }
+            return {"available": False, "demand_evidence": []}
+
+        def operating(t):
+            return {"available": True, "qoq_revenue_growth_pct": 18.0} if t == "NVDA" else {"available": False}
+
+        meta = self._run(
+            universe, fundamentals, lambda chunk: {t: closes[t] for t in chunk},
+            evidence=evidence, operating=operating,
+        )
+        rows = {r["ticker"]: r for r in ps_store.load_snapshot_rows(meta["snapshot_id"], limit=10)}
+        nvda, mu = rows["NVDA"], rows["MU"]
+        # Demand-evidence component varies (NVDA has real evidence, MU does not).
+        self.assertGreater(
+            nvda["score_breakdown"]["bottleneck_evidence_score"],
+            mu["score_breakdown"]["bottleneck_evidence_score"],
+        )
+        # Confidence is no longer static: NVDA (4 sources) reaches High.
+        self.assertEqual(nvda["confidence_level"], "High")
+        # Real headline persisted for the drawer.
+        self.assertTrue(nvda["evidence"]["headlines"])
 
     def test_second_run_is_cache_hit(self):
         universe = ["MU"]

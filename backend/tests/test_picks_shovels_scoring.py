@@ -64,6 +64,27 @@ class TestComponentScores(unittest.TestCase):
     def test_bottleneck_neutral_when_unavailable(self):
         self.assertEqual(scoring.bottleneck_evidence_score({"available": False}), scoring.NEUTRAL)
 
+    def test_bottleneck_varies_with_evidence(self):
+        strong = scoring.bottleneck_evidence_score({
+            "available": True, "positive_keyword_score": 24.0,
+            "negative_keyword_penalty": 0.0, "news_catalyst_score": 10.0,
+            "filing_evidence_score": 0.0,
+        })
+        weak = scoring.bottleneck_evidence_score({
+            "available": True, "positive_keyword_score": 0.0,
+            "negative_keyword_penalty": 30.0, "news_catalyst_score": 0.0,
+            "filing_evidence_score": 0.0,
+        })
+        self.assertGreater(strong, scoring.NEUTRAL)
+        self.assertLess(weak, scoring.NEUTRAL)
+        self.assertGreater(strong, weak)
+
+    def test_backlog_uses_operating_momentum(self):
+        self.assertEqual(scoring.backlog_rpo_score({"available": False}), scoring.NEUTRAL)
+        strong = scoring.backlog_rpo_score({"available": True, "qoq_revenue_growth_pct": 22.0, "qoq_revenue_accel_pct": 10.0})
+        weak = scoring.backlog_rpo_score({"available": True, "qoq_revenue_growth_pct": -8.0})
+        self.assertGreater(strong, weak)
+
     def test_customer_capex_uses_seed(self):
         self.assertEqual(scoring.customer_capex_exposure_score({"customer_capex_seed": 88.0}), 88.0)
 
@@ -113,6 +134,24 @@ class TestScoreRow(unittest.TestCase):
     def test_confidence_thresholds(self):
         self.assertEqual(scoring.confidence_level(1.0, 4)["confidence_level"], "High")
         self.assertEqual(scoring.confidence_level(0.0, 0)["confidence_level"], "Low")
+
+    def test_score_row_confidence_high_with_all_sources(self):
+        rows = [_raw("A"), _raw("B"), _raw("C")]
+        # Give the first row real operating + evidence so it has 4 independent sources.
+        rows[0]["operating"] = {"available": True, "qoq_revenue_growth_pct": 15.0}
+        rows[0]["evidence"] = {
+            "available": True, "positive_keyword_score": 24.0,
+            "negative_keyword_penalty": 0.0, "news_catalyst_score": 10.0,
+            "filing_evidence_score": 0.0,
+        }
+        ctx = scoring.PercentileContext.build(rows)
+        full = scoring.score_row(rows[0], ctx)
+        bare = scoring.score_row(rows[1], ctx)
+        self.assertEqual(full["confidence_level"], "High")
+        # The stub row (no evidence/operating) should not reach High.
+        self.assertNotEqual(bare["confidence_level"], "High")
+        # Demand-evidence component should lift the bottleneck score above neutral.
+        self.assertGreater(full["score_breakdown"]["bottleneck_evidence_score"], scoring.NEUTRAL)
 
 
 if __name__ == "__main__":

@@ -56,6 +56,19 @@ class TestExplain(unittest.TestCase):
         self.assertIn("22.0%", joined)
         self.assertIn("60.0%", joined)
 
+    def test_narrative_cites_real_headline_when_available(self):
+        row = _row()
+        row["evidence"] = {
+            "available": True,
+            "demand_evidence": ["Micron sees record HBM demand, raised guidance — Reuters"],
+            "headlines": [{"title": "Micron sees record HBM demand", "link": "http://x", "source": "Reuters"}],
+        }
+        ex = explain.build_explanation(row)
+        self.assertIn("record HBM demand", ex["narrative"])
+        self.assertNotIn("pending ingestion", ex["narrative"])
+        # Still anti-hallucination: no buy/sell recommendation.
+        self.assertNotIn("buy", ex["narrative"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()

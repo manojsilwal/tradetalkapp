@@ -17,6 +17,7 @@ __all__ = [
     "themes",
     "scoring",
     "data",
+    "evidence",
     "store",
     "explain",
     "engine",

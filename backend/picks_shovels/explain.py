@@ -116,11 +116,20 @@ def build_explanation(row: Dict[str, Any]) -> Dict[str, Any]:
     cash_summary = f"a free-cash-flow yield of {fcf}" if fcf else "cash-flow detail that is not yet available"
     risk_phrase = "; ".join(risks[:3])
 
+    # Prefer a real, ingested headline; else the curated theme exposure reason.
+    news_headlines = list(evidence.get("demand_evidence") or []) if evidence.get("available") else []
+    if news_headlines:
+        demand_summary = f'recent headlines such as "{news_headlines[0]}"'
+    elif membership is not None and membership.exposure_reason:
+        demand_summary = membership.exposure_reason
+    else:
+        demand_summary = "supply-chain exposure to the theme (news/filing evidence pending ingestion)"
+
     narrative = (
         f"{ticker} was selected for research because it ranks highly in the "
         f"{theme_label_str} theme and benefits from {bottleneck or 'a structural demand cycle'}.\n\n"
         f"The financial evidence is {rev_summary}, {margin_summary}, and {cash_summary}.\n\n"
-        f"The demand evidence includes {demand_evidence[0]} "
+        f"The demand evidence includes {demand_summary}. "
         f"This suggests the company may be benefiting from a structural demand cycle "
         f"rather than only short-term price momentum.\n\n"
         f"The main risks are {risk_phrase}.\n\n"

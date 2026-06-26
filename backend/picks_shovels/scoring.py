@@ -165,17 +165,21 @@ def margin_expansion_score(fund: Dict[str, Any], ctx: PercentileContext) -> Opti
 
 def backlog_rpo_score(operating: Dict[str, Any]) -> float:
     """
-    Plan §7.4. Backlog/RPO is not standardized and is not pulled in the MVP; per the
-    plan we use a neutral 50 and let transcript/news evidence adjust later (Phase 3).
+    Plan §7.4 — operating momentum. Backlog/RPO are not standardized in XBRL, so
+    Phase 3 uses sequential (QoQ) revenue growth + acceleration as a real operating
+    signal, blended with backlog/RPO/bookings when a future source provides them.
+    Returns neutral 50 when no operating data is available (never fabricated).
     """
     if not operating or not operating.get("available"):
         return NEUTRAL
     return _blend([
-        (0.30, _linscore(operating.get("backlog_growth_pct"), -10, 40)),
-        (0.25, _linscore(operating.get("rpo_growth_pct"), -10, 40)),
-        (0.20, _linscore(operating.get("bookings_growth_pct"), -10, 40)),
-        (0.15, _linscore(operating.get("book_to_bill"), 0.8, 1.4)),
-        (0.10, 100.0 if operating.get("long_term_agreement") else 50.0),
+        (0.35, _linscore(operating.get("qoq_revenue_growth_pct"), -10, 25)),
+        (0.20, _linscore(operating.get("qoq_revenue_accel_pct"), -10, 15)),
+        (0.15, _linscore(operating.get("backlog_growth_pct"), -10, 40)),
+        (0.10, _linscore(operating.get("rpo_growth_pct"), -10, 40)),
+        (0.10, _linscore(operating.get("bookings_growth_pct"), -10, 40)),
+        (0.05, _linscore(operating.get("book_to_bill"), 0.8, 1.4)),
+        (0.05, 100.0 if operating.get("long_term_agreement") else None),
     ]) or NEUTRAL
 
 
@@ -254,10 +258,16 @@ def classify_hiddenness(
 
 
 def confidence_level(coverage: float, evidence_sources: int) -> Dict[str, Any]:
-    """Plan §16 — MVP weights data completeness + number of evidence sources."""
+    """
+    Plan §16 — equal-weight data completeness + number of independent sources.
+
+    With market-cap + price-momentum almost always present (2 baseline sources),
+    reaching "High" requires a 3rd source (real operating metrics or demand
+    evidence), so confidence tracks Phase-3 data richness instead of being static.
+    """
     completeness = _clamp(float(coverage) * 100.0)
     sources = _clamp(min(evidence_sources, 4) / 4.0 * 100.0)
-    score = round(0.7 * completeness + 0.3 * sources, 2)
+    score = round(0.5 * completeness + 0.5 * sources, 2)
     if score >= 80:
         level = "High"
     elif score >= 55:
@@ -297,12 +307,17 @@ def score_row(raw: Dict[str, Any], ctx: PercentileContext) -> Dict[str, Any]:
     )
     coverage = round(ranked_present / 3.0, 3)
 
+    # Independent data sources that back the verdict (Plan §16). With Phase-3
+    # evidence + operating metrics real, this ranges 1-4 so confidence spans
+    # Low/Medium/High and "High" becomes reachable.
     evidence_sources = 0
-    if evidence.get("available"):
+    if fund.get("market_cap") is not None:
+        evidence_sources += 1
+    if momo.get("ret_3m_pct") is not None:
         evidence_sources += 1
     if operating.get("available"):
         evidence_sources += 1
-    if fund.get("market_cap") is not None:
+    if evidence.get("available"):
         evidence_sources += 1
 
     market_cap = fund.get("market_cap")

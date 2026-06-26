@@ -43,6 +43,10 @@ def _inter_chunk_delay_s() -> float:
     return float(os.environ.get("PICKS_SHOVELS_INTER_CHUNK_DELAY_S", "0.5") or "0.5")
 
 
+def _evidence_timeout_s() -> float:
+    return float(os.environ.get("PICKS_SHOVELS_EVIDENCE_TIMEOUT_S", "8") or "8")
+
+
 def get_universe() -> List[str]:
     return list(ps_themes.SEED_UNIVERSE)
 
@@ -81,7 +85,14 @@ def _set_job(**kwargs: Any) -> None:
 # ── Raw-row assembly (pass 1) ────────────────────────────────────────────────
 
 
-def _build_raw_row(ticker: str, fund: Dict[str, Any], closes: List[float]) -> Dict[str, Any]:
+def _build_raw_row(
+    ticker: str,
+    fund: Dict[str, Any],
+    closes: List[float],
+    *,
+    operating: Optional[Dict[str, Any]] = None,
+    evidence: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     momo = ps_data.momentum_from_closes(closes)
     membership = ps_themes.membership_for(ticker)
     theme = {
@@ -97,10 +108,19 @@ def _build_raw_row(ticker: str, fund: Dict[str, Any], closes: List[float]) -> Di
         "industry": fund.get("industry"),
         "momentum": momo,
         "fundamentals": fund,
-        "operating": ps_data.fetch_operating_metrics(ticker),
-        "evidence": ps_data.fetch_evidence(ticker),
+        "operating": operating if operating is not None else {"available": False},
+        "evidence": evidence if evidence is not None else {"available": False},
         "theme": theme,
     }
+
+
+async def _safe_thread(fn, *args) -> Dict[str, Any]:
+    """Run a blocking Phase-3 fetcher off-loop with a timeout; degrade on failure."""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=_evidence_timeout_s())
+    except Exception as e:
+        logger.debug("[PicksShovels] %s failed: %s", getattr(fn, "__name__", fn), e)
+        return {"available": False}
 
 
 async def _process_chunk(chunk: List[str]) -> List[Dict[str, Any]]:
@@ -119,7 +139,17 @@ async def _process_chunk(chunk: List[str]) -> List[Dict[str, Any]]:
             except Exception as e:
                 logger.debug("[PicksShovels] fundamentals failed for %s: %s", ticker, e)
                 fund = {"ticker": ticker.upper(), "company_name": ticker.upper()}
-        return _build_raw_row(ticker, fund, closes_by_ticker.get(ticker, []))
+            company_name = fund.get("company_name") or ticker.upper()
+            # Phase-3 network fetchers run off-loop under the same concurrency gate.
+            evidence = await _safe_thread(ps_data.fetch_evidence, ticker, company_name)
+            operating = await _safe_thread(ps_data.fetch_operating_metrics, ticker)
+        return _build_raw_row(
+            ticker,
+            fund,
+            closes_by_ticker.get(ticker, []),
+            operating=operating,
+            evidence=evidence,
+        )
 
     results = await asyncio.gather(*(_one(t) for t in chunk))
     return [r for r in results if r is not None]

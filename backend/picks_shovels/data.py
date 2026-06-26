@@ -6,13 +6,17 @@ Reuses the Actionable screener's rate-limit-safe primitives:
   - ``actionable_companies.fetch_fundamentals``   → yfinance ``.info`` snapshot (1h cache)
   - ``actionable_companies.compute_rsi_14``       → RSI helper
 
-The MVP fills price-momentum and fundamentals for real; backlog/RPO and
-news/filing evidence are returned as explicit "unavailable" stubs (Phase 3 hooks)
-so the scorer keeps them neutral instead of fabricating values (Plan §18).
+Price-momentum and fundamentals come from the Actionable screener. Phase 3 adds
+real operating metrics (yfinance quarterly revenue acceleration) and demand
+evidence (news + optional SEC filings via ``evidence.py``). All Phase-3 fetchers
+degrade to an explicit ``{"available": False}`` on any failure so the scorer keeps
+those components neutral instead of fabricating values (Plan §18).
 """
 from __future__ import annotations
 
+import logging
 import math
+import os
 from typing import Any, Dict, List, Optional, Sequence
 
 from ..actionable_companies import (
@@ -20,6 +24,8 @@ from ..actionable_companies import (
     fetch_chunk_history,
     fetch_fundamentals,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def momentum_from_closes(closes: Sequence[float]) -> Dict[str, Optional[float]]:
@@ -89,11 +95,67 @@ def fetch_fundamentals_extended(ticker: str) -> Dict[str, Any]:
     return fetch_fundamentals(ticker)
 
 
+def _operating_metrics_enabled() -> bool:
+    return os.environ.get("PICKS_SHOVELS_OPERATING_METRICS", "1").strip() != "0"
+
+
 def fetch_operating_metrics(ticker: str) -> Dict[str, Any]:
-    """Backlog / RPO / bookings — unavailable in the MVP (Phase 3 hook)."""
-    return {"available": False}
+    """
+    Operating momentum from yfinance quarterly revenue (Plan §7.4).
+
+    Computes sequential (QoQ) revenue growth and its acceleration. Backlog / RPO
+    are not standardized in XBRL and stay ``None`` (the scorer blend renormalizes
+    over present components — never fabricated). ``{"available": False}`` on failure.
+    """
+    if not _operating_metrics_enabled():
+        return {"available": False}
+    try:
+        import yfinance as yf
+
+        t = yf.Ticker(ticker)
+        df = None
+        for attr in ("quarterly_income_stmt", "quarterly_financials"):
+            try:
+                candidate = getattr(t, attr)
+            except Exception:
+                candidate = None
+            if candidate is not None and getattr(candidate, "empty", True) is False:
+                df = candidate
+                break
+        if df is None:
+            return {"available": False}
+
+        revenue = None
+        for label in ("Total Revenue", "TotalRevenue", "Total revenue", "Revenue"):
+            if label in df.index:
+                revenue = df.loc[label]
+                break
+        if revenue is None:
+            return {"available": False}
+
+        series = revenue.dropna().sort_index()  # ascending: oldest -> newest
+        q = [float(x) for x in series.tolist() if x is not None and not math.isnan(float(x))]
+        if len(q) < 2 or q[-2] == 0:
+            return {"available": False}
+
+        latest, prev = q[-1], q[-2]
+        qoq = (latest / prev - 1.0) * 100.0
+        out: Dict[str, Any] = {"available": True, "qoq_revenue_growth_pct": round(qoq, 2)}
+        if len(q) >= 3 and q[-3]:
+            prev_qoq = (prev / q[-3] - 1.0) * 100.0
+            out["qoq_revenue_accel_pct"] = round(qoq - prev_qoq, 2)
+        return out
+    except Exception as e:
+        logger.debug("[PicksShovels] operating metrics failed for %s: %s", ticker, e)
+        return {"available": False}
 
 
-def fetch_evidence(ticker: str) -> Dict[str, Any]:
-    """News / filing / transcript demand evidence — unavailable in the MVP (Phase 3 hook)."""
-    return {"available": False, "demand_evidence": [], "positive_keywords": [], "negative_keywords": []}
+def fetch_evidence(ticker: str, company_name: str = "") -> Dict[str, Any]:
+    """News + optional SEC-filing demand evidence (Phase 3). Resilient to failure."""
+    try:
+        from . import evidence as ps_evidence
+
+        return ps_evidence.fetch_demand_evidence(ticker, company_name)
+    except Exception as e:
+        logger.debug("[PicksShovels] evidence failed for %s: %s", ticker, e)
+        return {"available": False, "demand_evidence": []}

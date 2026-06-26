@@ -210,9 +210,9 @@ function StockDrawer({ ticker, onClose }) {
               <ScoreBar label="Price Momentum" value={bd.price_momentum_score} />
               <ScoreBar label="Revenue Acceleration" value={bd.revenue_acceleration_score} />
               <ScoreBar label="Margin Expansion" value={bd.margin_expansion_score} />
-              <ScoreBar label="Backlog / RPO" value={bd.backlog_rpo_score} />
+              <ScoreBar label="Operating Momentum" value={bd.backlog_rpo_score} />
               <ScoreBar label="Customer Capex Exposure" value={bd.customer_capex_exposure_score} />
-              <ScoreBar label="Bottleneck Evidence" value={bd.bottleneck_evidence_score} />
+              <ScoreBar label="Demand Evidence" value={bd.bottleneck_evidence_score} />
               <ScoreBar label="Valuation / Risk" value={bd.valuation_risk_score} />
             </div>
 
@@ -230,6 +230,26 @@ function StockDrawer({ ticker, onClose }) {
                 <h4 style={{ color: '#e2e8f0', margin: '0 0 6px' }}>Demand Evidence</h4>
                 <ul style={{ color: '#cbd5e1', fontSize: 13, margin: 0, paddingLeft: 18 }}>
                   {ex.demand_evidence.map((x, i) => <li key={i}>{x}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {(detail.evidence?.headlines || []).length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <h4 style={{ color: '#e2e8f0', margin: '0 0 6px' }}>Demand Headlines</h4>
+                <ul style={{ color: '#cbd5e1', fontSize: 13, margin: 0, paddingLeft: 18 }}>
+                  {detail.evidence.headlines.slice(0, 8).map((h, i) => (
+                    <li key={i} style={{ marginBottom: 4 }}>
+                      {h.link ? (
+                        <a href={h.link} target="_blank" rel="noopener noreferrer" style={{ color: '#a5b4fc', textDecoration: 'none' }}>
+                          {h.title}
+                        </a>
+                      ) : (
+                        h.title
+                      )}
+                      {h.source && <span style={{ color: '#64748b' }}> — {h.source}</span>}
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}
@@ -419,7 +439,7 @@ export default function PicksShovelsUI() {
                   <th>Momentum</th>
                   <th>Rev Accel</th>
                   <th>Margin</th>
-                  <th>Bottleneck</th>
+                  <th>Demand Evidence</th>
                   <th>Valuation</th>
                   <th>Confidence</th>
                 </tr>
