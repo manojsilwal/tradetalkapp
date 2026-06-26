@@ -37,7 +37,7 @@ def _chunk_size() -> int:
 
 
 def _max_concurrency() -> int:
-    return max(1, int(os.environ.get("PICKS_SHOVELS_MAX_CONCURRENCY", "10") or "10"))
+    return max(1, int(os.environ.get("PICKS_SHOVELS_MAX_CONCURRENCY", "6") or "6"))
 
 
 def _inter_chunk_delay_s() -> float:
@@ -46,6 +46,14 @@ def _inter_chunk_delay_s() -> float:
 
 def _evidence_timeout_s() -> float:
     return float(os.environ.get("PICKS_SHOVELS_EVIDENCE_TIMEOUT_S", "8") or "8")
+
+
+def _fundamentals_timeout_s() -> float:
+    return float(os.environ.get("PICKS_SHOVELS_FUNDAMENTALS_TIMEOUT_S", "12") or "12")
+
+
+def _chunk_history_timeout_s() -> float:
+    return float(os.environ.get("PICKS_SHOVELS_CHUNK_HISTORY_TIMEOUT_S", "90") or "90")
 
 
 def _executor_workers() -> int:
@@ -142,7 +150,10 @@ async def _safe_thread(fn, *args) -> Dict[str, Any]:
 async def _process_chunk(chunk: List[str]) -> List[Dict[str, Any]]:
     closes_by_ticker: Dict[str, List[float]] = {}
     try:
-        closes_by_ticker = await _in_executor(ps_data.fetch_price_series, chunk)
+        closes_by_ticker = await asyncio.wait_for(
+            _in_executor(ps_data.fetch_price_series, chunk),
+            timeout=_chunk_history_timeout_s(),
+        )
     except Exception as e:
         logger.warning("[PicksShovels] chunk history failed (%s…): %s", chunk[0] if chunk else "", e)
 
@@ -151,14 +162,18 @@ async def _process_chunk(chunk: List[str]) -> List[Dict[str, Any]]:
     async def _one(ticker: str) -> Optional[Dict[str, Any]]:
         async with sem:
             try:
-                fund = await _in_executor(ps_data.fetch_fundamentals_extended, ticker)
+                fund = await asyncio.wait_for(
+                    _in_executor(ps_data.fetch_fundamentals_extended, ticker),
+                    timeout=_fundamentals_timeout_s(),
+                )
             except Exception as e:
                 logger.debug("[PicksShovels] fundamentals failed for %s: %s", ticker, e)
                 fund = {"ticker": ticker.upper(), "company_name": ticker.upper()}
             company_name = fund.get("company_name") or ticker.upper()
-            # Phase-3 network fetchers run off-loop under the same concurrency gate.
-            evidence = await _safe_thread(ps_data.fetch_evidence, ticker, company_name)
-            operating = await _safe_thread(ps_data.fetch_operating_metrics, ticker)
+            evidence, operating = await asyncio.gather(
+                _safe_thread(ps_data.fetch_evidence, ticker, company_name),
+                _safe_thread(ps_data.fetch_operating_metrics, ticker),
+            )
         return _build_raw_row(
             ticker,
             fund,
