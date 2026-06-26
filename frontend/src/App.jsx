@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense, useEffect, useRef } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2, Bell, ChevronRight, MoreHorizontal, BarChart2, Trophy } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2, Bell, ChevronRight, MoreHorizontal, BarChart2, Trophy, Layers } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -36,6 +36,7 @@ const ChatUI = lazyWithRetry(() => import('./ChatUI'))
 const LlmCallsUI = lazyWithRetry(() => import('./LlmCallsUI'))
 const FundLeaderboardUI = lazyWithRetry(() => import('./intelligence/funds/FundLeaderboardUI'))
 const PipelineOpsUI = lazyWithRetry(() => import('./PipelineOpsUI'))
+const PicksShovelsUI = lazyWithRetry(() => import('./PicksShovelsUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when auth is required and user is not signed in.
@@ -55,6 +56,7 @@ const ROUTE_TO_KEY = {
     '/backtest': 'backtest',
 
     '/daily-brief': 'daily_brief',
+    '/picks-shovels': 'picks_shovels',
     '/intelligence/funds/leaderboard': 'leaderboard',
     '/observer': 'observer',
     '/swarm-score': 'swarm_score',
@@ -300,6 +302,15 @@ function App() {
                     </button>
 
                     <button
+                        className={`nav-btn ${activeTab === 'picks_shovels' ? 'active' : ''}`}
+                        onClick={() => { navigate('/picks-shovels'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/picks-shovels' ? 'page' : undefined}
+                    >
+                        <Layers size={20} />
+                        <span>Picks &amp; Shovels</span>
+                    </button>
+
+                    <button
                         className={`nav-btn ${activeTab === 'leaderboard' ? 'active' : ''}`}
                         onClick={() => { navigate('/intelligence/funds/leaderboard'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/intelligence/funds/leaderboard' ? 'page' : undefined}
@@ -397,6 +408,7 @@ function App() {
                             } />
 
                             <Route path="/daily-brief" element={<DailyBriefUI />} />
+                            <Route path="/picks-shovels" element={<PicksShovelsUI />} />
                             <Route path="/observer" element={
                                 <AdminGate featureName="Developer Trace">
                                     <ObserverUI />

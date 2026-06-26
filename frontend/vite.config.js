@@ -27,6 +27,7 @@ const API_PATH_PREFIXES = [
   '/resources',
   '/daily-brief',
   '/actionable-companies',
+  '/picks-shovels',
   '/decision-terminal',
   '/decision-terminal/snapshot',
   '/decision-terminal/verdict',

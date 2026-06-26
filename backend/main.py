@@ -166,6 +166,7 @@ from .routers import (
     brain as brain_router,
     investment as investment_router,
     pipeline_ops as pipeline_ops_router,
+    picks_shovels as picks_shovels_router,
 )
 
 app.include_router(auth_router.router)
@@ -199,6 +200,10 @@ app.include_router(fund_leaderboard_router.router)
 app.include_router(brain_router.router)
 app.include_router(investment_router.router)
 app.include_router(pipeline_ops_router.router)
+
+# Picks & Shovels Momentum Finder — additive, feature-flagged (default on).
+if os.environ.get("PICKS_SHOVELS_ENABLE", "1").strip() != "0":
+    app.include_router(picks_shovels_router.router)
 
 # ── MCP S&P 500 Market Data Server ────────────────────────────────────────────
 from .mcp_server.router import router as mcp_sp500_router
