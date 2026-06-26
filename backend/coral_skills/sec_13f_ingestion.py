@@ -217,13 +217,35 @@ async def _fetch_and_parse_filing(
         logger.error("[13F] index fetch failed %s: %s", accession_number, e)
         return {"status": "error", "message": str(e)}
 
+    items = idx_data.get("directory", {}).get("item", [])
+    xml_items = [f for f in items if str(f.get("name", "")).lower().endswith(".xml")]
     info_table_xml_name = None
-    for f in idx_data.get("directory", {}).get("item", []):
-        name = f.get("name", "")
-        if name.endswith(".xml") and ("info" in name.lower() or "table" in name.lower()):
-            info_table_xml_name = name
+    # 1) explicit type/description signal (most reliable across filers).
+    for f in xml_items:
+        meta = f"{f.get('type','')} {f.get('description','')}".lower()
+        if "information table" in meta or "info table" in meta:
+            info_table_xml_name = f.get("name")
             break
+    # 2) filename heuristic.
     if not info_table_xml_name:
+        for f in xml_items:
+            n = str(f.get("name", "")).lower()
+            if any(k in n for k in ("infotable", "info_table", "form13finfotable", "table", "info")):
+                info_table_xml_name = f.get("name")
+                break
+    # 3) fallback: any XML that is not the cover page (primary_doc.xml). 13F-HR
+    #    filings contain exactly the cover + the information table.
+    if not info_table_xml_name:
+        for f in xml_items:
+            n = str(f.get("name", "")).lower()
+            if n != "primary_doc.xml" and "primary" not in n:
+                info_table_xml_name = f.get("name")
+                break
+    if not info_table_xml_name:
+        logger.warning(
+            "[13F] info table XML not found for %s (xmls=%s)",
+            accession_number, [f.get("name") for f in xml_items],
+        )
         return {"status": "error", "message": "Information table XML not found in directory"}
 
     doc_url = f"{base}/{info_table_xml_name}"
