@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def _chunk_size() -> int:
-    return max(1, int(os.environ.get("PICKS_SHOVELS_CHUNK_SIZE", "15") or "15"))
+    return max(1, int(os.environ.get("PICKS_SHOVELS_CHUNK_SIZE", "5") or "5"))
 
 
 def _max_concurrency() -> int:
@@ -41,7 +41,7 @@ def _max_concurrency() -> int:
 
 
 def _inter_chunk_delay_s() -> float:
-    return float(os.environ.get("PICKS_SHOVELS_INTER_CHUNK_DELAY_S", "0.5") or "0.5")
+    return float(os.environ.get("PICKS_SHOVELS_INTER_CHUNK_DELAY_S", "1.5") or "1.5")
 
 
 def _evidence_timeout_s() -> float:
@@ -69,6 +69,16 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=_executor_workers(), thread_name_pref
 async def _in_executor(fn, *args) -> Any:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_EXECUTOR, fn, *args)
+
+
+def _reset_executor() -> None:
+    """Drop hung yfinance/news threads between chunks (wait_for does not kill threads)."""
+    global _EXECUTOR
+    try:
+        _EXECUTOR.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        pass
+    _EXECUTOR = ThreadPoolExecutor(max_workers=_executor_workers(), thread_name_prefix="ps-scan")
 
 
 def get_universe() -> List[str]:
@@ -275,8 +285,10 @@ async def run_scan(job_id: str, *, force: bool = False) -> Dict[str, Any]:
                 message=f"Fetched {processed}/{total} companies…",
                 processed=processed,
             )
-            if delay > 0 and idx < len(chunks) - 1:
-                await asyncio.sleep(delay)
+            if idx < len(chunks) - 1:
+                _reset_executor()
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
         _set_job(progress=92, message="Ranking cross-sectionally and scoring…")
         rows = await asyncio.to_thread(_finalize_rows, raw_rows)
