@@ -21,11 +21,12 @@ from backend.fincrawler_client import fc
 
 logger = logging.getLogger(__name__)
 
-# Basic headers per SEC access guidelines
+# Basic headers per SEC access guidelines. Do NOT hardcode Host — httpx derives
+# it per-request (data.sec.gov for submissions vs www.sec.gov for Archives).
+import os as _os
 SEC_HEADERS = {
-    "User-Agent": "TradeTalkApp contact@tradetalk.example.com",
+    "User-Agent": _os.environ.get("SEC_USER_AGENT", "TradeTalkApp contact@tradetalk.example.com"),
     "Accept-Encoding": "gzip, deflate",
-    "Host": "data.sec.gov"
 }
 
 
@@ -166,11 +167,13 @@ async def _fetch_and_parse_filing(
 ) -> Dict[str, Any]:
     """Fetch a single 13F filing's information-table XML and parse its holdings."""
     acc_no_dashes = accession_number.replace("-", "")
+    # SEC Archives paths use the CIK WITHOUT leading zeros (padded CIK 301-redirects).
+    cik_unpadded = str(int(cik_padded)) if str(cik_padded).isdigit() else str(cik_padded)
 
     # Fetch the index JSON for the specific filing to find the information table XML
-    index_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{acc_no_dashes}/index.json"
+    index_url = f"https://www.sec.gov/Archives/edgar/data/{cik_unpadded}/{acc_no_dashes}/index.json"
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             idx_resp = await client.get(index_url, headers=SEC_HEADERS)
             idx_resp.raise_for_status()
             idx_data = idx_resp.json()
@@ -188,9 +191,9 @@ async def _fetch_and_parse_filing(
     if not info_table_xml_name:
         return {"status": "error", "message": "Information table XML not found in directory"}
 
-    doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{acc_no_dashes}/{info_table_xml_name}"
+    doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik_unpadded}/{acc_no_dashes}/{info_table_xml_name}"
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             xml_resp = await client.get(doc_url, headers=SEC_HEADERS)
             xml_resp.raise_for_status()
             xml_text = xml_resp.text
