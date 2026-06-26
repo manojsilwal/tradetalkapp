@@ -69,6 +69,11 @@ function ReturnsSparkline({ series }) {
     );
 }
 
+const RANKING_MODES = [
+    { value: 'SEC_13F_VALUE', label: '13F Value (largest book)' },
+    { value: 'RETURNS', label: 'Clone Returns (risk-adjusted)' },
+];
+
 export default function FundLeaderboardUI() {
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -76,6 +81,9 @@ export default function FundLeaderboardUI() {
     const [message, setMessage] = useState(null);
     const [selectedFundId, setSelectedFundId] = useState(null);
     const [mode, setMode] = useState('13f_investable');
+    const [rankingMode, setRankingMode] = useState('SEC_13F_VALUE');
+    const [activeTab, setActiveTab] = useState('overview');
+    const [tabs, setTabs] = useState({ holdings: null, changes: null, timeline: null, loading: false, error: null });
 
     useEffect(() => {
         let cancelled = false;
@@ -129,6 +137,43 @@ export default function FundLeaderboardUI() {
         return () => { cancelled = true; };
     }, [selectedFundId, mode]);
 
+    useEffect(() => {
+        setActiveTab('overview');
+        setTabs({ holdings: null, changes: null, timeline: null, loading: false, error: null });
+    }, [selectedFundId]);
+
+    useEffect(() => {
+        if (!selectedFundId || activeTab === 'overview') return;
+        if (tabs[activeTab]) return; // already loaded
+        let cancelled = false;
+        setTabs((t) => ({ ...t, loading: true, error: null }));
+        const endpoint = activeTab === 'holdings'
+            ? `holdings`
+            : activeTab === 'changes'
+                ? `changes`
+                : `timeline`;
+        apiFetch(`${API_BASE_URL}/api/funds/${encodeURIComponent(selectedFundId)}/${endpoint}`)
+            .then((data) => {
+                if (cancelled) return;
+                setTabs((t) => ({ ...t, [activeTab]: data, loading: false }));
+            })
+            .catch((e) => {
+                if (cancelled) return;
+                setTabs((t) => ({ ...t, loading: false, error: e?.message || 'Not available yet.' }));
+            });
+        return () => { cancelled = true; };
+    }, [selectedFundId, activeTab, tabs]);
+
+    const displayRows = React.useMemo(() => {
+        const sorted = [...rows];
+        if (rankingMode === 'SEC_13F_VALUE') {
+            sorted.sort((a, b) => (b.latest13FValueUsd || 0) - (a.latest13FValueUsd || 0));
+        } else {
+            sorted.sort((a, b) => (b.leaderboardScore || b.cagr10Y || 0) - (a.leaderboardScore || a.cagr10Y || 0));
+        }
+        return sorted.map((r, i) => ({ ...r, displayRank: i + 1 }));
+    }, [rows, rankingMode]);
+
     const getConfidenceColor = (label) => {
         switch (label) {
             case 'High': return 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20';
@@ -163,9 +208,21 @@ export default function FundLeaderboardUI() {
             </div>
 
             {/* Controls */}
-            <div className="flex gap-4 items-center bg-slate-900/50 p-3 rounded-lg border border-slate-800">
+            <div className="flex flex-wrap gap-4 items-center bg-slate-900/50 p-3 rounded-lg border border-slate-800">
                 <div className="flex items-center gap-2">
-                    <span className="text-sm text-slate-400">Mode:</span>
+                    <span className="text-sm text-slate-400">Rank by:</span>
+                    <select
+                        value={rankingMode}
+                        onChange={(e) => setRankingMode(e.target.value)}
+                        className="bg-slate-800 text-sm text-white border border-slate-700 rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+                    >
+                        {RANKING_MODES.map((m) => (
+                            <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                    </select>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="text-sm text-slate-400">Return mode:</span>
                     <select
                         value={mode}
                         onChange={(e) => setMode(e.target.value)}
@@ -210,15 +267,15 @@ export default function FundLeaderboardUI() {
                                         {error}
                                     </td>
                                 </tr>
-                            ) : rows.length === 0 ? (
+                            ) : displayRows.length === 0 ? (
                                 <tr>
                                     <td colSpan="10" className="px-4 py-8 text-center text-slate-500">
                                         {message || 'No funds match the current filters.'}
                                     </td>
                                 </tr>
-                            ) : rows.map((row) => (
+                            ) : displayRows.map((row) => (
                                 <tr key={row.fundId} className="hover:bg-slate-800/40 transition-colors group">
-                                    <td className="px-4 py-3 font-medium text-white">#{row.rank}</td>
+                                    <td className="px-4 py-3 font-medium text-white">#{row.displayRank}</td>
                                     <td className="px-4 py-3">
                                         <div className="font-medium text-blue-400 group-hover:text-blue-300 transition-colors cursor-pointer" onClick={() => setSelectedFundId(row.fundId)}>
                                             {row.fundName}
@@ -282,7 +339,7 @@ export default function FundLeaderboardUI() {
                                 <h2 className="text-xl font-bold text-white">
                                     {rows.find(r => r.fundId === selectedFundId)?.fundName}
                                 </h2>
-                                <p className="text-sm text-slate-400 mt-1">13F Portfolio Analysis & 10Y Return Metrics</p>
+                                <p className="text-sm text-slate-400 mt-1">13F Portfolio Analysis & 5Y Return Metrics</p>
                             </div>
                             <button
                                 onClick={() => setSelectedFundId(null)}
@@ -292,9 +349,28 @@ export default function FundLeaderboardUI() {
                             </button>
                         </div>
 
+                        {/* Drawer Tab Bar */}
+                        <div className="flex gap-1 px-5 pt-3 border-b border-slate-800 bg-slate-900">
+                            {[
+                                { id: 'overview', label: 'Overview' },
+                                { id: 'holdings', label: 'Holdings' },
+                                { id: 'changes', label: 'Position Changes' },
+                                { id: 'timeline', label: 'Timeline' },
+                            ].map((t) => (
+                                <button
+                                    key={t.id}
+                                    onClick={() => setActiveTab(t.id)}
+                                    className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === t.id ? 'text-white border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200'}`}
+                                >
+                                    {t.label}
+                                </button>
+                            ))}
+                        </div>
+
                         {/* Drawer Content Area */}
                         <div className="flex-1 overflow-y-auto p-5 space-y-6">
 
+                          {activeTab === 'overview' && (<>
                             {/* Summary Card */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
@@ -386,6 +462,119 @@ export default function FundLeaderboardUI() {
                                     </div>
                                 )}
                             </div>
+                          </>)}
+
+                          {activeTab === 'holdings' && (
+                            <div className="bg-slate-950 rounded-xl border border-slate-800 p-5">
+                                <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
+                                    <Briefcase size={16} className="text-blue-400" />
+                                    Reported Holdings {tabs.holdings?.reportPeriod ? `(${tabs.holdings.reportPeriod})` : ''}
+                                </h3>
+                                {tabs.loading ? (
+                                    <div className="flex items-center justify-center h-40 text-slate-500"><Loader2 className="w-5 h-5 animate-spin" /></div>
+                                ) : (tabs.holdings?.holdings?.length > 0) ? (
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between text-[11px] uppercase tracking-wider text-slate-500 pb-2 border-b border-slate-800">
+                                            <span>Holding</span><span>Value / Weight</span>
+                                        </div>
+                                        {tabs.holdings.holdings.slice(0, 50).map((h, i) => (
+                                            <div key={`${h.ticker || h.cusip}-${i}`} className="flex justify-between text-xs py-1">
+                                                <span className="text-slate-300 truncate max-w-[55%]" title={h.companyName}>
+                                                    <span className="text-blue-400 font-medium">{h.ticker || '—'}</span> {h.companyName}
+                                                </span>
+                                                <span className="text-slate-400">{formatUsd(h.marketValueUsd)} · {formatPct(h.weight)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-center h-40 text-slate-500 border border-dashed border-slate-800 rounded-lg text-sm">
+                                        {tabs.error || 'Holdings unavailable.'}
+                                    </div>
+                                )}
+                            </div>
+                          )}
+
+                          {activeTab === 'changes' && (
+                            <div className="space-y-4">
+                                {tabs.loading ? (
+                                    <div className="flex items-center justify-center h-40 text-slate-500"><Loader2 className="w-5 h-5 animate-spin" /></div>
+                                ) : tabs.changes?.changes ? (
+                                    <>
+                                        <div className="grid grid-cols-4 gap-2 text-center">
+                                            {[
+                                                { k: 'new', label: 'New', color: 'text-emerald-400' },
+                                                { k: 'increased', label: 'Added', color: 'text-green-400' },
+                                                { k: 'decreased', label: 'Trimmed', color: 'text-orange-400' },
+                                                { k: 'soldOut', label: 'Exited', color: 'text-rose-400' },
+                                            ].map((c) => (
+                                                <div key={c.k} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                                                    <p className={`text-xl font-semibold ${c.color}`}>{tabs.changes.counts?.[c.k] ?? 0}</p>
+                                                    <p className="text-[11px] text-slate-400 uppercase tracking-wider">{c.label}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="text-xs text-slate-500">
+                                            Turnover est: {formatPct(tabs.changes.turnoverEstimatePct)} · Top-10 concentration: {formatPct(tabs.changes.top10Concentration)}
+                                        </div>
+                                        {[
+                                            { k: 'new', label: 'New Buys', color: 'text-emerald-400' },
+                                            { k: 'increased', label: 'Increased', color: 'text-green-400' },
+                                            { k: 'decreased', label: 'Decreased', color: 'text-orange-400' },
+                                            { k: 'soldOut', label: 'Sold Out', color: 'text-rose-400' },
+                                        ].map((sec) => (
+                                            (tabs.changes.changes[sec.k]?.length > 0) && (
+                                                <div key={sec.k} className="bg-slate-950 rounded-xl border border-slate-800 p-4">
+                                                    <h4 className={`text-xs font-semibold mb-2 ${sec.color}`}>{sec.label}</h4>
+                                                    <div className="space-y-1">
+                                                        {tabs.changes.changes[sec.k].slice(0, 10).map((c, i) => (
+                                                            <div key={i} className="flex justify-between text-xs">
+                                                                <span className="text-slate-300 truncate max-w-[60%]">{c.ticker || c.issuerName || c.key || 'N/A'}</span>
+                                                                <span className="text-slate-400">
+                                                                    {c.sharesChangePct != null ? `${(c.sharesChangePct * 100).toFixed(0)}%` : formatUsd(c.marketValueUsd)}
+                                                                </span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )
+                                        ))}
+                                    </>
+                                ) : (
+                                    <div className="flex items-center justify-center h-40 text-slate-500 border border-dashed border-slate-800 rounded-lg text-sm">
+                                        {tabs.error || 'No position-change data for this fund yet.'}
+                                    </div>
+                                )}
+                            </div>
+                          )}
+
+                          {activeTab === 'timeline' && (
+                            <div className="bg-slate-950 rounded-xl border border-slate-800 p-5">
+                                <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
+                                    <BarChart2 size={16} className="text-blue-400" /> Quarterly Timeline
+                                </h3>
+                                {tabs.loading ? (
+                                    <div className="flex items-center justify-center h-40 text-slate-500"><Loader2 className="w-5 h-5 animate-spin" /></div>
+                                ) : (tabs.timeline?.timeline?.length > 0) ? (
+                                    <div className="space-y-1">
+                                        <div className="grid grid-cols-4 gap-2 text-[11px] uppercase tracking-wider text-slate-500 pb-2 border-b border-slate-800">
+                                            <span>Period</span><span className="text-right">13F Value</span><span className="text-right">Holdings</span><span className="text-right">Turnover</span>
+                                        </div>
+                                        {tabs.timeline.timeline.map((t) => (
+                                            <div key={t.periodOfReport} className="grid grid-cols-4 gap-2 text-xs py-1">
+                                                <span className="text-slate-300">{t.periodOfReport}</span>
+                                                <span className="text-right text-slate-400">{formatUsd(t.total13FValueUsd)}</span>
+                                                <span className="text-right text-slate-400">{t.holdingsCount ?? '—'}</span>
+                                                <span className="text-right text-slate-400">{formatPct(t.turnoverEstimatePct)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-center h-40 text-slate-500 border border-dashed border-slate-800 rounded-lg text-sm">
+                                        {tabs.error || 'No timeline data for this fund yet.'}
+                                    </div>
+                                )}
+                            </div>
+                          )}
 
                         </div>
                     </div>

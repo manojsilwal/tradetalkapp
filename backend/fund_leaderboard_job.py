@@ -80,6 +80,9 @@ def _build_snapshots_and_persist(
             filing_date=filing.get("filing_date"),
             filing_url=filing.get("filing_url"),
             total_market_value_usd=total_mv,
+            primary_document=filing.get("primary_document"),
+            local_raw_path=filing.get("local_raw_path"),
+            parse_status="parsed",
         )
 
         weighted_holdings = []
@@ -148,12 +151,14 @@ def _top_sector(fund_id: str) -> Dict[str, Any]:
 async def _process_manager(
     filer: Dict[str, Any],
     max_quarters: int,
+    save_raw: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Ingest, map, reconstruct, and score a single manager. Returns a scoring dict."""
     from .coral_skills.sec_13f_ingestion import ingest_manager_13f_history
     from .coral_skills.security_mapper import map_holdings_to_tickers
     from .coral_skills.return_reconstruction import fetch_historical_prices, calculate_clone_returns
     from .coral_skills.leaderboard_scoring import calculate_data_confidence
+    from . import fund_leaderboard_diff
 
     cik = filer["cik"]
     name = filer["name"]
@@ -161,11 +166,19 @@ async def _process_manager(
     fund_id = store.upsert_fund(
         cik=cik,
         display_name=name,
-        manager_type="institutional",
+        manager_type=filer.get("manager_type", "institutional"),
+        strategy_tags=filer.get("strategy_tags") or [],
         latest_aum_usd=filer.get("aum_usd"),
+        latest_13f_value_usd=filer.get("latest_13f_value_usd"),
+        external_aum_usd=filer.get("external_aum_usd"),
+        ranking_method=filer.get("ranking_method"),
+        source=filer.get("source"),
+        entity_name=name,
     )
 
-    history = await ingest_manager_13f_history(cik, fund_id, max_quarters=max_quarters)
+    history = await ingest_manager_13f_history(
+        cik, fund_id, max_quarters=max_quarters, save_raw=save_raw,
+    )
     parsed = history.get("filings", [])
     if len(parsed) < MIN_QUARTERS:
         logger.info("[FundLB] %s (%s): only %d quarters, skipping", name, cik, len(parsed))
@@ -184,6 +197,12 @@ async def _process_manager(
     tickers = built["tickers"]
     if not snapshots or not tickers:
         return None
+
+    # Quarter-over-quarter change analytics (best-effort; never aborts a manager).
+    try:
+        fund_leaderboard_diff.compute_and_persist_for_fund(fund_id, cik)
+    except Exception as e:
+        logger.warning("[FundLB] diff engine failed for %s: %s", cik, e)
 
     mapped_pct = (built["mapped_mv_total"] / built["total_mv_total"]) if built["total_mv_total"] else 0.0
     if mapped_pct < MIN_MAPPED_PCT:
@@ -272,18 +291,25 @@ def _to_presentable_row(scored: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def run_fund_leaderboard_job(
+    ranking_mode: str = None,
     universe_size: int = DEFAULT_UNIVERSE_SIZE,
     top_n: int = DEFAULT_TOP_N,
     max_quarters: int = DEFAULT_MAX_QUARTERS,
     discovery_max: Optional[int] = None,
+    save_raw: bool = None,
 ) -> Dict[str, Any]:
     """Run the full pipeline and persist a fresh leaderboard snapshot."""
-    from .coral_skills.sec_universe import discover_top_filers
+    from .fund_leaderboard_universe import build_universe, RANKING_SEC_13F_VALUE
     from .coral_skills.leaderboard_scoring import rank_leaderboard
+
+    ranking_mode = (ranking_mode or os.environ.get("FUND_LB_RANKING_MODE") or RANKING_SEC_13F_VALUE)
+    if save_raw is None:
+        save_raw = os.environ.get("FUND_LB_SAVE_RAW", "0") == "1"
 
     store.init_schema()
     _run_state.update({"status": "running", "started_at": datetime.utcnow().isoformat(), "summary": None})
     summary: Dict[str, Any] = {
+        "ranking_mode": ranking_mode,
         "universe_size": universe_size,
         "top_n": top_n,
         "filers_discovered": 0,
@@ -293,7 +319,7 @@ async def run_fund_leaderboard_job(
     }
 
     try:
-        filers = await discover_top_filers(universe_size=universe_size, discovery_max=discovery_max)
+        filers = await build_universe(ranking_mode=ranking_mode, top_n=universe_size)
         summary["filers_discovered"] = len(filers)
         if not filers:
             _run_state.update({"status": "error", "summary": summary})
@@ -302,7 +328,7 @@ async def run_fund_leaderboard_job(
         scored: List[Dict[str, Any]] = []
         for filer in filers:
             try:
-                result = await _process_manager(filer, max_quarters)
+                result = await _process_manager(filer, max_quarters, save_raw=save_raw)
                 if result:
                     scored.append(result)
             except Exception as e:
@@ -315,6 +341,12 @@ async def run_fund_leaderboard_job(
             return summary
 
         ranked = rank_leaderboard(scored)
+        # In value-ranking mode the leaderboard is ordered by latest 13F value;
+        # otherwise by the composite return-based score (rank_leaderboard order).
+        if ranking_mode.upper() == RANKING_SEC_13F_VALUE:
+            ranked = sorted(ranked, key=lambda f: (f.get("latest13FValueUsd") or 0), reverse=True)
+            for i, f in enumerate(ranked):
+                f["rank"] = i + 1
         top = ranked[:top_n]
         rows = [_to_presentable_row(f) for f in top]
 
@@ -339,3 +371,19 @@ async def run_fund_leaderboard_job(
 def run_job_blocking(**kwargs) -> Dict[str, Any]:
     """Synchronous entrypoint for schedulers/threads."""
     return asyncio.run(run_fund_leaderboard_job(**kwargs))
+
+
+if __name__ == "__main__":
+    # Cloud Run Job entrypoint: `python -m backend.fund_leaderboard_job`.
+    # All knobs come from env (FUND_LB_RANKING_MODE, FUND_LB_UNIVERSE_SIZE,
+    # FUND_LB_TOP_N, FUND_LB_MAX_QUARTERS, FUND_LB_MAX_HOLDINGS_PER_FILING,
+    # FUND_LB_SAVE_RAW, SEC_USER_AGENT, OPENFIGI_API_KEY, POSTGRES_*).
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    _result = run_job_blocking()
+    logging.getLogger(__name__).info("[FundLB] job finished: %s", _result)
+    # Non-zero exit if nothing was produced, so the Cloud Run Job surfaces failure.
+    import sys as _sys
+    _sys.exit(0 if (_result or {}).get("leaderboard_rows", 0) > 0 else 1)

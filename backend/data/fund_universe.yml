@@ -1,0 +1,205 @@
+# Curated universe of well-known institutional 13F filers.
+#
+# Used by fund_leaderboard_universe.build_universe(ranking_mode="EXTERNAL_AUM_CURATED")
+# and as a fallback when the SEC bulk dataset is unavailable.
+#
+# `cik` is the SEC Central Index Key of the 13F *filing manager* (no leading zeros).
+# `external_aum_usd` is an approximate, human-curated AUM used ONLY for ranking in
+# curated mode; it is not authoritative and is not displayed as a precise figure.
+# Values are intentionally coarse (order-of-magnitude) and adjustable.
+managers:
+  - cik: 1067983
+    name: Berkshire Hathaway
+    manager_type: holding_company
+    external_aum_usd: 300000000000
+    strategy_tags: [value, long_term]
+  - cik: 1364742
+    name: BlackRock Inc.
+    manager_type: asset_manager
+    external_aum_usd: 3500000000000
+    strategy_tags: [index, multi_strategy]
+  - cik: 1364742
+    name: BlackRock Inc.
+    manager_type: asset_manager
+    external_aum_usd: 3500000000000
+    strategy_tags: [index, multi_strategy]
+  - cik: 102909
+    name: Vanguard Group Inc.
+    manager_type: asset_manager
+    external_aum_usd: 4500000000000
+    strategy_tags: [index, passive]
+  - cik: 93751
+    name: State Street Corp
+    manager_type: asset_manager
+    external_aum_usd: 2000000000000
+    strategy_tags: [index, passive]
+  - cik: 19617
+    name: JPMorgan Chase & Co.
+    manager_type: bank
+    external_aum_usd: 1000000000000
+    strategy_tags: [multi_strategy]
+  - cik: 895421
+    name: Morgan Stanley
+    manager_type: bank
+    external_aum_usd: 900000000000
+    strategy_tags: [multi_strategy]
+  - cik: 886982
+    name: Goldman Sachs Group Inc.
+    manager_type: bank
+    external_aum_usd: 600000000000
+    strategy_tags: [multi_strategy]
+  - cik: 1423053
+    name: Citadel Advisors LLC
+    manager_type: hedge_fund
+    external_aum_usd: 400000000000
+    strategy_tags: [multi_strategy, quant]
+  - cik: 1167483
+    name: Renaissance Technologies LLC
+    manager_type: hedge_fund
+    external_aum_usd: 120000000000
+    strategy_tags: [quant]
+  - cik: 1037389
+    name: Renaissance Technologies Holdings
+    manager_type: hedge_fund
+    external_aum_usd: 120000000000
+    strategy_tags: [quant]
+  - cik: 1336528
+    name: Pershing Square Capital Management
+    manager_type: hedge_fund
+    external_aum_usd: 18000000000
+    strategy_tags: [activist, concentrated]
+  - cik: 1418814
+    name: Two Sigma Investments
+    manager_type: hedge_fund
+    external_aum_usd: 60000000000
+    strategy_tags: [quant]
+  - cik: 1179392
+    name: Bridgewater Associates
+    manager_type: hedge_fund
+    external_aum_usd: 110000000000
+    strategy_tags: [macro]
+  - cik: 1273087
+    name: Millennium Management LLC
+    manager_type: hedge_fund
+    external_aum_usd: 60000000000
+    strategy_tags: [multi_strategy]
+  - cik: 1656456
+    name: Point72 Asset Management
+    manager_type: hedge_fund
+    external_aum_usd: 35000000000
+    strategy_tags: [multi_strategy]
+  - cik: 1350694
+    name: AQR Capital Management
+    manager_type: hedge_fund
+    external_aum_usd: 100000000000
+    strategy_tags: [quant, factor]
+  - cik: 1009207
+    name: D. E. Shaw & Co.
+    manager_type: hedge_fund
+    external_aum_usd: 60000000000
+    strategy_tags: [quant]
+  - cik: 1029160
+    name: Soros Fund Management
+    manager_type: family_office
+    external_aum_usd: 28000000000
+    strategy_tags: [macro]
+  - cik: 1037389
+    name: Lone Pine Capital
+    manager_type: hedge_fund
+    external_aum_usd: 15000000000
+    strategy_tags: [growth, long_short]
+  - cik: 1167557
+    name: Tiger Global Management
+    manager_type: hedge_fund
+    external_aum_usd: 25000000000
+    strategy_tags: [growth, technology]
+  - cik: 1135730
+    name: Coatue Management
+    manager_type: hedge_fund
+    external_aum_usd: 20000000000
+    strategy_tags: [technology, growth]
+  - cik: 1061165
+    name: Viking Global Investors
+    manager_type: hedge_fund
+    external_aum_usd: 30000000000
+    strategy_tags: [long_short]
+  - cik: 1056188
+    name: Maverick Capital
+    manager_type: hedge_fund
+    external_aum_usd: 9000000000
+    strategy_tags: [long_short]
+  - cik: 1009268
+    name: Appaloosa Management
+    manager_type: hedge_fund
+    external_aum_usd: 7000000000
+    strategy_tags: [distressed, value]
+  - cik: 1099281
+    name: Baupost Group
+    manager_type: hedge_fund
+    external_aum_usd: 27000000000
+    strategy_tags: [value, distressed]
+  - cik: 807985
+    name: Icahn Capital LP
+    manager_type: activist
+    external_aum_usd: 15000000000
+    strategy_tags: [activist]
+  - cik: 1418179
+    name: Greenlight Capital
+    manager_type: hedge_fund
+    external_aum_usd: 5000000000
+    strategy_tags: [value, long_short]
+  - cik: 1166559
+    name: Third Point LLC
+    manager_type: hedge_fund
+    external_aum_usd: 12000000000
+    strategy_tags: [activist, event_driven]
+  - cik: 1313510
+    name: ValueAct Capital
+    manager_type: activist
+    external_aum_usd: 10000000000
+    strategy_tags: [activist]
+  - cik: 1418814
+    name: Elliott Investment Management
+    manager_type: activist
+    external_aum_usd: 65000000000
+    strategy_tags: [activist, event_driven]
+  - cik: 1697748
+    name: Scion Asset Management
+    manager_type: hedge_fund
+    external_aum_usd: 300000000
+    strategy_tags: [value, contrarian]
+  - cik: 1649339
+    name: Duquesne Family Office
+    manager_type: family_office
+    external_aum_usd: 10000000000
+    strategy_tags: [macro, growth]
+  - cik: 1610520
+    name: Himalaya Capital Management
+    manager_type: hedge_fund
+    external_aum_usd: 14000000000
+    strategy_tags: [value, concentrated]
+  - cik: 1135778
+    name: Fisher Asset Management
+    manager_type: asset_manager
+    external_aum_usd: 200000000000
+    strategy_tags: [long_only]
+  - cik: 354204
+    name: T. Rowe Price Associates
+    manager_type: asset_manager
+    external_aum_usd: 1400000000000
+    strategy_tags: [long_only]
+  - cik: 315066
+    name: Wellington Management
+    manager_type: asset_manager
+    external_aum_usd: 1200000000000
+    strategy_tags: [long_only]
+  - cik: 1364742
+    name: Geode Capital Management
+    manager_type: asset_manager
+    external_aum_usd: 1000000000000
+    strategy_tags: [index]
+  - cik: 1551030
+    name: ARK Investment Management
+    manager_type: asset_manager
+    external_aum_usd: 14000000000
+    strategy_tags: [thematic, innovation]

@@ -21,7 +21,7 @@ router = APIRouter(prefix="/pipeline-ops", tags=["pipeline-ops"])
 
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "tradetalkapp-492904")
 REGION = os.environ.get("GCP_REGION", "us-central1")
-CLOUD_RUN_JOBS = ["sp500-ingest", "sp500-daily-update", "brain-nightly"]
+CLOUD_RUN_JOBS = ["sp500-ingest", "sp500-daily-update", "brain-nightly", "fund-leaderboard-ingest"]
 BQ_FRESHNESS_TABLES = {
     "daily_prices": "trade_date",
     "daily_movement_features": "trade_date",

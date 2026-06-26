@@ -58,6 +58,56 @@ class FundLeaderboardRouterTest(unittest.TestCase):
         self.assertIn("run", data)
         self.assertIn("fundsTracked", data)
 
+    def test_top_endpoint(self):
+        response = client.get("/api/funds/top?mode=13f_investable&limit=10")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("rows", response.json())
+
+    def test_cik_endpoints_roundtrip(self):
+        # Seed a fund + filing + holdings + quarterly summary, then read via CIK.
+        cik = "9990001"
+        fid = store.upsert_fund(cik, "CIK Endpoint Co", latest_13f_value_usd=1.0e9)
+        filing_id = store.upsert_filing(
+            fund_id=fid, cik=cik, accession_number="cik-acc-1", form_type="13F-HR",
+            report_period="2024-12-31", filing_date="2025-02-10", filing_url="http://x",
+            total_market_value_usd=1000.0, parse_status="parsed",
+        )
+        store.replace_holdings(filing_id, fid, "2024-12-31", [
+            {"issuer_name": "Apple", "cusip": "037833100", "ticker": "AAPL",
+             "sector": "Tech", "shares": 10, "market_value_usd": 1000.0, "holding_weight": 1.0},
+        ])
+        store.upsert_quarterly_summary(fid, cik, {
+            "period_of_report": "2024-12-31", "prev_period": None,
+            "total_13f_value_usd": 1000.0, "holdings_count": 1,
+            "top10_concentration": 1.0, "top20_concentration": 1.0,
+            "turnover_estimate_pct": None, "new_count": 1, "soldout_count": 0,
+            "increased_count": 0, "decreased_count": 0, "unchanged_count": 0,
+            "changes": {"new": [{"ticker": "AAPL"}], "soldOut": [], "increased": [], "decreased": []},
+            "sector_flow": [{"sector": "Tech", "netFlowUsd": 1000.0}],
+        })
+
+        r = client.get(f"/api/funds/{cik}/filings")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.json()["filings"]), 1)
+
+        r = client.get(f"/api/funds/{cik}/holdings")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["holdings"][0]["ticker"], "AAPL")
+
+        r = client.get(f"/api/funds/{cik}/changes")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["counts"]["new"], 1)
+
+        r = client.get(f"/api/funds/{cik}/timeline")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.json()["timeline"]), 1)
+
+    def test_cik_endpoints_404(self):
+        self.assertEqual(client.get("/api/funds/0000000/filings").status_code, 404)
+        self.assertEqual(client.get("/api/funds/0000000/holdings").status_code, 404)
+        self.assertEqual(client.get("/api/funds/0000000/changes").status_code, 404)
+        self.assertEqual(client.get("/api/funds/0000000/timeline").status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

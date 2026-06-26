@@ -2,85 +2,140 @@
 CORAL Hub Skill: SEC 13F Ingestion Agent
 
 Responsible for:
-- Fetching SEC submission JSON using the FinCrawler client.
-- Discovering latest 13F-HR filings for tracked managers.
-- Fetching raw SEC documents.
-- Normalizing XML tables to database structures.
+- Fetching SEC submission metadata (5-year history, paginated) via the shared
+  rate-limited EDGAR client.
+- Discovering 13F-HR / 13F-HR/A filings for tracked managers.
+- Downloading + caching raw filing documents (index.json, primary doc, info table).
+- Normalizing the XML information table to holdings structures (value-scale aware).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional
-import httpx
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.coral_agents import hub_add_note
-from backend.fincrawler_client import fc
+from backend.sec.edgar_client import edgar
 
 logger = logging.getLogger(__name__)
 
-# Basic headers per SEC access guidelines. Do NOT hardcode Host — httpx derives
-# it per-request (data.sec.gov for submissions vs www.sec.gov for Archives).
-import os as _os
-SEC_HEADERS = {
-    "User-Agent": _os.environ.get("SEC_USER_AGENT", "TradeTalkApp contact@tradetalk.example.com"),
-    "Accept-Encoding": "gzip, deflate",
-}
+DEFAULT_FORMS: Tuple[str, ...] = ("13F-HR", "13F-HR/A")
+
+# SEC began reporting 13F VALUE in whole dollars on 2023-01-03; before that it was
+# in thousands of dollars. Normalize everything to whole dollars.
+_DOLLAR_CUTOFF = datetime(2023, 1, 3).date()
+
+
+def resolve_raw_dir() -> Path:
+    explicit = os.environ.get("SEC_RAW_DIR", "").strip()
+    if explicit:
+        return Path(explicit)
+    data_dir = os.environ.get("TRADETALK_DATA_DIR", "").strip()
+    if data_dir:
+        return Path(data_dir) / "sec_raw"
+    return Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "sec_raw"
+
+
+def _flatten_columnar(block: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Turn a columnar filings dict ({form:[...], accessionNumber:[...]}) into rows."""
+    keys = list(block.keys())
+    if not keys:
+        return []
+    try:
+        n = len(block[keys[0]])
+    except TypeError:
+        return []
+    rows = []
+    for i in range(n):
+        rows.append({k: (block[k][i] if i < len(block[k]) else None) for k in keys})
+    return rows
+
+
+async def fetch_submissions_5y(
+    cik: str,
+    forms: Tuple[str, ...] = DEFAULT_FORMS,
+    years: int = 5,
+) -> Dict[str, Any]:
+    """
+    Fetch a CIK's submission metadata over the last ``years`` years, including the
+    older paginated ``filings.files[]`` JSONs (not just ``filings.recent``).
+    Returns deduped filings (latest filing per report period) for ``forms``.
+    """
+    cik_padded = str(cik).zfill(10)
+    submissions_url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
+    try:
+        root = await edgar.get_json(submissions_url)
+    except Exception as e:
+        logger.error("[13F] submissions fetch failed CIK %s: %s", cik, e)
+        return {"status": "error", "message": str(e), "filings": [], "entity_name": None}
+
+    entity_name = root.get("name")
+    all_rows: List[Dict[str, Any]] = _flatten_columnar(root.get("filings", {}).get("recent", {}))
+
+    for file_ref in root.get("filings", {}).get("files", []) or []:
+        name = file_ref.get("name")
+        if not name:
+            continue
+        try:
+            older = await edgar.get_json(f"https://data.sec.gov/submissions/{name}")
+            all_rows.extend(_flatten_columnar(older))
+        except Exception as e:
+            logger.warning("[13F] older submissions file %s failed: %s", name, e)
+
+    cutoff = datetime.utcnow().date() - timedelta(days=365 * years)
+    # Keep latest filing per report period (so amendments supersede originals).
+    by_period: Dict[str, Dict[str, str]] = {}
+    for row in all_rows:
+        form = row.get("form")
+        filed = row.get("filingDate")
+        if form not in forms or not filed:
+            continue
+        try:
+            filed_date = datetime.strptime(filed, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        if filed_date < cutoff:
+            continue
+        period = row.get("reportDate") or filed
+        rec = {
+            "accession_number": row.get("accessionNumber"),
+            "report_date": period,
+            "filing_date": filed,
+            "form_type": form,
+            "primary_document": row.get("primaryDocument"),
+        }
+        prev = by_period.get(period)
+        if prev is None or filed > prev["filing_date"]:
+            by_period[period] = rec
+
+    filings = sorted(by_period.values(), key=lambda r: r["report_date"], reverse=True)
+    return {
+        "status": "success",
+        "cik": cik_padded,
+        "entity_name": entity_name,
+        "filings": filings,
+    }
 
 
 async def ingest_manager_13f(cik: str, fund_id: str) -> Dict[str, Any]:
-    """
-    Given a zero-padded 10-digit CIK, fetch their submissions history,
-    find the most recent 13F-HR, and parse the holdings.
-    """
-    logger.info(f"[13F Ingestion] Starting ingestion for CIK: {cik}")
-    cik_padded = str(cik).zfill(10)
-    submissions_url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
-
-    try:
-        # Use httpx directly for SEC JSON to bypass crawler abstractions if needed,
-        # but using fincrawler's rate limiting would be better if exposed.
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(submissions_url, headers=SEC_HEADERS)
-            resp.raise_for_status()
-            sub_data = resp.json()
-    except Exception as e:
-        logger.error(f"[13F Ingestion] Failed to fetch submissions for CIK {cik}: {e}")
-        return {"status": "error", "message": str(e)}
-
-    filings = sub_data.get("filings", {}).get("recent", {})
-    if not filings:
-        return {"status": "error", "message": "No recent filings found"}
-
-    # Find latest 13F-HR
-    forms = filings.get("form", [])
-    accessions = filings.get("accessionNumber", [])
-    report_dates = filings.get("reportDate", [])
-    primary_docs = filings.get("primaryDocument", [])
-    filing_dates = filings.get("filingDate", [])
-
-    target_idx = -1
-    for i, form in enumerate(forms):
-        if form in ("13F-HR", "13F-HR/A"):
-            target_idx = i
-            break
-
-    if target_idx == -1:
-        msg = f"No 13F-HR found for CIK {cik}"
-        logger.info(f"[13F Ingestion] {msg}")
-        hub_add_note("data_ingest", msg)
-        return {"status": "skipped", "message": msg}
-
+    """Fetch + parse the most recent 13F-HR for a CIK (used for AUM probing)."""
+    logger.info("[13F Ingestion] Starting ingestion for CIK: %s", cik)
+    meta = await fetch_submissions_5y(cik)
+    if meta.get("status") != "success" or not meta.get("filings"):
+        return {"status": "skipped", "message": f"No recent 13F-HR for CIK {cik}"}
+    latest = meta["filings"][0]
     return await _fetch_and_parse_filing(
         cik=cik,
-        cik_padded=cik_padded,
+        cik_padded=str(cik).zfill(10),
         fund_id=fund_id,
-        accession_number=accessions[target_idx],
-        report_date=report_dates[target_idx],
-        filing_date=filing_dates[target_idx],
-        form_type=forms[target_idx],
+        accession_number=latest["accession_number"],
+        report_date=latest["report_date"],
+        filing_date=latest["filing_date"],
+        form_type=latest["form_type"],
+        primary_document=latest.get("primary_document"),
     )
 
 
@@ -88,58 +143,29 @@ async def ingest_manager_13f_history(
     cik: str,
     fund_id: str,
     max_quarters: int = 20,
+    save_raw: bool = False,
 ) -> Dict[str, Any]:
     """
-    Fetch up to ``max_quarters`` of 13F-HR filings for a CIK (most recent first),
-    parsing holdings for each. Used to build a multi-quarter return series.
+    Fetch up to ``max_quarters`` of 13F filings (5-year window, paginated),
+    parsing holdings for each.
     """
-    cik_padded = str(cik).zfill(10)
-    submissions_url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
+    meta = await fetch_submissions_5y(cik)
+    if meta.get("status") != "success":
+        return {"status": "error", "message": meta.get("message"), "filings": []}
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(submissions_url, headers=SEC_HEADERS)
-            resp.raise_for_status()
-            sub_data = resp.json()
-    except Exception as e:
-        logger.error(f"[13F History] Failed to fetch submissions for CIK {cik}: {e}")
-        return {"status": "error", "message": str(e), "filings": []}
-
-    filings = sub_data.get("filings", {}).get("recent", {})
-    forms = filings.get("form", [])
-    accessions = filings.get("accessionNumber", [])
-    report_dates = filings.get("reportDate", [])
-    filing_dates = filings.get("filingDate", [])
-
-    # Collect 13F-HR indices, de-duplicating by report period (prefer first/newest).
-    selected: List[Dict[str, str]] = []
-    seen_periods = set()
-    for i, form in enumerate(forms):
-        if form not in ("13F-HR", "13F-HR/A"):
-            continue
-        period = report_dates[i] if i < len(report_dates) else ""
-        if period in seen_periods:
-            continue
-        seen_periods.add(period)
-        selected.append({
-            "accession_number": accessions[i],
-            "report_date": period,
-            "filing_date": filing_dates[i] if i < len(filing_dates) else "",
-            "form_type": form,
-        })
-        if len(selected) >= max_quarters:
-            break
-
+    selected = meta["filings"][:max_quarters]
     parsed_filings: List[Dict[str, Any]] = []
     for f in selected:
         result = await _fetch_and_parse_filing(
             cik=cik,
-            cik_padded=cik_padded,
+            cik_padded=str(cik).zfill(10),
             fund_id=fund_id,
             accession_number=f["accession_number"],
             report_date=f["report_date"],
             filing_date=f["filing_date"],
             form_type=f["form_type"],
+            primary_document=f.get("primary_document"),
+            save_raw=save_raw,
         )
         if result.get("status") == "success":
             parsed_filings.append(result)
@@ -152,8 +178,20 @@ async def ingest_manager_13f_history(
         "status": "success" if parsed_filings else "error",
         "fund_id": fund_id,
         "cik": cik,
+        "entity_name": meta.get("entity_name"),
         "filings": parsed_filings,
     }
+
+
+def _apply_value_scale(holdings: List[Dict[str, Any]], filing_date: str) -> None:
+    """Scale market values to whole dollars (pre-2023 filings report in thousands)."""
+    try:
+        fd = datetime.strptime(filing_date, "%Y-%m-%d").date() if filing_date else None
+    except (ValueError, TypeError):
+        fd = None
+    if fd is not None and fd < _DOLLAR_CUTOFF:
+        for h in holdings:
+            h["market_value_usd"] = (h.get("market_value_usd") or 0.0) * 1000.0
 
 
 async def _fetch_and_parse_filing(
@@ -164,21 +202,19 @@ async def _fetch_and_parse_filing(
     report_date: str,
     filing_date: str,
     form_type: str,
+    primary_document: Optional[str] = None,
+    save_raw: bool = False,
 ) -> Dict[str, Any]:
     """Fetch a single 13F filing's information-table XML and parse its holdings."""
     acc_no_dashes = accession_number.replace("-", "")
-    # SEC Archives paths use the CIK WITHOUT leading zeros (padded CIK 301-redirects).
+    # SEC Archives paths use the CIK WITHOUT leading zeros.
     cik_unpadded = str(int(cik_padded)) if str(cik_padded).isdigit() else str(cik_padded)
+    base = f"https://www.sec.gov/Archives/edgar/data/{cik_unpadded}/{acc_no_dashes}"
 
-    # Fetch the index JSON for the specific filing to find the information table XML
-    index_url = f"https://www.sec.gov/Archives/edgar/data/{cik_unpadded}/{acc_no_dashes}/index.json"
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            idx_resp = await client.get(index_url, headers=SEC_HEADERS)
-            idx_resp.raise_for_status()
-            idx_data = idx_resp.json()
+        idx_data = await edgar.get_json(f"{base}/index.json")
     except Exception as e:
-        logger.error(f"[13F Ingestion] Failed to fetch filing index for {accession_number}: {e}")
+        logger.error("[13F] index fetch failed %s: %s", accession_number, e)
         return {"status": "error", "message": str(e)}
 
     info_table_xml_name = None
@@ -187,23 +223,38 @@ async def _fetch_and_parse_filing(
         if name.endswith(".xml") and ("info" in name.lower() or "table" in name.lower()):
             info_table_xml_name = name
             break
-
     if not info_table_xml_name:
         return {"status": "error", "message": "Information table XML not found in directory"}
 
-    doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik_unpadded}/{acc_no_dashes}/{info_table_xml_name}"
+    doc_url = f"{base}/{info_table_xml_name}"
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            xml_resp = await client.get(doc_url, headers=SEC_HEADERS)
-            xml_resp.raise_for_status()
-            xml_text = xml_resp.text
+        xml_text = await edgar.get_text(doc_url)
     except Exception as e:
-        logger.error(f"[13F Ingestion] Failed to fetch XML doc: {e}")
+        logger.error("[13F] info table fetch failed %s: %s", accession_number, e)
         return {"status": "error", "message": str(e)}
 
     holdings = _parse_info_table(xml_text)
     if holdings is None:
         return {"status": "error", "message": "XML parse error"}
+    _apply_value_scale(holdings, filing_date)
+
+    local_raw_path: Optional[str] = None
+    if save_raw:
+        try:
+            raw_dir = resolve_raw_dir() / cik_padded / acc_no_dashes
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            import json as _json
+            (raw_dir / "index.json").write_text(_json.dumps(idx_data), encoding="utf-8")
+            (raw_dir / info_table_xml_name).write_text(xml_text, encoding="utf-8")
+            if primary_document:
+                try:
+                    primary_bytes = await edgar.get_bytes(f"{base}/{primary_document}")
+                    (raw_dir / primary_document).write_bytes(primary_bytes)
+                except Exception as pe:
+                    logger.warning("[13F] primary doc save failed %s: %s", accession_number, pe)
+            local_raw_path = str(raw_dir)
+        except Exception as e:
+            logger.warning("[13F] raw save failed %s: %s", accession_number, e)
 
     hub_add_note(
         "data_ingest",
@@ -219,7 +270,9 @@ async def _fetch_and_parse_filing(
         "report_period": report_date,
         "filing_date": filing_date,
         "form_type": form_type,
+        "primary_document": primary_document,
         "filing_url": doc_url,
+        "local_raw_path": local_raw_path,
         "holdings": holdings,
     }
 
@@ -274,5 +327,5 @@ def _parse_info_table(xml_text: str) -> Optional[List[Dict[str, Any]]]:
             })
         return holdings
     except Exception as e:
-        logger.error(f"[13F Ingestion] XML parsing error: {e}")
+        logger.error("[13F Ingestion] XML parsing error: %s", e)
         return None

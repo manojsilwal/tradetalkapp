@@ -23,20 +23,11 @@ import os
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
-
 from backend.coral_agents import hub_add_note
 from backend.coral_skills.sec_13f_ingestion import ingest_manager_13f
+from backend.sec.edgar_client import edgar
 
 logger = logging.getLogger(__name__)
-
-# No explicit Host header — httpx derives it per-request (www vs data subdomain).
-SEC_HEADERS = {
-    "User-Agent": os.environ.get(
-        "SEC_USER_AGENT", "TradeTalkApp contact@tradetalk.example.com"
-    ),
-    "Accept-Encoding": "gzip, deflate",
-}
 
 THIRTEEN_F_FORMS = {"13F-HR", "13F-HR/A"}
 
@@ -62,12 +53,7 @@ def _candidate_quarters(lookback: int = 4) -> List[Tuple[int, int]]:
 async def _fetch_master_index(year: int, quarter: int) -> Optional[str]:
     url = f"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/master.idx"
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(url, headers=SEC_HEADERS)
-            if resp.status_code != 200:
-                logger.info("[Universe] master.idx %s QTR%s -> HTTP %s", year, quarter, resp.status_code)
-                return None
-            return resp.text
+        return await edgar.get_text(url)
     except Exception as e:
         logger.warning("[Universe] master.idx fetch failed %s QTR%s: %s", year, quarter, e)
         return None

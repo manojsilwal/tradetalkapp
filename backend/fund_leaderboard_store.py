@@ -230,10 +230,77 @@ _DDL = [
         updated_at TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS fund_quarterly_summary (
+        summary_id TEXT PRIMARY KEY,
+        fund_id TEXT,
+        cik TEXT,
+        period_of_report TEXT,
+        prev_period TEXT,
+        total_13f_value_usd REAL,
+        holdings_count INTEGER,
+        top10_concentration REAL,
+        top20_concentration REAL,
+        turnover_estimate_pct REAL,
+        new_count INTEGER,
+        soldout_count INTEGER,
+        increased_count INTEGER,
+        decreased_count INTEGER,
+        unchanged_count INTEGER,
+        changes_json TEXT,
+        sector_flow_json TEXT,
+        created_at TEXT,
+        UNIQUE(fund_id, period_of_report)
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_lb_mode_rank ON fund_leaderboard_snapshots(mode, rank)",
     "CREATE INDEX IF NOT EXISTS idx_holdings_filing ON thirteen_f_holdings(filing_id)",
+    "CREATE INDEX IF NOT EXISTS idx_holdings_fund_period ON thirteen_f_holdings(fund_id, report_period)",
     "CREATE INDEX IF NOT EXISTS idx_filings_fund ON sec_filings(fund_id, report_period)",
+    "CREATE INDEX IF NOT EXISTS idx_filings_cik ON sec_filings(cik, report_period)",
+    "CREATE INDEX IF NOT EXISTS idx_qsummary_fund ON fund_quarterly_summary(fund_id, period_of_report)",
 ]
+
+# Additive columns added after the original release. Each entry is
+# (table, column, column_definition_sql). Applied idempotently in init_schema().
+_ADDITIVE_COLUMNS = [
+    ("fund_master", "latest_13f_value_usd", "REAL"),
+    ("fund_master", "external_aum_usd", "REAL"),
+    ("fund_master", "ranking_method", "TEXT"),
+    ("fund_master", "source", "TEXT"),
+    ("fund_master", "entity_name", "TEXT"),
+    ("sec_filings", "primary_document", "TEXT"),
+    ("sec_filings", "local_raw_path", "TEXT"),
+    ("sec_filings", "parse_status", "TEXT DEFAULT 'pending'"),
+]
+
+
+def _existing_columns(cur, table: str) -> set:
+    if _use_postgres():
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name=%s",
+            (table,),
+        )
+        return {_row_to_dict(r).get("column_name") for r in cur.fetchall()}
+    cur.execute(f"PRAGMA table_info({table})")
+    return {_row_to_dict(r).get("name") for r in cur.fetchall()}
+
+
+def _ensure_columns() -> None:
+    """Idempotently ALTER TABLE ADD COLUMN for additive schema changes."""
+    with _cursor(commit=True) as (_conn, cur):
+        by_table: Dict[str, set] = {}
+        for table, column, coldef in _ADDITIVE_COLUMNS:
+            if table not in by_table:
+                by_table[table] = _existing_columns(cur, table)
+            if column in by_table[table]:
+                continue
+            try:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
+                by_table[table].add(column)
+                logger.info("[FundLeaderboard] added column %s.%s", table, column)
+            except Exception as e:
+                logger.warning("[FundLeaderboard] add column %s.%s failed: %s", table, column, e)
 
 
 def init_schema() -> None:
@@ -241,6 +308,7 @@ def init_schema() -> None:
     with _cursor(commit=True) as (_conn, cur):
         for ddl in _DDL:
             cur.execute(ddl)
+    _ensure_columns()
     logger.info("[FundLeaderboard] schema initialized (postgres=%s)", _use_postgres())
 
 
@@ -253,6 +321,11 @@ def upsert_fund(
     strategy_tags: Optional[List[str]] = None,
     is_index_manager: bool = False,
     latest_aum_usd: Optional[float] = None,
+    latest_13f_value_usd: Optional[float] = None,
+    external_aum_usd: Optional[float] = None,
+    ranking_method: Optional[str] = None,
+    source: Optional[str] = None,
+    entity_name: Optional[str] = None,
 ) -> str:
     """Insert or update a manager by CIK. Returns the fund_id."""
     cik = str(cik).strip()
@@ -268,12 +341,18 @@ def upsert_fund(
                     UPDATE fund_master
                     SET display_name=?, manager_type=COALESCE(?, manager_type),
                         strategy_tags=?, is_index_manager=?, latest_aum_usd=COALESCE(?, latest_aum_usd),
+                        latest_13f_value_usd=COALESCE(?, latest_13f_value_usd),
+                        external_aum_usd=COALESCE(?, external_aum_usd),
+                        ranking_method=COALESCE(?, ranking_method),
+                        source=COALESCE(?, source),
+                        entity_name=COALESCE(?, entity_name),
                         updated_at=?
                     WHERE fund_id=?
                     """
                 ),
                 (display_name, manager_type, tags, 1 if is_index_manager else 0,
-                 latest_aum_usd, now, fund_id),
+                 latest_aum_usd, latest_13f_value_usd, external_aum_usd,
+                 ranking_method, source, entity_name, now, fund_id),
             )
         return fund_id
 
@@ -284,12 +363,15 @@ def upsert_fund(
                 """
                 INSERT INTO fund_master
                 (fund_id, cik, display_name, manager_type, strategy_tags,
-                 include_in_leaderboard, is_index_manager, latest_aum_usd, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                 include_in_leaderboard, is_index_manager, latest_aum_usd,
+                 latest_13f_value_usd, external_aum_usd, ranking_method, source,
+                 entity_name, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """
             ),
             (fund_id, cik, display_name, manager_type, tags, 1,
-             1 if is_index_manager else 0, latest_aum_usd, now, now),
+             1 if is_index_manager else 0, latest_aum_usd, latest_13f_value_usd,
+             external_aum_usd, ranking_method, source, entity_name, now, now),
         )
     return fund_id
 
@@ -327,6 +409,9 @@ def upsert_filing(
     filing_date: str,
     filing_url: str,
     total_market_value_usd: Optional[float] = None,
+    primary_document: Optional[str] = None,
+    local_raw_path: Optional[str] = None,
+    parse_status: Optional[str] = None,
 ) -> str:
     existing = None
     with _cursor() as (_c, cur):
@@ -343,12 +428,16 @@ def upsert_filing(
                     """
                     UPDATE sec_filings
                     SET fund_id=?, form_type=?, report_period=?, filing_date=?,
-                        filing_url=?, total_market_value_usd=COALESCE(?, total_market_value_usd)
+                        filing_url=?, total_market_value_usd=COALESCE(?, total_market_value_usd),
+                        primary_document=COALESCE(?, primary_document),
+                        local_raw_path=COALESCE(?, local_raw_path),
+                        parse_status=COALESCE(?, parse_status)
                     WHERE filing_id=?
                     """
                 ),
                 (fund_id, form_type, report_period, filing_date, filing_url,
-                 total_market_value_usd, filing_id),
+                 total_market_value_usd, primary_document, local_raw_path,
+                 parse_status, filing_id),
             )
         return filing_id
 
@@ -359,14 +448,30 @@ def upsert_filing(
                 """
                 INSERT INTO sec_filings
                 (filing_id, fund_id, cik, accession_number, form_type, report_period,
-                 filing_date, filing_url, total_market_value_usd, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                 filing_date, filing_url, total_market_value_usd, primary_document,
+                 local_raw_path, parse_status, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """
             ),
             (filing_id, fund_id, str(cik).strip(), accession_number, form_type,
-             report_period, filing_date, filing_url, total_market_value_usd, _now()),
+             report_period, filing_date, filing_url, total_market_value_usd,
+             primary_document, local_raw_path, parse_status or "pending", _now()),
         )
     return filing_id
+
+
+def set_filing_parse_status(filing_id: str, parse_status: str, local_raw_path: Optional[str] = None) -> None:
+    with _cursor(commit=True) as (_c, cur):
+        cur.execute(
+            _ph(
+                """
+                UPDATE sec_filings
+                SET parse_status=?, local_raw_path=COALESCE(?, local_raw_path)
+                WHERE filing_id=?
+                """
+            ),
+            (parse_status, local_raw_path, filing_id),
+        )
 
 
 def replace_holdings(
@@ -431,6 +536,51 @@ def get_holdings_for_filing(filing_id: str) -> List[Dict[str, Any]]:
 def get_latest_filing(fund_id: str) -> Optional[Dict[str, Any]]:
     filings = get_filings_for_fund(fund_id, limit=1)
     return filings[0] if filings else None
+
+
+def get_filings_by_cik(cik: str, limit: int = 24) -> List[Dict[str, Any]]:
+    """List 13F filings for a CIK (resolving via fund_master)."""
+    fund = get_fund_by_cik(cik)
+    if not fund:
+        return []
+    return get_filings_for_fund(fund["fund_id"], limit=limit)
+
+
+def list_periods(fund_id: str) -> List[str]:
+    """Distinct report periods for a fund, most-recent first."""
+    with _cursor() as (_c, cur):
+        cur.execute(
+            _ph(
+                """
+                SELECT DISTINCT report_period FROM sec_filings
+                WHERE fund_id=? AND form_type IN ('13F-HR','13F-HR/A')
+                  AND report_period IS NOT NULL
+                ORDER BY report_period DESC
+                """
+            ),
+            (fund_id,),
+        )
+        rows = cur.fetchall()
+    return [_row_to_dict(r).get("report_period") for r in rows]
+
+
+def get_holdings_for_period(fund_id: str, period: str) -> List[Dict[str, Any]]:
+    """Holdings for a fund's filing matching ``period`` (latest filing for that period)."""
+    with _cursor() as (_c, cur):
+        cur.execute(
+            _ph(
+                """
+                SELECT filing_id FROM sec_filings
+                WHERE fund_id=? AND report_period=? AND form_type IN ('13F-HR','13F-HR/A')
+                ORDER BY filing_date DESC LIMIT 1
+                """
+            ),
+            (fund_id, period),
+        )
+        row = cur.fetchone()
+    if not row:
+        return []
+    return get_holdings_for_filing(_row_to_dict(row)["filing_id"])
 
 
 # ── CUSIP -> ticker cache ───────────────────────────────────────────────────────
@@ -545,6 +695,99 @@ def get_fund_returns(fund_id: str, mode: str = DEFAULT_MODE, period: str = "5Y")
         },
         "series": _loads(d.get("series_json"), []),
     }
+
+
+# ── Quarterly summary (diff engine output) ──────────────────────────────────────
+
+def upsert_quarterly_summary(fund_id: str, cik: str, summary: Dict[str, Any]) -> None:
+    """Insert/update a fund_quarterly_summary row keyed by (fund_id, period)."""
+    now = _now()
+    with _cursor(commit=True) as (_c, cur):
+        cur.execute(
+            _ph(
+                """
+                INSERT INTO fund_quarterly_summary
+                (summary_id, fund_id, cik, period_of_report, prev_period,
+                 total_13f_value_usd, holdings_count, top10_concentration,
+                 top20_concentration, turnover_estimate_pct, new_count, soldout_count,
+                 increased_count, decreased_count, unchanged_count, changes_json,
+                 sector_flow_json, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(fund_id, period_of_report) DO UPDATE SET
+                    cik=excluded.cik, prev_period=excluded.prev_period,
+                    total_13f_value_usd=excluded.total_13f_value_usd,
+                    holdings_count=excluded.holdings_count,
+                    top10_concentration=excluded.top10_concentration,
+                    top20_concentration=excluded.top20_concentration,
+                    turnover_estimate_pct=excluded.turnover_estimate_pct,
+                    new_count=excluded.new_count, soldout_count=excluded.soldout_count,
+                    increased_count=excluded.increased_count,
+                    decreased_count=excluded.decreased_count,
+                    unchanged_count=excluded.unchanged_count,
+                    changes_json=excluded.changes_json,
+                    sector_flow_json=excluded.sector_flow_json,
+                    created_at=excluded.created_at
+                """
+            ),
+            (
+                _new_id(), fund_id, str(cik).strip(), summary.get("period_of_report"),
+                summary.get("prev_period"), summary.get("total_13f_value_usd"),
+                summary.get("holdings_count"), summary.get("top10_concentration"),
+                summary.get("top20_concentration"), summary.get("turnover_estimate_pct"),
+                summary.get("new_count"), summary.get("soldout_count"),
+                summary.get("increased_count"), summary.get("decreased_count"),
+                summary.get("unchanged_count"), json.dumps(summary.get("changes") or {}),
+                json.dumps(summary.get("sector_flow") or []), now,
+            ),
+        )
+
+
+def get_quarterly_summary(fund_id: str, period: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    with _cursor() as (_c, cur):
+        if period:
+            cur.execute(
+                _ph("SELECT * FROM fund_quarterly_summary WHERE fund_id=? AND period_of_report=?"),
+                (fund_id, period),
+            )
+            row = cur.fetchone()
+        else:
+            cur.execute(
+                _ph(
+                    """
+                    SELECT * FROM fund_quarterly_summary WHERE fund_id=?
+                    ORDER BY period_of_report DESC LIMIT 1
+                    """
+                ),
+                (fund_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    d = _row_to_dict(row)
+    d["changes"] = _loads(d.get("changes_json"), {})
+    d["sector_flow"] = _loads(d.get("sector_flow_json"), [])
+    return d
+
+
+def list_quarterly_summaries(fund_id: str) -> List[Dict[str, Any]]:
+    with _cursor() as (_c, cur):
+        cur.execute(
+            _ph(
+                """
+                SELECT * FROM fund_quarterly_summary WHERE fund_id=?
+                ORDER BY period_of_report DESC
+                """
+            ),
+            (fund_id,),
+        )
+        rows = cur.fetchall()
+    out = []
+    for r in rows:
+        d = _row_to_dict(r)
+        d["changes"] = _loads(d.get("changes_json"), {})
+        d["sector_flow"] = _loads(d.get("sector_flow_json"), [])
+        out.append(d)
+    return out
 
 
 # ── Leaderboard snapshots ────────────────────────────────────────────────────────
