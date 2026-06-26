@@ -36,6 +36,10 @@ BENCHMARK = "SPY"
 MIN_MAPPED_PCT = float(os.environ.get("FUND_LB_MIN_MAPPED_PCT", "0.40"))
 MIN_QUARTERS = int(os.environ.get("FUND_LB_MIN_QUARTERS", "8"))
 
+# Optional cap on holdings mapped per filing (0 = no cap). The largest positions
+# dominate the clone weight, so capping bounds OpenFIGI/price cost dramatically.
+MAX_HOLDINGS_PER_FILING = int(os.environ.get("FUND_LB_MAX_HOLDINGS_PER_FILING", "0"))
+
 _run_state: Dict[str, Any] = {"status": "idle", "started_at": None, "summary": None}
 
 
@@ -167,9 +171,13 @@ async def _process_manager(
         logger.info("[FundLB] %s (%s): only %d quarters, skipping", name, cik, len(parsed))
         return None
 
-    # Map CUSIP -> ticker for each filing's holdings.
+    # Map CUSIP -> ticker for each filing's holdings (optionally capped to the
+    # largest positions to bound mapping/price cost).
     for filing in parsed:
-        filing["holdings"] = await map_holdings_to_tickers(filing.get("holdings", []))
+        hs = filing.get("holdings", [])
+        if MAX_HOLDINGS_PER_FILING > 0 and len(hs) > MAX_HOLDINGS_PER_FILING:
+            hs = sorted(hs, key=lambda h: (h.get("market_value_usd") or 0), reverse=True)[:MAX_HOLDINGS_PER_FILING]
+        filing["holdings"] = await map_holdings_to_tickers(hs)
 
     built = _build_snapshots_and_persist(fund_id, parsed)
     snapshots = built["snapshots"]
