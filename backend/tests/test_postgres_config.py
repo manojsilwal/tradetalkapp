@@ -17,6 +17,8 @@ class TestPostgresConfig(unittest.TestCase):
             "PORTFOLIO_STORAGE",
             "POSTGRES_PASSWORD",
             "POSTGRES_HOST",
+            "POSTGRES_USER",
+            "POSTGRES_IAM_AUTH",
             "DATABASE_URL",
         ):
             os.environ.pop(k, None)
@@ -53,6 +55,45 @@ class TestPostgresConfig(unittest.TestCase):
         ):
             self.assertTrue(postgres_enabled())
             self.assertEqual(postgres_dsn(), "postgresql://u:p@host:5432/db")
+
+    def test_iam_auth_enabled_without_password(self):
+        with patch.dict(
+            os.environ,
+            {"PORTFOLIO_STORAGE": "postgres", "POSTGRES_IAM_AUTH": "1"},
+            clear=False,
+        ):
+            self.assertTrue(postgres_enabled())
+
+    def test_iam_tcp_uses_token_password_and_sslmode(self):
+        env = {
+            "POSTGRES_IAM_AUTH": "1",
+            "POSTGRES_USER": "svc@proj.iam",
+            "POSTGRES_HOST": "10.0.0.5",
+        }
+        with patch.dict(os.environ, env, clear=False), patch(
+            "backend.postgres_config._iam_access_token", return_value="ya29.TOKEN"
+        ):
+            kw = postgres_connection_kwargs()
+            self.assertEqual(kw["password"], "ya29.TOKEN")
+            self.assertEqual(kw["user"], "svc@proj.iam")
+            self.assertEqual(kw["sslmode"], "require")
+            self.assertIn("sslmode=require", postgres_dsn())
+
+    def test_iam_unix_socket_dsn_uses_host_param_no_sslmode(self):
+        env = {
+            "POSTGRES_IAM_AUTH": "1",
+            "POSTGRES_USER": "svc@proj.iam",
+            "POSTGRES_HOST": "/cloudsql/proj:us-central1:inst",
+            "POSTGRES_DB": "tradetalk",
+        }
+        with patch.dict(os.environ, env, clear=False), patch(
+            "backend.postgres_config._iam_access_token", return_value="ya29.TOKEN"
+        ):
+            kw = postgres_connection_kwargs()
+            self.assertNotIn("sslmode", kw)
+            dsn = postgres_dsn()
+            self.assertTrue(dsn.startswith("postgresql://svc%40proj.iam:ya29.TOKEN@/tradetalk?"))
+            self.assertIn("host=%2Fcloudsql%2Fproj%3Aus-central1%3Ainst", dsn)
 
 
 if __name__ == "__main__":
