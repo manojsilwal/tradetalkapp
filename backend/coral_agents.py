@@ -103,12 +103,18 @@ def hub_add_note(
     ttl_seconds: Optional[float] = None,
 ) -> int:
     _warn_if_unknown_agent(agent_id)
-    row_id = coral_hub.add_note(
-        agent_id,
-        observation,
-        market_regime=market_regime,
-        ttl_seconds=ttl_seconds,
-    )
+    # Hub writes must never break the calling surface (e.g. a standalone Cloud
+    # Run Job where the hub schema isn't initialized). Degrade to a no-op.
+    try:
+        row_id = coral_hub.add_note(
+            agent_id,
+            observation,
+            market_regime=market_regime,
+            ttl_seconds=ttl_seconds,
+        )
+    except Exception:
+        logger.debug("[CoralAgents] hub add_note failed (degraded)", exc_info=True)
+        return -1
     # Dual-write to BigQuery for permanent persistence (no TTL)
     try:
         from .mcp_server.persist import persist_agent_learning
