@@ -72,29 +72,115 @@ async def ingest_manager_13f(cik: str, fund_id: str) -> Dict[str, Any]:
         hub_add_note("data_ingest", msg)
         return {"status": "skipped", "message": msg}
 
-    acc_num = accessions[target_idx]
-    acc_no_dashes = acc_num.replace("-", "")
-    report_date = report_dates[target_idx]
-    filing_date = filing_dates[target_idx]
-    form_type = forms[target_idx]
+    return await _fetch_and_parse_filing(
+        cik=cik,
+        cik_padded=cik_padded,
+        fund_id=fund_id,
+        accession_number=accessions[target_idx],
+        report_date=report_dates[target_idx],
+        filing_date=filing_dates[target_idx],
+        form_type=forms[target_idx],
+    )
 
-    # We must fetch the index JSON for the specific filing to find the information table XML
+
+async def ingest_manager_13f_history(
+    cik: str,
+    fund_id: str,
+    max_quarters: int = 20,
+) -> Dict[str, Any]:
+    """
+    Fetch up to ``max_quarters`` of 13F-HR filings for a CIK (most recent first),
+    parsing holdings for each. Used to build a multi-quarter return series.
+    """
+    cik_padded = str(cik).zfill(10)
+    submissions_url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(submissions_url, headers=SEC_HEADERS)
+            resp.raise_for_status()
+            sub_data = resp.json()
+    except Exception as e:
+        logger.error(f"[13F History] Failed to fetch submissions for CIK {cik}: {e}")
+        return {"status": "error", "message": str(e), "filings": []}
+
+    filings = sub_data.get("filings", {}).get("recent", {})
+    forms = filings.get("form", [])
+    accessions = filings.get("accessionNumber", [])
+    report_dates = filings.get("reportDate", [])
+    filing_dates = filings.get("filingDate", [])
+
+    # Collect 13F-HR indices, de-duplicating by report period (prefer first/newest).
+    selected: List[Dict[str, str]] = []
+    seen_periods = set()
+    for i, form in enumerate(forms):
+        if form not in ("13F-HR", "13F-HR/A"):
+            continue
+        period = report_dates[i] if i < len(report_dates) else ""
+        if period in seen_periods:
+            continue
+        seen_periods.add(period)
+        selected.append({
+            "accession_number": accessions[i],
+            "report_date": period,
+            "filing_date": filing_dates[i] if i < len(filing_dates) else "",
+            "form_type": form,
+        })
+        if len(selected) >= max_quarters:
+            break
+
+    parsed_filings: List[Dict[str, Any]] = []
+    for f in selected:
+        result = await _fetch_and_parse_filing(
+            cik=cik,
+            cik_padded=cik_padded,
+            fund_id=fund_id,
+            accession_number=f["accession_number"],
+            report_date=f["report_date"],
+            filing_date=f["filing_date"],
+            form_type=f["form_type"],
+        )
+        if result.get("status") == "success":
+            parsed_filings.append(result)
+
+    hub_add_note(
+        "data_ingest",
+        f"[13F History] CIK {cik}: parsed {len(parsed_filings)}/{len(selected)} quarterly filings",
+    )
+    return {
+        "status": "success" if parsed_filings else "error",
+        "fund_id": fund_id,
+        "cik": cik,
+        "filings": parsed_filings,
+    }
+
+
+async def _fetch_and_parse_filing(
+    cik: str,
+    cik_padded: str,
+    fund_id: str,
+    accession_number: str,
+    report_date: str,
+    filing_date: str,
+    form_type: str,
+) -> Dict[str, Any]:
+    """Fetch a single 13F filing's information-table XML and parse its holdings."""
+    acc_no_dashes = accession_number.replace("-", "")
+
+    # Fetch the index JSON for the specific filing to find the information table XML
     index_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{acc_no_dashes}/index.json"
-
     try:
         async with httpx.AsyncClient() as client:
             idx_resp = await client.get(index_url, headers=SEC_HEADERS)
             idx_resp.raise_for_status()
             idx_data = idx_resp.json()
     except Exception as e:
-        logger.error(f"[13F Ingestion] Failed to fetch filing index for {acc_num}: {e}")
+        logger.error(f"[13F Ingestion] Failed to fetch filing index for {accession_number}: {e}")
         return {"status": "error", "message": str(e)}
 
-    # Find the information table XML (often named something like form13fInfoTable.xml or similar ending in .xml)
     info_table_xml_name = None
     for f in idx_data.get("directory", {}).get("item", []):
         name = f.get("name", "")
-        # Primary docs are usually .txt or primary XML, information table is separate
         if name.endswith(".xml") and ("info" in name.lower() or "table" in name.lower()):
             info_table_xml_name = name
             break
@@ -103,12 +189,7 @@ async def ingest_manager_13f(cik: str, fund_id: str) -> Dict[str, Any]:
         return {"status": "error", "message": "Information table XML not found in directory"}
 
     doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{acc_no_dashes}/{info_table_xml_name}"
-
     try:
-        # Use FinCrawler to fetch the raw XML text
-        xml_text = await fc.scrape_text(doc_url)
-        # Note: scrape_text strips tags sometimes, but let's assume it grabs raw if properly configured,
-        # otherwise we fetch directly. For safety on SEC XML:
         async with httpx.AsyncClient() as client:
             xml_resp = await client.get(doc_url, headers=SEC_HEADERS)
             xml_resp.raise_for_status()
@@ -117,18 +198,43 @@ async def ingest_manager_13f(cik: str, fund_id: str) -> Dict[str, Any]:
         logger.error(f"[13F Ingestion] Failed to fetch XML doc: {e}")
         return {"status": "error", "message": str(e)}
 
-    # Parse the XML
-    holdings = []
+    holdings = _parse_info_table(xml_text)
+    if holdings is None:
+        return {"status": "error", "message": "XML parse error"}
+
+    hub_add_note(
+        "data_ingest",
+        f"Parsed {len(holdings)} holdings from {form_type} ({accession_number}) "
+        f"for CIK {cik} (Period: {report_date})",
+    )
+
+    return {
+        "status": "success",
+        "fund_id": fund_id,
+        "cik": cik,
+        "accession_number": accession_number,
+        "report_period": report_date,
+        "filing_date": filing_date,
+        "form_type": form_type,
+        "filing_url": doc_url,
+        "holdings": holdings,
+    }
+
+
+def _parse_info_table(xml_text: str) -> Optional[List[Dict[str, Any]]]:
+    """Parse a 13F information-table XML string into holdings dicts."""
     try:
-        # Avoid XML vulnerabilities with defusedxml in production, using standard ET for MVP
         import defusedxml.ElementTree as DET
         root = DET.fromstring(xml_text)
 
-        # XML namespace handling (SEC 13F uses namespaces)
         ns = {"ns": root.tag.split('}')[0].strip('{')} if '}' in root.tag else {"ns": ""}
 
-        for p in root.findall(".//ns:infoTable", namespaces=ns) if ns["ns"] else root.findall(".//infoTable"):
-            # Helper to safely extract text
+        holdings: List[Dict[str, Any]] = []
+        info_tables = (
+            root.findall(".//ns:infoTable", namespaces=ns)
+            if ns["ns"] else root.findall(".//infoTable")
+        )
+        for p in info_tables:
             def _get_text(elem, path):
                 node = elem.find(path, namespaces=ns) if ns["ns"] else elem.find(path)
                 return node.text.strip() if node is not None and node.text else ""
@@ -158,29 +264,12 @@ async def ingest_manager_13f(cik: str, fund_id: str) -> Dict[str, Any]:
                 "issuer_name": issuer,
                 "title_of_class": title_class,
                 "cusip": cusip,
-                "market_value_usd": val,  # SEC standard is $ thousands, but parser should normalize
+                "market_value_usd": val,
                 "shares": amt,
                 "shares_type": shrs_type,
-                "put_call": put_call
+                "put_call": put_call,
             })
-
+        return holdings
     except Exception as e:
         logger.error(f"[13F Ingestion] XML parsing error: {e}")
-        return {"status": "error", "message": f"XML parse error: {e}"}
-
-    hub_add_note(
-        "data_ingest",
-        f"Parsed {len(holdings)} holdings from 13F-HR ({acc_num}) for CIK {cik} (Period: {report_date})"
-    )
-
-    return {
-        "status": "success",
-        "fund_id": fund_id,
-        "cik": cik,
-        "accession_number": acc_num,
-        "report_period": report_date,
-        "filing_date": filing_date,
-        "form_type": form_type,
-        "filing_url": doc_url,
-        "holdings": holdings
-    }
+        return None

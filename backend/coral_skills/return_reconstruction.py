@@ -18,6 +18,18 @@ from backend.coral_agents import hub_add_note
 
 logger = logging.getLogger(__name__)
 
+
+def _quarter_freq() -> str:
+    """Quarter-end resample alias ('QE' on pandas>=2.2, 'Q' on older versions)."""
+    try:
+        pd.tseries.frequencies.to_offset("QE")
+        return "QE"
+    except Exception:
+        return "Q"
+
+
+_Q_FREQ = _quarter_freq()
+
 async def fetch_historical_prices(tickers: List[str], start_date: str, end_date: str) -> pd.DataFrame:
     """
     Fetch adjusted close prices for a list of tickers.
@@ -178,8 +190,25 @@ def calculate_clone_returns(
     max_drawdown = drawdowns.min()
 
     # Positive quarters proxy (using 63 trading days per quarter)
-    quarterly_returns = port_series.resample('Q').apply(lambda x: (1 + x).prod() - 1)
+    quarterly_returns = port_series.resample(_Q_FREQ).apply(lambda x: (1 + x).prod() - 1)
     pos_quarters = (quarterly_returns > 0).sum() / len(quarterly_returns) if len(quarterly_returns) > 0 else 0
+
+    # Quarter-end downsampled series for charting (cumulative growth of $1).
+    series = []
+    try:
+        q_port = cumulative_port.resample(_Q_FREQ).last()
+        q_bench = cumulative_bench.reindex(q_port.index, method='ffill')
+        q_running_max = q_port.cummax()
+        q_drawdown = (q_port / q_running_max) - 1
+        for idx in q_port.index:
+            series.append({
+                "periodEnd": idx.strftime("%Y-%m-%d"),
+                "cumulativeValue": float(q_port.loc[idx]),
+                "benchmarkCumulativeValue": float(q_bench.loc[idx]) if idx in q_bench.index else None,
+                "drawdown": float(q_drawdown.loc[idx]),
+            })
+    except Exception as e:
+        logger.warning(f"[Return Reconstruction] Series downsample error: {e}")
 
     hub_add_note(
         "technical",
@@ -194,10 +223,13 @@ def calculate_clone_returns(
             "sharpe": float(sharpe),
             "sortino": float(sortino),
             "maxDrawdown": float(max_drawdown),
-            "positiveQuarterRate": float(pos_quarters)
+            "positiveQuarterRate": float(pos_quarters),
+            "cumulativeReturn": float(total_return),
+            "benchmarkCumulativeReturn": float(bench_total_return),
         },
         "cumulative_return": float(total_return),
         "benchmark_cumulative_return": float(bench_total_return),
+        "series": series,
         "start_date": dates[0].strftime("%Y-%m-%d"),
         "end_date": dates[-1].strftime("%Y-%m-%d")
     }

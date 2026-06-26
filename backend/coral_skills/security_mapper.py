@@ -8,12 +8,16 @@ Responsible for:
 """
 import asyncio
 import logging
+import os
 import yfinance as yf
-from typing import Dict, Any, List
+import httpx
+from typing import Dict, Any, List, Optional
 
 from backend.coral_agents import hub_add_note
 
 logger = logging.getLogger(__name__)
+
+OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 
 async def map_security_and_sector(cusip: str, issuer_name: str, symbol_hint: str = "") -> Dict[str, Any]:
     """
@@ -105,3 +109,131 @@ async def batch_map_securities(holdings: List[Dict[str, Any]]) -> List[Dict[str,
         mapped_holdings.append(mapped_holding)
 
     return mapped_holdings
+
+
+# ── OpenFIGI CUSIP -> ticker resolution (cached) ────────────────────────────────
+
+def _openfigi_headers() -> Dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    key = os.environ.get("OPENFIGI_API_KEY", "").strip()
+    if key:
+        headers["X-OPENFIGI-APIKEY"] = key
+    return headers
+
+
+def _openfigi_limits() -> Dict[str, float]:
+    """Batch size + inter-request delay depend on whether an API key is set."""
+    has_key = bool(os.environ.get("OPENFIGI_API_KEY", "").strip())
+    if has_key:
+        return {"batch": 100, "delay": 0.3}
+    # Keyless: 25 requests/min, 10 jobs/request -> ~3s between requests (use 7s safe).
+    return {"batch": 10, "delay": 7.0}
+
+
+def _pick_ticker(data_items: List[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    """From an OpenFIGI mapping 'data' list, pick a US common-stock ticker."""
+    if not data_items:
+        return None
+    preferred = [d for d in data_items if (d.get("exchCode") in ("US", "UN", "UQ", "UW", "UR"))]
+    pool = preferred or data_items
+    for d in pool:
+        ticker = (d.get("ticker") or "").strip()
+        if ticker and "/" not in ticker:
+            return {"ticker": ticker, "name": d.get("name") or ""}
+    return None
+
+
+async def _openfigi_resolve(cusips: List[str]) -> Dict[str, Optional[Dict[str, str]]]:
+    """Resolve a list of CUSIPs to tickers via OpenFIGI in rate-limited batches."""
+    out: Dict[str, Optional[Dict[str, str]]] = {}
+    if not cusips:
+        return out
+    limits = _openfigi_limits()
+    batch_size = int(limits["batch"])
+    delay = limits["delay"]
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for start in range(0, len(cusips), batch_size):
+            batch = cusips[start:start + batch_size]
+            payload = [{"idType": "ID_CUSIP", "value": c, "exchCode": "US"} for c in batch]
+            try:
+                resp = await client.post(OPENFIGI_URL, headers=_openfigi_headers(), json=payload)
+                if resp.status_code == 429:
+                    logger.warning("[Security Mapper] OpenFIGI rate-limited; backing off")
+                    await asyncio.sleep(max(delay, 10.0))
+                    continue
+                resp.raise_for_status()
+                results = resp.json()
+            except Exception as e:
+                logger.warning("[Security Mapper] OpenFIGI batch failed: %s", e)
+                for c in batch:
+                    out.setdefault(c, None)
+                await asyncio.sleep(delay)
+                continue
+
+            for cusip, item in zip(batch, results):
+                if isinstance(item, dict) and item.get("data"):
+                    out[cusip] = _pick_ticker(item["data"])
+                else:
+                    out[cusip] = None
+
+            if start + batch_size < len(cusips):
+                await asyncio.sleep(delay)
+    return out
+
+
+async def map_holdings_to_tickers(holdings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Resolve a 13F holdings list (issuer_name + cusip) to tickers, using a
+    persistent CUSIP cache and OpenFIGI for cache misses. Adds ``ticker``,
+    ``sector``, and ``mapping_status`` keys to each holding.
+    """
+    from backend import fund_leaderboard_store as store
+
+    enriched: List[Dict[str, Any]] = []
+    cusips = []
+    for h in holdings:
+        c = (h.get("cusip") or "").strip()
+        if c:
+            cusips.append(c)
+    unique_cusips = sorted(set(cusips))
+
+    # 1. Cache lookups
+    cache_hits: Dict[str, Dict[str, Any]] = {}
+    misses: List[str] = []
+    for c in unique_cusips:
+        cached = store.cache_get_ticker(c)
+        if cached:
+            cache_hits[c] = cached
+        else:
+            misses.append(c)
+
+    # 2. Resolve misses via OpenFIGI, persist to cache
+    resolved = await _openfigi_resolve(misses) if misses else {}
+    for c in misses:
+        hit = resolved.get(c)
+        if hit and hit.get("ticker"):
+            store.cache_put_ticker(c, hit["ticker"], hit.get("name"), None, "mapped")
+            cache_hits[c] = {"ticker": hit["ticker"], "name": hit.get("name"), "sector": None}
+        else:
+            store.cache_put_ticker(c, None, None, None, "unmapped")
+            cache_hits[c] = {"ticker": None, "sector": None}
+
+    # 3. Enrich holdings
+    for h in holdings:
+        c = (h.get("cusip") or "").strip()
+        info = cache_hits.get(c, {})
+        ticker = info.get("ticker")
+        out = h.copy()
+        out["ticker"] = ticker
+        out["sector"] = info.get("sector") or "Unknown"
+        out["mapping_status"] = "mapped" if ticker else "unmapped"
+        enriched.append(out)
+
+    mapped_count = sum(1 for h in enriched if h.get("ticker"))
+    hub_add_note(
+        "data_ingest",
+        f"[Security Mapper] Mapped {mapped_count}/{len(enriched)} holdings to tickers "
+        f"({len(cache_hits) - len(misses)} cache hits, {len(misses)} OpenFIGI lookups)",
+    )
+    return enriched

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy, TrendingUp, TrendingDown, Target, Building2, BarChart2, Briefcase, FileText, ShieldAlert, Award, ChevronRight, X, Loader2, AlertTriangle, PlayCircle, Info } from 'lucide-react';
+import { API_BASE_URL, apiFetch } from '../../api';
 
 /**
  * @typedef {'reported' | '13f_economic' | '13f_investable'} LeaderboardMode
@@ -37,64 +38,96 @@ const formatUsd = (val) => {
 const formatMult = (val) => val != null ? `${val.toFixed(1)}x` : 'N/A';
 const formatDec = (val) => val != null ? val.toFixed(2) : 'N/A';
 
+function ReturnsSparkline({ series }) {
+    const W = 520, H = 180, pad = 8;
+    const fund = series.map((p) => p.cumulativeValue).filter((v) => v != null);
+    const bench = series.map((p) => p.benchmarkCumulativeValue).filter((v) => v != null);
+    const all = [...fund, ...bench];
+    if (all.length < 2) return null;
+    const min = Math.min(...all), max = Math.max(...all);
+    const range = max - min || 1;
+    const x = (i, n) => pad + (i / (n - 1)) * (W - 2 * pad);
+    const y = (v) => H - pad - ((v - min) / range) * (H - 2 * pad);
+    const toPath = (vals) => vals.map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i, vals.length).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+    const last = series[series.length - 1];
+    const totalPct = last?.cumulativeValue != null ? (last.cumulativeValue - 1) : null;
+
+    return (
+        <div>
+            <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-48">
+                <path d={toPath(fund)} fill="none" stroke="#34d399" strokeWidth="2" />
+                {bench.length > 1 && <path d={toPath(bench)} fill="none" stroke="#64748b" strokeWidth="1.5" strokeDasharray="4 3" />}
+            </svg>
+            <div className="flex items-center gap-4 text-xs text-slate-400 mt-2">
+                <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-emerald-400 inline-block" /> Fund clone</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-slate-500 inline-block" /> SPY</span>
+                {totalPct != null && (
+                    <span className="ml-auto text-slate-300">Cumulative: {(totalPct * 100).toFixed(1)}%</span>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export default function FundLeaderboardUI() {
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [message, setMessage] = useState(null);
     const [selectedFundId, setSelectedFundId] = useState(null);
     const [mode, setMode] = useState('13f_investable');
 
     useEffect(() => {
-        // Fetch or use mock data
+        let cancelled = false;
         setLoading(true);
-        // Mock data to unblock UI while Phase 2 connects backend
-        const mockRows = [
-            {
-                rank: 1,
-                fundId: 'f1',
-                fundName: 'Pershing Square Capital',
-                managerType: 'Hedge Fund',
-                strategyTags: ['Concentrated', 'Activist'],
-                cagr10Y: 0.185,
-                roicProxy10Y: 4.4,
-                alphaVsSP500: 0.052,
-                sharpe10Y: 1.3,
-                maxDrawdown10Y: -0.21,
-                latest13FValueUsd: 10400000000,
-                latestReportPeriod: '2023-12-31',
-                topSector: 'Consumer Discretionary',
-                topSectorWeight: 0.35,
-                top10HoldingsWeight: 0.95,
-                dataConfidenceScore: 85,
-                dataConfidenceLabel: 'Good',
-                lastFilingDate: '2024-02-14'
-            },
-            {
-                rank: 2,
-                fundId: 'f2',
-                fundName: 'Renaissance Technologies',
-                managerType: 'Quant',
-                strategyTags: ['Quant', 'High Frequency'],
-                cagr10Y: 0.125,
-                roicProxy10Y: 2.1,
-                alphaVsSP500: -0.01,
-                sharpe10Y: 0.8,
-                maxDrawdown10Y: -0.15,
-                latest13FValueUsd: 65000000000,
-                latestReportPeriod: '2023-12-31',
-                topSector: 'Information Technology',
-                topSectorWeight: 0.22,
-                top10HoldingsWeight: 0.12,
-                dataConfidenceScore: 45,
-                dataConfidenceLabel: 'Low',
-                lastFilingDate: '2024-02-14'
-            }
-        ];
+        setError(null);
+        setMessage(null);
 
-        setTimeout(() => {
-            setRows(mockRows);
-            setLoading(false);
-        }, 500);
+        apiFetch(`${API_BASE_URL}/api/funds/leaderboard?mode=${encodeURIComponent(mode)}&limit=50`)
+            .then((data) => {
+                if (cancelled) return;
+                setRows(Array.isArray(data?.rows) ? data.rows : []);
+                setMessage(data?.message || null);
+            })
+            .catch((e) => {
+                if (cancelled) return;
+                setRows([]);
+                setError(e?.message || 'Failed to load leaderboard');
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+
+        return () => { cancelled = true; };
     }, [mode]);
+
+    const [detail, setDetail] = useState({ portfolio: null, returns: null, loading: false, error: null });
+
+    useEffect(() => {
+        if (!selectedFundId) {
+            setDetail({ portfolio: null, returns: null, loading: false, error: null });
+            return;
+        }
+        let cancelled = false;
+        setDetail({ portfolio: null, returns: null, loading: true, error: null });
+
+        Promise.allSettled([
+            apiFetch(`${API_BASE_URL}/api/funds/${encodeURIComponent(selectedFundId)}/portfolio/latest`),
+            apiFetch(`${API_BASE_URL}/api/funds/${encodeURIComponent(selectedFundId)}/returns?mode=${encodeURIComponent(mode)}`),
+        ]).then(([pRes, rRes]) => {
+            if (cancelled) return;
+            setDetail({
+                portfolio: pRes.status === 'fulfilled' ? pRes.value : null,
+                returns: rRes.status === 'fulfilled' ? rRes.value : null,
+                loading: false,
+                error: (pRes.status === 'rejected' && rRes.status === 'rejected')
+                    ? 'Detailed data not available for this fund yet.'
+                    : null,
+            });
+        });
+
+        return () => { cancelled = true; };
+    }, [selectedFundId, mode]);
 
     const getConfidenceColor = (label) => {
         switch (label) {
@@ -114,7 +147,7 @@ export default function FundLeaderboardUI() {
                         <Trophy className="text-amber-400" size={28} />
                         Fund Leaderboard
                     </h1>
-                    <p className="text-slate-400 mt-1">Institutional Intelligence & 10-Year Clone Returns</p>
+                    <p className="text-slate-400 mt-1">Institutional Intelligence & 5-Year Clone Returns</p>
                 </div>
             </header>
 
@@ -152,8 +185,8 @@ export default function FundLeaderboardUI() {
                             <tr className="border-b border-slate-800 bg-slate-800/30 text-xs font-semibold text-slate-400 uppercase tracking-wider">
                                 <th className="px-4 py-3">Rank</th>
                                 <th className="px-4 py-3">Fund / Manager</th>
-                                <th className="px-4 py-3 text-right">10Y CAGR</th>
-                                <th className="px-4 py-3 text-right">10Y Alpha</th>
+                                <th className="px-4 py-3 text-right">5Y CAGR</th>
+                                <th className="px-4 py-3 text-right">5Y Alpha</th>
                                 <th className="px-4 py-3 text-right">Sharpe</th>
                                 <th className="px-4 py-3 text-right">Drawdown</th>
                                 <th className="px-4 py-3 text-right">Latest 13F Value</th>
@@ -170,10 +203,17 @@ export default function FundLeaderboardUI() {
                                         Loading leaderboard data...
                                     </td>
                                 </tr>
+                            ) : error ? (
+                                <tr>
+                                    <td colSpan="10" className="px-4 py-8 text-center text-rose-400">
+                                        <AlertTriangle className="w-6 h-6 mx-auto mb-2" />
+                                        {error}
+                                    </td>
+                                </tr>
                             ) : rows.length === 0 ? (
                                 <tr>
                                     <td colSpan="10" className="px-4 py-8 text-center text-slate-500">
-                                        No funds match the current filters.
+                                        {message || 'No funds match the current filters.'}
                                     </td>
                                 </tr>
                             ) : rows.map((row) => (
@@ -269,7 +309,7 @@ export default function FundLeaderboardUI() {
                                     <p className="text-2xl font-semibold text-emerald-400">
                                         {formatPct(rows.find(r => r.fundId === selectedFundId)?.cagr10Y)}
                                     </p>
-                                    <p className="text-xs text-slate-500 mt-1">Investable Clone Return</p>
+                                    <p className="text-xs text-slate-500 mt-1">5Y Investable Clone Return</p>
                                 </div>
                             </div>
 
@@ -286,26 +326,65 @@ export default function FundLeaderboardUI() {
                                 </div>
                             )}
 
-                            {/* Portfolio Preview */}
+                            {/* Portfolio Allocation */}
                             <div className="bg-slate-950 rounded-xl border border-slate-800 p-5">
                                 <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
                                     <Briefcase size={16} className="text-blue-400" />
-                                    Portfolio Allocation
+                                    Top Holdings & Sectors
                                 </h3>
-                                <div className="flex items-center justify-center h-40 text-slate-500 border border-dashed border-slate-800 rounded-lg">
-                                    Sector & Holdings Charts (Backend Required)
-                                </div>
+                                {detail.loading ? (
+                                    <div className="flex items-center justify-center h-40 text-slate-500">
+                                        <Loader2 className="w-5 h-5 animate-spin" />
+                                    </div>
+                                ) : detail.portfolio ? (
+                                    <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            {(detail.portfolio.sectorAllocation || []).slice(0, 5).map((s) => (
+                                                <div key={s.sector} className="flex items-center gap-3">
+                                                    <span className="text-xs text-slate-400 w-40 truncate" title={s.sector}>{s.sector}</span>
+                                                    <div className="flex-1 h-2 bg-slate-800 rounded overflow-hidden">
+                                                        <div className="h-full bg-blue-500/70" style={{ width: `${Math.min(100, (s.weight || 0) * 100)}%` }} />
+                                                    </div>
+                                                    <span className="text-xs text-slate-300 w-12 text-right">{formatPct(s.weight)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="border-t border-slate-800 pt-3 space-y-1">
+                                            {[...(detail.portfolio.holdings || [])]
+                                                .sort((a, b) => (b.weight || 0) - (a.weight || 0))
+                                                .slice(0, 8)
+                                                .map((h, i) => (
+                                                    <div key={`${h.ticker || h.companyName}-${i}`} className="flex justify-between text-xs">
+                                                        <span className="text-slate-300 truncate max-w-[60%]">{h.ticker || h.companyName || 'N/A'}</span>
+                                                        <span className="text-slate-400">{formatPct(h.weight)}</span>
+                                                    </div>
+                                                ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-center h-40 text-slate-500 border border-dashed border-slate-800 rounded-lg text-sm">
+                                        {detail.error || 'Holdings data unavailable.'}
+                                    </div>
+                                )}
                             </div>
 
-                            {/* Performance Chart Preview */}
+                            {/* Cumulative Returns */}
                             <div className="bg-slate-950 rounded-xl border border-slate-800 p-5">
                                 <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
                                     <TrendingUp size={16} className="text-emerald-400" />
-                                    10-Year Return Growth
+                                    5-Year Return Growth
                                 </h3>
-                                <div className="flex items-center justify-center h-48 text-slate-500 border border-dashed border-slate-800 rounded-lg">
-                                    Cumulative Returns Chart (Backend Required)
-                                </div>
+                                {detail.loading ? (
+                                    <div className="flex items-center justify-center h-48 text-slate-500">
+                                        <Loader2 className="w-5 h-5 animate-spin" />
+                                    </div>
+                                ) : (detail.returns?.series?.length > 1) ? (
+                                    <ReturnsSparkline series={detail.returns.series} />
+                                ) : (
+                                    <div className="flex items-center justify-center h-48 text-slate-500 border border-dashed border-slate-800 rounded-lg text-sm">
+                                        {detail.error || 'Return series unavailable.'}
+                                    </div>
+                                )}
                             </div>
 
                         </div>

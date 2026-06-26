@@ -1,157 +1,136 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
-from typing import List, Optional
-import uuid
+import asyncio
+import logging
+import os
+
+from fastapi import APIRouter, Header, HTTPException, Query
+from typing import Optional
+
+from .. import fund_leaderboard_store as store
+from .. import fund_leaderboard_job as job
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/funds", tags=["funds"])
 
+_EMPTY_DISCLAIMER = (
+    "13F-derived returns are partial public long-book estimates, not actual fund "
+    "returns. They exclude shorts, leverage, cash, and non-U.S. holdings."
+)
+
+
+def _empty_leaderboard(mode: str) -> dict:
+    return {
+        "asOfDate": None,
+        "latestReportPeriod": None,
+        "methodologyVersion": store.METHODOLOGY_VERSION,
+        "mode": mode,
+        "disclaimer": _EMPTY_DISCLAIMER,
+        "rows": [],
+        "message": (
+            "No leaderboard snapshot yet. Trigger ingestion via "
+            "POST /api/funds/ingest/run to populate from SEC 13F filings."
+        ),
+    }
+
+
 @router.get("/leaderboard")
 async def get_fund_leaderboard(
-    period: str = Query("10Y"),
+    period: str = Query("5Y"),
     mode: str = Query("13f_investable"),
     rankingMode: str = Query("risk_adjusted_default"),
     strategy: str = Query("all"),
     sector: str = Query("all"),
-    minTrackRecordQuarters: int = Query(32),
+    minTrackRecordQuarters: int = Query(8),
     excludeIndexManagers: bool = Query(True),
-    minConfidence: int = Query(60),
+    minConfidence: int = Query(0),
     latestReportPeriod: str = Query("auto"),
-    limit: int = Query(100),
-    offset: int = Query(0)
+    limit: int = Query(50),
+    offset: int = Query(0),
 ):
-    """
-    Returns the fund leaderboard rankings based on 13F clone performance.
-    """
-    # TODO: Implement DB query over `fund_leaderboard_snapshots`
-    return {
-        "asOfDate": "2024-02-14",
-        "latestReportPeriod": "2023-12-31",
-        "methodologyVersion": "fund-leaderboard-v1.0",
-        "mode": mode,
-        "disclaimer": "13F-derived returns are partial public long-book estimates, not actual fund returns.",
-        "rows": [
-            {
-                "rank": 1,
-                "fundId": str(uuid.uuid4()),
-                "fundName": "Example Capital Management",
-                "managerType": "hedge_fund",
-                "strategyTags": ["value", "concentrated_long_equity"],
-                "cagr10Y": 0.184,
-                "roicProxy10Y": 4.42,
-                "alphaVsSP500": 0.052,
-                "sharpe10Y": 1.31,
-                "maxDrawdown10Y": -0.218,
-                "latest13FValueUsd": 12500000000,
-                "topSector": "Information Technology",
-                "topSectorWeight": 0.42,
-                "top10HoldingsWeight": 0.68,
-                "dataConfidenceScore": 82,
-                "dataConfidenceLabel": "Good",
-                "lastFilingDate": "2024-02-14",
-                "reportPeriod": "2023-12-31"
-            }
-        ]
-    }
+    """Fund leaderboard rankings based on 13F clone performance (DB-backed)."""
+    try:
+        store.init_schema()
+        result = store.get_leaderboard(
+            mode=mode, limit=limit, offset=offset, min_confidence=minConfidence
+        )
+        if not result.get("rows"):
+            return _empty_leaderboard(mode)
+        return result
+    except Exception as e:
+        logger.warning("[FundLeaderboard] leaderboard query failed: %s", e)
+        return _empty_leaderboard(mode)
+
 
 @router.get("/{fundId}/portfolio/latest")
 async def get_fund_portfolio_latest(fundId: str):
-    """
-    Returns the latest 13F portfolio holdings and sector allocation for a specific fund.
-    """
-    # TODO: Implement DB query
-    return {
-        "fundId": fundId,
-        "fundName": "Example Capital Management",
-        "reportPeriod": "2023-12-31",
-        "filingDate": "2024-02-14",
-        "filingUrl": "https://www.sec.gov/Archives/...",
-        "totalMarketValueUsd": 12500000000,
-        "mappedMarketValuePct": 0.97,
-        "pricedMarketValuePct": 0.94,
-        "sectorAllocation": [
-            {
-                "sector": "Information Technology",
-                "weight": 0.42,
-                "marketValueUsd": 5250000000,
-                "holdingsCount": 12
-            }
-        ],
-        "holdings": [
-            {
-                "ticker": "AAPL",
-                "companyName": "Apple Inc.",
-                "cusip": "037833100",
-                "sector": "Information Technology",
-                "shares": 10000000,
-                "marketValueUsd": 1900000000,
-                "weight": 0.152,
-                "qoqWeightChange": 0.012,
-                "positionStatus": "INCREASED",
-                "mappingStatus": "mapped"
-            }
-        ]
-    }
+    """Latest 13F portfolio holdings and sector allocation for a fund."""
+    store.init_schema()
+    data = store.get_fund_portfolio_latest(fundId)
+    if not data:
+        raise HTTPException(status_code=404, detail="Fund portfolio not found")
+    return data
+
 
 @router.get("/{fundId}/returns")
 async def get_fund_returns(
     fundId: str,
     mode: str = Query("13f_investable"),
-    period: str = Query("10Y"),
-    benchmark: str = Query("SPY")
+    period: str = Query("5Y"),
+    benchmark: str = Query("SPY"),
 ):
-    """
-    Returns the time-series return data and performance metrics for a fund.
-    """
-    # TODO: Implement DB query
-    return {
-        "fundId": fundId,
-        "mode": mode,
-        "period": period,
-        "benchmark": benchmark,
-        "metrics": {
-            "cagr": 0.184,
-            "roicProxy": 4.42,
-            "alphaVsBenchmark": 0.052,
-            "sharpe": 1.31,
-            "sortino": 1.77,
-            "maxDrawdown": -0.218,
-            "positiveQuarterRate": 0.72,
-            "dataConfidenceScore": 82
-        },
-        "series": [
-            {
-                "periodEnd": "2016-06-30",
-                "returnValue": 0.041,
-                "cumulativeValue": 1.041,
-                "benchmarkCumulativeValue": 1.035,
-                "drawdown": 0
-            }
-        ]
-    }
+    """Time-series return data and performance metrics for a fund."""
+    store.init_schema()
+    data = store.get_fund_returns(fundId, mode=mode, period=period)
+    if not data:
+        raise HTTPException(status_code=404, detail="Fund returns not found")
+    return data
+
 
 @router.get("/{fundId}/quarterly-report")
 async def get_fund_quarterly_report(fundId: str):
-    """
-    Returns the quarterly report summary and AI narrative for a fund.
-    """
-    # TODO: Implement DB query
-    return {
-        "fundId": fundId,
-        "reportPeriod": "2023-12-31",
-        "filingDate": "2024-02-14",
-        "filingType": "13F-HR",
-        "filingUrl": "https://www.sec.gov/Archives/...",
-        "totalMarketValueUsd": 12500000000,
-        "numberOfHoldings": 87,
-        "topSector": "Information Technology",
-        "topSectorWeight": 0.42,
-        "top10HoldingsWeight": 0.68,
-        "newBuysCount": 8,
-        "soldOutCount": 5,
-        "increasedCount": 21,
-        "reducedCount": 18,
-        "summary": "Latest public 13F portfolio is concentrated in Information Technology...",
-        "qualityWarnings": [
-            "13F excludes shorts and cash",
-            "2.4% of market value could not be mapped to active tickers"
-        ]
-    }
+    """Quarterly report summary for a fund."""
+    store.init_schema()
+    data = store.get_fund_quarterly_report(fundId)
+    if not data:
+        raise HTTPException(status_code=404, detail="Fund report not found")
+    return data
+
+
+def _check_admin(token: Optional[str]) -> None:
+    """Require X-Admin-Token to match FUND_LB_ADMIN_TOKEN when that env is set."""
+    expected = os.environ.get("FUND_LB_ADMIN_TOKEN", "").strip()
+    if expected and token != expected:
+        raise HTTPException(status_code=403, detail="Forbidden: invalid admin token")
+
+
+@router.post("/ingest/run")
+async def run_ingestion(
+    universeSize: int = Query(job.DEFAULT_UNIVERSE_SIZE),
+    topN: int = Query(job.DEFAULT_TOP_N),
+    maxQuarters: int = Query(job.DEFAULT_MAX_QUARTERS),
+    discoveryMax: Optional[int] = Query(None),
+    x_admin_token: Optional[str] = Header(None),
+):
+    """Kick the 13F ingestion + ranking pipeline in the background."""
+    _check_admin(x_admin_token)
+    state = job.get_run_state()
+    if state.get("status") == "running":
+        return {"status": "already_running", "state": state}
+
+    async def _runner():
+        await job.run_fund_leaderboard_job(
+            universe_size=universeSize,
+            top_n=topN,
+            max_quarters=maxQuarters,
+            discovery_max=discoveryMax,
+        )
+
+    asyncio.create_task(_runner())
+    return {"status": "started", "universeSize": universeSize, "topN": topN}
+
+
+@router.get("/ingest/status")
+async def ingestion_status():
+    """Current state of the ingestion job + how many funds are populated."""
+    store.init_schema()
+    return {"run": job.get_run_state(), "fundsTracked": store.count_funds()}

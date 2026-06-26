@@ -137,6 +137,13 @@ try:
 except Exception as _e:
     print(f"[SupplyChain][startup] skipped (non-fatal): {_e}")
 
+# Fund Leaderboard (13F clone-return pipeline) — ensure schema exists.
+try:
+    from . import fund_leaderboard_store as _fund_lb_store
+    _fund_lb_store.init_schema()
+except Exception as _e:
+    print(f"[FundLeaderboard][startup] schema init skipped (non-fatal): {_e}")
+
 # ── Register routers ─────────────────────────────────────────────────────────
 from .routers import (
     auth as auth_router,
@@ -266,6 +273,20 @@ async def startup_event():
     _mil_scheduler.add_job(_mil_slow, "interval", minutes=30, id="mil_slow", max_instances=1)
     _mil_scheduler.start()
     print("[MarketIntel] APScheduler: fast=10min, slow=30min")
+
+    # Fund Leaderboard weekly refresh (13F is quarterly, weekly is ample).
+    # Gated behind FUND_LB_SCHEDULE_ENABLE=1 since it is a heavy network job.
+    if os.environ.get("FUND_LB_SCHEDULE_ENABLE", "0").strip() == "1":
+        try:
+            from .fund_leaderboard_job import run_fund_leaderboard_job as _fund_lb_run
+            _fund_lb_scheduler = AsyncIOScheduler()
+            _fund_lb_scheduler.add_job(
+                _fund_lb_run, "interval", weeks=1, id="fund_lb_weekly", max_instances=1
+            )
+            _fund_lb_scheduler.start()
+            print("[FundLeaderboard] APScheduler: weekly 13F refresh enabled")
+        except Exception as _e:
+            print(f"[FundLeaderboard] scheduler start skipped (non-fatal): {_e}")
 
     # ── SEPL (Autogenesis §3.2) evolution cycle, feature-flagged off by default.
     # Even when SEPL_ENABLE=1, autocommit requires SEPL_AUTOCOMMIT=1; otherwise
