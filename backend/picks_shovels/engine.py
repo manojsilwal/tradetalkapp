@@ -18,6 +18,7 @@ import logging
 import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -45,6 +46,21 @@ def _inter_chunk_delay_s() -> float:
 
 def _evidence_timeout_s() -> float:
     return float(os.environ.get("PICKS_SHOVELS_EVIDENCE_TIMEOUT_S", "8") or "8")
+
+
+def _executor_workers() -> int:
+    return max(2, int(os.environ.get("PICKS_SHOVELS_EXECUTOR_WORKERS", "8") or "8"))
+
+
+# Dedicated bounded thread pool for the scan's blocking I/O (yfinance, news RSS).
+# Cloud Run's default loop executor is tiny (~cpu+4) and shared with the rest of
+# the app; an isolated pool prevents one slow fetch from starving everything.
+_EXECUTOR = ThreadPoolExecutor(max_workers=_executor_workers(), thread_name_prefix="ps-scan")
+
+
+async def _in_executor(fn, *args) -> Any:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_EXECUTOR, fn, *args)
 
 
 def get_universe() -> List[str]:
@@ -117,7 +133,7 @@ def _build_raw_row(
 async def _safe_thread(fn, *args) -> Dict[str, Any]:
     """Run a blocking Phase-3 fetcher off-loop with a timeout; degrade on failure."""
     try:
-        return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=_evidence_timeout_s())
+        return await asyncio.wait_for(_in_executor(fn, *args), timeout=_evidence_timeout_s())
     except Exception as e:
         logger.debug("[PicksShovels] %s failed: %s", getattr(fn, "__name__", fn), e)
         return {"available": False}
@@ -126,7 +142,7 @@ async def _safe_thread(fn, *args) -> Dict[str, Any]:
 async def _process_chunk(chunk: List[str]) -> List[Dict[str, Any]]:
     closes_by_ticker: Dict[str, List[float]] = {}
     try:
-        closes_by_ticker = await asyncio.to_thread(ps_data.fetch_price_series, chunk)
+        closes_by_ticker = await _in_executor(ps_data.fetch_price_series, chunk)
     except Exception as e:
         logger.warning("[PicksShovels] chunk history failed (%s…): %s", chunk[0] if chunk else "", e)
 
@@ -135,7 +151,7 @@ async def _process_chunk(chunk: List[str]) -> List[Dict[str, Any]]:
     async def _one(ticker: str) -> Optional[Dict[str, Any]]:
         async with sem:
             try:
-                fund = await asyncio.to_thread(ps_data.fetch_fundamentals_extended, ticker)
+                fund = await _in_executor(ps_data.fetch_fundamentals_extended, ticker)
             except Exception as e:
                 logger.debug("[PicksShovels] fundamentals failed for %s: %s", ticker, e)
                 fund = {"ticker": ticker.upper(), "company_name": ticker.upper()}

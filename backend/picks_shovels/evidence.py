@@ -77,7 +77,7 @@ def _news_max_items() -> int:
 
 
 def _news_timeout_s() -> float:
-    return float(os.environ.get("PICKS_SHOVELS_NEWS_TIMEOUT_S", "6") or "6")
+    return float(os.environ.get("PICKS_SHOVELS_NEWS_TIMEOUT_S", "5") or "5")
 
 
 # ── Deterministic keyword scoring (pure, offline-testable) ────────────────────

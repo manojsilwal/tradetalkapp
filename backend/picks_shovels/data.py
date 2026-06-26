@@ -96,16 +96,22 @@ def fetch_fundamentals_extended(ticker: str) -> Dict[str, Any]:
 
 
 def _operating_metrics_enabled() -> bool:
-    return os.environ.get("PICKS_SHOVELS_OPERATING_METRICS", "1").strip() != "0"
+    # Default OFF: yfinance quarterly statements can hang/retry under Yahoo
+    # rate-limiting, and an uncancellable to_thread call starves Cloud Run's small
+    # executor pool. Opt in (PICKS_SHOVELS_OPERATING_METRICS=1) only where the
+    # data source is reliable. News evidence (hard HTTP timeout) is the default
+    # Phase-3 signal.
+    return os.environ.get("PICKS_SHOVELS_OPERATING_METRICS", "0").strip() == "1"
 
 
 def fetch_operating_metrics(ticker: str) -> Dict[str, Any]:
     """
-    Operating momentum from yfinance quarterly revenue (Plan §7.4).
+    Operating momentum from yfinance quarterly revenue (Plan §7.4) — opt-in.
 
     Computes sequential (QoQ) revenue growth and its acceleration. Backlog / RPO
     are not standardized in XBRL and stay ``None`` (the scorer blend renormalizes
-    over present components — never fabricated). ``{"available": False}`` on failure.
+    over present components — never fabricated). ``{"available": False}`` on failure
+    or when disabled.
     """
     if not _operating_metrics_enabled():
         return {"available": False}
