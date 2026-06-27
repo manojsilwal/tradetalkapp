@@ -46,15 +46,18 @@ async def fetch_historical_prices(tickers: List[str], start_date: str, end_date:
 
         data = await asyncio.to_thread(_download)
 
-        # Format the dataframe to be MultiIndex columns (Ticker, Close/Volume/etc)
-        # If single ticker, it just returns simple columns
-        if len(tickers) == 1:
-            df = pd.DataFrame()
-            df[(tickers[0], 'Close')] = data['Close']
-            return df
-        else:
-            # yfinance already returns MultiIndex for multiple tickers
+        if data is None or data.empty:
+            return pd.DataFrame()
+
+        # Downstream uses xs('Close', level=1, axis=1), so normalize to a
+        # (ticker, field) MultiIndex. Current yfinance returns that shape for
+        # both single and multi ticker requests under group_by='ticker', but
+        # older versions return flat columns for a single ticker.
+        if isinstance(data.columns, pd.MultiIndex):
             return data
+        data = data.copy()
+        data.columns = pd.MultiIndex.from_product([[tickers[0]], data.columns])
+        return data
     except Exception as e:
         logger.error(f"[Return Reconstruction] Error fetching prices: {e}")
         return pd.DataFrame()
