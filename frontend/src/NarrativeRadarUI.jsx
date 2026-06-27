@@ -188,9 +188,30 @@ function Metric({ label, v, inverse }) {
 }
 
 function DetailDrawer({ theme, onClose }) {
+  const [timeline, setTimeline] = useState([]);
+  const [detail, setDetail] = useState(null);
+
+  useEffect(() => {
+    if (!theme) { setTimeline([]); setDetail(null); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const t = await apiFetch(`${API_BASE_URL}/narrative-radar/themes/${theme.theme_id}/timeline`);
+        if (alive) setTimeline(t?.events || []);
+      } catch { if (alive) setTimeline([]); }
+      try {
+        const d = await apiFetch(`${API_BASE_URL}/narrative-radar/themes/${theme.theme_id}`);
+        if (alive) setDetail(d || null);
+      } catch { if (alive) setDetail(null); }
+    })();
+    return () => { alive = false; };
+  }, [theme]);
+
   if (!theme) return null;
   const s = theme.scores || {};
-  const exp = theme.explanation || {};
+  const exp = (detail && detail.explanation) || theme.explanation || {};
+  const freshness = exp.data_freshness || {};
+  const backtest = detail && detail.backtest;
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 60,
@@ -232,10 +253,10 @@ function DetailDrawer({ theme, onClose }) {
             );
           })}
         </div>
-        {theme.backtest && (
+        {backtest && (
           <div style={{ marginTop: 12, fontSize: 12, color: '#cbd5e1' }}>
-            Backtest (21d): {theme.backtest.n} graded calls ·
-            {' '}hit rate {theme.backtest.hit_rate != null ? `${Math.round(theme.backtest.hit_rate * 100)}%` : '—'}
+            Backtest (21d): {backtest.n} graded calls ·
+            {' '}hit rate {backtest.hit_rate != null ? `${Math.round(backtest.hit_rate * 100)}%` : '—'}
           </div>
         )}
 
@@ -255,6 +276,37 @@ function DetailDrawer({ theme, onClose }) {
             </ul>
           </>
         )}
+        {timeline.length > 0 && (
+          <>
+            <h4 style={{ color: '#e2e8f0', marginBottom: 6, marginTop: 16 }}>Evidence timeline</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {timeline.slice(0, 12).map((ev, i) => (
+                <div key={i} style={{ borderLeft: '2px solid #334155', paddingLeft: 10 }}>
+                  <div style={{ fontSize: 11, color: '#64748b' }}>
+                    {ev.date ? new Date(ev.date).toLocaleDateString() : ev.source_type} · {ev.event_type}
+                  </div>
+                  <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>{ev.title}</div>
+                  {ev.summary && <div style={{ fontSize: 12, color: '#94a3b8' }}>{ev.summary}</div>}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {Object.keys(freshness).length > 0 && (
+          <>
+            <h4 style={{ color: '#e2e8f0', marginBottom: 6, marginTop: 16 }}>Data freshness</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 4, fontSize: 12, color: '#94a3b8' }}>
+              {Object.entries(freshness).map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <span>{k.replace(/_/g, ' ')}</span>
+                  <span style={{ color: String(v).includes('pending') ? '#64748b' : '#cbd5e1', textAlign: 'right' }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         {theme.pending_signal_families?.length > 0 && (
           <div style={{ marginTop: 12, fontSize: 12, color: '#94a3b8', display: 'flex', gap: 6 }}>
             <Info size={14} style={{ flexShrink: 0, marginTop: 2 }} />
