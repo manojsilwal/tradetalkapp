@@ -114,7 +114,16 @@ def _compute_core_cpi_yoy() -> Optional[float]:
 
 def _sync_fetch_all(include_extended: bool = True) -> dict:
     import os
-    if os.environ.get("FRED_OFFLINE") == "1" or os.environ.get("OFFLINE") == "1" or "PYTEST_CURRENT_TEST" in os.environ:
+    import sys
+    in_test = (
+        "PYTEST_CURRENT_TEST" in os.environ
+        or "unittest" in sys.modules
+        or "pytest" in sys.modules
+        or any("unittest" in arg or "pytest" in arg for arg in sys.argv)
+        or os.environ.get("FRED_OFFLINE") == "1"
+        or os.environ.get("OFFLINE") == "1"
+    )
+    if in_test:
         seed = _load_fred_seed() or {}
         snapshot = {
             "fed_funds_rate": seed.get("fed_funds_rate"),
