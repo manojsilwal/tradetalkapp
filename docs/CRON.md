@@ -48,6 +48,15 @@ If `PIPELINE_CRON_SECRET` is **unset**, behavior matches local dev (open access)
 | `render-wake.yml` (API wake) | Every 10 minutes | `GET /docs` |
 | `render-daily-pipeline.yml` (daily knowledge pipeline) | 00:05 UTC daily | `POST /knowledge/pipeline-run` with Bearer secret |
 | `macro-flow-daily.yml` | 01:25 UTC daily | `POST /macro/flow/cron-refresh` with Bearer secret |
+| `precompute-pages.yml` (global page snapshots) | 01:10 UTC daily + Mon 06:00 UTC | `POST /knowledge/picks-shovels-run` + `POST /knowledge/narrative-radar-run` (Bearer secret, **synchronous**) daily; `POST /api/funds/ingest/run` (`X-Admin-Token`) weekly |
+
+**Precompute pages (why external cron):** Cloud Run scales to zero and in-process
+schedulers don't run at zero, and its filesystem is ephemeral. The Picks & Shovels,
+Narrative Radar, and Fund Leaderboard pages therefore rely on (a) **durable snapshots**
+(`backend/durable_snapshot.py`, Postgres in prod) and (b) this external cron, which
+calls the warm endpoints **synchronously** so the instance stays alive until the
+durable snapshot is written. See [PRECOMPUTED_PAGES_PLAN.md](./PRECOMPUTED_PAGES_PLAN.md).
+Required repo secrets: `TRADETALK_API_BASE`, `PIPELINE_CRON_SECRET`, `FUND_LB_ADMIN_TOKEN` (weekly leaderboard only).
 
 Use **Actions → Run workflow** to test manually.
 

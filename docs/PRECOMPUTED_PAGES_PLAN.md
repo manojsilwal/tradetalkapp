@@ -2,7 +2,7 @@
 
 **Goal.** The three "global" pages — **Picks & Shovels Momentum Finder** (`/picks-shovels`), **Narrative Rotation Radar** (`/narrative-radar`), and **Fund Leaderboard** (`/intelligence/funds/leaderboard`) — should load **instantly from precomputed, shared, daily-refreshed data**, instead of showing a blank "click Run/Refresh" state and forcing the user to wait 1–2 minutes for a live scan. These datasets are the same for every user and change at most daily, so they are a perfect fit for a scheduled warm + durable snapshot.
 
-> **Status:** plan / design (no code in this doc).
+> **Status:** Implemented. Durable shared store `backend/durable_snapshot.py` (Postgres dual-write, degrades to local SQLite / inactive when unconfigured) wired into `picks_shovels/store.py` + `narrative_radar/store.py` (snapshots + alerts survive Cloud Run cold starts). Synchronous warm endpoints `POST /knowledge/picks-shovels-run` + `POST /knowledge/narrative-radar-run` (added/updated). External cron `.github/workflows/precompute-pages.yml` (daily P&S + Radar, weekly leaderboard) + secondary in-process APScheduler jobs (`picks_shovels_daily` 00:40, `narrative_radar_daily` 00:50). Frontend cold-start self-warm on `/picks-shovels` and `/narrative-radar`. Tests: `backend/tests/test_narrative_radar.py` (57, incl. durable round-trip + cold-start survival). The Fund Leaderboard was already Postgres-durable; the weekly cron triggers its ingest.
 
 ---
 
