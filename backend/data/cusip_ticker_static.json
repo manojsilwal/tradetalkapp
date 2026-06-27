@@ -1,0 +1,1757 @@
+{
+ "001055102": {
+  "name": "AFLAC INC",
+  "sector": "Finance",
+  "ticker": "AFL"
+ },
+ "00130H105": {
+  "name": "AES CORP",
+  "sector": "Utilities",
+  "ticker": "AES"
+ },
+ "00206R102": {
+  "name": "AT&T INC",
+  "sector": "Telecommunications",
+  "ticker": "T"
+ },
+ "002824100": {
+  "name": "ABBOTT LABORATORIES",
+  "sector": "Health Care",
+  "ticker": "ABT"
+ },
+ "00287Y109": {
+  "name": "ABBVIE INC",
+  "sector": "Health Care",
+  "ticker": "ABBV"
+ },
+ "00724F101": {
+  "name": "ADOBE INC",
+  "sector": "Technology",
+  "ticker": "ADBE"
+ },
+ "00766T100": {
+  "name": "AECOM",
+  "sector": "Consumer Discretionary",
+  "ticker": "ACM"
+ },
+ "007903107": {
+  "name": "ADVANCED MICRO DEVICES",
+  "sector": "Technology",
+  "ticker": "AMD"
+ },
+ "008474108": {
+  "name": "AGNICO EAGLE MINES LTD",
+  "sector": "Other",
+  "ticker": "AEM"
+ },
+ "008492100": {
+  "name": "AGREE REALTY CORP",
+  "sector": "Real Estate",
+  "ticker": "ADC"
+ },
+ "00971T101": {
+  "name": "AKAMAI TECHNOLOGIES INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "AKAM"
+ },
+ "012653101": {
+  "name": "ALBEMARLE CORP",
+  "sector": "Industrials",
+  "ticker": "ALB"
+ },
+ "018522300": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "020002101": {
+  "name": "ALLSTATE CORP",
+  "sector": "Finance",
+  "ticker": "ALL"
+ },
+ "02079K107": {
+  "name": "ALPHABET INC-CL C",
+  "sector": "Technology",
+  "ticker": "GOOG"
+ },
+ "02079K305": {
+  "name": "ALPHABET INC-CL A",
+  "sector": "Technology",
+  "ticker": "GOOGL"
+ },
+ "02079k107": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "02079k305": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "023135106": {
+  "name": "AMAZON.COM INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "AMZN"
+ },
+ "02553E106": {
+  "name": "AMERICAN EAGLE OUTFITTERS",
+  "sector": "Consumer Discretionary",
+  "ticker": "AEO"
+ },
+ "03064D108": {
+  "name": "AMERICOLD REALTY TRUST INC",
+  "sector": "Real Estate",
+  "ticker": "COLD"
+ },
+ "03076C106": {
+  "name": "AMERIPRISE FINANCIAL INC",
+  "sector": "Finance",
+  "ticker": "AMP"
+ },
+ "031162100": {
+  "name": "AMGEN INC",
+  "sector": "Health Care",
+  "ticker": "AMGN"
+ },
+ "032095101": {
+  "name": "AMPHENOL CORP-CL A",
+  "sector": "Technology",
+  "ticker": "APH"
+ },
+ "032654105": {
+  "name": "ANALOG DEVICES INC",
+  "sector": "Technology",
+  "ticker": "ADI"
+ },
+ "037833100": {
+  "name": "APPLE INC",
+  "sector": "Technology",
+  "ticker": "AAPL"
+ },
+ "038222105": {
+  "name": "APPLIED MATERIALS INC",
+  "sector": "Technology",
+  "ticker": "AMAT"
+ },
+ "03831W108": {
+  "name": "APPLOVIN CORP-CLASS A",
+  "sector": "Technology",
+  "ticker": "APP"
+ },
+ "03990B101": {
+  "name": "ARES MANAGEMENT CORP - A",
+  "sector": "Finance",
+  "ticker": "ARES"
+ },
+ "040413106": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "040413205": {
+  "name": "ARISTA NETWORKS INC",
+  "sector": "Telecommunications",
+  "ticker": "ANET"
+ },
+ "044186104": {
+  "name": "ASHLAND INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "ASH"
+ },
+ "046353108": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "053015103": {
+  "name": "AUTOMATIC DATA PROCESSING",
+  "sector": "Industrials",
+  "ticker": "ADP"
+ },
+ "05368V106": {
+  "name": "AVIENT CORP",
+  "sector": "Industrials",
+  "ticker": "AVNT"
+ },
+ "05464C101": {
+  "name": "AXON ENTERPRISE INC",
+  "sector": "Industrials",
+  "ticker": "AXON"
+ },
+ "05605H100": {
+  "name": "BWX TECHNOLOGIES INC",
+  "sector": "Industrials",
+  "ticker": "BWXT"
+ },
+ "060505104": {
+  "name": "BANK OF AMERICA CORP",
+  "sector": "Finance",
+  "ticker": "BAC"
+ },
+ "063671101": {
+  "name": "BANK OF MONTREAL",
+  "sector": "Other",
+  "ticker": "BMO"
+ },
+ "064058100": {
+  "name": "BANK OF NEW YORK MELLON CORP",
+  "sector": "Finance",
+  "ticker": "BNY"
+ },
+ "067806109": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "084670108": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "084670702": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "09247X101": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "094235108": {
+  "name": "BLOOMIN' BRANDS INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "BLMN"
+ },
+ "097023105": {
+  "name": "BOEING CO/THE",
+  "sector": "Industrials",
+  "ticker": "BA"
+ },
+ "09857L108": {
+  "name": "BOOKING HOLDINGS INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "BKNG"
+ },
+ "099502106": {
+  "name": "BOOZ ALLEN HAMILTON HOLDINGS",
+  "sector": "Consumer Discretionary",
+  "ticker": "BAH"
+ },
+ "099724106": {
+  "name": "BORGWARNER INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "BWA"
+ },
+ "101137107": {
+  "name": "BOSTON SCIENTIFIC CORP",
+  "sector": "Health Care",
+  "ticker": "BSX"
+ },
+ "110122108": {
+  "name": "BRISTOL-MYERS SQUIBB CO",
+  "sector": "Health Care",
+  "ticker": "BMY"
+ },
+ "11135F101": {
+  "name": "BROADCOM INC",
+  "sector": "Technology",
+  "ticker": "AVGO"
+ },
+ "11135f101": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "11271J107": {
+  "name": "BROOKFIELD CORP",
+  "sector": "Other",
+  "ticker": "BN"
+ },
+ "11284V105": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "117043109": {
+  "name": "BRUNSWICK CORP",
+  "sector": "Industrials",
+  "ticker": "BC"
+ },
+ "126408103": {
+  "name": "CSX CORP",
+  "sector": "Industrials",
+  "ticker": "CSX"
+ },
+ "126650100": {
+  "name": "CVS HEALTH CORP",
+  "sector": "Consumer Staples",
+  "ticker": "CVS"
+ },
+ "127387108": {
+  "name": "CADENCE DESIGN SYS INC",
+  "sector": "Technology",
+  "ticker": "CDNS"
+ },
+ "130788102": {
+  "name": "CALIFORNIA WATER SERVICE GRP",
+  "sector": "Utilities",
+  "ticker": "CWT"
+ },
+ "13321L108": {
+  "name": "CAMECO CORP",
+  "sector": "Other",
+  "ticker": "CCJ"
+ },
+ "136375102": {
+  "name": "CANADIAN NATL RAILWAY CO",
+  "sector": "Other",
+  "ticker": "CNI"
+ },
+ "136385101": {
+  "name": "CANADIAN NATURAL RESOURCES",
+  "sector": "Other",
+  "ticker": "CNQ"
+ },
+ "13645T100": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "13646K108": {
+  "name": "CANADIAN PACIFIC KANSAS CITY",
+  "sector": "Other",
+  "ticker": "CP"
+ },
+ "14040H105": {
+  "name": "CAPITAL ONE FINANCIAL CORP",
+  "sector": "Finance",
+  "ticker": "COF"
+ },
+ "146229109": {
+  "name": "CARTER'S INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "CRI"
+ },
+ "147528103": {
+  "name": "CASEY'S GENERAL STORES INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "CASY"
+ },
+ "149123101": {
+  "name": "CATERPILLAR INC",
+  "sector": "Industrials",
+  "ticker": "CAT"
+ },
+ "15872M104": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "163851108": {
+  "name": "CHEMOURS CO/THE",
+  "sector": "Industrials",
+  "ticker": "CC"
+ },
+ "16411R208": {
+  "name": "CHENIERE ENERGY INC",
+  "sector": "Utilities",
+  "ticker": "LNG"
+ },
+ "165167735": {
+  "name": "EXPAND ENERGY CORP",
+  "sector": "Energy",
+  "ticker": "EXE"
+ },
+ "166764100": {
+  "name": "CHEVRON CORP",
+  "sector": "Energy",
+  "ticker": "CVX"
+ },
+ "17275R102": {
+  "name": "CISCO SYSTEMS INC",
+  "sector": "Telecommunications",
+  "ticker": "CSCO"
+ },
+ "17275r102": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "172967424": {
+  "name": "CITIGROUP INC",
+  "sector": "Finance",
+  "ticker": "C"
+ },
+ "191216100": {
+  "name": "COCA-COLA CO/THE",
+  "sector": "Consumer Staples",
+  "ticker": "KO"
+ },
+ "192446102": {
+  "name": "COGNIZANT TECH SOLUTIONS-A",
+  "sector": "Technology",
+  "ticker": "CTSH"
+ },
+ "19247A100": {
+  "name": "COHEN & STEERS INC",
+  "sector": "Finance",
+  "ticker": "CNS"
+ },
+ "19247G107": {
+  "name": "COHERENT CORP",
+  "sector": "Technology",
+  "ticker": "COHR"
+ },
+ "197236102": {
+  "name": "COLUMBIA BANKING SYSTEM INC",
+  "sector": "Finance",
+  "ticker": "COLB"
+ },
+ "20030N101": {
+  "name": "COMCAST CORP-CLASS A",
+  "sector": "Telecommunications",
+  "ticker": "CMCSA"
+ },
+ "20030n101": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "205887102": {
+  "name": "CONAGRA BRANDS INC",
+  "sector": "Consumer Staples",
+  "ticker": "CAG"
+ },
+ "20602D101": {
+  "name": "CONCENTRIX CORP",
+  "sector": "Technology",
+  "ticker": "CNXC"
+ },
+ "20825C104": {
+  "name": "CONOCOPHILLIPS",
+  "sector": "Energy",
+  "ticker": "COP"
+ },
+ "21036P108": {
+  "name": "CONSTELLATION BRANDS INC-A",
+  "sector": "Consumer Staples",
+  "ticker": "STZ"
+ },
+ "21037T109": {
+  "name": "CONSTELLATION ENERGY",
+  "sector": "Utilities",
+  "ticker": "CEG"
+ },
+ "219350105": {
+  "name": "CORNING INC",
+  "sector": "Industrials",
+  "ticker": "GLW"
+ },
+ "22052L104": {
+  "name": "CORTEVA INC",
+  "sector": "Consumer Staples",
+  "ticker": "CTVA"
+ },
+ "22160K105": {
+  "name": "COSTCO WHOLESALE CORP",
+  "sector": "Consumer Discretionary",
+  "ticker": "COST"
+ },
+ "22160k105": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "222795502": {
+  "name": "COUSINS PROPERTIES INC",
+  "sector": "Real Estate",
+  "ticker": "CUZ"
+ },
+ "22788C105": {
+  "name": "CROWDSTRIKE HOLDINGS INC - A",
+  "sector": "Technology",
+  "ticker": "CRWD"
+ },
+ "229899109": {
+  "name": "CULLEN/FROST BANKERS INC",
+  "sector": "Finance",
+  "ticker": "CFR"
+ },
+ "235851102": {
+  "name": "DANAHER CORP",
+  "sector": "Industrials",
+  "ticker": "DHR"
+ },
+ "24665A103": {
+  "name": "DELEK US HOLDINGS INC",
+  "sector": "Energy",
+  "ticker": "DK"
+ },
+ "248019101": {
+  "name": "DELUXE CORP",
+  "sector": "Consumer Discretionary",
+  "ticker": "DLX"
+ },
+ "254687106": {
+  "name": "WALT DISNEY CO/THE",
+  "sector": "Consumer Discretionary",
+  "ticker": "DIS"
+ },
+ "278642103": {
+  "name": "EBAY INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "EBAY"
+ },
+ "28035Q102": {
+  "name": "EDGEWELL PERSONAL CARE CO",
+  "sector": "Consumer Discretionary",
+  "ticker": "EPC"
+ },
+ "28618M106": {
+  "name": "ELEMENT SOLUTIONS INC",
+  "sector": "Industrials",
+  "ticker": "ESI"
+ },
+ "291011104": {
+  "name": "EMERSON ELECTRIC CO",
+  "sector": "Technology",
+  "ticker": "EMR"
+ },
+ "29250N105": {
+  "name": "ENBRIDGE INC",
+  "sector": "Other",
+  "ticker": "ENB"
+ },
+ "29261A100": {
+  "name": "ENCOMPASS HEALTH CORP",
+  "sector": "Health Care",
+  "ticker": "EHC"
+ },
+ "29275Y102": {
+  "name": "ENERSYS",
+  "sector": "Technology",
+  "ticker": "ENS"
+ },
+ "29355A107": {
+  "name": "ENPHASE ENERGY INC",
+  "sector": "Technology",
+  "ticker": "ENPH"
+ },
+ "30231G102": {
+  "name": "EXXON MOBIL CORP",
+  "sector": "Energy",
+  "ticker": "XOM"
+ },
+ "30231g102": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "30257X104": {
+  "name": "FB FINANCIAL CORP",
+  "sector": "Finance",
+  "ticker": "FBK"
+ },
+ "30303M102": {
+  "name": "META PLATFORMS INC-CLASS A",
+  "sector": "Technology",
+  "ticker": "META"
+ },
+ "30303m102": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "316773100": {
+  "name": "FIFTH THIRD BANCORP",
+  "sector": "Finance",
+  "ticker": "FITB"
+ },
+ "31847R102": {
+  "name": "FIRST AMERICAN FINANCIAL",
+  "sector": "Finance",
+  "ticker": "FAF"
+ },
+ "32054K103": {
+  "name": "FIRST INDUSTRIAL REALTY TR",
+  "sector": "Real Estate",
+  "ticker": "FR"
+ },
+ "335720108": {
+  "name": "FIRST NATL OF NEBRASKA INC",
+  "sector": null,
+  "ticker": "FINN"
+ },
+ "336433107": {
+  "name": "FIRST SOLAR INC",
+  "sector": "Technology",
+  "ticker": "FSLR"
+ },
+ "337738108": {
+  "name": "FISERV INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "FISV"
+ },
+ "34354P105": {
+  "name": "FLOWSERVE CORP",
+  "sector": "Industrials",
+  "ticker": "FLS"
+ },
+ "34959E109": {
+  "name": "FORTINET INC",
+  "sector": "Technology",
+  "ticker": "FTNT"
+ },
+ "34959e109": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "35671D857": {
+  "name": "FREEPORT-MCMORAN INC",
+  "sector": "Basic Materials",
+  "ticker": "FCX"
+ },
+ "359694106": {
+  "name": "H.B. FULLER CO.",
+  "sector": "Industrials",
+  "ticker": "FUL"
+ },
+ "36118L106": {
+  "name": "FUTU HOLDINGS LTD-ADR",
+  "sector": "Other",
+  "ticker": "FUTU"
+ },
+ "36828A101": {
+  "name": "GE VERNOVA INC",
+  "sector": "Uncategorized",
+  "ticker": "GEV"
+ },
+ "369550108": {
+  "name": "GENERAL DYNAMICS CORP",
+  "sector": "Industrials",
+  "ticker": "GD"
+ },
+ "37045V100": {
+  "name": "GENERAL MOTORS CO",
+  "sector": "Industrials",
+  "ticker": "GM"
+ },
+ "375558103": {
+  "name": "GILEAD SCIENCES INC",
+  "sector": "Health Care",
+  "ticker": "GILD"
+ },
+ "37637Q105": {
+  "name": "GLACIER BANCORP INC",
+  "sector": "Finance",
+  "ticker": "GBCI"
+ },
+ "38141G104": {
+  "name": "GOLDMAN SACHS GROUP INC",
+  "sector": "Finance",
+  "ticker": "GS"
+ },
+ "384802104": {
+  "name": "WW GRAINGER INC",
+  "sector": "Industrials",
+  "ticker": "GWW"
+ },
+ "387328107": {
+  "name": "GRANITE CONSTRUCTION INC",
+  "sector": "Industrials",
+  "ticker": "GVA"
+ },
+ "397624107": {
+  "name": "GREIF INC-CL A",
+  "sector": "Uncategorized",
+  "ticker": "GEF"
+ },
+ "403949100": {
+  "name": "HF SINCLAIR CORP",
+  "sector": "Energy",
+  "ticker": "DINO"
+ },
+ "40434L105": {
+  "name": "HP INC",
+  "sector": "Technology",
+  "ticker": "HPQ"
+ },
+ "41068X100": {
+  "name": "HA SUSTAINABLE INFRASTRUCTUR",
+  "sector": "Finance",
+  "ticker": "HASI"
+ },
+ "416515104": {
+  "name": "HARTFORD INSURANCE GROUP INC",
+  "sector": "Finance",
+  "ticker": "HIG"
+ },
+ "418056107": {
+  "name": "HASBRO INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "HAS"
+ },
+ "421906108": {
+  "name": "HEALTHCARE SERVICES GROUP",
+  "sector": "Health Care",
+  "ticker": "HCSG"
+ },
+ "42226K105": {
+  "name": "HEALTHCARE REALTY TRUST INC",
+  "sector": "Real Estate",
+  "ticker": "HR"
+ },
+ "422806109": {
+  "name": "HEICO CORP",
+  "sector": "Industrials",
+  "ticker": "HEI"
+ },
+ "42328H109": {
+  "name": "HELIOS TECHNOLOGIES INC",
+  "sector": "Industrials",
+  "ticker": "HLIO"
+ },
+ "43300A203": {
+  "name": "HILTON WORLDWIDE HOLDINGS IN",
+  "sector": "Consumer Discretionary",
+  "ticker": "HLT"
+ },
+ "437076102": {
+  "name": "HOME DEPOT INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "HD"
+ },
+ "438516106": {
+  "name": "HONEYWELL INTERNATIONAL INC",
+  "sector": "Industrials",
+  "ticker": "HON"
+ },
+ "44107P104": {
+  "name": "HOST HOTELS & RESORTS INC",
+  "sector": "Real Estate",
+  "ticker": "HST"
+ },
+ "443201108": {
+  "name": "HOWMET AEROSPACE INC",
+  "sector": "Industrials",
+  "ticker": "HWM"
+ },
+ "443320106": {
+  "name": "HUB GROUP INC-CL A",
+  "sector": "Industrials",
+  "ticker": "HUBG"
+ },
+ "443573100": {
+  "name": "HUBSPOT INC",
+  "sector": "Technology",
+  "ticker": "HUBS"
+ },
+ "447011107": {
+  "name": "HUNTSMAN CORP",
+  "sector": "Industrials",
+  "ticker": "HUN"
+ },
+ "45073V108": {
+  "name": "ITT INC",
+  "sector": "Industrials",
+  "ticker": "ITT"
+ },
+ "451107106": {
+  "name": "IDACORP INC",
+  "sector": "Utilities",
+  "ticker": "IDA"
+ },
+ "45167R104": {
+  "name": "IDEX CORP",
+  "sector": "Industrials",
+  "ticker": "IEX"
+ },
+ "453836108": {
+  "name": "INDEPENDENT BANK CORP/MA",
+  "sector": "Finance",
+  "ticker": "INDB"
+ },
+ "458140100": {
+  "name": "INTEL CORP",
+  "sector": "Technology",
+  "ticker": "INTC"
+ },
+ "45866F104": {
+  "name": "INTERCONTINENTAL EXCHANGE IN",
+  "sector": "Finance",
+  "ticker": "ICE"
+ },
+ "459200101": {
+  "name": "INTL BUSINESS MACHINES CORP",
+  "sector": "Technology",
+  "ticker": "IBM"
+ },
+ "459506101": {
+  "name": "INTL FLAVORS & FRAGRANCES",
+  "sector": "Industrials",
+  "ticker": "IFF"
+ },
+ "461202103": {
+  "name": "INTUIT INC",
+  "sector": "Technology",
+  "ticker": "INTU"
+ },
+ "46120E602": {
+  "name": "INTUITIVE SURGICAL INC",
+  "sector": "Health Care",
+  "ticker": "ISRG"
+ },
+ "46120e602": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "46266C105": {
+  "name": "IQVIA HOLDINGS INC",
+  "sector": "Health Care",
+  "ticker": "IQV"
+ },
+ "46284V101": {
+  "name": "IRON MOUNTAIN INC",
+  "sector": "Real Estate",
+  "ticker": "IRM"
+ },
+ "464287200": {
+  "name": "ISHARES CORE S&P 500 ETF",
+  "sector": "Other",
+  "ticker": "IVV"
+ },
+ "464287507": {
+  "name": "ISHARES CORE S&P MIDCAP ETF",
+  "sector": "Other",
+  "ticker": "IJH"
+ },
+ "464287598": {
+  "name": "ISHARES RUSSELL 1000 VALUE E",
+  "sector": "Other",
+  "ticker": "IWD"
+ },
+ "464287614": {
+  "name": "ISHARES RUSSELL 1000 GROWTH",
+  "sector": "Other",
+  "ticker": "IWF"
+ },
+ "464287804": {
+  "name": "ISHARES CORE S&P SMALL-CAP E",
+  "sector": "Other",
+  "ticker": "IJR"
+ },
+ "466032109": {
+  "name": "J & J SNACK FOODS CORP",
+  "sector": "Consumer Staples",
+  "ticker": "JJSF"
+ },
+ "46625H100": {
+  "name": "JPMORGAN CHASE & CO",
+  "sector": "Finance",
+  "ticker": "JPM"
+ },
+ "46625h100": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "46982L108": {
+  "name": "JACOBS SOLUTIONS INC",
+  "sector": "Industrials",
+  "ticker": "J"
+ },
+ "478160104": {
+  "name": "JOHNSON & JOHNSON",
+  "sector": "Health Care",
+  "ticker": "JNJ"
+ },
+ "483007704": {
+  "name": "KAISER ALUMINUM CORP",
+  "sector": "Industrials",
+  "ticker": "KALU"
+ },
+ "48666K109": {
+  "name": "KB HOME",
+  "sector": "Consumer Discretionary",
+  "ticker": "KBH"
+ },
+ "488401100": {
+  "name": "KEMPER CORP",
+  "sector": "Finance",
+  "ticker": "KMPR"
+ },
+ "489170100": {
+  "name": "KENNAMETAL INC",
+  "sector": "Industrials",
+  "ticker": "KMT"
+ },
+ "50012A108": {
+  "name": "KODIAK GAS SERVICES INC",
+  "sector": "Utilities",
+  "ticker": "KGS"
+ },
+ "501242101": {
+  "name": "KULICKE & SOFFA INDUSTRIES",
+  "sector": "Other",
+  "ticker": "KLIC"
+ },
+ "50212V100": {
+  "name": "LPL FINANCIAL HOLDINGS INC",
+  "sector": "Finance",
+  "ticker": "LPLA"
+ },
+ "502431109": {
+  "name": "L3HARRIS TECHNOLOGIES INC",
+  "sector": "Industrials",
+  "ticker": "LHX"
+ },
+ "512807108": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "512807306": {
+  "name": "LAM RESEARCH CORP",
+  "sector": "Technology",
+  "ticker": "LRCX"
+ },
+ "513272104": {
+  "name": "LAMB WESTON HOLDINGS INC",
+  "sector": "Consumer Staples",
+  "ticker": "LW"
+ },
+ "517834107": {
+  "name": "LAS VEGAS SANDS CORP",
+  "sector": "Consumer Discretionary",
+  "ticker": "LVS"
+ },
+ "521865204": {
+  "name": "LEAR CORP",
+  "sector": "Consumer Discretionary",
+  "ticker": "LEA"
+ },
+ "52736R102": {
+  "name": "LEVI STRAUSS & CO- CLASS A",
+  "sector": "Consumer Discretionary",
+  "ticker": "LEVI"
+ },
+ "532457108": {
+  "name": "ELI LILLY & CO",
+  "sector": "Health Care",
+  "ticker": "LLY"
+ },
+ "546347105": {
+  "name": "LOUISIANA-PACIFIC CORP",
+  "sector": "Basic Materials",
+  "ticker": "LPX"
+ },
+ "548661107": {
+  "name": "LOWE'S COS INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "LOW"
+ },
+ "552690109": {
+  "name": "MDU RESOURCES GROUP INC",
+  "sector": "Industrials",
+  "ticker": "MDU"
+ },
+ "553530106": {
+  "name": "MSC INDUSTRIAL DIRECT CO-A",
+  "sector": "Industrials",
+  "ticker": "MSM"
+ },
+ "55616P104": {
+  "name": "MACY'S INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "M"
+ },
+ "55825t103": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "56585A102": {
+  "name": "MARATHON PETROLEUM CORP",
+  "sector": "Energy",
+  "ticker": "MPC"
+ },
+ "571903202": {
+  "name": "MARRIOTT INTERNATIONAL -CL A",
+  "sector": "Consumer Discretionary",
+  "ticker": "MAR"
+ },
+ "57636Q104": {
+  "name": "MASTERCARD INC - A",
+  "sector": "Consumer Discretionary",
+  "ticker": "MA"
+ },
+ "57667L107": {
+  "name": "MATCH GROUP INC",
+  "sector": "Technology",
+  "ticker": "MTCH"
+ },
+ "58733R102": {
+  "name": "MERCADOLIBRE INC",
+  "sector": "Other",
+  "ticker": "MELI"
+ },
+ "58933Y105": {
+  "name": "MERCK & CO. INC.",
+  "sector": "Health Care",
+  "ticker": "MRK"
+ },
+ "594918104": {
+  "name": "MICROSOFT CORP",
+  "sector": "Technology",
+  "ticker": "MSFT"
+ },
+ "595017104": {
+  "name": "MICROCHIP TECHNOLOGY INC",
+  "sector": "Technology",
+  "ticker": "MCHP"
+ },
+ "595112103": {
+  "name": "MICRON TECHNOLOGY INC",
+  "sector": "Technology",
+  "ticker": "MU"
+ },
+ "600544100": {
+  "name": "MILLERKNOLL INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "MLKN"
+ },
+ "60770K107": {
+  "name": "MODERNA INC",
+  "sector": "Health Care",
+  "ticker": "MRNA"
+ },
+ "609207105": {
+  "name": "MONDELEZ INTERNATIONAL INC-A",
+  "sector": "Consumer Staples",
+  "ticker": "MDLZ"
+ },
+ "610236101": {
+  "name": "MONRO INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "MNRO"
+ },
+ "61174X109": {
+  "name": "MONSTER BEVERAGE CORP",
+  "sector": "Consumer Staples",
+  "ticker": "MNST"
+ },
+ "61174x109": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "617446448": {
+  "name": "MORGAN STANLEY",
+  "sector": "Finance",
+  "ticker": "MS"
+ },
+ "629377508": {
+  "name": "NRG ENERGY INC",
+  "sector": "Utilities",
+  "ticker": "NRG"
+ },
+ "62955J103": {
+  "name": "NOV INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "NOV"
+ },
+ "633707104": {
+  "name": "NATIONAL BANK HOLD-CL A",
+  "sector": "Finance",
+  "ticker": "NBHC"
+ },
+ "64110D104": {
+  "name": "NETAPP INC",
+  "sector": "Technology",
+  "ticker": "NTAP"
+ },
+ "64110L106": {
+  "name": "NETFLIX INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "NFLX"
+ },
+ "64110l106": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "64119V303": {
+  "name": "NETSTREIT CORP",
+  "sector": "Real Estate",
+  "ticker": "NTST"
+ },
+ "651229106": {
+  "name": "NEWELL BRANDS INC",
+  "sector": "Industrials",
+  "ticker": "NWL"
+ },
+ "65339F101": {
+  "name": "NEXTERA ENERGY INC",
+  "sector": "Technology",
+  "ticker": "NEE"
+ },
+ "666807102": {
+  "name": "NORTHROP GRUMMAN CORP",
+  "sector": "Industrials",
+  "ticker": "NOC"
+ },
+ "67066G104": {
+  "name": "NVIDIA CORP",
+  "sector": "Technology",
+  "ticker": "NVDA"
+ },
+ "67066g104": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "67077M108": {
+  "name": "NUTRIEN LTD",
+  "sector": "Other",
+  "ticker": "NTR"
+ },
+ "67103H107": {
+  "name": "O'REILLY AUTOMOTIVE INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "ORLY"
+ },
+ "679580100": {
+  "name": "OLD DOMINION FREIGHT LINE",
+  "sector": "Industrials",
+  "ticker": "ODFL"
+ },
+ "682189105": {
+  "name": "ON SEMICONDUCTOR",
+  "sector": "Technology",
+  "ticker": "ON"
+ },
+ "68389X105": {
+  "name": "ORACLE CORP",
+  "sector": "Technology",
+  "ticker": "ORCL"
+ },
+ "68389x105": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "68622V106": {
+  "name": "ORGANON & CO",
+  "sector": "Health Care",
+  "ticker": "OGN"
+ },
+ "69007J106": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "69608A108": {
+  "name": "PALANTIR TECHNOLOGIES INC-A",
+  "sector": "Technology",
+  "ticker": "PLTR"
+ },
+ "697435105": {
+  "name": "PALO ALTO NETWORKS INC",
+  "sector": "Technology",
+  "ticker": "PANW"
+ },
+ "698813102": {
+  "name": "PAPA JOHN'S INTL INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "PZZA"
+ },
+ "701094104": {
+  "name": "PARKER HANNIFIN CORP",
+  "sector": "Industrials",
+  "ticker": "PH"
+ },
+ "703481101": {
+  "name": "PATTERSON-UTI ENERGY INC",
+  "sector": "Energy",
+  "ticker": "PTEN"
+ },
+ "70450Y103": {
+  "name": "PAYPAL HOLDINGS INC",
+  "sector": "Industrials",
+  "ticker": "PYPL"
+ },
+ "70450y103": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "713448108": {
+  "name": "PEPSICO INC",
+  "sector": "Consumer Staples",
+  "ticker": "PEP"
+ },
+ "717081103": {
+  "name": "PFIZER INC",
+  "sector": "Health Care",
+  "ticker": "PFE"
+ },
+ "72346Q104": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "737630103": {
+  "name": "POTLATCHDELTIC CORP",
+  "sector": null,
+  "ticker": "PCH"
+ },
+ "741623102": {
+  "name": "PRIMO BRANDS CORP",
+  "sector": "Consumer Staples",
+  "ticker": "PRMB"
+ },
+ "74164M108": {
+  "name": "PRIMERICA INC",
+  "sector": "Finance",
+  "ticker": "PRI"
+ },
+ "74167P108": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "742718109": {
+  "name": "PROCTER & GAMBLE CO/THE",
+  "sector": "Consumer Discretionary",
+  "ticker": "PG"
+ },
+ "74316P652": {
+  "name": "BRIDGES INVESTMENT FUND-I",
+  "sector": null,
+  "ticker": "BRGIX"
+ },
+ "743315103": {
+  "name": "PROGRESSIVE CORP",
+  "sector": "Finance",
+  "ticker": "PGR"
+ },
+ "743606105": {
+  "name": "PROSPERITY BANCSHARES INC",
+  "sector": "Finance",
+  "ticker": "PB"
+ },
+ "745867101": {
+  "name": "PULTEGROUP INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "PHM"
+ },
+ "747525103": {
+  "name": "QUALCOMM INC",
+  "sector": "Technology",
+  "ticker": "QCOM"
+ },
+ "74762E102": {
+  "name": "QUANTA SERVICES INC",
+  "sector": "Industrials",
+  "ticker": "PWR"
+ },
+ "754730109": {
+  "name": "RAYMOND JAMES FINANCIAL INC",
+  "sector": "Finance",
+  "ticker": "RJF"
+ },
+ "754907103": {
+  "name": "RAYONIER INC",
+  "sector": "Real Estate",
+  "ticker": "RYN"
+ },
+ "75513E101": {
+  "name": "RTX CORP",
+  "sector": "Industrials",
+  "ticker": "RTX"
+ },
+ "75886F107": {
+  "name": "REGENERON PHARMACEUTICALS",
+  "sector": "Health Care",
+  "ticker": "REGN"
+ },
+ "75970E107": {
+  "name": "RENASANT CORP",
+  "sector": "Finance",
+  "ticker": "RNST"
+ },
+ "770323103": {
+  "name": "ROBERT HALF INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "RHI"
+ },
+ "770700102": {
+  "name": "ROBINHOOD MARKETS INC - A",
+  "sector": "Finance",
+  "ticker": "HOOD"
+ },
+ "775109200": {
+  "name": "ROGERS COMMUNICATIONS INC-B",
+  "sector": "Other",
+  "ticker": "RCI"
+ },
+ "77543R102": {
+  "name": "ROKU INC",
+  "sector": "Telecommunications",
+  "ticker": "ROKU"
+ },
+ "780087102": {
+  "name": "ROYAL BANK OF CANADA",
+  "sector": "Other",
+  "ticker": "RY"
+ },
+ "78409V104": {
+  "name": "S&P GLOBAL INC",
+  "sector": "Finance",
+  "ticker": "SPGI"
+ },
+ "78410K667": {
+  "name": "SHELTON EQTY PREMIUM INC ETF",
+  "sector": "Other",
+  "ticker": "SEPI"
+ },
+ "78462F103": {
+  "name": "SS SPDR S&P 500 ETF TRUST-US",
+  "sector": "Other",
+  "ticker": "SPY"
+ },
+ "78462f103": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "78468R663": {
+  "name": "SS SPDR BB 1-3M T-BILL ETF",
+  "sector": "Other",
+  "ticker": "BIL"
+ },
+ "806857108": {
+  "name": "SLB LTD",
+  "sector": "Other",
+  "ticker": "SLB"
+ },
+ "80689H102": {
+  "name": "SCHNEIDER NATIONAL INC-CL B",
+  "sector": "Industrials",
+  "ticker": "SNDR"
+ },
+ "808513105": {
+  "name": "SCHWAB (CHARLES) CORP",
+  "sector": "Finance",
+  "ticker": "SCHW"
+ },
+ "810186106": {
+  "name": "SCOTTS MIRACLE-GRO CO",
+  "sector": "Industrials",
+  "ticker": "SMG"
+ },
+ "81141R100": {
+  "name": "SEA LTD-ADR",
+  "sector": "Consumer Discretionary",
+  "ticker": "SE"
+ },
+ "811707801": {
+  "name": "SEACOAST BANKING CORP/FL",
+  "sector": "Finance",
+  "ticker": "SBCF"
+ },
+ "81211K100": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "81369Y209": {
+  "name": "SS HEALTH CARE SELECT SECTOR",
+  "sector": "Other",
+  "ticker": "XLV"
+ },
+ "81369Y407": {
+  "name": "SS CONSUMER DISC SELECT SECT",
+  "sector": "Other",
+  "ticker": "XLY"
+ },
+ "81369Y605": {
+  "name": "SS FINANCIAL SELECT SECTOR",
+  "sector": "Other",
+  "ticker": "XLF"
+ },
+ "81369Y803": {
+  "name": "SS TECHNOLOGY SELECT SECTOR",
+  "sector": "Other",
+  "ticker": "XLK"
+ },
+ "81369Y852": {
+  "name": "SS COMM SELECT SECTOR SPDR",
+  "sector": "Other",
+  "ticker": "XLC"
+ },
+ "81617J301": {
+  "name": "SELECT WATER SOLUTIONS INC",
+  "sector": "Energy",
+  "ticker": "WTTR"
+ },
+ "81762P102": {
+  "name": "SERVICENOW INC",
+  "sector": "Technology",
+  "ticker": "NOW"
+ },
+ "81768T108": {
+  "name": "SERVISFIRST BANCSHARES INC",
+  "sector": "Finance",
+  "ticker": "SFBS"
+ },
+ "82509L107": {
+  "name": "SHOPIFY INC - CLASS A",
+  "sector": "Other",
+  "ticker": "SHOP"
+ },
+ "82983N108": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "835495102": {
+  "name": "SONOCO PRODUCTS CO",
+  "sector": "Consumer Discretionary",
+  "ticker": "SON"
+ },
+ "835699307": {
+  "name": "SONY GROUP CORP - SP ADR",
+  "sector": "Other",
+  "ticker": "SONY"
+ },
+ "84265V105": {
+  "name": "SOUTHERN COPPER CORP",
+  "sector": "Basic Materials",
+  "ticker": "SCCO"
+ },
+ "84472E102": {
+  "name": "SOUTHSTATE BANK CORP",
+  "sector": "Finance",
+  "ticker": "SSB"
+ },
+ "844741108": {
+  "name": "SOUTHWEST AIRLINES CO",
+  "sector": "Consumer Discretionary",
+  "ticker": "LUV"
+ },
+ "85254J102": {
+  "name": "STAG INDUSTRIAL INC",
+  "sector": "Real Estate",
+  "ticker": "STAG"
+ },
+ "855244109": {
+  "name": "STARBUCKS CORP",
+  "sector": "Consumer Discretionary",
+  "ticker": "SBUX"
+ },
+ "858586100": {
+  "name": "STEPAN CO",
+  "sector": "Consumer Discretionary",
+  "ticker": "SCL"
+ },
+ "871607107": {
+  "name": "SYNOPSYS INC",
+  "sector": "Technology",
+  "ticker": "SNPS"
+ },
+ "872540109": {
+  "name": "TJX COMPANIES INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "TJX"
+ },
+ "872590104": {
+  "name": "T-MOBILE US INC",
+  "sector": "Telecommunications",
+  "ticker": "TMUS"
+ },
+ "874039100": {
+  "name": "TAIWAN SEMICONDUCTOR-SP ADR",
+  "sector": "Other",
+  "ticker": "TSM"
+ },
+ "87612G101": {
+  "name": "TARGA RESOURCES CORP",
+  "sector": "Utilities",
+  "ticker": "TRGP"
+ },
+ "87971M103": {
+  "name": "TELUS CORP",
+  "sector": "Other",
+  "ticker": "TU"
+ },
+ "88160R101": {
+  "name": "TESLA INC",
+  "sector": "Industrials",
+  "ticker": "TSLA"
+ },
+ "88160r101": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "882508104": {
+  "name": "TEXAS INSTRUMENTS INC",
+  "sector": "Technology",
+  "ticker": "TXN"
+ },
+ "88262P102": {
+  "name": "TEXAS PACIFIC LAND CORP",
+  "sector": "Energy",
+  "ticker": "TPL"
+ },
+ "883556102": {
+  "name": "THERMO FISHER SCIENTIFIC INC",
+  "sector": "Industrials",
+  "ticker": "TMO"
+ },
+ "884903808": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "885160101": {
+  "name": "THOR INDUSTRIES INC",
+  "sector": "Industrials",
+  "ticker": "THO"
+ },
+ "887389104": {
+  "name": "TIMKEN CO",
+  "sector": "Industrials",
+  "ticker": "TKR"
+ },
+ "891160509": {
+  "name": "TORONTO-DOMINION BANK",
+  "sector": "Other",
+  "ticker": "TD"
+ },
+ "896239100": {
+  "name": "TRIMBLE INC",
+  "sector": "Industrials",
+  "ticker": "TRMB"
+ },
+ "902681105": {
+  "name": "UGI CORP",
+  "sector": "Utilities",
+  "ticker": "UGI"
+ },
+ "90278Q108": {
+  "name": "UFP INDUSTRIES INC",
+  "sector": "Basic Materials",
+  "ticker": "UFPI"
+ },
+ "902973304": {
+  "name": "US BANCORP",
+  "sector": "Finance",
+  "ticker": "USB"
+ },
+ "90353T100": {
+  "name": "UBER TECHNOLOGIES INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "UBER"
+ },
+ "90384S303": {
+  "name": "ULTA BEAUTY INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "ULTA"
+ },
+ "907818108": {
+  "name": "UNION PACIFIC CORP",
+  "sector": "Industrials",
+  "ticker": "UNP"
+ },
+ "911312106": {
+  "name": "UNITED PARCEL SERVICE-CL B",
+  "sector": "Industrials",
+  "ticker": "UPS"
+ },
+ "91324P102": {
+  "name": "UNITEDHEALTH GROUP INC",
+  "sector": "Health Care",
+  "ticker": "UNH"
+ },
+ "91324p102": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "91347P105": {
+  "name": "UNIVERSAL DISPLAY CORP",
+  "sector": "Technology",
+  "ticker": "OLED"
+ },
+ "918204108": {
+  "name": "VF CORP",
+  "sector": "Industrials",
+  "ticker": "VFC"
+ },
+ "91913Y100": {
+  "name": "VALERO ENERGY CORP",
+  "sector": "Energy",
+  "ticker": "VLO"
+ },
+ "920253101": {
+  "name": "VALMONT INDUSTRIES",
+  "sector": "Industrials",
+  "ticker": "VMI"
+ },
+ "921943858": {
+  "name": "VANGUARD FTSE DEVELOPED ETF",
+  "sector": "Other",
+  "ticker": "VEA"
+ },
+ "922042858": {
+  "name": "VANGUARD FTSE EMERGING MARKE",
+  "sector": "Other",
+  "ticker": "VWO"
+ },
+ "922908769": {
+  "name": "VANGUARD TOTAL STOCK MKT ETF",
+  "sector": "Other",
+  "ticker": "VTI"
+ },
+ "92343V104": {
+  "name": "VERIZON COMMUNICATIONS INC",
+  "sector": "Telecommunications",
+  "ticker": "VZ"
+ },
+ "92532F100": {
+  "name": "VERTEX PHARMACEUTICALS INC",
+  "sector": "Health Care",
+  "ticker": "VRTX"
+ },
+ "92532f100": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "92826C839": {
+  "name": "VISA INC-CLASS A SHARES",
+  "sector": "Consumer Discretionary",
+  "ticker": "V"
+ },
+ "928298108": {
+  "name": "VISHAY INTERTECHNOLOGY INC",
+  "sector": "Technology",
+  "ticker": "VSH"
+ },
+ "931142103": {
+  "name": "WALMART INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "WMT"
+ },
+ "93148P102": {
+  "name": "WALKER & DUNLOP INC",
+  "sector": "Finance",
+  "ticker": "WD"
+ },
+ "94106B101": {
+  "name": "WASTE CONNECTIONS INC",
+  "sector": "Other",
+  "ticker": "WCN"
+ },
+ "94106L109": {
+  "name": "WASTE MANAGEMENT INC",
+  "sector": "Utilities",
+  "ticker": "WM"
+ },
+ "949746101": {
+  "name": "WELLS FARGO & CO",
+  "sector": "Finance",
+  "ticker": "WFC"
+ },
+ "950755108": {
+  "name": "WERNER ENTERPRISES INC",
+  "sector": "Industrials",
+  "ticker": "WERN"
+ },
+ "958102105": {
+  "name": "WESTERN DIGITAL CORP",
+  "sector": "Technology",
+  "ticker": "WDC"
+ },
+ "963320106": {
+  "name": "WHIRLPOOL CORP",
+  "sector": "Consumer Discretionary",
+  "ticker": "WHR"
+ },
+ "98311A105": {
+  "name": "WYNDHAM HOTELS & RESORTS INC",
+  "sector": "Consumer Discretionary",
+  "ticker": "WH"
+ },
+ "98419M100": {
+  "name": "XYLEM INC",
+  "sector": "Industrials",
+  "ticker": "XYL"
+ },
+ "G1151C101": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "G25508105": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "G29183103": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "G4863A108": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "G51502105": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "G54950103": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "G5960L103": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "G87110105": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "G97822103": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "L8681T102": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "N53745100": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ },
+ "N6596X109": {
+  "name": "",
+  "sector": null,
+  "ticker": null
+ }
+}

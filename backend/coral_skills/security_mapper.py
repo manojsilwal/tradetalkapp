@@ -7,8 +7,11 @@ Responsible for:
 - Flagging unmapped or ambiguous securities.
 """
 import asyncio
+import json
 import logging
 import os
+from functools import lru_cache
+from pathlib import Path
 import yfinance as yf
 import httpx
 from typing import Dict, Any, List, Optional
@@ -18,6 +21,24 @@ from backend.coral_agents import hub_add_note
 logger = logging.getLogger(__name__)
 
 OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
+
+_STATIC_CUSIP_PATH = Path(__file__).resolve().parent.parent / "data" / "cusip_ticker_static.json"
+
+
+@lru_cache(maxsize=1)
+def _static_cusip_map() -> Dict[str, Dict[str, Any]]:
+    """Bundled CUSIP -> {ticker, name, sector} map (OpenFIGI bootstrap output)."""
+    try:
+        raw = json.loads(_STATIC_CUSIP_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.info("[Security Mapper] static CUSIP map unavailable (%s): %s", _STATIC_CUSIP_PATH, e)
+        return {}
+    # Keep only rows that actually carry a ticker.
+    return {
+        str(c).strip(): v
+        for c, v in raw.items()
+        if isinstance(v, dict) and v.get("ticker")
+    }
 
 async def map_security_and_sector(cusip: str, issuer_name: str, symbol_hint: str = "") -> Dict[str, Any]:
     """
@@ -143,6 +164,29 @@ def _pick_ticker(data_items: List[Dict[str, Any]]) -> Optional[Dict[str, str]]:
     return None
 
 
+async def _openfigi_post(client: httpx.AsyncClient, batch: List[str], delay: float) -> Optional[list]:
+    """POST one CUSIP batch to OpenFIGI, retrying on 429 / transient errors.
+
+    Returns the parsed JSON list on success, or ``None`` if the batch could not
+    be resolved after retries (caller marks those CUSIPs unresolved).
+    """
+    payload = [{"idType": "ID_CUSIP", "idValue": c, "exchCode": "US"} for c in batch]
+    for attempt in range(3):
+        try:
+            resp = await client.post(OPENFIGI_URL, headers=_openfigi_headers(), json=payload)
+            if resp.status_code == 429:
+                backoff = max(delay, 10.0) * (attempt + 1)
+                logger.warning("[Security Mapper] OpenFIGI rate-limited; retry in %.0fs", backoff)
+                await asyncio.sleep(backoff)
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.warning("[Security Mapper] OpenFIGI batch attempt %d failed: %s", attempt + 1, e)
+            await asyncio.sleep(delay * (attempt + 1))
+    return None
+
+
 async def _openfigi_resolve(cusips: List[str]) -> Dict[str, Optional[Dict[str, str]]]:
     """Resolve a list of CUSIPs to tickers via OpenFIGI in rate-limited batches."""
     out: Dict[str, Optional[Dict[str, str]]] = {}
@@ -155,85 +199,134 @@ async def _openfigi_resolve(cusips: List[str]) -> Dict[str, Optional[Dict[str, s
     async with httpx.AsyncClient(timeout=30.0) as client:
         for start in range(0, len(cusips), batch_size):
             batch = cusips[start:start + batch_size]
-            payload = [{"idType": "ID_CUSIP", "value": c, "exchCode": "US"} for c in batch]
-            try:
-                resp = await client.post(OPENFIGI_URL, headers=_openfigi_headers(), json=payload)
-                if resp.status_code == 429:
-                    logger.warning("[Security Mapper] OpenFIGI rate-limited; backing off")
-                    await asyncio.sleep(max(delay, 10.0))
-                    continue
-                resp.raise_for_status()
-                results = resp.json()
-            except Exception as e:
-                logger.warning("[Security Mapper] OpenFIGI batch failed: %s", e)
+            results = await _openfigi_post(client, batch, delay)
+            if results is None:
                 for c in batch:
                     out.setdefault(c, None)
-                await asyncio.sleep(delay)
-                continue
-
-            for cusip, item in zip(batch, results):
-                if isinstance(item, dict) and item.get("data"):
-                    out[cusip] = _pick_ticker(item["data"])
-                else:
-                    out[cusip] = None
+            else:
+                for cusip, item in zip(batch, results):
+                    if isinstance(item, dict) and item.get("data"):
+                        out[cusip] = _pick_ticker(item["data"])
+                    else:
+                        out[cusip] = None
 
             if start + batch_size < len(cusips):
                 await asyncio.sleep(delay)
     return out
 
 
+def _enrich_sector(ticker: Optional[str], existing_sector: Optional[str]) -> str:
+    """Resolve a sector for a ticker from the bundled references (no network)."""
+    if not ticker:
+        return existing_sector or "Unknown"
+    from backend import ticker_reference
+
+    meta = ticker_reference.get_ticker_meta(ticker)
+    if meta and meta.get("sector") and meta["sector"] != "Unknown":
+        return meta["sector"]
+    try:
+        from backend.sp500_gics_reference import get_sp500_gics
+
+        gics = get_sp500_gics(ticker)
+        if gics and gics.get("sector"):
+            return gics["sector"]
+    except Exception:
+        pass
+    return existing_sector or (meta.get("sector") if meta else None) or "Unknown"
+
+
 async def map_holdings_to_tickers(holdings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Resolve a 13F holdings list (issuer_name + cusip) to tickers, using a
-    persistent CUSIP cache and OpenFIGI for cache misses. Adds ``ticker``,
-    ``sector``, and ``mapping_status`` keys to each holding.
+    Resolve a 13F holdings list (issuer_name + cusip) to tickers via a layered
+    resolver, then enrich sector. Adds ``ticker``, ``sector``, and
+    ``mapping_status`` keys to each holding.
+
+    Resolution order per CUSIP:
+      1. ``cusip_ticker_cache`` (persistent DB)
+      2. bundled ``cusip_ticker_static.json``
+      3. issuer-name fallback via the bundled ticker reference
+      4. OpenFIGI (network) for remaining misses
     """
     from backend import fund_leaderboard_store as store
+    from backend import ticker_reference
 
-    enriched: List[Dict[str, Any]] = []
-    cusips = []
-    for h in holdings:
-        c = (h.get("cusip") or "").strip()
-        if c:
-            cusips.append(c)
-    unique_cusips = sorted(set(cusips))
+    static_map = _static_cusip_map()
 
-    # 1. Cache lookups
-    cache_hits: Dict[str, Dict[str, Any]] = {}
-    misses: List[str] = []
+    unique_cusips = sorted({(h.get("cusip") or "").strip() for h in holdings if (h.get("cusip") or "").strip()})
+
+    # cusip -> {ticker, name, sector, status}
+    resolved: Dict[str, Dict[str, Any]] = {}
+    n_cache = n_static = n_issuer = 0
+    openfigi_misses: List[str] = []
+
+    # 1. DB cache + 2. bundled static map
     for c in unique_cusips:
         cached = store.cache_get_ticker(c)
-        if cached:
-            cache_hits[c] = cached
-        else:
-            misses.append(c)
+        if cached and cached.get("ticker"):
+            resolved[c] = {**cached, "status": "mapped"}
+            n_cache += 1
+            continue
+        if cached and cached.get("mapping_status") == "unmapped":
+            # Previously confirmed miss — still try static/issuer/openfigi below,
+            # but do not count as a cache hit.
+            pass
+        s = static_map.get(c)
+        if s and s.get("ticker"):
+            resolved[c] = {"ticker": s["ticker"], "name": s.get("name"), "sector": s.get("sector"), "status": "mapped_static"}
+            n_static += 1
+            continue
+        openfigi_misses.append(c)
 
-    # 2. Resolve misses via OpenFIGI, persist to cache
-    resolved = await _openfigi_resolve(misses) if misses else {}
-    for c in misses:
-        hit = resolved.get(c)
-        if hit and hit.get("ticker"):
-            store.cache_put_ticker(c, hit["ticker"], hit.get("name"), None, "mapped")
-            cache_hits[c] = {"ticker": hit["ticker"], "name": hit.get("name"), "sector": None}
-        else:
-            store.cache_put_ticker(c, None, None, None, "unmapped")
-            cache_hits[c] = {"ticker": None, "sector": None}
-
-    # 3. Enrich holdings
+    # 3. Issuer-name fallback for CUSIP misses that carry an issuer name.
+    cusip_to_issuer: Dict[str, str] = {}
     for h in holdings:
         c = (h.get("cusip") or "").strip()
-        info = cache_hits.get(c, {})
+        if c and c not in cusip_to_issuer:
+            cusip_to_issuer[c] = h.get("issuer_name") or ""
+
+    still_missing: List[str] = []
+    for c in openfigi_misses:
+        issuer = cusip_to_issuer.get(c, "")
+        ticker = ticker_reference.lookup_by_issuer_name(issuer) if issuer else None
+        if ticker:
+            resolved[c] = {"ticker": ticker, "name": issuer, "sector": None, "status": "mapped_issuer"}
+            n_issuer += 1
+        else:
+            still_missing.append(c)
+
+    # 4. OpenFIGI for the remainder, persisting hits + confirmed misses to cache.
+    figi = await _openfigi_resolve(still_missing) if still_missing else {}
+    n_openfigi = 0
+    for c in still_missing:
+        hit = figi.get(c)
+        if hit and hit.get("ticker"):
+            resolved[c] = {"ticker": hit["ticker"], "name": hit.get("name"), "sector": None, "status": "mapped_openfigi"}
+            n_openfigi += 1
+        else:
+            store.cache_put_ticker(c, None, None, None, "unmapped")
+
+    # Persist newly resolved tickers (static/issuer/openfigi) into the cache.
+    for c, info in resolved.items():
+        if info.get("status") in ("mapped_static", "mapped_issuer", "mapped_openfigi"):
+            store.cache_put_ticker(c, info["ticker"], info.get("name"), info.get("sector"), "mapped")
+
+    # Enrich + emit.
+    enriched: List[Dict[str, Any]] = []
+    for h in holdings:
+        c = (h.get("cusip") or "").strip()
+        info = resolved.get(c, {})
         ticker = info.get("ticker")
         out = h.copy()
         out["ticker"] = ticker
-        out["sector"] = info.get("sector") or "Unknown"
-        out["mapping_status"] = "mapped" if ticker else "unmapped"
+        out["sector"] = _enrich_sector(ticker, info.get("sector"))
+        out["mapping_status"] = info.get("status", "unmapped") if ticker else "unmapped"
         enriched.append(out)
 
     mapped_count = sum(1 for h in enriched if h.get("ticker"))
     hub_add_note(
         "data_ingest",
-        f"[Security Mapper] Mapped {mapped_count}/{len(enriched)} holdings to tickers "
-        f"({len(cache_hits) - len(misses)} cache hits, {len(misses)} OpenFIGI lookups)",
+        f"[Security Mapper] Mapped {mapped_count}/{len(enriched)} holdings "
+        f"(cache={n_cache}, static={n_static}, issuer={n_issuer}, openfigi={n_openfigi}, "
+        f"unresolved={len(still_missing) - n_openfigi})",
     )
     return enriched
