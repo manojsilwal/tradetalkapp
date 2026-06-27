@@ -29,6 +29,16 @@ const HEATMAP_COLUMNS = [
   { key: 'theme_exit_risk_score', label: 'Exit Risk', inverse: true },
 ];
 
+// Underlying signal families (NR-5..NR-9) shown in the detail drawer.
+const FAMILY_ROWS = [
+  { key: 'institutional_conviction_score', label: 'Institutional conviction (13F)' },
+  { key: 'productization_score', label: 'ETF productization' },
+  { key: 'narrative_score', label: 'Media narrative' },
+  { key: 'retail_saturation_score', label: 'Retail saturation', inverse: true },
+  { key: 'narrative_reality_alignment_score', label: 'Fundamentals reality' },
+  { key: 'macro_tailwind_score', label: 'Macro tailwind' },
+];
+
 function usePolledScan() {
   const [busy, setBusy] = useState(false);
   const [jobStatus, setJobStatus] = useState(null);
@@ -37,6 +47,9 @@ function usePolledScan() {
   const [sort, setSort] = useState('acceleration');
   const pollRef = useRef(null);
 
+  const [alerts, setAlerts] = useState([]);
+  const [backtest, setBacktest] = useState(null);
+
   const fetchOverview = useCallback(async (sortKey) => {
     try {
       const res = await apiFetch(`${API_BASE_URL}/narrative-radar/overview?sort=${sortKey}&limit=50`);
@@ -44,6 +57,14 @@ function usePolledScan() {
     } catch {
       /* no snapshot yet */
     }
+    try {
+      const a = await apiFetch(`${API_BASE_URL}/narrative-radar/alerts?limit=20`);
+      setAlerts(a?.alerts || []);
+    } catch { /* none */ }
+    try {
+      const b = await apiFetch(`${API_BASE_URL}/narrative-radar/backtests?horizon=21d`);
+      setBacktest(b || null);
+    } catch { /* none */ }
   }, []);
 
   useEffect(() => { fetchOverview(sort); }, [fetchOverview, sort]);
@@ -76,7 +97,7 @@ function usePolledScan() {
     return () => clearInterval(pollRef.current);
   }, [busy, fetchOverview, sort]);
 
-  return { busy, jobStatus, data, error, sort, setSort, startScan };
+  return { busy, jobStatus, data, error, sort, setSort, startScan, alerts, backtest };
 }
 
 function fmtScore(v) { return v === null || v === undefined ? '—' : Number(v).toFixed(0); }
@@ -185,7 +206,7 @@ function DetailDrawer({ theme, onClose }) {
         <div style={{ marginTop: 8 }}><PhasePill phase={theme.lifecycle_phase} label={theme.phase_label} /></div>
         <p style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.5 }}>{theme.summary}</p>
 
-        <h4 style={{ color: '#e2e8f0', marginBottom: 6 }}>Scores</h4>
+        <h4 style={{ color: '#e2e8f0', marginBottom: 6 }}>Lifecycle scores</h4>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           {HEATMAP_COLUMNS.map((c) => (
             <div key={c.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -195,6 +216,28 @@ function DetailDrawer({ theme, onClose }) {
             </div>
           ))}
         </div>
+
+        <h4 style={{ color: '#e2e8f0', marginBottom: 6, marginTop: 16 }}>Signal families</h4>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          {FAMILY_ROWS.map((c) => {
+            const v = s[c.key];
+            const pending = v === null || v === undefined;
+            return (
+              <div key={c.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '6px 10px', borderRadius: 8,
+                ...(pending ? { background: 'rgba(100,116,139,0.12)', color: '#64748b' } : scoreCell(v, c.inverse)) }}>
+                <span style={{ fontSize: 12 }}>{c.label}</span>
+                <strong>{pending ? 'pending' : fmtScore(v)}</strong>
+              </div>
+            );
+          })}
+        </div>
+        {theme.backtest && (
+          <div style={{ marginTop: 12, fontSize: 12, color: '#cbd5e1' }}>
+            Backtest (21d): {theme.backtest.n} graded calls ·
+            {' '}hit rate {theme.backtest.hit_rate != null ? `${Math.round(theme.backtest.hit_rate * 100)}%` : '—'}
+          </div>
+        )}
 
         {exp.top_positive_drivers?.length > 0 && (
           <>
@@ -223,8 +266,10 @@ function DetailDrawer({ theme, onClose }) {
   );
 }
 
+const SEV_COLOR = { high: '#f87171', medium: '#fbbf24', info: '#60a5fa' };
+
 export default function NarrativeRadarUI() {
-  const { busy, jobStatus, data, error, sort, setSort, startScan } = usePolledScan();
+  const { busy, jobStatus, data, error, sort, setSort, startScan, alerts, backtest } = usePolledScan();
   const [selected, setSelected] = useState(null);
 
   const themes = data?.themes || [];
@@ -283,6 +328,28 @@ export default function NarrativeRadarUI() {
           <KpiCard label="Accelerating" value={kpis.accelerating} />
           <KpiCard label="Distribution / Exit" value={kpis.exiting} />
           <KpiCard label="Themes scored" value={snapshot.scored} />
+          <KpiCard
+            label="Backtest hit rate (21d)"
+            value={backtest && backtest.hit_rate != null ? `${Math.round(backtest.hit_rate * 100)}%` : '—'}
+          />
+        </div>
+      )}
+
+      {alerts && alerts.length > 0 && (
+        <div className="glass-panel" style={{ padding: 14, marginTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#e2e8f0', fontWeight: 700, marginBottom: 8 }}>
+            <Info size={16} /> Alerts
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {alerts.slice(0, 8).map((a, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0,
+                  background: SEV_COLOR[a.severity] || '#60a5fa' }} />
+                <strong style={{ color: '#f1f5f9' }}>{a.title}</strong>
+                <span style={{ color: '#94a3b8' }}>— {a.explanation}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
