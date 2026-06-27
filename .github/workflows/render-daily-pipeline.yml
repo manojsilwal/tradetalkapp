@@ -1,12 +1,12 @@
 # Triggers the FastAPI daily knowledge pipeline (backend on GCP Cloud Run or other URL).
+# PRIMARY trigger: GCP Cloud Scheduler (see scripts/deploy_precompute_scheduler.sh).
+# This workflow is a MANUAL FALLBACK only (Actions → Run workflow).
 # Required repo secrets:
 #   TRADETALK_API_BASE — Cloud Run API URL (no trailing slash), e.g. https://tradetalk-api-xxxxx.run.app
 #   PIPELINE_CRON_SECRET — must match PIPELINE_CRON_SECRET on the API service
 name: Daily knowledge pipeline
 
 on:
-  schedule:
-    - cron: "5 0 * * *" # 00:05 UTC daily
   workflow_dispatch:
 
 jobs:

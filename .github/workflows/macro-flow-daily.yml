@@ -1,10 +1,10 @@
 # Daily thematic macro_flow refresh on the FastAPI backend (GCP Cloud Run or other origin).
+# PRIMARY trigger: GCP Cloud Scheduler (see scripts/deploy_precompute_scheduler.sh).
+# This workflow is a MANUAL FALLBACK only (Actions → Run workflow).
 # Secrets: TRADETALK_API_BASE (Cloud Run URL); PIPELINE_CRON_SECRET (must match API env).
 name: Macro flow daily refresh
 
 on:
-  schedule:
-    - cron: "25 1 * * *" # 01:25 UTC — after US cash close window
   workflow_dispatch:
 
 jobs:

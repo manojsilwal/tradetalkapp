@@ -1,14 +1,12 @@
 # Prewarm decision-terminal verdict cache for top S&P tickers (sequential, ~20 names).
+# PRIMARY trigger: GCP Cloud Scheduler (see scripts/deploy_precompute_scheduler.sh).
+# This workflow is a MANUAL FALLBACK only (Actions → Run workflow).
 # Required repo secrets:
 #   TRADETALK_API_BASE — Cloud Run API URL (no trailing slash)
 #   PIPELINE_CRON_SECRET — must match PIPELINE_CRON_SECRET on the API service
 name: Verdict cache prewarm
 
 on:
-  schedule:
-    # Pre-US cash open (~13:00 UTC) and mid US session (~18:30 UTC)
-    - cron: "0 13 * * 1-5"
-    - cron: "30 18 * * 1-5"
   workflow_dispatch:
 
 jobs:

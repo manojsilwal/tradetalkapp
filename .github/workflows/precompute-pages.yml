@@ -1,7 +1,8 @@
 # Precompute the three "global" pages so they load instantly from a durable snapshot
-# instead of a blank "click Run" state. In-process schedulers don't run while Cloud
-# Run is scaled to zero, so external cron is the reliable trigger (see docs/CRON.md
-# and docs/PRECOMPUTED_PAGES_PLAN.md).
+# instead of a blank "click Run" state.
+#
+# PRIMARY trigger: GCP Cloud Scheduler (see scripts/deploy_precompute_scheduler.sh).
+# This workflow is a MANUAL FALLBACK only (Actions → Run workflow).
 #
 # Required repo secrets:
 #   TRADETALK_API_BASE   — Cloud Run API URL (no trailing slash)
@@ -10,9 +11,6 @@
 name: Precompute global pages
 
 on:
-  schedule:
-    - cron: "10 1 * * *"   # daily 01:10 UTC — Picks & Shovels + Narrative Radar
-    - cron: "0 6 * * 1"    # Mondays 06:00 UTC — Fund Leaderboard 13F ingest (heavy)
   workflow_dispatch:
 
 jobs:
@@ -20,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Picks & Shovels (daily, synchronous)
-        if: github.event.schedule == '10 1 * * *' || github.event_name == 'workflow_dispatch'
+
         env:
           BASE: ${{ secrets.TRADETALK_API_BASE }}
           SECRET: ${{ secrets.PIPELINE_CRON_SECRET }}
@@ -32,7 +30,7 @@ jobs:
             -H "Authorization: Bearer ${SECRET}" -H "Content-Type: application/json"
 
       - name: Narrative Rotation Radar (daily, synchronous)
-        if: github.event.schedule == '10 1 * * *' || github.event_name == 'workflow_dispatch'
+
         env:
           BASE: ${{ secrets.TRADETALK_API_BASE }}
           SECRET: ${{ secrets.PIPELINE_CRON_SECRET }}
@@ -42,7 +40,7 @@ jobs:
             -H "Authorization: Bearer ${SECRET}" -H "Content-Type: application/json"
 
       - name: Fund Leaderboard 13F ingest (weekly)
-        if: github.event.schedule == '0 6 * * 1' || github.event_name == 'workflow_dispatch'
+
         env:
           BASE: ${{ secrets.TRADETALK_API_BASE }}
           ADMIN: ${{ secrets.FUND_LB_ADMIN_TOKEN }}
