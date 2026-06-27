@@ -54,8 +54,29 @@ def get_cached(connector: str, ticker: str, ttl: Optional[int] = None) -> Option
 
 
 def set_cached(connector: str, value: Any, ticker: str) -> None:
-    """Store a connector result with the current timestamp."""
+    """Store a connector result with the current timestamp, cleaning up expired or excess items."""
     k = _key(connector, ticker)
+    now = time.time()
     with _lock:
-        _store[k] = (time.time(), value)
+        # Prevent unbounded memory growth by enforcing a capacity limit (e.g., 1000 items)
+        if len(_store) >= 1000:
+            # Evict expired entries first
+            effective_ttl = connector_cache_ttl()
+            expired_keys = [
+                key for key, (ts, _) in _store.items()
+                if now - ts > effective_ttl
+            ]
+            for key in expired_keys:
+                del _store[key]
+
+            # If still exceeding capacity, evict the oldest entries
+            if len(_store) >= 1000:
+                # Sort keys by timestamp ascending (oldest first)
+                sorted_keys = sorted(_store.keys(), key=lambda x: _store[x][0])
+                # Evict oldest 100 entries to restore safety margin
+                for old_key in sorted_keys[:100]:
+                    del _store[old_key]
+
+        _store[k] = (now, value)
     logger.debug("[ConnectorCache] SET %s", k)
+

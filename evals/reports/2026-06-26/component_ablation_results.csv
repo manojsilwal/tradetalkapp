@@ -1,0 +1,6 @@
+component,status,reason,with_score,without_score,delta,recommendation
+Critic agent,ok,,93.25,81.0,12.25,Keep always-on
+Reflection loop,ok,,93.25,81.75,11.5,Keep always-on
+RRF memory retrieval,ok,,93.25,81.9,11.35,Keep always-on
+Nightly Mutation Engine,ok,,93.25,82.05,11.2,Keep always-on
+CORAL / Meta-LLM,ok,,93.25,80.55,12.7,Keep always-on
