@@ -337,6 +337,20 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
             )
             nr_msg = " + narrative radar 00:50 UTC"
 
+        # Picks & Shovels momentum scan — daily 00:40 UTC. Secondary to the external
+        # cron (in-process schedulers don't run while Cloud Run is scaled to zero).
+        if os.environ.get("PICKS_SHOVELS_ENABLE", "1").strip() != "0":
+            scheduler.add_job(
+                _picks_shovels_job,
+                trigger="cron",
+                hour=0,
+                minute=40,
+                id="picks_shovels_daily",
+                replace_existing=True,
+                max_instances=1,
+            )
+            nr_msg += " + picks&shovels 00:40 UTC"
+
         scheduler.start()
         logger.info(
             "[DailyPipeline] APScheduler started — daily 00:00 UTC + L1 every 15m + "
@@ -381,6 +395,19 @@ async def _dreaming_job(knowledge_store, llm_client=None) -> None:
         await run_dreaming_job(knowledge_store, llm_client)
     except Exception as e:
         logger.warning("[DailyPipeline] coral dreaming failed: %s", e)
+
+
+async def _picks_shovels_job() -> None:
+    """Daily Picks & Shovels momentum scan → durable snapshot. Never raises."""
+    try:
+        import uuid
+
+        from .picks_shovels import engine as ps_engine
+
+        result = await ps_engine.run_scan(uuid.uuid4().hex, force=True)
+        logger.info("[DailyPipeline] picks_shovels scan result=%s", result)
+    except Exception as e:
+        logger.warning("[DailyPipeline] picks & shovels job failed: %s", e)
 
 
 async def _narrative_radar_job() -> None:

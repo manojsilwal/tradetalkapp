@@ -20,8 +20,11 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from .. import durable_snapshot
+
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _db_lock = threading.Lock()
+_DURABLE_KIND = "picks_shovels"
 
 
 def cache_ttl_s() -> int:
@@ -110,12 +113,30 @@ def persist_snapshot(
                 ],
             )
             conn.commit()
-            return len(rows)
         finally:
             conn.close()
+    # Durable mirror (Postgres in prod) so the snapshot survives Cloud Run cold
+    # starts and is readable by any instance. No-op when durable store inactive.
+    durable_snapshot.put(
+        _DURABLE_KIND, snapshot_id, ts,
+        {"rows": rows, "universe_size": universe_size, "scored": len(rows), "skipped": skipped},
+        meta or {},
+    )
+    return len(rows)
 
 
 def latest_snapshot_meta() -> Optional[Dict[str, Any]]:
+    d = durable_snapshot.get_latest(_DURABLE_KIND)
+    if d:
+        p = d.get("payload") or {}
+        return {
+            "snapshot_id": d["snapshot_id"],
+            "created_at": d["created_at"],
+            "universe_size": int(p.get("universe_size") or 0),
+            "scored": int(p.get("scored") or len(p.get("rows") or [])),
+            "skipped": int(p.get("skipped") or 0),
+            "meta": d.get("meta") or {},
+        }
     with _db_lock:
         conn = _connect()
         try:
@@ -136,8 +157,19 @@ def latest_snapshot_meta() -> Optional[Dict[str, Any]]:
     }
 
 
+def _durable_rows(snapshot_id: str) -> Optional[List[Dict[str, Any]]]:
+    d = durable_snapshot.get_latest(_DURABLE_KIND)
+    if d and d.get("snapshot_id") == snapshot_id:
+        rows = (d.get("payload") or {}).get("rows") or []
+        return sorted(rows, key=lambda r: r.get("final_score") or 0, reverse=True)
+    return None
+
+
 def load_snapshot_rows(snapshot_id: str, *, limit: int = 200) -> List[Dict[str, Any]]:
     """All rows for a snapshot, ranked by final score (desc). Filtering happens in the router."""
+    durable = _durable_rows(snapshot_id)
+    if durable is not None:
+        return durable[: int(limit)]
     with _db_lock:
         conn = _connect()
         try:
@@ -152,6 +184,12 @@ def load_snapshot_rows(snapshot_id: str, *, limit: int = 200) -> List[Dict[str, 
 
 
 def load_row(snapshot_id: str, ticker: str) -> Optional[Dict[str, Any]]:
+    durable = _durable_rows(snapshot_id)
+    if durable is not None:
+        for r in durable:
+            if (r.get("ticker") or "").upper() == ticker.upper():
+                return r
+        return None
     with _db_lock:
         conn = _connect()
         try:

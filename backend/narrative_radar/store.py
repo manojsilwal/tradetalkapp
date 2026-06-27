@@ -19,8 +19,12 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from .. import durable_snapshot
+
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _db_lock = threading.Lock()
+_DURABLE_KIND = "narrative_radar"
+_DURABLE_ALERTS_KIND = "narrative_radar_alerts"
 
 
 def cache_ttl_s() -> int:
@@ -123,12 +127,29 @@ def persist_snapshot(
                 ],
             )
             conn.commit()
-            return len(rows)
         finally:
             conn.close()
+    # Durable mirror (Postgres in prod) so the snapshot survives Cloud Run cold starts.
+    durable_snapshot.put(
+        _DURABLE_KIND, snapshot_id, ts,
+        {"rows": rows, "theme_count": theme_count, "scored": len(rows), "skipped": skipped},
+        meta or {},
+    )
+    return len(rows)
 
 
 def latest_snapshot_meta() -> Optional[Dict[str, Any]]:
+    d = durable_snapshot.get_latest(_DURABLE_KIND)
+    if d:
+        p = d.get("payload") or {}
+        return {
+            "snapshot_id": d["snapshot_id"],
+            "created_at": d["created_at"],
+            "theme_count": int(p.get("theme_count") or 0),
+            "scored": int(p.get("scored") or len(p.get("rows") or [])),
+            "skipped": int(p.get("skipped") or 0),
+            "meta": d.get("meta") or {},
+        }
     with _db_lock:
         conn = _connect()
         try:
@@ -149,7 +170,17 @@ def latest_snapshot_meta() -> Optional[Dict[str, Any]]:
     }
 
 
+def _durable_rows(snapshot_id: str) -> Optional[List[Dict[str, Any]]]:
+    d = durable_snapshot.get_latest(_DURABLE_KIND)
+    if d and d.get("snapshot_id") == snapshot_id:
+        return (d.get("payload") or {}).get("rows") or []
+    return None
+
+
 def load_snapshot_rows(snapshot_id: str) -> List[Dict[str, Any]]:
+    durable = _durable_rows(snapshot_id)
+    if durable is not None:
+        return durable
     with _db_lock:
         conn = _connect()
         try:
@@ -163,6 +194,12 @@ def load_snapshot_rows(snapshot_id: str) -> List[Dict[str, Any]]:
 
 
 def load_row(snapshot_id: str, theme_id: str) -> Optional[Dict[str, Any]]:
+    durable = _durable_rows(snapshot_id)
+    if durable is not None:
+        for r in durable:
+            if r.get("theme_id") == theme_id:
+                return r
+        return None
     with _db_lock:
         conn = _connect()
         try:
@@ -196,12 +233,19 @@ def persist_alerts(snapshot_id: str, alerts: List[Dict[str, Any]], *, created_at
                 ],
             )
             conn.commit()
-            return len(alerts)
         finally:
             conn.close()
+    durable_snapshot.put(_DURABLE_ALERTS_KIND, snapshot_id, ts, {"alerts": alerts}, {})
+    return len(alerts)
 
 
 def load_alerts(snapshot_id: str, *, severity: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    d = durable_snapshot.get_latest(_DURABLE_ALERTS_KIND)
+    if d and d.get("snapshot_id") == snapshot_id:
+        alerts = (d.get("payload") or {}).get("alerts") or []
+        if severity:
+            alerts = [a for a in alerts if a.get("severity") == severity]
+        return alerts[: int(limit)]
     with _db_lock:
         conn = _connect()
         try:

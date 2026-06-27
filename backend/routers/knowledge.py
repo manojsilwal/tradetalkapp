@@ -99,17 +99,44 @@ async def trigger_sec_filing_job(background_tasks: BackgroundTasks):
 
 
 @router.post("/narrative-radar-run", dependencies=[Depends(require_cron_secret)])
-async def trigger_narrative_radar():
-    """Trigger a Narrative Rotation Radar scan (theme-lifecycle snapshot + alerts +
-    ledger emit). Cron entry point — guard with PIPELINE_CRON_SECRET when set."""
+async def trigger_narrative_radar(background: bool = Query(False)):
+    """Run a Narrative Rotation Radar scan (theme-lifecycle snapshot + alerts + ledger
+    emit) and write a durable snapshot. Cron entry point (PIPELINE_CRON_SECRET).
+
+    Runs **synchronously** by default so the caller (and the Cloud Run instance)
+    stays alive until the durable snapshot is persisted — fire-and-forget background
+    tasks can be killed when the instance scales to zero. Pass ``?background=true``
+    for the legacy non-blocking behavior."""
     import os
+    import uuid
 
     if os.environ.get("NARRATIVE_RADAR_ENABLE", "1").strip() == "0":
         return {"status": "disabled", "message": "NARRATIVE_RADAR_ENABLE=0"}
     from ..narrative_radar import engine as nr_engine
 
-    job = nr_engine.start_scan_task(force=True)
-    return {"status": "accepted", "message": "Narrative radar scan triggered", "job": job}
+    if background:
+        job = nr_engine.start_scan_task(force=True)
+        return {"status": "accepted", "message": "Narrative radar scan triggered", "job": job}
+    result = await nr_engine.run_scan(uuid.uuid4().hex, force=True)
+    return {"status": "ok", "message": "Narrative radar scan complete", "snapshot": result}
+
+
+@router.post("/picks-shovels-run", dependencies=[Depends(require_cron_secret)])
+async def trigger_picks_shovels(background: bool = Query(False)):
+    """Run a Picks & Shovels momentum scan and write a durable snapshot. Cron entry
+    point (PIPELINE_CRON_SECRET). Synchronous by default (see narrative-radar-run)."""
+    import os
+    import uuid
+
+    if os.environ.get("PICKS_SHOVELS_ENABLE", "1").strip() == "0":
+        return {"status": "disabled", "message": "PICKS_SHOVELS_ENABLE=0"}
+    from ..picks_shovels import engine as ps_engine
+
+    if background:
+        job = ps_engine.start_scan_task(force=True)
+        return {"status": "accepted", "message": "Picks & Shovels scan triggered", "job": job}
+    result = await ps_engine.run_scan(uuid.uuid4().hex, force=True)
+    return {"status": "ok", "message": "Picks & Shovels scan complete", "snapshot": result}
 
 
 class ClaimIngestRequest(BaseModel):

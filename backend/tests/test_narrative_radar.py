@@ -428,5 +428,73 @@ class TestDataFreshness(unittest.TestCase):
         self.assertNotIn("pending", full["etf_productization"])
 
 
+class TestDurableSnapshot(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.environ["DURABLE_SNAPSHOT_DB_PATH"] = os.path.join(self._tmp.name, "page.db")
+
+    def tearDown(self):
+        os.environ.pop("DURABLE_SNAPSHOT_DB_PATH", None)
+
+    def test_put_get_roundtrip(self):
+        from backend import durable_snapshot as ds
+        self.assertTrue(ds.active())
+        ok = ds.put("k", "snap1", 123.0, {"rows": [{"theme_id": "x"}]}, {"m": 1})
+        self.assertTrue(ok)
+        got = ds.get_latest("k")
+        self.assertEqual(got["snapshot_id"], "snap1")
+        self.assertEqual(got["payload"]["rows"][0]["theme_id"], "x")
+        self.assertIsNone(ds.get_latest("other"))
+
+    def test_inactive_without_config(self):
+        from backend import durable_snapshot as ds
+        os.environ.pop("DURABLE_SNAPSHOT_DB_PATH", None)
+        # No Postgres, no explicit path → inactive (local stores remain source of truth).
+        self.assertFalse(ds.active())
+        self.assertFalse(ds.put("k", "s", 1.0, {}, {}))
+        self.assertIsNone(ds.get_latest("k"))
+
+
+class TestColdStartDurability(unittest.TestCase):
+    """A snapshot must survive losing the local SQLite file (Cloud Run cold start)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._nr_db = os.path.join(self._tmp.name, "nr.db")
+        os.environ["NARRATIVE_RADAR_DB_PATH"] = self._nr_db
+        os.environ["DURABLE_SNAPSHOT_DB_PATH"] = os.path.join(self._tmp.name, "page.db")
+
+    def tearDown(self):
+        os.environ.pop("NARRATIVE_RADAR_DB_PATH", None)
+        os.environ.pop("DURABLE_SNAPSHOT_DB_PATH", None)
+
+    def test_snapshot_survives_local_db_loss(self):
+        feats = [_strong_feat("ai_compute"), _weak_feat("cybersecurity")]
+        rows = nr_engine.assemble_theme_rows(feats)
+        nr_store.persist_snapshot("snapX", rows, theme_count=2, skipped=0)
+        # Simulate a fresh instance: the local SQLite file is gone.
+        if os.path.exists(self._nr_db):
+            os.remove(self._nr_db)
+        meta = nr_store.latest_snapshot_meta()
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta["snapshot_id"], "snapX")
+        loaded = nr_store.load_snapshot_rows("snapX")
+        self.assertEqual(len(loaded), len(rows))
+        self.assertIsNotNone(nr_store.load_row("snapX", "ai_compute"))
+
+    def test_alerts_survive_local_db_loss(self):
+        from backend.narrative_radar import alerts as nr_alerts
+        feats = [{"theme_id": "z", "theme_label": "Z", "confidence_score": 80,
+                  "scores": {"theme_exit_risk_score": 88}}]
+        a = nr_alerts.generate_alerts(feats)
+        nr_store.persist_alerts("snapA", a)
+        if os.path.exists(self._nr_db):
+            os.remove(self._nr_db)
+        loaded = nr_store.load_alerts("snapA")
+        self.assertEqual(len(loaded), len(a))
+
+
 if __name__ == "__main__":
     unittest.main()
