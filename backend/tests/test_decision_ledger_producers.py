@@ -16,7 +16,7 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
 os.environ.setdefault("GEMINI_PRIMARY", "0")
@@ -275,16 +275,14 @@ class TestVerdictSliceEmitsDecision(_LedgerTestBase):
             bear_score=1,
             neutral_score=1,
         )
-        analysis = SimpleNamespace(
-            swarm=swarm, debate=debate, macro_fetched_at_utc="2026-06-25T00:00:00Z"
-        )
+        async def _execute_swarm_trace(ticker, credit_stress, auth_user):
+            return swarm, {"indicators": {"fred_fetched_at": "2026-06-25T00:00:00Z"}}
 
-        async def _execute_analyze(ticker, credit_stress, auth_user, **kwargs):
-            # Drain the injected debate-data task so it is not left pending.
+        async def _execute_debate(ticker, auth_user, **kwargs):
             task = kwargs.get("debate_data_task")
             if task is not None:
                 await task
-            return analysis
+            return debate
 
         class _ToolRegistry:
             async def invoke(self, name, args, timeout_s=None):
@@ -294,17 +292,26 @@ class TestVerdictSliceEmitsDecision(_LedgerTestBase):
             async def fetch_data(self, ticker):
                 return {"events": [], "source": "test", "has_relevant_data": False}
 
-        payload = asyncio.run(
-            run_decision_verdict_request(
-                "aapl",
-                None,
-                None,
-                execute_analyze=_execute_analyze,
-                tool_registry=_ToolRegistry(),
-                poly_connector=_PolyConnector(),
-                force=True,
+        async def _execute_analyze_unused(*args, **kwargs):
+            raise AssertionError("execute_analyze should not be called in split verdict path")
+
+        async def _async_poly_empty(*args, **kwargs):
+            return {"events": [], "source": "test", "has_relevant_data": False}
+
+        with patch("backend.decision_terminal._safe_poly_fetch", new=_async_poly_empty):
+            payload = asyncio.run(
+                run_decision_verdict_request(
+                    "aapl",
+                    None,
+                    None,
+                    execute_analyze=_execute_analyze_unused,
+                    execute_swarm_trace=_execute_swarm_trace,
+                    execute_debate=_execute_debate,
+                    tool_registry=_ToolRegistry(),
+                    poly_connector=_PolyConnector(),
+                    force=True,
+                )
             )
-        )
 
         self.assertEqual(payload.ticker, "AAPL")
         self.assertIsNotNone(payload.verdict)

@@ -28,8 +28,9 @@ const QUALITY_ICONS = {
 };
 
 const VERDICT_STEP_LABEL = 'Synthesizing valuation terminal & roadmap';
-const FAST_PROGRESS_WEIGHT = 30;
-const VERDICT_PROGRESS_WEIGHT = 70;
+const DEBATE_STEP_LABEL = 'Assembling multi-agent debate chamber';
+const FAST_PROGRESS_WEIGHT = 85;
+const DEBATE_PROGRESS_WEIGHT = 15;
 
 function formatElapsed(seconds) {
   const safe = Math.max(0, Number(seconds) || 0);
@@ -250,6 +251,7 @@ export default function UnifiedDashboardUI() {
         debateError: null,
         decisionData: cached.dt,
         decisionLoading: false,
+        roadmapLoading: false,
         scorecardData: cached.scorecard,
         scorecardLoading: false,
         scorecardError: null,
@@ -277,6 +279,7 @@ export default function UnifiedDashboardUI() {
       debateError: null,
       decisionData: null,
       decisionLoading: false,
+      roadmapLoading: false,
       scorecardData: null,
       scorecardLoading: false,
       scorecardError: null,
@@ -305,6 +308,7 @@ export default function UnifiedDashboardUI() {
     debateError,
     decisionData,
     decisionLoading,
+    roadmapLoading,
     scorecardData,
     scorecardLoading,
     scorecardError,
@@ -316,10 +320,11 @@ export default function UnifiedDashboardUI() {
 
   const error = localError || analysisError;
   const isAnalyzing = analysisStatus === 'loading';
+  const showDebateBackground = debateLoading && analysisStatus === 'success';
   const showFundamentalsMetricsLoader = fundamentalsLoading || (isAnalyzing && !fundamentalsData?.metrics);
 
   useEffect(() => {
-    if (!isAnalyzing) {
+    if (!isAnalyzing && !showDebateBackground) {
       analysisStartedAtRef.current = null;
       setAnalysisElapsedSec(0);
       return undefined;
@@ -335,7 +340,7 @@ export default function UnifiedDashboardUI() {
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [isAnalyzing]);
+  }, [isAnalyzing, showDebateBackground]);
   const showFundamentalsPriceLoader = fundamentalsLoading || (isAnalyzing && !fundamentalsData?.price_history?.[period]);
   const showFundamentalsChartLoader = fundamentalsLoading || (isAnalyzing && !fundamentalsData?.financials?.[perfPeriod]);
 
@@ -509,30 +514,30 @@ export default function UnifiedDashboardUI() {
   const steps = useMemo(() => [
     { label: 'Validating ticker & format', done: true },
     { label: 'Retrieving RAG knowledge base & metrics', done: !metricsLoading && !scorecardLoading },
-    { label: 'Assembling multi-agent debate chamber', done: !debateLoading },
     { label: 'Executing swarm consensus trace', done: !traceLoading },
-    { label: VERDICT_STEP_LABEL, done: !decisionLoading },
-    { label: 'Scanning prediction market contracts', done: !predMarketsLoading }
-  ], [metricsLoading, scorecardLoading, debateLoading, traceLoading, decisionLoading, predMarketsLoading]);
+    { label: VERDICT_STEP_LABEL, done: !decisionLoading && !roadmapLoading },
+    { label: 'Scanning prediction market contracts', done: !predMarketsLoading },
+    { label: DEBATE_STEP_LABEL, done: !debateLoading },
+  ], [metricsLoading, scorecardLoading, debateLoading, traceLoading, decisionLoading, roadmapLoading, predMarketsLoading]);
 
   const progressPct = useMemo(() => {
-    const fastSteps = steps.filter((s) => s.label !== VERDICT_STEP_LABEL);
+    const fastSteps = steps.filter((s) => s.label !== DEBATE_STEP_LABEL);
     const fastDone = fastSteps.filter((s) => s.done).length;
     const fastPct = fastSteps.length ? (fastDone / fastSteps.length) * FAST_PROGRESS_WEIGHT : 0;
-    const verdictStep = steps.find((s) => s.label === VERDICT_STEP_LABEL);
-    let verdictPct = 0;
-    if (verdictStep?.done) {
-      verdictPct = VERDICT_PROGRESS_WEIGHT;
-    } else if (decisionLoading && isAnalyzing) {
+    const debateStep = steps.find((s) => s.label === DEBATE_STEP_LABEL);
+    let debatePct = 0;
+    if (debateStep?.done) {
+      debatePct = DEBATE_PROGRESS_WEIGHT;
+    } else if (debateLoading && (isAnalyzing || showDebateBackground)) {
       const creep = Math.min(0.92, analysisElapsedSec / 180);
-      verdictPct = creep * VERDICT_PROGRESS_WEIGHT;
+      debatePct = creep * DEBATE_PROGRESS_WEIGHT;
     }
-    const total = fastPct + verdictPct;
-    if (verdictStep?.done && fastDone === fastSteps.length) {
+    const total = fastPct + debatePct;
+    if (debateStep?.done && fastDone === fastSteps.length) {
       return 100;
     }
     return Math.min(99, Math.round(total));
-  }, [steps, decisionLoading, isAnalyzing, analysisElapsedSec]);
+  }, [steps, debateLoading, isAnalyzing, showDebateBackground, analysisElapsedSec]);
 
   const isPricePositive = (fundamentalsData?.company_info?.price_change ?? 0) >= 0;
 
@@ -638,18 +643,18 @@ export default function UnifiedDashboardUI() {
         </div>
       )}
 
-      {isAnalyzing && (
+      {(isAnalyzing || showDebateBackground) && (
         <section className="dt-panel dt-analysis-progress" data-testid="dashboard-analysis-progress">
           <div className="dt-analysis-progress-head">
             <span className="dt-analysis-progress-title">
-              {loadingStep || 'Running analysis…'}
-              {decisionLoading && (
+              {loadingStep || (showDebateBackground ? 'Finishing multi-agent debate…' : 'Running analysis…')}
+              {debateLoading && (
                 <span
                   className="dt-analysis-elapsed"
                   data-testid="dashboard-verdict-elapsed"
                 >
                   {' '}
-                  · Verdict pipeline running… {formatElapsed(analysisElapsedSec)}
+                  · Debate running… {formatElapsed(analysisElapsedSec)}
                 </span>
               )}
             </span>
@@ -1155,7 +1160,7 @@ export default function UnifiedDashboardUI() {
                     </div>
 
                     <div className="dt-roadmap-chart-sm" style={{ flex: 1, minHeight: 180, width: '100%' }}>
-                      {decisionLoading ? (
+                      {roadmapLoading && (isAnalyzing || !r) ? (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--dt-muted)' }}>
                           <Loader2 className="spinner" size={18} /> Generating paths…
                         </div>
@@ -1230,7 +1235,7 @@ export default function UnifiedDashboardUI() {
                       </div>
                       <div className="dt-verdict-row">
                         <span className="dt-verdict-row-label">Expert Consensus</span>
-                        {decisionLoading ? (
+                        {debateLoading ? (
                           <Loader2 className="spinner" size={16} />
                         ) : (
                           <div style={{ fontSize: '0.78rem', textAlign: 'right', lineHeight: 1.45 }}>
@@ -1252,13 +1257,13 @@ export default function UnifiedDashboardUI() {
                       
                       <div className="dt-aggregate-card" style={{ marginTop: 4 }}>
                         <div className="dt-aggregate-card-title">Aggregate Verdict</div>
-                        {decisionLoading ? (
+                        {debateLoading ? (
                           <div
                             className="dt-verdict-pipeline-wait"
                             data-testid="dashboard-verdict-pipeline-wait"
                           >
                             <Loader2 className="spinner" size={14} />
-                            <span>Verdict pipeline running… {formatElapsed(analysisElapsedSec)}</span>
+                            <span>Debate running… {formatElapsed(analysisElapsedSec)}</span>
                           </div>
                         ) : (
                           <div className={`dt-aggregate-badge ${verdictTone(z?.headline_verdict || verdict)}`}>
@@ -1316,7 +1321,7 @@ export default function UnifiedDashboardUI() {
 
       </div>
 
-      {(debateLoading || debateData || isAnalyzing) && (
+      {(debateLoading || debateData || isAnalyzing || showDebateBackground) && (
         <section className="dt-panel dt-area-debate" data-testid="dashboard-debate-panel">
           <h2 className="dt-panel-title" style={{ fontSize: '0.78rem' }}>Investment Committee Debate</h2>
           {debateError && (
@@ -1326,7 +1331,7 @@ export default function UnifiedDashboardUI() {
             <div style={{ flex: '0 0 350px', width: 350, boxSizing: 'border-box' }}>
               <DebateVerdictSummary
                 result={debateData}
-                loading={debateLoading || (isAnalyzing && !debateData)}
+                loading={debateLoading || showDebateBackground || (isAnalyzing && !debateData)}
               />
             </div>
             <div style={{ flex: 1, minWidth: 320, boxSizing: 'border-box' }}>

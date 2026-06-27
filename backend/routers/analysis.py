@@ -14,6 +14,7 @@ from ..connectors.stock_fundamentals import fetch_stock_fundamentals
 from ..schemas import (
     MarketState, MarketRegime, SwarmConsensus, DebateResult,
     DecisionSnapshotPayload,
+    DecisionSwarmPayload,
     DecisionTerminalPayload,
     DecisionVerdictPayload,
     DecisionRoadmapPayload,
@@ -441,6 +442,25 @@ async def _execute_debate(
     return result
 
 
+async def _execute_debate_for_terminal(
+    ticker: str,
+    _auth_user,
+    *,
+    swarm_context: str = "",
+    debate_data_task: Optional["asyncio.Future"] = None,
+    macro_data: Optional[dict] = None,
+) -> DebateResult:
+    """Debate slice for decision-terminal (no duplicate XP; swarm context required)."""
+    return await _execute_debate(
+        ticker,
+        _auth_user,
+        swarm_context=swarm_context,
+        award_debate_xp=False,
+        debate_data_task=debate_data_task,
+        macro_data=macro_data,
+    )
+
+
 class AnalyzeResponse(BaseModel):
     swarm: SwarmConsensus
     debate: DebateResult
@@ -459,13 +479,10 @@ async def _execute_analyze(
     debate_data: Optional[dict] = None,
     debate_data_task: Optional["asyncio.Future"] = None,
 ) -> AnalyzeResponse:
+    from ..decision_terminal import build_swarm_context
+
     swarm_result, macro_data = await _execute_swarm_trace(ticker, credit_stress, _auth_user)
-    factor_summary = "; ".join(f"{name}: signal={fr.trading_signal}, conf={fr.confidence:.2f}" for name, fr in swarm_result.factors.items())
-    swarm_context = (
-        f"[Swarm pre-analysis for {ticker.upper()}] "
-        f"Verdict: {swarm_result.global_verdict}, confidence: {swarm_result.confidence:.2f}. "
-        f"Factors: {factor_summary}. {swarm_result.consensus_rationale}"
-    )
+    swarm_context = build_swarm_context(ticker, swarm_result)
     debate_result = await _execute_debate(
         ticker,
         _auth_user,
@@ -559,6 +576,50 @@ async def decision_terminal_snapshot_get(
     return await run_decision_snapshot_request(t, tool_registry=tool_registry, force=force)
 
 
+@router.get("/decision-terminal/swarm", response_model=DecisionSwarmPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_swarm_get(
+    ticker: str = Query("AAPL", description="Stock ticker for the decision terminal swarm slice."),
+    credit_stress: float = Query(None, description="Optional credit stress override (same as /analyze)."),
+    force: bool = Query(False, description="Bypass per-trading-day swarm cache."),
+    _auth_user=Depends(get_optional_user),
+):
+    """Medium slice: swarm consensus trace + polymarket-gated partial verdict (debate runs separately)."""
+    from ..decision_terminal import run_decision_swarm_request
+
+    t = validate_ticker_query(ticker)
+    return await run_decision_swarm_request(
+        t,
+        credit_stress,
+        _auth_user,
+        execute_swarm_trace=_execute_swarm_trace,
+        poly_connector=poly_connector,
+        force=force,
+    )
+
+
+@router.get("/decision-terminal/debate", response_model=DecisionVerdictPayload, dependencies=[Depends(_rl_expensive)])
+async def decision_terminal_debate_get(
+    ticker: str = Query("AAPL", description="Stock ticker for the decision terminal debate slice."),
+    credit_stress: float = Query(None, description="Optional credit stress override (same as /analyze)."),
+    force: bool = Query(False, description="Bypass per-trading-day verdict cache."),
+    _auth_user=Depends(get_optional_user),
+):
+    """Slow slice: multi-agent debate with cached swarm context + fused verdict."""
+    from ..decision_terminal import run_decision_debate_request
+
+    t = validate_ticker_query(ticker)
+    return await run_decision_debate_request(
+        t,
+        credit_stress,
+        _auth_user,
+        execute_debate=_execute_debate_for_terminal,
+        execute_swarm_trace=_execute_swarm_trace,
+        tool_registry=tool_registry,
+        poly_connector=poly_connector,
+        force=force,
+    )
+
+
 @router.get("/decision-terminal/verdict", response_model=DecisionVerdictPayload, dependencies=[Depends(_rl_expensive)])
 async def decision_terminal_verdict_get(
     ticker: str = Query("AAPL", description="Stock ticker for the decision terminal verdict."),
@@ -575,6 +636,8 @@ async def decision_terminal_verdict_get(
         credit_stress,
         _auth_user,
         execute_analyze=_execute_analyze,
+        execute_swarm_trace=_execute_swarm_trace,
+        execute_debate=_execute_debate_for_terminal,
         tool_registry=tool_registry,
         poly_connector=poly_connector,
         force=force,
@@ -625,6 +688,8 @@ async def decision_terminal_get(
         credit_stress,
         _auth_user,
         execute_analyze=_execute_analyze,
+        execute_swarm_trace=_execute_swarm_trace,
+        execute_debate=_execute_debate_for_terminal,
         tool_registry=tool_registry,
         poly_connector=poly_connector,
         llm_client=llm_client,
@@ -652,6 +717,8 @@ async def decision_terminal_prewarm(
     return await run_verdict_prewarm(
         tickers=sym_list,
         execute_analyze=_execute_analyze,
+        execute_swarm_trace=_execute_swarm_trace,
+        execute_debate=_execute_debate_for_terminal,
         tool_registry=tool_registry,
         poly_connector=poly_connector,
         llm_client=llm_client,
@@ -676,6 +743,8 @@ async def decision_terminal_verdict_post(body: AnalyzeIngressRequest, _auth_user
         body.credit_stress,
         _auth_user,
         execute_analyze=_execute_analyze,
+        execute_swarm_trace=_execute_swarm_trace,
+        execute_debate=_execute_debate_for_terminal,
         tool_registry=tool_registry,
         poly_connector=poly_connector,
         force=bool(body.force),
@@ -702,6 +771,8 @@ async def decision_terminal_post(body: AnalyzeIngressRequest, _auth_user=Depends
         body.credit_stress,
         _auth_user,
         execute_analyze=_execute_analyze,
+        execute_swarm_trace=_execute_swarm_trace,
+        execute_debate=_execute_debate_for_terminal,
         tool_registry=tool_registry,
         poly_connector=poly_connector,
         llm_client=llm_client,

@@ -81,7 +81,7 @@ export default function FundLeaderboardUI() {
     const [message, setMessage] = useState(null);
     const [selectedFundId, setSelectedFundId] = useState(null);
     const [mode, setMode] = useState('13f_investable');
-    const [rankingMode, setRankingMode] = useState('SEC_13F_VALUE');
+    const [rankingMode, setRankingMode] = useState('RETURNS');
     const [activeTab, setActiveTab] = useState('overview');
     const [tabs, setTabs] = useState({ holdings: null, changes: null, timeline: null, loading: false, error: null });
 
@@ -169,7 +169,12 @@ export default function FundLeaderboardUI() {
         if (rankingMode === 'SEC_13F_VALUE') {
             sorted.sort((a, b) => (b.latest13FValueUsd || 0) - (a.latest13FValueUsd || 0));
         } else {
-            sorted.sort((a, b) => (b.leaderboardScore || b.cagr10Y || 0) - (a.leaderboardScore || a.cagr10Y || 0));
+            // Returns-ranked: emerging funds (no reconstructed returns) sink to the
+            // bottom regardless of book size so the ranking stays performance-driven.
+            sorted.sort((a, b) => {
+                if (!!a.emerging !== !!b.emerging) return a.emerging ? 1 : -1;
+                return (b.leaderboardScore || b.cagr10Y || 0) - (a.leaderboardScore || a.cagr10Y || 0);
+            });
         }
         return sorted.map((r, i) => ({ ...r, displayRank: i + 1 }));
     }, [rows, rankingMode]);
@@ -180,9 +185,12 @@ export default function FundLeaderboardUI() {
             case 'Good': return 'text-green-400 bg-green-400/10 border-green-400/20';
             case 'Medium': return 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20';
             case 'Low': return 'text-orange-400 bg-orange-400/10 border-orange-400/20';
+            case 'Emerging': return 'text-violet-300 bg-violet-400/10 border-violet-400/20';
             default: return 'text-red-400 bg-red-400/10 border-red-400/20';
         }
     };
+
+    const selectedRow = rows.find((r) => r.fundId === selectedFundId);
 
     return (
         <div className="w-full max-w-7xl mx-auto space-y-6">
@@ -192,7 +200,7 @@ export default function FundLeaderboardUI() {
                         <Trophy className="text-amber-400" size={28} />
                         Fund Leaderboard
                     </h1>
-                    <p className="text-slate-400 mt-1">Institutional Intelligence & 5-Year Clone Returns</p>
+                    <p className="text-slate-400 mt-1">Great investors by philosophy & 5-Year clone returns</p>
                 </div>
             </header>
 
@@ -276,28 +284,40 @@ export default function FundLeaderboardUI() {
                             ) : displayRows.map((row) => (
                                 <tr key={row.fundId} className="hover:bg-slate-800/40 transition-colors group">
                                     <td className="px-4 py-3 font-medium text-white">#{row.displayRank}</td>
-                                    <td className="px-4 py-3">
-                                        <div className="font-medium text-blue-400 group-hover:text-blue-300 transition-colors cursor-pointer" onClick={() => setSelectedFundId(row.fundId)}>
-                                            {row.fundName}
+                                    <td className="px-4 py-3 max-w-[320px]">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-medium text-blue-400 group-hover:text-blue-300 transition-colors cursor-pointer" onClick={() => setSelectedFundId(row.fundId)}>
+                                                {row.fundName}
+                                            </span>
+                                            {row.emerging && (
+                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide text-violet-300 bg-violet-400/10 border border-violet-400/20">
+                                                    Emerging
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                                            <span>{row.managerType}</span>
+                                            <span className="capitalize">{(row.managerType || '').replace(/_/g, ' ')}</span>
                                             {row.strategyTags && row.strategyTags.length > 0 && (
                                                 <>
                                                     <span className="w-1 h-1 rounded-full bg-slate-600"></span>
-                                                    <span>{row.strategyTags[0]}</span>
+                                                    <span>{row.strategyTags.slice(0, 2).join(' · ').replace(/_/g, ' ')}</span>
                                                 </>
                                             )}
                                         </div>
+                                        {row.philosophy && (
+                                            <div className="text-xs text-slate-400 mt-1 line-clamp-2 max-w-[300px]" title={row.philosophy}>
+                                                {row.philosophy}
+                                            </div>
+                                        )}
                                     </td>
-                                    <td className={`px-4 py-3 text-right font-medium ${row.cagr10Y > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                        {formatPct(row.cagr10Y)}
+                                    <td className={`px-4 py-3 text-right font-medium ${row.cagr10Y == null ? 'text-slate-500' : row.cagr10Y > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {row.cagr10Y == null ? '—' : formatPct(row.cagr10Y)}
                                     </td>
-                                    <td className={`px-4 py-3 text-right text-sm ${row.alphaVsSP500 > 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
-                                        {row.alphaVsSP500 > 0 ? '+' : ''}{formatPct(row.alphaVsSP500)}
+                                    <td className={`px-4 py-3 text-right text-sm ${row.alphaVsSP500 == null ? 'text-slate-500' : row.alphaVsSP500 > 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
+                                        {row.alphaVsSP500 == null ? '—' : `${row.alphaVsSP500 > 0 ? '+' : ''}${formatPct(row.alphaVsSP500)}`}
                                     </td>
-                                    <td className="px-4 py-3 text-right text-sm text-slate-300">{formatDec(row.sharpe10Y)}</td>
-                                    <td className="px-4 py-3 text-right text-sm text-rose-400">{formatPct(row.maxDrawdown10Y)}</td>
+                                    <td className="px-4 py-3 text-right text-sm text-slate-300">{row.sharpe10Y == null ? '—' : formatDec(row.sharpe10Y)}</td>
+                                    <td className="px-4 py-3 text-right text-sm text-rose-400">{row.maxDrawdown10Y == null ? '—' : formatPct(row.maxDrawdown10Y)}</td>
                                     <td className="px-4 py-3 text-right text-sm text-slate-300">{formatUsd(row.latest13FValueUsd)}</td>
                                     <td className="px-4 py-3">
                                         <div className="text-sm text-slate-300 truncate max-w-[120px]" title={row.topSector}>
@@ -336,8 +356,13 @@ export default function FundLeaderboardUI() {
                         {/* Drawer Header */}
                         <div className="flex items-center justify-between p-5 border-b border-slate-800 bg-slate-900">
                             <div>
-                                <h2 className="text-xl font-bold text-white">
-                                    {rows.find(r => r.fundId === selectedFundId)?.fundName}
+                                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                    {selectedRow?.fundName}
+                                    {selectedRow?.emerging && (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide text-violet-300 bg-violet-400/10 border border-violet-400/20">
+                                            Emerging
+                                        </span>
+                                    )}
                                 </h2>
                                 <p className="text-sm text-slate-400 mt-1">13F Portfolio Analysis & 5Y Return Metrics</p>
                             </div>
@@ -371,26 +396,60 @@ export default function FundLeaderboardUI() {
                         <div className="flex-1 overflow-y-auto p-5 space-y-6">
 
                           {activeTab === 'overview' && (<>
+                            {/* Investing Philosophy */}
+                            {selectedRow?.philosophy && (
+                                <div className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50">
+                                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                                        <Award size={13} className="text-amber-400" /> Investing Philosophy
+                                    </p>
+                                    <p className="text-sm text-slate-200 leading-relaxed">{selectedRow.philosophy}</p>
+                                    {selectedRow.strategyTags && selectedRow.strategyTags.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 mt-3">
+                                            {selectedRow.strategyTags.map((t) => (
+                                                <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-slate-700/60 text-slate-300 capitalize">
+                                                    {String(t).replace(/_/g, ' ')}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Summary Card */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
                                     <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">Latest 13F Market Value</p>
                                     <p className="text-2xl font-semibold text-white">
-                                        {formatUsd(rows.find(r => r.fundId === selectedFundId)?.latest13FValueUsd)}
+                                        {formatUsd(selectedRow?.latest13FValueUsd)}
                                     </p>
-                                    <p className="text-xs text-slate-500 mt-1">As of {rows.find(r => r.fundId === selectedFundId)?.latestReportPeriod}</p>
+                                    <p className="text-xs text-slate-500 mt-1">As of {selectedRow?.latestReportPeriod}</p>
                                 </div>
                                 <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
-                                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">10Y CAGR</p>
-                                    <p className="text-2xl font-semibold text-emerald-400">
-                                        {formatPct(rows.find(r => r.fundId === selectedFundId)?.cagr10Y)}
+                                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">5Y CAGR (Clone)</p>
+                                    <p className={`text-2xl font-semibold ${selectedRow?.cagr10Y == null ? 'text-slate-500' : 'text-emerald-400'}`}>
+                                        {selectedRow?.cagr10Y == null ? 'N/A' : formatPct(selectedRow?.cagr10Y)}
                                     </p>
-                                    <p className="text-xs text-slate-500 mt-1">5Y Investable Clone Return</p>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        {selectedRow?.emerging ? 'Insufficient history for a reliable clone' : '5Y Investable Clone Return'}
+                                    </p>
                                 </div>
                             </div>
 
+                            {/* Emerging notice */}
+                            {selectedRow?.emerging && (
+                                <div className="bg-violet-500/10 border border-violet-500/20 p-4 rounded-lg flex gap-3 text-violet-100 text-sm">
+                                    <Info className="shrink-0 mt-0.5 text-violet-300" size={18} />
+                                    <div>
+                                        <p className="font-semibold text-violet-300">Emerging / high-conviction manager</p>
+                                        <p className="mt-1 opacity-80">
+                                            This fund has a short 13F history and/or an options- or short-driven book that the long-equity clone can't represent. We show its reported holdings and philosophy, but withhold a clone return rather than report a misleading number.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Trust Indicator */}
-                            {rows.find(r => r.fundId === selectedFundId)?.dataConfidenceLabel === 'Low' && (
+                            {selectedRow?.dataConfidenceLabel === 'Low' && (
                                 <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-lg flex gap-3 text-orange-200 text-sm">
                                     <ShieldAlert className="shrink-0 mt-0.5 text-orange-400" size={18} />
                                     <div>
@@ -457,8 +516,10 @@ export default function FundLeaderboardUI() {
                                 ) : (detail.returns?.series?.length > 1) ? (
                                     <ReturnsSparkline series={detail.returns.series} />
                                 ) : (
-                                    <div className="flex items-center justify-center h-48 text-slate-500 border border-dashed border-slate-800 rounded-lg text-sm">
-                                        {detail.error || 'Return series unavailable.'}
+                                    <div className="flex items-center justify-center h-48 text-slate-500 border border-dashed border-slate-800 rounded-lg text-sm text-center px-6">
+                                        {selectedRow?.emerging
+                                            ? 'Clone return withheld — too few quarters of 13F history (and options/short exposure is not captured by the long-book clone).'
+                                            : (detail.error || 'Return series unavailable.')}
                                     </div>
                                 )}
                             </div>

@@ -86,6 +86,7 @@ def _universe_from_yaml(path: str, ranking_method: str, source: str, top_n: int)
             "source": source,
             "manager_type": m.get("manager_type"),
             "strategy_tags": m.get("strategy_tags") or [],
+            "philosophy": m.get("philosophy"),
         })
     rows.sort(key=lambda r: r["aum_usd"], reverse=True)
     return rows[:top_n]

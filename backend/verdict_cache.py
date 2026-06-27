@@ -20,6 +20,7 @@ from .market_calendar import last_completed_session
 from .schemas import (
     DecisionRoadmapPayload,
     DecisionSnapshotPayload,
+    DecisionSwarmPayload,
     DecisionTerminalPayload,
     DecisionVerdictPayload,
     SpotEnvelope,
@@ -28,11 +29,13 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 SLICE_SNAPSHOT = "snapshot"
+SLICE_SWARM = "swarm"
 SLICE_VERDICT = "verdict"
 SLICE_ROADMAP = "roadmap"
 
 SlicePayload = Union[
     DecisionSnapshotPayload,
+    DecisionSwarmPayload,
     DecisionVerdictPayload,
     DecisionRoadmapPayload,
     DecisionTerminalPayload,
@@ -104,6 +107,8 @@ def _supabase_client():
 def _payload_from_json(slice_name: str, data: dict) -> SlicePayload:
     if slice_name == SLICE_SNAPSHOT:
         return DecisionSnapshotPayload.model_validate(data)
+    if slice_name == SLICE_SWARM:
+        return DecisionSwarmPayload.model_validate(data)
     if slice_name == SLICE_VERDICT:
         return DecisionVerdictPayload.model_validate(data)
     if slice_name == SLICE_ROADMAP:
@@ -188,6 +193,8 @@ def get_cached_slice(slice_name: str, ticker: str) -> Optional[SlicePayload]:
     if isinstance(payload, DecisionRoadmapPayload):
         return payload.model_copy(update={"slice_from_cache": True})
     if isinstance(payload, DecisionSnapshotPayload):
+        return payload.model_copy(update={"slice_from_cache": True})
+    if isinstance(payload, DecisionSwarmPayload):
         return payload.model_copy(update={"slice_from_cache": True})
     return payload
 

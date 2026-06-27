@@ -39,6 +39,8 @@ async def run_verdict_prewarm(
     *,
     tickers: Optional[List[str]],
     execute_analyze,
+    execute_swarm_trace,
+    execute_debate,
     tool_registry,
     poly_connector,
     llm_client,
@@ -46,9 +48,10 @@ async def run_verdict_prewarm(
     from .decision_terminal import (
         run_decision_roadmap_request,
         run_decision_snapshot_request,
+        run_decision_swarm_request,
         run_decision_verdict_request,
     )
-    from .verdict_cache import SLICE_ROADMAP, SLICE_SNAPSHOT, SLICE_VERDICT
+    from .verdict_cache import SLICE_ROADMAP, SLICE_SNAPSHOT, SLICE_SWARM, SLICE_VERDICT
 
     _ = llm_client
     raw = tickers if tickers else PREWARM_DEFAULT_TICKERS
@@ -76,13 +79,23 @@ async def run_verdict_prewarm(
         t0 = time.perf_counter()
         row: Dict[str, Any] = {"ticker": sym}
         try:
-            snapshot, verdict, roadmap = await asyncio.gather(
+            snapshot, swarm, verdict, roadmap = await asyncio.gather(
                 run_decision_snapshot_request(sym, tool_registry=tool_registry, force=False),
+                run_decision_swarm_request(
+                    sym,
+                    None,
+                    None,
+                    execute_swarm_trace=execute_swarm_trace,
+                    poly_connector=poly_connector,
+                    force=False,
+                ),
                 run_decision_verdict_request(
                     sym,
                     None,
                     None,
                     execute_analyze=execute_analyze,
+                    execute_swarm_trace=execute_swarm_trace,
+                    execute_debate=execute_debate,
                     tool_registry=tool_registry,
                     poly_connector=poly_connector,
                     force=False,
@@ -92,6 +105,7 @@ async def run_verdict_prewarm(
             dur = round(time.perf_counter() - t0, 2)
             from_cache = bool(
                 snapshot.slice_from_cache
+                or swarm.slice_from_cache
                 or verdict.slice_from_cache
                 or roadmap.slice_from_cache
             )
@@ -106,6 +120,7 @@ async def run_verdict_prewarm(
                     "verdict_from_cache": from_cache,
                     "slices": {
                         SLICE_SNAPSHOT: snapshot.slice_from_cache,
+                        SLICE_SWARM: swarm.slice_from_cache,
                         SLICE_VERDICT: verdict.slice_from_cache,
                         SLICE_ROADMAP: roadmap.slice_from_cache,
                     },

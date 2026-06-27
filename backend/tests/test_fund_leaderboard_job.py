@@ -142,6 +142,37 @@ class BuildSnapshotsTest(unittest.TestCase):
         self.assertEqual(row["dataConfidenceLabel"], "Good")
         self.assertEqual(row["leaderboardScore"], 0.88)
 
+    def test_presentable_row_preserves_philosophy_and_tags(self):
+        from backend import fund_leaderboard_job as job
+        scored = {
+            "fundId": "p", "fundName": "Pershing Square", "managerType": "hedge_fund",
+            "strategyTags": ["activist", "concentrated"],
+            "philosophy": "Concentrated activist bets on quality businesses.",
+            "emerging": False, "rank": 2, "leaderboard_score": 0.7,
+            "metrics": {"cagr": 0.18}, "confidence": {"score": 80, "label": "Good"},
+            "latest13FValueUsd": 1e10, "latestReportPeriod": "2025-12-31",
+        }
+        row = job._to_presentable_row(scored)
+        self.assertEqual(row["managerType"], "hedge_fund")
+        self.assertEqual(row["strategyTags"], ["activist", "concentrated"])
+        self.assertEqual(row["philosophy"], "Concentrated activist bets on quality businesses.")
+        self.assertFalse(row["emerging"])
+
+    def test_presentable_row_emerging_has_null_returns(self):
+        from backend import fund_leaderboard_job as job
+        scored = {
+            "fundId": "s", "fundName": "Situational Awareness LP", "managerType": "hedge_fund",
+            "strategyTags": ["ai", "thematic"], "philosophy": "Concentrated AI thesis.",
+            "emerging": True, "metrics": {}, "confidence": {"score": 0, "label": "Emerging"},
+            "latest13FValueUsd": 1.3e10, "latestReportPeriod": "2026-03-31",
+        }
+        row = job._to_presentable_row(scored)
+        self.assertTrue(row["emerging"])
+        self.assertIsNone(row["cagr10Y"])
+        self.assertIsNone(row["alphaVsSP500"])
+        self.assertEqual(row["dataConfidenceLabel"], "Emerging")
+        self.assertEqual(row["philosophy"], "Concentrated AI thesis.")
+
 
 if __name__ == "__main__":
     unittest.main()

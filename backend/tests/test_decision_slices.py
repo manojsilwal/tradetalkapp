@@ -20,6 +20,7 @@ from backend.schemas import (  # noqa: E402
     DebateResult,
     DecisionRoadmapPayload,
     DecisionSnapshotPayload,
+    DecisionSwarmPayload,
     DecisionVerdictPayload,
     MarketRegime,
     MarketState,
@@ -113,15 +114,14 @@ class TestVerdictRunner(_SliceTestBase):
     def test_returns_verdict_with_embedded_swarm_debate(self) -> None:
         from backend.decision_terminal import run_decision_verdict_request
 
-        analysis = SimpleNamespace(
-            swarm=_swarm(), debate=_debate(), macro_fetched_at_utc="2026-06-25T00:00:00Z"
-        )
+        async def _execute_swarm_trace(ticker, credit_stress, auth_user):
+            return _swarm(), {"indicators": {"fred_fetched_at": "2026-06-25T00:00:00Z"}}
 
-        async def _execute_analyze(ticker, credit_stress, auth_user, **kwargs):
+        async def _execute_debate(ticker, auth_user, **kwargs):
             task = kwargs.get("debate_data_task")
             if task is not None:
                 await task
-            return analysis
+            return _debate()
 
         registry = _ToolRegistry()
         with patch("backend.decision_terminal._emit_verdict_ledger") as emit:
@@ -130,7 +130,9 @@ class TestVerdictRunner(_SliceTestBase):
                     "aapl",
                     None,
                     None,
-                    execute_analyze=_execute_analyze,
+                    execute_analyze=_execute_analyze_unused,
+                    execute_swarm_trace=_execute_swarm_trace,
+                    execute_debate=_execute_debate,
                     tool_registry=registry,
                     poly_connector=_PolyConnector(),
                     force=True,
@@ -142,6 +144,95 @@ class TestVerdictRunner(_SliceTestBase):
         self.assertIsNotNone(payload.debate)
         self.assertEqual(payload.macro_fetched_at_utc, "2026-06-25T00:00:00Z")
         emit.assert_called_once()
+
+
+class TestSwarmRunner(_SliceTestBase):
+    def test_returns_swarm_and_caches(self) -> None:
+        from backend.decision_terminal import run_decision_swarm_request
+
+        async def _execute_swarm_trace(ticker, credit_stress, auth_user):
+            return _swarm(), {"indicators": {"fred_fetched_at": "2026-06-25T00:00:00Z"}}
+
+        with patch("backend.decision_terminal._safe_poly_fetch", new=_async_poly_empty):
+            payload = asyncio.run(
+                run_decision_swarm_request(
+                    "aapl",
+                    None,
+                    None,
+                    execute_swarm_trace=_execute_swarm_trace,
+                    poly_connector=_PolyConnector(),
+                    force=True,
+                )
+            )
+        self.assertIsInstance(payload, DecisionSwarmPayload)
+        self.assertEqual(payload.ticker, "AAPL")
+        self.assertIsNotNone(payload.swarm)
+        self.assertEqual(payload.verdict.swarm_verdict, "BUY")
+
+        with patch("backend.decision_terminal._safe_poly_fetch", new=_async_poly_empty):
+            cached = asyncio.run(
+                run_decision_swarm_request(
+                    "aapl",
+                    None,
+                    None,
+                    execute_swarm_trace=_execute_swarm_trace,
+                    poly_connector=_PolyConnector(),
+                    force=False,
+                )
+            )
+        self.assertTrue(cached.slice_from_cache)
+
+
+class TestDebateRunner(_SliceTestBase):
+    def test_reuses_cached_swarm_context(self) -> None:
+        from backend.decision_terminal import (
+            run_decision_debate_request,
+            run_decision_swarm_request,
+        )
+
+        swarm_calls = {"n": 0}
+        debate_contexts: list[str] = []
+
+        async def _execute_swarm_trace(ticker, credit_stress, auth_user):
+            swarm_calls["n"] += 1
+            return _swarm(), {"indicators": {"fred_fetched_at": "2026-06-25T00:00:00Z"}}
+
+        async def _execute_debate(ticker, auth_user, **kwargs):
+            debate_contexts.append(kwargs.get("swarm_context") or "")
+            task = kwargs.get("debate_data_task")
+            if task is not None:
+                await task
+            return _debate()
+
+        registry = _ToolRegistry()
+        with patch("backend.decision_terminal._safe_poly_fetch", new=_async_poly_empty), patch(
+            "backend.decision_terminal._emit_verdict_ledger"
+        ):
+            asyncio.run(
+                run_decision_swarm_request(
+                    "aapl",
+                    None,
+                    None,
+                    execute_swarm_trace=_execute_swarm_trace,
+                    poly_connector=_PolyConnector(),
+                    force=True,
+                )
+            )
+            payload = asyncio.run(
+                run_decision_debate_request(
+                    "aapl",
+                    None,
+                    None,
+                    execute_debate=_execute_debate,
+                    execute_swarm_trace=_execute_swarm_trace,
+                    tool_registry=registry,
+                    poly_connector=_PolyConnector(),
+                    force=False,
+                )
+            )
+        self.assertIsInstance(payload, DecisionVerdictPayload)
+        self.assertEqual(swarm_calls["n"], 1)
+        self.assertTrue(any("Swarm pre-analysis for AAPL" in ctx for ctx in debate_contexts))
 
 
 class TestRoadmapRunner(_SliceTestBase):
@@ -182,6 +273,14 @@ async def _async_none(*args, **kwargs):
 
 async def _async_predictor_fail(*args, **kwargs):
     return SimpleNamespace(status="error", base_price_usd_3y_scenario=None)
+
+
+async def _async_poly_empty(*args, **kwargs):
+    return {"events": [], "source": "test", "has_relevant_data": False}
+
+
+async def _execute_analyze_unused(*args, **kwargs):
+    raise AssertionError("execute_analyze should not be called in split verdict path")
 
 
 if __name__ == "__main__":

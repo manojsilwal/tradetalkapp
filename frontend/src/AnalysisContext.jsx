@@ -12,6 +12,7 @@ const SP500_TICKER_SET = new Set(SP500_TICKERS);
 const MAX_CONCURRENT_ANALYSES = 3;
 
 const FAST_TIMEOUT_MS = 30000;
+const MEDIUM_TIMEOUT_MS = 90000;
 const LLM_TIMEOUT_MS = 240000; // 240s — cold GCP decision-terminal can exceed 150s (swarm + debate + LLM)
 const LIVE_POLL_FAST_MS = 30000;
 const LIVE_POLL_SLOW_MS = 5 * 60 * 1000;
@@ -36,7 +37,32 @@ function fundamentalsMissing(fundamentals) {
 }
 
 function decisionTerminalMissing(state) {
-    return !state?.decisionData;
+    return !state?.decisionData?.valuation;
+}
+
+function mergeDecisionData(prev, patch) {
+    if (!patch) return prev ?? null;
+    return {
+        ...(prev || {}),
+        ...patch,
+        valuation: patch.valuation ?? prev?.valuation,
+        quality: patch.quality ?? prev?.quality,
+        verdict: patch.verdict ?? prev?.verdict,
+        roadmap: patch.roadmap ?? prev?.roadmap,
+        swarm: patch.swarm ?? prev?.swarm,
+        debate: patch.debate ?? prev?.debate,
+        brain: patch.brain ?? prev?.brain,
+        scorecard_summary: patch.scorecard_summary ?? prev?.scorecard_summary,
+        spot: patch.spot ?? prev?.spot,
+        disclaimer: patch.disclaimer ?? prev?.disclaimer,
+        data_freshness: patch.data_freshness ?? prev?.data_freshness,
+        market_data_degraded: patch.market_data_degraded ?? prev?.market_data_degraded,
+        spot_price_source: patch.spot_price_source ?? prev?.spot_price_source,
+        generated_at_utc: patch.generated_at_utc ?? prev?.generated_at_utc,
+        verdict_captured_at_utc: patch.verdict_captured_at_utc ?? prev?.verdict_captured_at_utc,
+        macro_fetched_at_utc: patch.macro_fetched_at_utc ?? prev?.macro_fetched_at_utc,
+        verdict_from_cache: patch.verdict_from_cache ?? prev?.verdict_from_cache,
+    };
 }
 
 export function analysisStillRunning(state) {
@@ -49,7 +75,8 @@ export function analysisStillRunning(state) {
         state.decisionLoading ||
         state.predMarketsLoading ||
         state.smallCapLoading ||
-        state.fundamentalsLoading
+        state.fundamentalsLoading ||
+        state.roadmapLoading
     );
 }
 
@@ -455,6 +482,7 @@ export function AnalysisProvider({ children }) {
             debateError: null,
             decisionData: null,
             decisionLoading: true,
+            roadmapLoading: true,
             scorecardData: null,
             scorecardLoading: true,
             scorecardError: null,
@@ -495,6 +523,7 @@ export function AnalysisProvider({ children }) {
                             smallCapLoading: false,
                             debateLoading: false,
                             decisionLoading: false,
+                            roadmapLoading: false,
                             scorecardLoading: false,
                             predMarketsLoading: false,
                             fundamentalsLoading: false,
@@ -548,7 +577,7 @@ export function AnalysisProvider({ children }) {
         const SMALL_CAP_BUCKETS = new Set(['Small Cap', 'Micro Cap']);
 
         // Helper to emit progress to the session tray
-        const TOTAL_STEPS = 5;
+        const TOTAL_STEPS = 8;
         let stepsCompleted = 0;
         const emitStep = (stepName) => {
             stepsCompleted++;
@@ -564,7 +593,24 @@ export function AnalysisProvider({ children }) {
             });
         };
 
-        const jobs = [
+        const dtBase = `${API_BASE_URL}/decision-terminal`;
+        const dtQ = `?ticker=${encodeURIComponent(sym)}${forceRefresh ? '&force=true' : ''}`;
+
+        const mergeDtPatch = (patch) => {
+            setAnalyses((prev) => {
+                const cur = prev[sym];
+                if (!cur) return prev;
+                return {
+                    ...prev,
+                    [sym]: {
+                        ...cur,
+                        decisionData: mergeDecisionData(cur.decisionData, patch),
+                    },
+                };
+            });
+        };
+
+        const coreJobs = [
             apiFetchTimed(`${API_BASE_URL}/metrics/${sym}`, {}, FAST_TIMEOUT_MS, abortSignal)
                 .then(async (res) => {
                     let metrics = res?.metrics ?? null;
@@ -631,34 +677,53 @@ export function AnalysisProvider({ children }) {
                     updateTickerState({ predMarketsData: null, predMarketsLoading: false });
                 }),
 
-            // Consolidated: /decision-terminal runs swarm + debate ONCE and now
-            // returns them embedded, so the Trace and Debate tabs are derived from
-            // the same payload instead of re-running those pipelines via /trace + /debate.
-            apiFetchTimed(
-                `${API_BASE_URL}/decision-terminal?ticker=${encodeURIComponent(sym)}${forceRefresh ? '&force=true' : ''}`,
-                {},
-                LLM_TIMEOUT_MS,
-                abortSignal,
-            )
-                .then((res) => {
+            apiFetchTimed(`${dtBase}/snapshot${dtQ}`, {}, FAST_TIMEOUT_MS, abortSignal)
+                .then((snap) => {
                     onSuccess();
-                    emitStep('Multi-agent debate & valuation');
-                    updateTickerState({
-                        decisionData: res,
-                        decisionLoading: false,
-                        traceData: res?.swarm ?? null,
-                        traceLoading: false,
-                        debateData: res?.debate ?? null,
-                        debateError: null,
-                        debateLoading: false,
+                    emitStep('Valuation snapshot');
+                    mergeDtPatch({
+                        ticker: sym,
+                        disclaimer: snap.disclaimer,
+                        generated_at_utc: snap.generated_at_utc,
+                        valuation: snap.valuation,
+                        quality: snap.quality,
+                        scorecard_summary: snap.scorecard_summary,
+                        spot: snap.spot,
+                        data_freshness: snap.data_freshness,
+                        market_data_degraded: snap.market_data_degraded,
+                        spot_price_source: snap.spot_price_source,
                     });
-                    const flags = analysisToastFlagsRef.current[sym];
-                    if (!flags?.verdict) {
-                        analysisToastFlagsRef.current[sym] = { ...flags, verdict: true };
-                        addToast(`${sym} verdict ready ✓`, 'success', 5000);
-                    }
-                    const regime = res?.swarm?.macro_state?.market_regime;
-                    if (regime) {
+                    updateTickerState({ decisionLoading: false });
+                })
+                .catch((err) => {
+                    onFail(err);
+                    emitStepFailed('Valuation snapshot');
+                    updateTickerState({ decisionLoading: false });
+                }),
+
+            apiFetchTimed(`${dtBase}/swarm${dtQ}`, {}, MEDIUM_TIMEOUT_MS, abortSignal)
+                .then((sw) => {
+                    onSuccess();
+                    emitStep('Swarm consensus trace');
+                    mergeDtPatch({
+                        ticker: sym,
+                        swarm: sw.swarm,
+                        verdict: sw.verdict,
+                        macro_fetched_at_utc: sw.macro_fetched_at_utc,
+                        generated_at_utc: sw.generated_at_utc,
+                    });
+                    updateTickerState({
+                        traceData: sw?.swarm ?? null,
+                        traceLoading: false,
+                    });
+                    // The base /stock-fundamentals job already fetched with the
+                    // default (BULL_NORMAL) regime. Only refetch with the live
+                    // regime when it actually differs, so we never double-fetch
+                    // in the common case while preserving regime-adjusted accuracy
+                    // under stress regimes.
+                    const regime = sw?.swarm?.macro_state?.market_regime;
+                    const regimeUpper = (regime || '').toUpperCase();
+                    if (regimeUpper && regimeUpper !== 'BULL_NORMAL') {
                         apiFetchTimed(
                             `${API_BASE_URL}/stock-fundamentals/${encodeURIComponent(sym)}?market_regime=${encodeURIComponent(regime)}`,
                             {},
@@ -673,18 +738,28 @@ export function AnalysisProvider({ children }) {
                 })
                 .catch((err) => {
                     onFail(err);
-                    emitStepFailed('Debate & valuation');
+                    emitStepFailed('Swarm trace');
                     updateTickerState({
-                        decisionData: null,
-                        decisionLoading: false,
                         traceData: null,
                         traceLoading: false,
-                        debateData: null,
-                        debateError: err?.isInsufficientData
-                            ? (err.message || 'Insufficient live data for the debate.')
-                            : 'Debate temporarily unavailable.',
-                        debateLoading: false,
                     });
+                }),
+
+            apiFetchTimed(`${dtBase}/roadmap${dtQ}`, {}, MEDIUM_TIMEOUT_MS, abortSignal)
+                .then((rd) => {
+                    onSuccess();
+                    emitStep('Future price roadmap');
+                    mergeDtPatch({
+                        ticker: sym,
+                        roadmap: rd.roadmap,
+                        generated_at_utc: rd.generated_at_utc,
+                    });
+                    updateTickerState({ roadmapLoading: false });
+                })
+                .catch((err) => {
+                    onFail(err);
+                    emitStepFailed('Roadmap');
+                    updateTickerState({ roadmapLoading: false });
                 }),
 
             apiFetchTimed(
@@ -726,20 +801,55 @@ export function AnalysisProvider({ children }) {
                 }),
         ];
 
-        Promise.allSettled(jobs).then(() => {
-            // Clean up abort controller
+        const debateJob = apiFetchTimed(`${dtBase}/debate${dtQ}`, {}, LLM_TIMEOUT_MS, abortSignal)
+            .then((vd) => {
+                onSuccess();
+                emitStep('Multi-agent debate');
+                mergeDtPatch({
+                    ticker: sym,
+                    verdict: vd.verdict,
+                    swarm: vd.swarm,
+                    debate: vd.debate,
+                    brain: vd.brain,
+                    verdict_captured_at_utc: vd.verdict_captured_at_utc,
+                    macro_fetched_at_utc: vd.macro_fetched_at_utc,
+                    generated_at_utc: vd.generated_at_utc,
+                    verdict_from_cache: vd.slice_from_cache,
+                });
+                updateTickerState({
+                    debateData: vd?.debate ?? null,
+                    debateError: null,
+                    debateLoading: false,
+                });
+                const flags = analysisToastFlagsRef.current[sym];
+                if (!flags?.verdict) {
+                    analysisToastFlagsRef.current[sym] = { ...flags, verdict: true };
+                    addToast(`${sym} debate & verdict ready ✓`, 'success', 5000);
+                }
+            })
+            .catch((err) => {
+                onFail(err);
+                emitStepFailed('Multi-agent debate');
+                updateTickerState({
+                    debateData: null,
+                    debateError: err?.isInsufficientData
+                        ? (err.message || 'Insufficient live data for the debate.')
+                        : 'Debate temporarily unavailable.',
+                    debateLoading: false,
+                });
+            });
+
+        let coreFinished = false;
+        const finishCoreAnalysis = () => {
+            if (coreFinished) return;
+            coreFinished = true;
             _abortControllers.delete(sessionActionId);
 
-            setAnalyses(prev => {
+            setAnalyses((prev) => {
                 const current = prev[sym];
                 if (!current) return prev;
-
-                // If analysis was cancelled externally, don't overwrite
                 if (current.status === 'cancelled') return prev;
 
-                // Truthful-data contract: any insufficient-data refusal from the
-                // backend marks the whole analysis as errored — never present a
-                // partial dashboard as if it were a complete result.
                 const isSuccess = successCount > 0 && !insufficientErr;
                 let finalError = null;
 
@@ -759,7 +869,7 @@ export function AnalysisProvider({ children }) {
                     loading: false,
                     loadingStep: '',
                     status: isSuccess ? 'success' : 'error',
-                    error: finalError
+                    error: finalError,
                 };
 
                 if (isSuccess && (updated.metricsData || updated.decisionData || updated.traceData || updated.fundamentalsData)) {
@@ -776,7 +886,6 @@ export function AnalysisProvider({ children }) {
                             fundamentals: updated.fundamentalsData,
                         });
                         startDashboardPoller(sym);
-                        // Complete the session action and notify user
                         sessionStore.completeAction(sessionActionId, {
                             ticker: sym,
                             completedAt: Date.now(),
@@ -789,8 +898,29 @@ export function AnalysisProvider({ children }) {
 
                 return {
                     ...prev,
-                    [sym]: updated
+                    [sym]: updated,
                 };
+            });
+        };
+
+        Promise.allSettled(coreJobs).then(finishCoreAnalysis);
+
+        Promise.allSettled([debateJob]).then(() => {
+            setAnalyses((prev) => {
+                const current = prev[sym];
+                if (!current || current.status !== 'success') return prev;
+                addAnalysis(sym, {
+                    trace: current.traceData,
+                    debate: current.debateData,
+                    metrics: current.metricsData,
+                    dt: current.decisionData,
+                    scorecard: current.scorecardData,
+                    predMarkets: current.predMarketsData,
+                    smallCap: current.smallCapData,
+                    capBucket: current.capBucket,
+                    fundamentals: current.fundamentalsData,
+                });
+                return prev;
             });
         }).finally(() => {
             delete inFlightRef.current[sym];

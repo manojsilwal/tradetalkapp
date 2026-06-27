@@ -36,6 +36,14 @@ BENCHMARK = "SPY"
 MIN_MAPPED_PCT = float(os.environ.get("FUND_LB_MIN_MAPPED_PCT", "0.40"))
 MIN_QUARTERS = int(os.environ.get("FUND_LB_MIN_QUARTERS", "8"))
 
+# Managers with at least EMERGING_MIN_QUARTERS but fewer than MIN_QUARTERS of
+# history (or whose edge is options/short-driven, e.g. Situational Awareness) are
+# surfaced as "emerging": holdings + philosophy are shown, but clone returns are
+# withheld (marked N/A) rather than reported as a misleading long-book number.
+# Default floor is 6 quarters (~1.5 years) so Situational Awareness LP (which has
+# exactly 6 quarters of 13F history) makes the cut while truly raw filers do not.
+EMERGING_MIN_QUARTERS = int(os.environ.get("FUND_LB_EMERGING_MIN_QUARTERS", "6"))
+
 # Optional cap on holdings mapped per filing (0 = no cap). The largest positions
 # dominate the clone weight, so capping bounds OpenFIGI/price cost dramatically.
 MAX_HOLDINGS_PER_FILING = int(os.environ.get("FUND_LB_MAX_HOLDINGS_PER_FILING", "0"))
@@ -180,9 +188,10 @@ async def _process_manager(
         cik, fund_id, max_quarters=max_quarters, save_raw=save_raw,
     )
     parsed = history.get("filings", [])
-    if len(parsed) < MIN_QUARTERS:
+    if len(parsed) < EMERGING_MIN_QUARTERS:
         logger.info("[FundLB] %s (%s): only %d quarters, skipping", name, cik, len(parsed))
         return None
+    emerging = len(parsed) < MIN_QUARTERS
 
     # Map CUSIP -> ticker for each filing's holdings (optionally capped to the
     # largest positions to bound mapping/price cost).
@@ -195,14 +204,35 @@ async def _process_manager(
     built = _build_snapshots_and_persist(fund_id, parsed)
     snapshots = built["snapshots"]
     tickers = built["tickers"]
-    if not snapshots or not tickers:
-        return None
 
     # Quarter-over-quarter change analytics (best-effort; never aborts a manager).
     try:
         fund_leaderboard_diff.compute_and_persist_for_fund(fund_id, cik)
     except Exception as e:
         logger.warning("[FundLB] diff engine failed for %s: %s", cik, e)
+
+    # Emerging managers: surface holdings + philosophy without reconstructing a
+    # (misleading) long-book clone return. No price fetch, no mapped-pct gate.
+    if emerging:
+        logger.info("[FundLB] %s (%s): emerging (%d quarters) — holdings only, returns N/A", name, cik, len(parsed))
+        return {
+            "fundId": fund_id,
+            "fundName": name,
+            "cik": cik,
+            "managerType": filer.get("manager_type") or "Institutional",
+            "strategyTags": filer.get("strategy_tags") or [],
+            "philosophy": filer.get("philosophy"),
+            "emerging": True,
+            "metrics": {},
+            "confidence": {"score": 0, "label": "Emerging"},
+            "latest13FValueUsd": built["latest_total_mv"],
+            "latestReportPeriod": built["latest_report_period"],
+            "lastFilingDate": built["latest_filing_date"],
+            **_top_sector(fund_id),
+        }
+
+    if not snapshots or not tickers:
+        return None
 
     mapped_pct = (built["mapped_mv_total"] / built["total_mv_total"]) if built["total_mv_total"] else 0.0
     if mapped_pct < MIN_MAPPED_PCT:
@@ -253,8 +283,10 @@ async def _process_manager(
         "fundId": fund_id,
         "fundName": name,
         "cik": cik,
-        "managerType": "Institutional",
-        "strategyTags": [],
+        "managerType": filer.get("manager_type") or "Institutional",
+        "strategyTags": filer.get("strategy_tags") or [],
+        "philosophy": filer.get("philosophy"),
+        "emerging": False,
         "metrics": metrics,
         "confidence": confidence,
         "latest13FValueUsd": built["latest_total_mv"],
@@ -273,6 +305,8 @@ def _to_presentable_row(scored: Dict[str, Any]) -> Dict[str, Any]:
         "fundName": scored["fundName"],
         "managerType": scored.get("managerType", "Institutional"),
         "strategyTags": scored.get("strategyTags", []),
+        "philosophy": scored.get("philosophy"),
+        "emerging": bool(scored.get("emerging")),
         "cagr10Y": m.get("cagr"),
         "roicProxy10Y": m.get("roicProxy"),
         "alphaVsSP500": m.get("alphaVsBenchmark"),
@@ -299,10 +333,13 @@ async def run_fund_leaderboard_job(
     save_raw: bool = None,
 ) -> Dict[str, Any]:
     """Run the full pipeline and persist a fresh leaderboard snapshot."""
-    from .fund_leaderboard_universe import build_universe, RANKING_SEC_13F_VALUE
+    from .fund_leaderboard_universe import build_universe, RANKING_SEC_13F_VALUE, RANKING_EXTERNAL_AUM
     from .coral_skills.leaderboard_scoring import rank_leaderboard
 
-    ranking_mode = (ranking_mode or os.environ.get("FUND_LB_RANKING_MODE") or RANKING_SEC_13F_VALUE)
+    # Default to the curated "great investors" universe (ranked by reconstructed
+    # returns) rather than the size-ranked SEC bulk feed, which surfaces giant
+    # index managers instead of philosophy-driven funds.
+    ranking_mode = (ranking_mode or os.environ.get("FUND_LB_RANKING_MODE") or RANKING_EXTERNAL_AUM)
     if save_raw is None:
         save_raw = os.environ.get("FUND_LB_SAVE_RAW", "0") == "1"
 

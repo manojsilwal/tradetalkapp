@@ -38,6 +38,24 @@ test.describe('Analysis Surfaces', () => {
     await expectNoGenericFetchFailure(page);
   });
 
+  test('dashboard renders fast surfaces while the debate slice is still synthesizing (AAPL)', async ({ page }) => {
+    await page.goto('/dashboard');
+    await dismissOnboarding(page);
+    await expect(page.getByRole('heading', { name: 'TradeTalk', exact: true })).toBeVisible({ timeout: 15000 });
+    await runUnifiedLandingAnalyze(page, 'AAPL');
+
+    // Fast slices (snapshot/swarm/roadmap + metrics/fundamentals) should land well
+    // before the slow multi-agent debate slice — the page is interactive first.
+    await expect(page.getByTestId('consensus-valuation-panel')).toBeVisible({ timeout: 120000 });
+    await expect(page.getByText('Business Quality Scorecard')).toBeVisible();
+    await expect(page.getByTestId('dashboard-debate-panel')).toBeVisible();
+
+    // The debate verdict label only appears once the /decision-terminal/debate
+    // slice resolves; it fills in after the fast surfaces are already shown.
+    await expect(page.getByTestId('debate-panel-verdict-label')).toBeVisible({ timeout: 240000 });
+    await expectNoGenericFetchFailure(page);
+  });
+
   test('decision terminal renders verdict and roadmap for AAPL (FaultHunter: decision-aapl-today)', async ({ page }) => {
     await page.goto('/decision-terminal', { waitUntil: 'domcontentloaded' });
     await dismissOnboarding(page);

@@ -12,13 +12,16 @@ import asyncio
 import logging
 import math
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
 from backend.data_errors import InsufficientDataError
 
 from .base import clean_dividend_yield
+
+_DEBATE_DATA_CACHE: Dict[str, Tuple[float, dict]] = {}
+_DEBATE_DATA_CACHE_TTL_S = max(30.0, float(__import__("os").environ.get("DEBATE_DATA_CACHE_TTL_S", "120")))
 
 
 async def fetch_debate_data(ticker: str) -> dict:
@@ -35,7 +38,14 @@ async def fetch_debate_data(ticker: str) -> dict:
 
     Raises InsufficientDataError when live price history cannot be fetched.
     """
-    return await asyncio.to_thread(_sync_fetch, ticker)
+    t_up = ticker.upper().strip()
+    now = time.time()
+    cached = _DEBATE_DATA_CACHE.get(t_up)
+    if cached is not None and (now - cached[0]) < _DEBATE_DATA_CACHE_TTL_S:
+        return cached[1]
+    result = await asyncio.to_thread(_sync_fetch, t_up)
+    _DEBATE_DATA_CACHE[t_up] = (now, result)
+    return result
 
 
 def _build_record_from_history(

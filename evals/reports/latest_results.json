@@ -1,20 +1,20 @@
 {
-  "run_id": "eval_20260626_193044",
-  "timestamp": "2026-06-26T19:30:44Z",
+  "run_id": "eval_20260627_193249",
+  "timestamp": "2026-06-27T19:32:49Z",
   "production_version": "v1.0.0",
   "benchmark_suite": "agentic_swarm_eval_v1",
   "decision": "hold",
   "winner": "Production 5-Agent Swarm",
   "scores": {
     "production_swarm": {
-      "aes": 93.25,
+      "aes": 93.35,
       "task_success": 93.0,
       "rag_quality": 97.0,
       "orchestration": 91.0,
       "continual_learning": 90.0,
       "efficiency": 93.0,
       "safety_groundedness": 99.0,
-      "maintainability": 88.0
+      "maintainability": 90.0
     },
     "single_agent_rag": {
       "aes": 82.2,
@@ -97,50 +97,50 @@
       "maintainability": 76.0
     }
   },
-  "swarm_advantage_score": 9.2,
+  "swarm_advantage_score": 9.3,
   "complexity_tax": "low",
   "ablation_results": [
     {
       "component": "Critic agent",
-      "with_score": 93.25,
+      "with_score": 93.35,
       "without_score": 81.0,
-      "delta": 12.25,
+      "delta": 12.35,
       "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
     },
     {
       "component": "Reflection loop",
-      "with_score": 93.25,
+      "with_score": 93.35,
       "without_score": 81.75,
-      "delta": 11.5,
+      "delta": 11.6,
       "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
     },
     {
       "component": "RRF memory retrieval",
-      "with_score": 93.25,
+      "with_score": 93.35,
       "without_score": 81.9,
-      "delta": 11.35,
+      "delta": 11.45,
       "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
     },
     {
       "component": "Nightly Mutation Engine",
-      "with_score": 93.25,
+      "with_score": 93.35,
       "without_score": 82.05,
-      "delta": 11.2,
+      "delta": 11.3,
       "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
     },
     {
       "component": "CORAL / Meta-LLM",
-      "with_score": 93.25,
+      "with_score": 93.35,
       "without_score": 80.55,
-      "delta": 12.7,
+      "delta": 12.8,
       "recommendation": "Keep always-on",
       "status": "ok",
       "reason": null
@@ -157,21 +157,21 @@
     "Keep production swarm as baseline until a candidate clearly wins."
   ],
   "dashboard_notification": {
-    "run_id": "eval_20260626_193044",
-    "timestamp": "2026-06-26T19:30:44Z",
+    "run_id": "eval_20260627_193249",
+    "timestamp": "2026-06-27T19:32:49Z",
     "status": "pass",
     "winner": "Production 5-Agent Swarm",
-    "production_score": 93.25,
-    "winning_score": 93.25,
+    "production_score": 93.35,
+    "winning_score": 93.35,
     "score_delta": 0.0,
-    "swarm_advantage_score": 9.2,
+    "swarm_advantage_score": 9.3,
     "complexity_tax": "low",
     "hallucination_rate": 0.01,
     "critical_failures": 0,
     "p95_latency_ms": 3800.0,
     "cost_per_task": 0.08,
     "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-26/weekly_swarm_effectiveness_report.md",
+    "report_path": "/evals/reports/2026-06-27/weekly_swarm_effectiveness_report.md",
     "dashboard_badge": {
       "label": "Eval: Pass",
       "color": "green"
@@ -187,14 +187,14 @@
       "name": "Production 5-Agent Swarm",
       "status": "ok",
       "status_reason": null,
-      "aes": 93.25,
+      "aes": 93.35,
       "task_success": 93.0,
       "rag_quality": 97.0,
       "orchestration": 91.0,
       "learning": 90.0,
       "efficiency": 93.0,
       "safety": 99.0,
-      "maintainability": 88.0,
+      "maintainability": 90.0,
       "p95_latency_ms": 3800.0,
       "cost_per_task": 0.08,
       "decision": ""

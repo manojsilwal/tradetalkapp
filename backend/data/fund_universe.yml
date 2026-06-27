@@ -1,205 +1,253 @@
 # Curated universe of well-known institutional 13F filers.
 #
-# Used by fund_leaderboard_universe.build_universe(ranking_mode="EXTERNAL_AUM_CURATED")
-# and as a fallback when the SEC bulk dataset is unavailable.
+# Used by fund_leaderboard_universe.build_universe(ranking_mode="EXTERNAL_AUM_CURATED"
+# or "CUSTOM_WATCHLIST") and as a fallback when the SEC bulk dataset is unavailable.
 #
-# `cik` is the SEC Central Index Key of the 13F *filing manager* (no leading zeros).
-# `external_aum_usd` is an approximate, human-curated AUM used ONLY for ranking in
-# curated mode; it is not authoritative and is not displayed as a precise figure.
-# Values are intentionally coarse (order-of-magnitude) and adjustable.
+# Fields:
+#   cik               SEC Central Index Key of the 13F *filing manager* (no leading
+#                     zeros). MUST be the correct filer CIK — a wrong CIK silently
+#                     pulls another manager's holdings and produces bogus returns.
+#   name              Display name.
+#   manager_type      hedge_fund | asset_manager | bank | family_office | activist |
+#                     holding_company.
+#   external_aum_usd  Approximate, human-curated AUM used ONLY for ranking in curated
+#                     mode. Coarse (order-of-magnitude), not displayed as a precise
+#                     figure, not authoritative.
+#   strategy_tags     Short tags surfaced in the UI.
+#   philosophy        One-line plain-English description of the manager's investing
+#                     philosophy, surfaced on the leaderboard + fund drawer.
+#
+# Returns shown on the leaderboard are reconstructed from the *long* 13F equity book
+# only (no shorts/puts/leverage/cash/non-US). Funds whose edge is options- or
+# short-driven (e.g. Situational Awareness) are flagged "emerging" with returns N/A
+# rather than a misleading clone number when they lack ~8 quarters of history.
 managers:
   - cik: 1067983
     name: Berkshire Hathaway
     manager_type: holding_company
     external_aum_usd: 300000000000
     strategy_tags: [value, long_term]
-  - cik: 1364742
-    name: BlackRock Inc.
-    manager_type: asset_manager
-    external_aum_usd: 3500000000000
-    strategy_tags: [index, multi_strategy]
-  - cik: 1364742
-    name: BlackRock Inc.
-    manager_type: asset_manager
-    external_aum_usd: 3500000000000
-    strategy_tags: [index, multi_strategy]
-  - cik: 102909
-    name: Vanguard Group Inc.
-    manager_type: asset_manager
-    external_aum_usd: 4500000000000
-    strategy_tags: [index, passive]
-  - cik: 93751
-    name: State Street Corp
-    manager_type: asset_manager
-    external_aum_usd: 2000000000000
-    strategy_tags: [index, passive]
-  - cik: 19617
-    name: JPMorgan Chase & Co.
-    manager_type: bank
-    external_aum_usd: 1000000000000
-    strategy_tags: [multi_strategy]
-  - cik: 895421
-    name: Morgan Stanley
-    manager_type: bank
-    external_aum_usd: 900000000000
-    strategy_tags: [multi_strategy]
-  - cik: 886982
-    name: Goldman Sachs Group Inc.
-    manager_type: bank
-    external_aum_usd: 600000000000
-    strategy_tags: [multi_strategy]
-  - cik: 1423053
-    name: Citadel Advisors LLC
-    manager_type: hedge_fund
-    external_aum_usd: 400000000000
-    strategy_tags: [multi_strategy, quant]
-  - cik: 1167483
-    name: Renaissance Technologies LLC
-    manager_type: hedge_fund
-    external_aum_usd: 120000000000
-    strategy_tags: [quant]
-  - cik: 1037389
-    name: Renaissance Technologies Holdings
-    manager_type: hedge_fund
-    external_aum_usd: 120000000000
-    strategy_tags: [quant]
+    philosophy: Buy wonderful businesses with durable moats at fair prices and hold for decades (Buffett/Munger).
   - cik: 1336528
     name: Pershing Square Capital Management
     manager_type: hedge_fund
     external_aum_usd: 18000000000
-    strategy_tags: [activist, concentrated]
-  - cik: 1418814
-    name: Two Sigma Investments
+    strategy_tags: [activist, concentrated, quality]
+    philosophy: Concentrated activist bets on simple, predictable, free-cash-flow-generative businesses (Bill Ackman).
+  - cik: 1647251
+    name: TCI Fund Management
     manager_type: hedge_fund
     external_aum_usd: 60000000000
-    strategy_tags: [quant]
-  - cik: 1179392
-    name: Bridgewater Associates
+    strategy_tags: [quality, concentrated, activist]
+    philosophy: A handful of exceptional, high-return-on-capital global monopolies held with extreme conviction (Chris Hohn).
+  - cik: 1610520
+    name: Himalaya Capital Management
     manager_type: hedge_fund
-    external_aum_usd: 110000000000
-    strategy_tags: [macro]
-  - cik: 1273087
-    name: Millennium Management LLC
+    external_aum_usd: 14000000000
+    strategy_tags: [value, concentrated, long_term]
+    philosophy: Deep-value, ultra-concentrated long-term ownership of great businesses (Li Lu, Munger-backed).
+  - cik: 1112520
+    name: Akre Capital Management
+    manager_type: asset_manager
+    external_aum_usd: 12000000000
+    strategy_tags: [quality, compounders, long_term]
+    philosophy: Own a few "compounding machines" — high ROE, reinvestment runway, honest managers — and sit still (Chuck Akre).
+  - cik: 1549575
+    name: Pabrai Investment Funds (Dalal Street)
     manager_type: hedge_fund
-    external_aum_usd: 60000000000
-    strategy_tags: [multi_strategy]
-  - cik: 1656456
-    name: Point72 Asset Management
+    external_aum_usd: 600000000
+    strategy_tags: [value, concentrated, contrarian]
+    philosophy: Few bets, big bets, infrequent bets — low-risk, high-uncertainty deep value where heads I win, tails I don't lose much (Mohnish Pabrai).
+  - cik: 1697748
+    name: Scion Asset Management
     manager_type: hedge_fund
-    external_aum_usd: 35000000000
-    strategy_tags: [multi_strategy]
-  - cik: 1350694
-    name: AQR Capital Management
-    manager_type: hedge_fund
-    external_aum_usd: 100000000000
-    strategy_tags: [quant, factor]
-  - cik: 1009207
-    name: D. E. Shaw & Co.
-    manager_type: hedge_fund
-    external_aum_usd: 60000000000
-    strategy_tags: [quant]
-  - cik: 1029160
-    name: Soros Fund Management
-    manager_type: family_office
-    external_aum_usd: 28000000000
-    strategy_tags: [macro]
-  - cik: 1037389
-    name: Lone Pine Capital
-    manager_type: hedge_fund
-    external_aum_usd: 15000000000
-    strategy_tags: [growth, long_short]
-  - cik: 1167557
-    name: Tiger Global Management
-    manager_type: hedge_fund
-    external_aum_usd: 25000000000
-    strategy_tags: [growth, technology]
-  - cik: 1135730
-    name: Coatue Management
-    manager_type: hedge_fund
-    external_aum_usd: 20000000000
-    strategy_tags: [technology, growth]
-  - cik: 1061165
-    name: Viking Global Investors
-    manager_type: hedge_fund
-    external_aum_usd: 30000000000
-    strategy_tags: [long_short]
-  - cik: 1056188
-    name: Maverick Capital
-    manager_type: hedge_fund
-    external_aum_usd: 9000000000
-    strategy_tags: [long_short]
-  - cik: 1009268
-    name: Appaloosa Management
-    manager_type: hedge_fund
-    external_aum_usd: 7000000000
-    strategy_tags: [distressed, value]
+    external_aum_usd: 300000000
+    strategy_tags: [value, contrarian, deep_value]
+    philosophy: Contrarian, deeply-researched value and special situations against the consensus (Michael Burry).
   - cik: 1099281
     name: Baupost Group
     manager_type: hedge_fund
     external_aum_usd: 27000000000
-    strategy_tags: [value, distressed]
-  - cik: 807985
-    name: Icahn Capital LP
-    manager_type: activist
-    external_aum_usd: 15000000000
-    strategy_tags: [activist]
+    strategy_tags: [value, distressed, margin_of_safety]
+    philosophy: Absolute-return value with a large margin of safety; hold cash when nothing is cheap (Seth Klarman).
+  - cik: 1009268
+    name: Appaloosa Management
+    manager_type: hedge_fund
+    external_aum_usd: 7000000000
+    strategy_tags: [distressed, value, macro]
+    philosophy: Opportunistic distressed and deep-value with macro-aware, high-conviction sizing (David Tepper).
   - cik: 1418179
     name: Greenlight Capital
     manager_type: hedge_fund
     external_aum_usd: 5000000000
     strategy_tags: [value, long_short]
+    philosophy: Long undervalued, short overvalued — research-driven long/short value (David Einhorn).
   - cik: 1166559
     name: Third Point LLC
     manager_type: hedge_fund
     external_aum_usd: 12000000000
     strategy_tags: [activist, event_driven]
+    philosophy: Event-driven and constructivist activism to catalyze undervalued situations (Daniel Loeb).
   - cik: 1313510
     name: ValueAct Capital
     manager_type: activist
     external_aum_usd: 10000000000
-    strategy_tags: [activist]
-  - cik: 1418814
+    strategy_tags: [activist, concentrated, value]
+    philosophy: Friendly, board-level activism in a concentrated book of quality businesses (Jeff Ubben/Mason Morfit).
+  - cik: 1791786
     name: Elliott Investment Management
     manager_type: activist
     external_aum_usd: 65000000000
-    strategy_tags: [activist, event_driven]
-  - cik: 1697748
-    name: Scion Asset Management
+    strategy_tags: [activist, event_driven, multi_strategy]
+    philosophy: Aggressive multi-strategy activism and event-driven situations across the capital structure (Paul Singer).
+  - cik: 807985
+    name: Icahn Capital LP
+    manager_type: activist
+    external_aum_usd: 15000000000
+    strategy_tags: [activist, value]
+    philosophy: Hard-nosed activist value — buy cheap, push management/boards to unlock value (Carl Icahn).
+  - cik: 1061165
+    name: Lone Pine Capital
     manager_type: hedge_fund
-    external_aum_usd: 300000000
-    strategy_tags: [value, contrarian]
+    external_aum_usd: 15000000000
+    strategy_tags: [growth, long_short, quality]
+    philosophy: Long/short fundamental investing in high-quality secular growth franchises (Tiger cub, Stephen Mandel).
+  - cik: 1167557
+    name: Tiger Global Management
+    manager_type: hedge_fund
+    external_aum_usd: 25000000000
+    strategy_tags: [growth, technology]
+    philosophy: Concentrated bets on dominant internet/software platforms and secular tech winners (Chase Coleman).
+  - cik: 1135730
+    name: Coatue Management
+    manager_type: hedge_fund
+    external_aum_usd: 20000000000
+    strategy_tags: [technology, growth, long_short]
+    philosophy: Technology-focused long/short investing across public and private innovation leaders (Philippe Laffont).
+  - cik: 1103804
+    name: Viking Global Investors
+    manager_type: hedge_fund
+    external_aum_usd: 30000000000
+    strategy_tags: [long_short, fundamental]
+    philosophy: Bottom-up fundamental long/short across sectors with rigorous business analysis (Andreas Halvorsen).
+  - cik: 1056188
+    name: Maverick Capital
+    manager_type: hedge_fund
+    external_aum_usd: 9000000000
+    strategy_tags: [long_short, fundamental]
+    philosophy: Industry-specialist long/short equity built on deep fundamental research (Lee Ainslie).
   - cik: 1649339
     name: Duquesne Family Office
     manager_type: family_office
     external_aum_usd: 10000000000
-    strategy_tags: [macro, growth]
-  - cik: 1610520
-    name: Himalaya Capital Management
+    strategy_tags: [macro, growth, opportunistic]
+    philosophy: Top-down macro plus concentrated equity bets, sized big when conviction is high (Stanley Druckenmiller).
+  - cik: 1029160
+    name: Soros Fund Management
+    manager_type: family_office
+    external_aum_usd: 28000000000
+    strategy_tags: [macro, opportunistic]
+    philosophy: Reflexivity-driven global macro and opportunistic positioning across asset classes (George Soros).
+  - cik: 1423053
+    name: Citadel Advisors LLC
     manager_type: hedge_fund
-    external_aum_usd: 14000000000
-    strategy_tags: [value, concentrated]
-  - cik: 1135778
-    name: Fisher Asset Management
-    manager_type: asset_manager
-    external_aum_usd: 200000000000
-    strategy_tags: [long_only]
-  - cik: 354204
-    name: T. Rowe Price Associates
-    manager_type: asset_manager
-    external_aum_usd: 1400000000000
-    strategy_tags: [long_only]
-  - cik: 315066
-    name: Wellington Management
-    manager_type: asset_manager
-    external_aum_usd: 1200000000000
-    strategy_tags: [long_only]
-  - cik: 1364742
-    name: Geode Capital Management
-    manager_type: asset_manager
-    external_aum_usd: 1000000000000
-    strategy_tags: [index]
+    external_aum_usd: 400000000000
+    strategy_tags: [multi_strategy, quant]
+    philosophy: Multi-strategy, multi-manager platform with tight risk control across many uncorrelated bets (Ken Griffin).
+  - cik: 1167483
+    name: Renaissance Technologies LLC
+    manager_type: hedge_fund
+    external_aum_usd: 120000000000
+    strategy_tags: [quant, systematic]
+    philosophy: Purely systematic, signal-driven trading from massive datasets and statistical models (Jim Simons).
+  - cik: 1350694
+    name: AQR Capital Management
+    manager_type: hedge_fund
+    external_aum_usd: 100000000000
+    strategy_tags: [quant, factor, systematic]
+    philosophy: Evidence-based factor investing — value, momentum, quality, carry — applied systematically (Cliff Asness).
+  - cik: 1418814
+    name: Two Sigma Investments
+    manager_type: hedge_fund
+    external_aum_usd: 60000000000
+    strategy_tags: [quant, systematic]
+    philosophy: Data-science and machine-learning-driven systematic strategies at scale.
+  - cik: 1009207
+    name: D. E. Shaw & Co.
+    manager_type: hedge_fund
+    external_aum_usd: 60000000000
+    strategy_tags: [quant, multi_strategy]
+    philosophy: Computational, quantitative and qualitative strategies blended across markets (David E. Shaw).
+  - cik: 1179392
+    name: Bridgewater Associates
+    manager_type: hedge_fund
+    external_aum_usd: 110000000000
+    strategy_tags: [macro, systematic]
+    philosophy: Systematic global macro built on economic cause-and-effect and diversified risk parity (Ray Dalio).
+  - cik: 1273087
+    name: Millennium Management LLC
+    manager_type: hedge_fund
+    external_aum_usd: 60000000000
+    strategy_tags: [multi_strategy, market_neutral]
+    philosophy: Multi-manager, market-neutral platform with strict risk limits per pod (Izzy Englander).
+  - cik: 1656456
+    name: Point72 Asset Management
+    manager_type: hedge_fund
+    external_aum_usd: 35000000000
+    strategy_tags: [multi_strategy, long_short]
+    philosophy: Multi-strategy discretionary long/short plus systematic and macro sleeves (Steve Cohen).
   - cik: 1551030
     name: ARK Investment Management
     manager_type: asset_manager
     external_aum_usd: 14000000000
-    strategy_tags: [thematic, innovation]
+    strategy_tags: [thematic, innovation, growth]
+    philosophy: High-conviction thematic bets on disruptive innovation (AI, genomics, energy) (Cathie Wood).
+  - cik: 1135778
+    name: Fisher Asset Management
+    manager_type: asset_manager
+    external_aum_usd: 200000000000
+    strategy_tags: [long_only, growth]
+    philosophy: Top-down global long-only allocation driven by capital-markets and behavioral analysis (Ken Fisher).
+  - cik: 354204
+    name: T. Rowe Price Associates
+    manager_type: asset_manager
+    external_aum_usd: 1400000000000
+    strategy_tags: [long_only, fundamental]
+    philosophy: Active, research-driven long-only investing across the cap spectrum.
+  - cik: 315066
+    name: Wellington Management
+    manager_type: asset_manager
+    external_aum_usd: 1200000000000
+    strategy_tags: [long_only, fundamental]
+    philosophy: Broad, research-intensive active management across global equities and credit.
+  - cik: 1214717
+    name: Geode Capital Management
+    manager_type: asset_manager
+    external_aum_usd: 1000000000000
+    strategy_tags: [index, passive]
+    philosophy: Low-cost, rules-based index replication at massive scale.
+  - cik: 1364742
+    name: BlackRock Inc.
+    manager_type: asset_manager
+    external_aum_usd: 3500000000000
+    strategy_tags: [index, multi_strategy]
+    philosophy: World's largest asset manager — predominantly index/ETF replication plus active sleeves.
+  - cik: 102909
+    name: Vanguard Group Inc.
+    manager_type: asset_manager
+    external_aum_usd: 4500000000000
+    strategy_tags: [index, passive]
+    philosophy: Low-cost, broad-market index ownership on behalf of fund shareholders.
+  - cik: 93751
+    name: State Street Corp
+    manager_type: asset_manager
+    external_aum_usd: 2000000000000
+    strategy_tags: [index, passive]
+    philosophy: Large-scale index and ETF (SPDR) replication.
+  # ── Emerging / high-conviction (short history; returns shown as N/A, not cloned) ──
+  - cik: 2045724
+    name: Situational Awareness LP
+    manager_type: hedge_fund
+    external_aum_usd: 13000000000
+    strategy_tags: [ai, thematic, options, high_conviction]
+    philosophy: Concentrated AI-infrastructure thesis expressed through equities and large option overlays (Leopold Aschenbrenner). Options/short exposure is not captured by long-book clone returns.

@@ -49,6 +49,53 @@ class BulkParseTest(unittest.TestCase):
         self.assertAlmostEqual(rows[1]["value"], 5_000_000.0)
 
 
+class CuratedYamlIntegrityTest(unittest.TestCase):
+    """Guards the shipped curated universe against the wrong-CIK class of bug."""
+
+    def _managers(self):
+        import yaml
+        path = os.path.join(os.path.dirname(uni.__file__), "data", "fund_universe.yml")
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("managers", [])
+
+    def test_no_duplicate_ciks(self):
+        ciks = [str(m.get("cik")).strip() for m in self._managers()]
+        dupes = {c for c in ciks if ciks.count(c) > 1}
+        self.assertEqual(dupes, set(), f"duplicate CIKs in fund_universe.yml: {dupes}")
+
+    def test_every_manager_has_cik_name_and_philosophy(self):
+        for m in self._managers():
+            self.assertTrue(str(m.get("cik", "")).strip().isdigit(), f"bad cik: {m}")
+            self.assertTrue((m.get("name") or "").strip(), f"missing name: {m}")
+            self.assertTrue((m.get("philosophy") or "").strip(), f"missing philosophy: {m.get('name')}")
+
+    def test_known_filers_have_correct_ciks(self):
+        by_name = {m.get("name"): str(m.get("cik")).strip() for m in self._managers()}
+        # Regression guard for the CIK fixes (Lone Pine/Viking/Elliott/Geode) and
+        # the curated additions (Situational Awareness/TCI/Akre/Pabrai).
+        expected = {
+            "Lone Pine Capital": "1061165",
+            "Viking Global Investors": "1103804",
+            "Elliott Investment Management": "1791786",
+            "Geode Capital Management": "1214717",
+            "Pershing Square Capital Management": "1336528",
+            "TCI Fund Management": "1647251",
+            "Akre Capital Management": "1112520",
+            "Situational Awareness LP": "2045724",
+        }
+        for name, cik in expected.items():
+            self.assertEqual(by_name.get(name), cik, f"{name} should have CIK {cik}")
+
+    def test_philosophy_flows_through_universe_rows(self):
+        rows = uni._universe_from_yaml(
+            os.path.join(os.path.dirname(uni.__file__), "data", "fund_universe.yml"),
+            uni.RANKING_EXTERNAL_AUM, "fund_universe.yml", top_n=100,
+        )
+        self.assertTrue(all("philosophy" in r for r in rows))
+        self.assertTrue(any(r.get("philosophy") for r in rows))
+
+
 class CuratedYamlTest(unittest.TestCase):
     def test_yaml_curated_mode_ranks_by_external_aum(self):
         yaml_text = (

@@ -850,6 +850,20 @@ class DecisionSnapshotPayload(BaseModel):
     scorecard_summary: Optional[TerminalScorecardSummary] = None
 
 
+class DecisionSwarmPayload(BaseModel):
+    """Medium slice: swarm consensus + polymarket-gated partial verdict (debate pending)."""
+
+    ticker: str
+    generated_at_utc: str
+    cache_ttl_seconds: int = 300
+    slice_from_cache: bool = False
+    macro_fetched_at_utc: Optional[str] = None
+    swarm: SwarmConsensus
+    verdict: TerminalVerdictPanel = Field(
+        description="Swarm + prediction-market fields only; debate stance fills in via /debate slice.",
+    )
+
+
 class DecisionVerdictPayload(BaseModel):
     """Slow slice: fused verdict + embedded swarm/debate for Trace/Debate tabs."""
 

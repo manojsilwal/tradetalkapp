@@ -266,7 +266,7 @@ def _check_admin(token: Optional[str]) -> None:
 
 @router.post("/ingest/run")
 async def run_ingestion(
-    rankingMode: str = Query("SEC_13F_VALUE"),
+    rankingMode: str = Query("EXTERNAL_AUM_CURATED"),
     universeSize: int = Query(job.DEFAULT_UNIVERSE_SIZE),
     topN: int = Query(job.DEFAULT_TOP_N),
     maxQuarters: int = Query(job.DEFAULT_MAX_QUARTERS),

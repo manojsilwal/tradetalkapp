@@ -29,6 +29,7 @@ from .schemas import (
     DebateResult,
     DecisionRoadmapPayload,
     DecisionSnapshotPayload,
+    DecisionSwarmPayload,
     DecisionTerminalPayload,
     DecisionVerdictPayload,
     HorizonQuantileBand,
@@ -278,6 +279,69 @@ def _swarm_rejection_present(swarm: SwarmConsensus) -> bool:
         if fr.status == VerificationStatus.REJECTED:
             return True
     return False
+
+
+def build_swarm_context(ticker: str, swarm: SwarmConsensus) -> str:
+    """Verbatim swarm pre-analysis string passed into the debate agents."""
+    factor_summary = "; ".join(
+        f"{name}: signal={fr.trading_signal}, conf={fr.confidence:.2f}"
+        for name, fr in swarm.factors.items()
+    )
+    return (
+        f"[Swarm pre-analysis for {ticker.upper()}] "
+        f"Verdict: {swarm.global_verdict}, confidence: {swarm.confidence:.2f}. "
+        f"Factors: {factor_summary}. {swarm.consensus_rationale}"
+    )
+
+
+def _macro_as_of_from_data(macro_data: dict) -> Optional[str]:
+    ind = macro_data.get("indicators") or {}
+    macro_as_of = (
+        ind.get("fred_fetched_at")
+        or ind.get("as_of")
+        or macro_data.get("as_of")
+        or macro_data.get("fetched_at")
+    )
+    return str(macro_as_of) if macro_as_of else None
+
+
+async def _build_swarm_only_verdict_panel(
+    ticker: str,
+    swarm: SwarmConsensus,
+    poly_raw: dict,
+) -> TerminalVerdictPanel:
+    """Partial verdict panel before debate completes (swarm + polymarket only)."""
+    tokens = _company_tokens_from_debate_data({"company_name": ticker})
+    events = poly_raw.get("events") or []
+    gated = select_gated_polymarket_event(events, ticker, tokens + [ticker])
+    best_score = gated.relevance_score if gated else 0.0
+
+    pm_pct = None
+    pm_title = None
+    gated_out = True
+    if gated is not None:
+        pm_pct = gated.probability_pct
+        pm_title = gated.title
+        gated_out = False
+
+    sv = swarm.global_verdict or "NEUTRAL"
+    note = "Swarm consensus ready; multi-agent debate in progress."
+    if _swarm_rejection_present(swarm):
+        note += " One or more swarm factors were REJECTED."
+
+    return TerminalVerdictPanel(
+        headline_verdict=sv,
+        debate_verdict="PENDING",
+        swarm_verdict=sv,
+        fusion_note=note,
+        debate_stance_bull_pct=None,
+        debate_confidence_pct=None,
+        expert_bullish_pct=None,
+        prediction_market_bullish_pct=pm_pct,
+        prediction_market_event_title=pm_title,
+        polymarket_relevance_score=round(best_score, 3) if events else None,
+        polymarket_gated_out=gated_out,
+    )
 
 
 def _sanitize_roadmap_scenarios(
@@ -1582,17 +1646,57 @@ async def run_decision_snapshot_request(
     return payload
 
 
-async def run_decision_verdict_request(
+async def run_decision_swarm_request(
     ticker: str,
     credit_stress: Optional[float],
     auth_user: Any,
     *,
-    execute_analyze,
+    execute_swarm_trace,
+    poly_connector: Any,
+    force: bool = False,
+) -> DecisionSwarmPayload:
+    from .verdict_cache import (
+        SLICE_SWARM,
+        get_cached_slice,
+        store_slice_cache,
+        verdict_cache_enabled,
+    )
+
+    t = ticker.upper()
+    if not force and verdict_cache_enabled():
+        cached = get_cached_slice(SLICE_SWARM, t)
+        if isinstance(cached, DecisionSwarmPayload):
+            return cached
+
+    swarm, macro_data = await execute_swarm_trace(t, credit_stress, auth_user)
+    poly_raw = await _safe_poly_fetch(poly_connector, t)
+    now = datetime.now(timezone.utc).isoformat()
+    verdict = await _build_swarm_only_verdict_panel(t, swarm, poly_raw)
+    payload = DecisionSwarmPayload(
+        ticker=t,
+        generated_at_utc=now,
+        swarm=swarm,
+        verdict=verdict,
+        macro_fetched_at_utc=_macro_as_of_from_data(macro_data),
+    )
+    if verdict_cache_enabled():
+        store_slice_cache(SLICE_SWARM, t, payload)
+    return payload
+
+
+async def run_decision_debate_request(
+    ticker: str,
+    credit_stress: Optional[float],
+    auth_user: Any,
+    *,
+    execute_debate,
+    execute_swarm_trace,
     tool_registry: Any,
     poly_connector: Any,
     force: bool = False,
 ) -> DecisionVerdictPayload:
     from .verdict_cache import (
+        SLICE_SWARM,
         SLICE_VERDICT,
         get_cached_slice,
         store_slice_cache,
@@ -1605,16 +1709,34 @@ async def run_decision_verdict_request(
         if isinstance(cached, DecisionVerdictPayload):
             return cached
 
+    swarm: SwarmConsensus
+    macro_fetched_at: Optional[str] = None
+    cached_swarm = None if force else get_cached_slice(SLICE_SWARM, t)
+    if isinstance(cached_swarm, DecisionSwarmPayload):
+        swarm = cached_swarm.swarm
+        macro_fetched_at = cached_swarm.macro_fetched_at_utc
+    else:
+        swarm_payload = await run_decision_swarm_request(
+            t,
+            credit_stress,
+            auth_user,
+            execute_swarm_trace=execute_swarm_trace,
+            poly_connector=poly_connector,
+            force=force,
+        )
+        swarm = swarm_payload.swarm
+        macro_fetched_at = swarm_payload.macro_fetched_at_utc
+
+    swarm_context = build_swarm_context(t, swarm)
     debate_data_task = asyncio.ensure_future(
         tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0)
     )
     try:
-        analysis, poly_raw, debate_data = await asyncio.gather(
-            execute_analyze(
+        debate, poly_raw, debate_data = await asyncio.gather(
+            execute_debate(
                 t,
-                credit_stress,
                 auth_user,
-                award_deep_analysis_xp=False,
+                swarm_context=swarm_context,
                 debate_data_task=debate_data_task,
             ),
             _safe_poly_fetch(poly_connector, t),
@@ -1632,16 +1754,61 @@ async def run_decision_verdict_request(
 
     payload = await build_verdict_slice(
         t,
-        analysis.swarm,
-        analysis.debate,
+        swarm,
+        debate,
         debate_data,
         poly_raw,
-        macro_fetched_at_utc=analysis.macro_fetched_at_utc,
+        macro_fetched_at_utc=macro_fetched_at,
     )
     if verdict_cache_enabled():
         store_slice_cache(SLICE_VERDICT, t, payload)
     _emit_verdict_ledger(t, payload)
     return payload
+
+
+async def run_decision_verdict_request(
+    ticker: str,
+    credit_stress: Optional[float],
+    auth_user: Any,
+    *,
+    execute_analyze,
+    execute_swarm_trace,
+    execute_debate,
+    tool_registry: Any,
+    poly_connector: Any,
+    force: bool = False,
+) -> DecisionVerdictPayload:
+    from .verdict_cache import (
+        SLICE_VERDICT,
+        get_cached_slice,
+        verdict_cache_enabled,
+    )
+
+    t = ticker.upper()
+    if not force and verdict_cache_enabled():
+        cached = get_cached_slice(SLICE_VERDICT, t)
+        if isinstance(cached, DecisionVerdictPayload):
+            return cached
+
+    _ = execute_analyze
+    await run_decision_swarm_request(
+        t,
+        credit_stress,
+        auth_user,
+        execute_swarm_trace=execute_swarm_trace,
+        poly_connector=poly_connector,
+        force=force,
+    )
+    return await run_decision_debate_request(
+        t,
+        credit_stress,
+        auth_user,
+        execute_debate=execute_debate,
+        execute_swarm_trace=execute_swarm_trace,
+        tool_registry=tool_registry,
+        poly_connector=poly_connector,
+        force=force,
+    )
 
 
 async def run_decision_roadmap_request(
@@ -1684,6 +1851,8 @@ async def run_decision_terminal_request(
     auth_user: Any,
     *,
     execute_analyze,
+    execute_swarm_trace,
+    execute_debate,
     tool_registry: Any,
     poly_connector: Any,
     llm_client: Any,
@@ -1693,7 +1862,8 @@ async def run_decision_terminal_request(
     """
     Aggregator: run snapshot, verdict, and roadmap slices in parallel, then merge.
 
-    ``execute_analyze`` must be ``_execute_analyze`` from analysis router (injected).
+    ``execute_analyze`` is retained for backward compatibility; verdict uses
+    ``execute_swarm_trace`` + ``execute_debate`` with cached swarm context.
     """
     _ = llm_client
     from .verdict_cache import get_cached_verdict, verdict_cache_enabled
@@ -1711,6 +1881,8 @@ async def run_decision_terminal_request(
             credit_stress,
             auth_user,
             execute_analyze=execute_analyze,
+            execute_swarm_trace=execute_swarm_trace,
+            execute_debate=execute_debate,
             tool_registry=tool_registry,
             poly_connector=poly_connector,
             force=force,
