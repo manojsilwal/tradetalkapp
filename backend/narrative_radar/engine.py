@@ -279,6 +279,35 @@ async def run_scan(job_id: str, *, force: bool = False) -> Dict[str, Any]:
         _set_job(progress=98, message="Emitting theme-phase decisions to ledger…")
         emitted = await asyncio.to_thread(nr_ledger.emit_decisions, rows, snapshot_id)
 
+        # CORAL handoff for nightly dreaming (best-effort; never breaks the scan).
+        try:
+            from ..coral_hub import log_handoff_event
+
+            phase_counts: Dict[str, int] = {}
+            for r in rows:
+                p = r.get("lifecycle_phase") or "UNKNOWN"
+                phase_counts[p] = phase_counts.get(p, 0) + 1
+            top_exit = sorted(
+                rows, key=lambda r: (r.get("scores") or {}).get("theme_exit_risk_score") or 0, reverse=True
+            )[:3]
+            await asyncio.to_thread(
+                log_handoff_event,
+                "handoff_theme_phase",
+                {
+                    "snapshot_id": snapshot_id,
+                    "themes_scored": len(rows),
+                    "alerts": len(alerts),
+                    "phase_counts": phase_counts,
+                    "top_exit_risk": [
+                        {"theme_id": r.get("theme_id"),
+                         "exit_risk": (r.get("scores") or {}).get("theme_exit_risk_score")}
+                        for r in top_exit
+                    ],
+                },
+            )
+        except Exception as e:
+            logger.debug("[NarrativeRadar] CORAL handoff failed (non-fatal): %s", e)
+
         _set_job(status="done", progress=100,
                  message=(f"Scan complete: {len(rows)} themes scored, "
                           f"{len(alerts)} alerts, {emitted} ledger decisions."),

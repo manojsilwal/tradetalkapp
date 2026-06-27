@@ -395,5 +395,38 @@ class TestAssembleWithSignals(unittest.TestCase):
         self.assertIsNotNone(ai["scores"]["institutional_conviction_score"])
 
 
+class TestTimeline(unittest.TestCase):
+    def test_phase_timeline_emits_transitions_only(self):
+        from backend.narrative_radar import timeline as tl
+        history = [
+            {"created_at": 100.0, "lifecycle_phase": "EARLY_ACCUMULATION", "confidence": 0.6},
+            {"created_at": 200.0, "lifecycle_phase": "EARLY_ACCUMULATION", "confidence": 0.6},  # no change
+            {"created_at": 300.0, "lifecycle_phase": "ACCELERATION", "confidence": 0.7},
+            {"created_at": 400.0, "lifecycle_phase": "DISTRIBUTION_RISK", "confidence": 0.8},
+        ]
+        events = tl.phase_timeline_from_history(history)
+        # 3 distinct phases → 3 events, newest first.
+        self.assertEqual(len(events), 3)
+        self.assertEqual(events[0]["phase"], "DISTRIBUTION_RISK")
+        self.assertEqual(events[-1]["phase"], "EARLY_ACCUMULATION")
+        self.assertEqual(events[-1]["event_type"], "PHASE_SET")
+        self.assertEqual(events[0]["event_type"], "PHASE_TRANSITION")
+
+    def test_phase_timeline_empty(self):
+        from backend.narrative_radar import timeline as tl
+        self.assertEqual(tl.phase_timeline_from_history([]), [])
+
+
+class TestDataFreshness(unittest.TestCase):
+    def test_freshness_marks_pending_and_lag(self):
+        from backend.narrative_radar import explain
+        fresh = explain.data_freshness(["market_confirmation", "breadth_quality"])
+        self.assertIn("pending", fresh["institutional_13f"])
+        self.assertIn("pending", fresh["etf_productization"])
+        full = explain.data_freshness(["institutional_conviction", "productization"])
+        self.assertIn("13F", full["institutional_13f"])
+        self.assertNotIn("pending", full["etf_productization"])
+
+
 if __name__ == "__main__":
     unittest.main()

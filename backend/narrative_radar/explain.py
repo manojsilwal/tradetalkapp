@@ -8,7 +8,8 @@ buy/sell/hold.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Sequence
 
 from . import lifecycle as lc
 from . import themes as nr_themes
@@ -29,6 +30,27 @@ _FAMILY_HUMAN = {
     "productization": "ETF productization",
     "macro_tailwind": "macro regime fit",
 }
+
+
+def data_freshness(available_families: Sequence[str]) -> Dict[str, str]:
+    """Per-family data recency / lag for the UI (Plan §15, §21). Honest about lag
+    and about which families are pending (no source wired/enabled)."""
+    have = set(available_families or [])
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    def _state(fam: str, live_label: str) -> str:
+        return live_label if fam in have else "pending (source not enabled / no data)"
+
+    return {
+        "market_data": today,
+        "breadth": today,
+        "institutional_13f": _state("institutional_conviction", "latest 13F filing period (~45-day reporting lag)"),
+        "etf_productization": _state("productization", "latest EDGAR N-1A/S-1 filings"),
+        "narrative_media": _state("narrative", "rolling recent-news window"),
+        "retail_social": _state("retail_saturation", "rolling recent-social window"),
+        "fundamentals_reality": _state("narrative_reality_alignment", "latest quarterly filing"),
+        "macro": _state("macro_tailwind", "latest macro regime"),
+    }
 
 
 def _fmt_pct(v: Optional[float]) -> Optional[str]:
@@ -107,5 +129,6 @@ def build_explanation(
         "top_positive_drivers": _positive_drivers(feat, scores),
         "top_negative_drivers": _negative_drivers(feat, scores),
         "pending_signal_families": unavailable_human,
+        "data_freshness": data_freshness(scored.get("available_families") or []),
         "disclaimer": DISCLAIMER,
     }

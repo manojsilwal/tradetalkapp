@@ -136,9 +136,11 @@ async def get_overview(
 
     age_s = max(0, int(time.time() - meta["created_at"]))
     phase_counts: Dict[str, int] = {}
+    available_union: set = set()
     for r in rows:
         p = r.get("lifecycle_phase") or "UNKNOWN"
         phase_counts[p] = phase_counts.get(p, 0) + 1
+        available_union.update(r.get("available_families") or [])
 
     return {
         "snapshot": meta,
@@ -146,6 +148,7 @@ async def get_overview(
         "is_fresh": age_s <= nr_store.cache_ttl_s(),
         "phase_counts": phase_counts,
         "themes": [_overview_item(r) for r in filtered[:limit]],
+        "data_freshness": nr_explain.data_freshness(sorted(available_union)),
         "disclaimer": nr_explain.DISCLAIMER,
     }
 
@@ -195,6 +198,32 @@ async def get_theme_detail(slug: str) -> Dict[str, Any]:
     return {
         "found": True, "snapshot": meta, "members": nr_themes.theme_members(slug),
         "backtest": backtest, **row,
+    }
+
+
+@router.get("/themes/{slug}/timeline", dependencies=[Depends(_rl)])
+async def get_theme_timeline(slug: str) -> Dict[str, Any]:
+    """Chronological evidence trail: lifecycle-phase transitions (from the ledger),
+    current alerts, and supporting RAG evidence (Plan §10.3, §11.4)."""
+    from ..narrative_radar import timeline as nr_timeline
+
+    meta = nr_store.latest_snapshot_meta()
+    alerts: List[Dict[str, Any]] = []
+    alerts_when = None
+    label = nr_themes.theme_label(slug)
+    if meta:
+        try:
+            all_alerts = nr_store.load_alerts(meta["snapshot_id"], limit=200)
+            alerts = [a for a in all_alerts if (a.get("theme_id") or "") == slug]
+            alerts_when = meta.get("created_at")
+        except Exception:
+            alerts = []
+    events = nr_timeline.build_timeline(slug, label, alerts=alerts, alerts_when=alerts_when)
+    return {
+        "theme_id": slug,
+        "theme_label": label,
+        "events": events,
+        "disclaimer": nr_explain.DISCLAIMER,
     }
 
 

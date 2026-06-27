@@ -98,6 +98,20 @@ async def trigger_sec_filing_job(background_tasks: BackgroundTasks):
     return {"status": "accepted", "message": "SEC filing job triggered in background"}
 
 
+@router.post("/narrative-radar-run", dependencies=[Depends(require_cron_secret)])
+async def trigger_narrative_radar():
+    """Trigger a Narrative Rotation Radar scan (theme-lifecycle snapshot + alerts +
+    ledger emit). Cron entry point — guard with PIPELINE_CRON_SECRET when set."""
+    import os
+
+    if os.environ.get("NARRATIVE_RADAR_ENABLE", "1").strip() == "0":
+        return {"status": "disabled", "message": "NARRATIVE_RADAR_ENABLE=0"}
+    from ..narrative_radar import engine as nr_engine
+
+    job = nr_engine.start_scan_task(force=True)
+    return {"status": "accepted", "message": "Narrative radar scan triggered", "job": job}
+
+
 class ClaimIngestRequest(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=32)
     claim_text: str = Field(..., min_length=1, max_length=8000)

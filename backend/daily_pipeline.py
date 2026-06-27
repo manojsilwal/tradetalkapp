@@ -322,11 +322,26 @@ def start_scheduler(knowledge_store, llm_client=None) -> None:
         )
         snap_msg = " + portfolio snapshots 22:30 UTC"
 
+        # Narrative Rotation Radar — daily 00:50 UTC (after the 00:00 ingest so it
+        # scores on fresh prices). Additive + feature-flagged; never blocks startup.
+        nr_msg = ""
+        if os.environ.get("NARRATIVE_RADAR_ENABLE", "1").strip() != "0":
+            scheduler.add_job(
+                _narrative_radar_job,
+                trigger="cron",
+                hour=0,
+                minute=50,
+                id="narrative_radar_daily",
+                replace_existing=True,
+                max_instances=1,
+            )
+            nr_msg = " + narrative radar 00:50 UTC"
+
         scheduler.start()
         logger.info(
             "[DailyPipeline] APScheduler started — daily 00:00 UTC + L1 every 15m + "
             "CORAL heartbeat every %dm + dreaming 01:40 UTC + meta-harness Sun 03:10 UTC%s%s",
-            hb_min, grader_msg, snap_msg,
+            hb_min, grader_msg, snap_msg + nr_msg,
         )
     except Exception as e:
         logger.warning(f"[DailyPipeline] Scheduler start failed: {e}")
@@ -366,6 +381,20 @@ async def _dreaming_job(knowledge_store, llm_client=None) -> None:
         await run_dreaming_job(knowledge_store, llm_client)
     except Exception as e:
         logger.warning("[DailyPipeline] coral dreaming failed: %s", e)
+
+
+async def _narrative_radar_job() -> None:
+    """Daily Narrative Rotation Radar scan — theme-lifecycle snapshot + alerts +
+    theme_phase ledger emit. Never raises (best-effort like other scheduled jobs)."""
+    try:
+        import uuid
+
+        from .narrative_radar import engine as nr_engine
+
+        result = await nr_engine.run_scan(uuid.uuid4().hex, force=True)
+        logger.info("[DailyPipeline] narrative_radar scan result=%s", result)
+    except Exception as e:
+        logger.warning("[DailyPipeline] narrative radar job failed: %s", e)
 
 
 async def _outcome_grader_job() -> None:
