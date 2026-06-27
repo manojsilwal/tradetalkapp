@@ -1,6 +1,6 @@
 # Narrative Rotation Radar — TradeTalk implementation plan
 
-**Status:** Plan / design (no code shipped in this doc).
+**Status:** Implemented (NR-1..NR-9). Backend `backend/narrative_radar/` + connectors `backend/connectors/etf_filings.py`, `backend/connectors/etf_flows.py`; API `backend/routers/narrative_radar.py` (`/themes`, `/overview`, `/themes/{slug}`, `/themes/{slug}/stocks`, `/alerts`, `/backtests`, `/refresh`, `/status`) behind `NARRATIVE_RADAR_ENABLE`; frontend `frontend/src/NarrativeRadarUI.jsx` at `/narrative-radar`; tests `backend/tests/test_narrative_radar.py` (33 offline). Network-heavy signal families (productization, ETF flows, narrative/social, reality) are flag-gated OFF by default so the default scan stays MVP-fast; institutional 13F aggregation reads the local fund-leaderboard DB and degrades to unavailable when empty.
 **Owner surface:** new investor-facing feature, name **Narrative Rotation Radar** (a.k.a. *Theme Lifecycle Engine*).
 **Goal:** detect how capital and narrative rotate through market themes/sectors — when a theme is *seeded → accumulated → accelerating → crowded → distributing → exiting* — so an investor can enter early and reduce before the crowd, using signals TradeTalk **already ingests** plus a small set of new connectors.
 

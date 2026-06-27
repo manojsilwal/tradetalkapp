@@ -22,12 +22,14 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from . import alerts as nr_alerts
 from . import data as nr_data
 from . import explain as nr_explain
 from . import features as nr_features
 from . import ledger as nr_ledger
 from . import lifecycle as nr_lifecycle
 from . import scoring as nr_scoring
+from . import signals as nr_signals
 from . import store as nr_store
 from . import themes as nr_themes
 
@@ -107,17 +109,22 @@ def _set_job(**kwargs: Any) -> None:
 # ── Pass 2 — pure scoring/classification/explanation (offline-testable) ───────
 
 
-def assemble_theme_rows(feature_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def assemble_theme_rows(
+    feature_rows: List[Dict[str, Any]],
+    signals_by_theme: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     """
-    Given raw per-theme feature dicts (from ``features.build_theme_features``),
-    build the cross-sectional context, score + classify + explain every theme.
-    Pure function — no I/O — so tests can feed synthetic features.
+    Given raw per-theme feature dicts (from ``features.build_theme_features``) and
+    optional per-theme signal families (NR-5..NR-9), build the cross-sectional
+    context, score + classify + explain every theme. Pure function — no I/O — so
+    tests can feed synthetic features and signals.
     """
+    signals_by_theme = signals_by_theme or {}
     ctx = nr_scoring.ThemeContext.build(feature_rows)
     out: List[Dict[str, Any]] = []
     for feat in feature_rows:
         theme_id = feat["theme_id"]
-        scored = nr_scoring.score_theme(feat, ctx)
+        scored = nr_scoring.score_theme(feat, ctx, signals_by_theme.get(theme_id))
         if scored.get("insufficient_data"):
             continue
         phase = nr_lifecycle.classify_theme_phase(
@@ -205,6 +212,21 @@ def _build_feature_rows(member_by_ticker: Dict[str, Dict[str, Any]], spy_closes:
     return rows
 
 
+def _build_signals(feature_rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """NR-5..NR-9 signal families per theme. Each family is independently
+    flag-gated + resilient; unavailable families just lower confidence."""
+    regime = os.environ.get("NARRATIVE_RADAR_REGIME", "").strip() or None
+    out: Dict[str, Dict[str, Any]] = {}
+    for feat in feature_rows:
+        tid = feat["theme_id"]
+        try:
+            out[tid] = nr_signals.build_signals(tid, nr_themes.theme_members(tid), regime=regime)
+        except Exception as e:
+            logger.debug("[NarrativeRadar] signal build failed for %s: %s", tid, e)
+            out[tid] = {}
+    return out
+
+
 async def run_scan(job_id: str, *, force: bool = False) -> Dict[str, Any]:
     if not force:
         cached = nr_store.fresh_snapshot_meta()
@@ -228,11 +250,14 @@ async def run_scan(job_id: str, *, force: bool = False) -> Dict[str, Any]:
             _in_executor(nr_data.fetch_benchmark_closes), timeout=_chunk_history_timeout_s()
         )
 
-        _set_job(progress=88, message="Building theme features…")
+        _set_job(progress=86, message="Building theme features…")
         feature_rows = await asyncio.to_thread(_build_feature_rows, member_by_ticker, spy_closes)
 
-        _set_job(progress=92, message="Scoring + classifying lifecycle phases…")
-        rows = await asyncio.to_thread(assemble_theme_rows, feature_rows)
+        _set_job(progress=90, message="Gathering signal families (13F / ETF / narrative)…")
+        signals_by_theme = await asyncio.to_thread(_build_signals, feature_rows)
+
+        _set_job(progress=93, message="Scoring + classifying lifecycle phases…")
+        rows = await asyncio.to_thread(assemble_theme_rows, feature_rows, signals_by_theme)
 
         skipped = len(nr_themes.theme_ids()) - len(rows)
         snapshot_id = f"nr_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
@@ -243,11 +268,20 @@ async def run_scan(job_id: str, *, force: bool = False) -> Dict[str, Any]:
             meta={"duration_s": round(time.time() - started, 1), "force": force},
         )
 
-        _set_job(progress=97, message="Emitting theme-phase decisions to ledger…")
+        _set_job(progress=96, message="Generating alerts…")
+        try:
+            alerts = nr_alerts.generate_alerts(rows)
+            await asyncio.to_thread(nr_store.persist_alerts, snapshot_id, alerts)
+        except Exception as e:
+            logger.debug("[NarrativeRadar] alert generation failed (non-fatal): %s", e)
+            alerts = []
+
+        _set_job(progress=98, message="Emitting theme-phase decisions to ledger…")
         emitted = await asyncio.to_thread(nr_ledger.emit_decisions, rows, snapshot_id)
 
         _set_job(status="done", progress=100,
-                 message=f"Scan complete: {len(rows)} themes scored, {emitted} ledger decisions.",
+                 message=(f"Scan complete: {len(rows)} themes scored, "
+                          f"{len(alerts)} alerts, {emitted} ledger decisions."),
                  snapshot_id=snapshot_id, error=None)
         return nr_store.latest_snapshot_meta() or {}
     except Exception as e:

@@ -81,12 +81,19 @@ def _overview_item(row: Dict[str, Any]) -> Dict[str, Any]:
         "scores": {
             "market_confirmation_score": s.get("market_confirmation_score"),
             "breadth_quality_score": s.get("breadth_quality_score"),
+            "institutional_conviction_score": s.get("institutional_conviction_score"),
+            "productization_score": s.get("productization_score"),
+            "narrative_score": s.get("narrative_score"),
+            "retail_saturation_score": s.get("retail_saturation_score"),
+            "narrative_reality_alignment_score": s.get("narrative_reality_alignment_score"),
+            "macro_tailwind_score": s.get("macro_tailwind_score"),
             "theme_formation_score": s.get("theme_formation_score"),
             "theme_accumulation_score": s.get("theme_accumulation_score"),
             "theme_acceleration_score": s.get("theme_acceleration_score"),
             "theme_distribution_risk_score": s.get("theme_distribution_risk_score"),
             "theme_exit_risk_score": s.get("theme_exit_risk_score"),
         },
+        "available_families": row.get("available_families") or [],
         "pending_signal_families": (row.get("explanation") or {}).get("pending_signal_families") or [],
     }
 
@@ -143,6 +150,31 @@ async def get_overview(
     }
 
 
+@router.get("/alerts", dependencies=[Depends(_rl)])
+async def get_alerts(
+    severity: Optional[str] = Query(None, description="info | medium | high"),
+    limit: int = Query(50, ge=1, le=200),
+) -> Dict[str, Any]:
+    meta = nr_store.latest_snapshot_meta()
+    if not meta:
+        return {"snapshot": None, "alerts": [], "disclaimer": nr_explain.DISCLAIMER}
+    alerts = nr_store.load_alerts(meta["snapshot_id"], severity=severity, limit=limit)
+    return {"snapshot": meta, "alerts": alerts, "disclaimer": nr_explain.DISCLAIMER}
+
+
+@router.get("/backtests", dependencies=[Depends(_rl)])
+async def get_backtests(horizon: str = Query("21d", description="1d | 5d | 21d | 63d | 252d")) -> Dict[str, Any]:
+    from ..narrative_radar import backtests as nr_backtests
+
+    summary = nr_backtests.overall_summary(horizon=horizon)
+    summary["disclaimer"] = nr_explain.DISCLAIMER
+    summary["note"] = (
+        "Hit rate = share of theme-phase calls with correct directional excess return vs SPY, "
+        "graded by the Decision-Outcome Ledger. Accumulates over time as decisions mature."
+    )
+    return summary
+
+
 @router.get("/themes/{slug}", dependencies=[Depends(_rl)])
 async def get_theme_detail(slug: str) -> Dict[str, Any]:
     meta = nr_store.latest_snapshot_meta()
@@ -151,7 +183,19 @@ async def get_theme_detail(slug: str) -> Dict[str, Any]:
     row = nr_store.load_row(meta["snapshot_id"], slug)
     if not row:
         return {"theme_id": slug, "found": False, "message": "Theme not in latest snapshot."}
-    return {"found": True, "snapshot": meta, "members": nr_themes.theme_members(slug), **row}
+    backtest = None
+    try:
+        from ..narrative_radar import backtests as nr_backtests
+
+        matches = [r for r in nr_backtests.theme_phase_hit_rates(horizon="21d", limit=500)
+                   if (r.get("theme_id") or "").upper() == slug.upper()]
+        backtest = matches[0] if matches else None
+    except Exception:
+        backtest = None
+    return {
+        "found": True, "snapshot": meta, "members": nr_themes.theme_members(slug),
+        "backtest": backtest, **row,
+    }
 
 
 @router.get("/themes/{slug}/stocks", dependencies=[Depends(_rl)])

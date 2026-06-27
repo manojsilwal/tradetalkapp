@@ -235,5 +235,165 @@ class TestLedgerEmit(unittest.TestCase):
             self.assertIn(d.verdict, ("BUY", "SELL", "HOLD"))
 
 
+# ── NR-5..NR-9: signal families, aggregators, alerts, backtests ──────────────
+
+
+def _full_signals():
+    """All eight families available → should reach High confidence."""
+    return {
+        "institutional": {
+            "available": True, "ownership_breadth_pct": 80.0, "net_position_change_pct": 12.0,
+            "new_position_ratio": 0.2, "concentration_pct": 30.0,
+        },
+        "etf_flow": {"available": True, "flow_score": 70.0, "flow_acceleration_pct": 65.0},
+        "productization": {"available": True, "filings_count": 4, "issuer_count": 3,
+                           "aum_growth_pct": 30.0, "launch_after_runup": False},
+        "narrative": {"available": True, "mention_velocity_pct": 70.0, "attention_percentile": 65.0, "sentiment": 0.4},
+        "retail": {"available": True, "social_velocity_pct": 60.0, "media_freq_pct": 55.0,
+                   "youtube_score": 50.0, "buy_now_density": 3.0},
+        "reality": {"available": True, "revenue_accel_pct": 12.0, "capex_growth_pct": 25.0,
+                    "guidance_revision": 1.0, "keyword_growth_pct": 30.0, "estimate_revision_pct": 8.0},
+        "macro": {"available": True, "regime_fit_pct": 80.0},
+    }
+
+
+class TestSignalFamilies(unittest.TestCase):
+    def test_full_signals_reach_high_confidence(self):
+        feats = [_strong_feat("ai_compute"), _weak_feat("cybersecurity")]
+        ctx = nr_scoring.ThemeContext.build(feats)
+        scored = nr_scoring.score_theme(feats[0], ctx, _full_signals())
+        self.assertEqual(scored["confidence_level"], "High")
+        s = scored["scores"]
+        for fam in ("institutional_conviction_score", "productization_score", "narrative_score",
+                    "retail_saturation_score", "narrative_reality_alignment_score", "macro_tailwind_score"):
+            self.assertIsNotNone(s[fam])
+
+    def test_institutional_none_without_real_proxy(self):
+        # Pure price fast-proxy alone must not create an institutional family.
+        self.assertIsNone(nr_scoring.institutional_conviction_score(None, 70.0, None))
+        # 13F present → available.
+        self.assertIsNotNone(nr_scoring.institutional_conviction_score(
+            {"available": True, "ownership_breadth_pct": 70.0}, 60.0, None))
+        # ETF flow present → available.
+        self.assertIsNotNone(nr_scoring.institutional_conviction_score(
+            None, 60.0, {"available": True, "flow_score": 70.0}))
+
+    def test_retail_saturation_monotonic(self):
+        hi = nr_scoring.retail_saturation_score({"available": True, "social_velocity_pct": 90,
+                                                 "media_freq_pct": 90, "youtube_score": 90, "buy_now_density": 9})
+        lo = nr_scoring.retail_saturation_score({"available": True, "social_velocity_pct": 10,
+                                                 "media_freq_pct": 10, "youtube_score": 10, "buy_now_density": 0})
+        self.assertGreater(hi, lo)
+
+    def test_deferred_none_when_signals_absent(self):
+        feats = [_strong_feat("ai_compute")]
+        ctx = nr_scoring.ThemeContext.build(feats)
+        s = nr_scoring.score_theme(feats[0], ctx)["scores"]
+        self.assertIsNone(s["institutional_conviction_score"])
+        self.assertIsNone(s["productization_score"])
+
+
+class TestInstitutionalAggregation(unittest.TestCase):
+    def test_aggregate_holdings(self):
+        from backend.narrative_radar import institutional as inst
+        rows = [
+            {"report_period": "2026Q1", "ticker": "NVDA", "fund_id": "f1", "shares": 100, "market_value_usd": 1000},
+            {"report_period": "2026Q1", "ticker": "AMD", "fund_id": "f2", "shares": 50, "market_value_usd": 400},
+            {"report_period": "2025Q4", "ticker": "NVDA", "fund_id": "f1", "shares": 80, "market_value_usd": 800},
+        ]
+        out = inst.aggregate_holdings(rows, ["NVDA", "AMD", "AVGO"])
+        self.assertTrue(out["available"])
+        self.assertEqual(out["latest_period"], "2026Q1")
+        self.assertAlmostEqual(out["ownership_breadth_pct"], round(100 * 2 / 3, 2))
+        # NVDA shares 80→100 = +25%
+        self.assertAlmostEqual(out["net_position_change_pct"], 25.0, places=1)
+
+    def test_aggregate_holdings_empty(self):
+        from backend.narrative_radar import institutional as inst
+        self.assertFalse(inst.aggregate_holdings([], ["NVDA"])["available"])
+
+
+class TestProductization(unittest.TestCase):
+    def test_theme_productization_with_fake_counter(self):
+        from backend.connectors import etf_filings
+        calls = {}
+        def fake(phrase):
+            calls[phrase] = calls.get(phrase, 0) + 1
+            return {"total": 3, "issuers": 2}
+        out = etf_filings.theme_productization(["ai infrastructure", "GPU"], counter=fake)
+        self.assertTrue(out["available"])
+        self.assertEqual(out["filings_count"], 6)
+        self.assertEqual(out["issuer_count"], 2)
+
+    def test_productization_score_present(self):
+        out = {"available": True, "filings_count": 4, "issuer_count": 3, "aum_growth_pct": 30, "launch_after_runup": False}
+        self.assertIsNotNone(nr_scoring.productization_score(out, None))
+
+
+class TestEtfFlows(unittest.TestCase):
+    def test_flow_from_series(self):
+        from backend.connectors import etf_flows
+        closes = [100 + i for i in range(40)]
+        volumes = [1_000_000] * 20 + [3_000_000] * 20  # rising volume
+        out = etf_flows.flow_from_series(closes, volumes)
+        self.assertTrue(out["available"])
+        self.assertGreater(out["flow_score"], 50)
+
+    def test_flow_insufficient(self):
+        from backend.connectors import etf_flows
+        self.assertFalse(etf_flows.flow_from_series([1, 2, 3], [1, 2, 3])["available"])
+
+
+class TestSignalHelpers(unittest.TestCase):
+    def test_keyword_hits_and_buy_now(self):
+        from backend.narrative_radar import signals
+        titles = ["NVDA AI infrastructure boom", "best stocks to buy now", "random sports headline"]
+        self.assertEqual(signals.keyword_hits(titles, ["ai infrastructure"]), 1)
+        self.assertGreater(signals.buy_now_density(titles), 0)
+
+    def test_reality_from_members(self):
+        from backend.narrative_radar import signals
+        rows = [{"available": True, "qoq_revenue_accel_pct": 10.0, "qoq_revenue_growth_pct": 20.0},
+                {"available": True, "qoq_revenue_accel_pct": 6.0, "qoq_revenue_growth_pct": 15.0}]
+        out = signals.reality_from_members(rows)
+        self.assertTrue(out["available"])
+        self.assertIsNotNone(out["revenue_accel_pct"])
+
+    def test_macro_fit(self):
+        from backend.narrative_radar import signals
+        hot = signals.macro_fit("ai_compute", "ai_capex_supercycle")
+        self.assertTrue(hot["available"])
+        self.assertGreater(hot["regime_fit_pct"], 50)
+        self.assertFalse(signals.macro_fit("ai_compute", None)["available"])
+
+
+class TestAlerts(unittest.TestCase):
+    def test_exit_alert_fires(self):
+        from backend.narrative_radar import alerts
+        rows = [{"theme_id": "x", "theme_label": "X", "confidence_score": 80,
+                 "scores": {"theme_exit_risk_score": 88}}]
+        types = {a["alert_type"] for a in alerts.generate_alerts(rows)}
+        self.assertIn(alerts.EXIT_ALERT, types)
+
+    def test_emerging_and_none_safe(self):
+        from backend.narrative_radar import alerts
+        rows = [{"theme_id": "y", "theme_label": "Y", "confidence_score": 60,
+                 "scores": {"theme_formation_score": 70, "retail_saturation_score": 20}}]
+        a = alerts.generate_alerts(rows)
+        self.assertIn(alerts.EMERGING_THEME, {x["alert_type"] for x in a})
+        # Missing scores must not raise.
+        self.assertIsInstance(alerts.generate_alerts([{"theme_id": "z", "scores": {}}]), list)
+
+
+class TestAssembleWithSignals(unittest.TestCase):
+    def test_signals_threaded_through(self):
+        feats = [_strong_feat("ai_compute"), _weak_feat("cybersecurity")]
+        sigs = {"ai_compute": _full_signals()}
+        rows = nr_engine.assemble_theme_rows(feats, sigs)
+        ai = next(r for r in rows if r["theme_id"] == "ai_compute")
+        self.assertEqual(ai["confidence_level"], "High")
+        self.assertIsNotNone(ai["scores"]["institutional_conviction_score"])
+
+
 if __name__ == "__main__":
     unittest.main()

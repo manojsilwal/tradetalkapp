@@ -24,6 +24,7 @@ DISCLAIMER = (
 _FAMILY_HUMAN = {
     "institutional_conviction": "institutional 13F footprint",
     "retail_saturation": "retail/media saturation",
+    "narrative": "media narrative",
     "narrative_reality_alignment": "fundamentals reality check",
     "productization": "ETF productization",
     "macro_tailwind": "macro regime fit",

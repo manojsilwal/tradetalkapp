@@ -69,6 +69,20 @@ def _connect() -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_nr_rows_phase "
         "ON nr_theme_rows (snapshot_id, lifecycle_phase)"
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS nr_alerts (
+               alert_id      TEXT PRIMARY KEY,
+               snapshot_id   TEXT NOT NULL,
+               created_at    REAL NOT NULL,
+               theme_id      TEXT,
+               alert_type    TEXT NOT NULL,
+               severity      TEXT NOT NULL,
+               title         TEXT NOT NULL,
+               explanation   TEXT,
+               payload_json  TEXT NOT NULL DEFAULT '{}'
+           )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nr_alerts_snapshot ON nr_alerts (snapshot_id, created_at DESC)")
     return conn
 
 
@@ -159,6 +173,52 @@ def load_row(snapshot_id: str, theme_id: str) -> Optional[Dict[str, Any]]:
         finally:
             conn.close()
     return json.loads(row["payload_json"]) if row else None
+
+
+def persist_alerts(snapshot_id: str, alerts: List[Dict[str, Any]], *, created_at: Optional[float] = None) -> int:
+    import uuid
+    ts = created_at if created_at is not None else time.time()
+    with _db_lock:
+        conn = _connect()
+        try:
+            conn.execute("DELETE FROM nr_alerts WHERE snapshot_id = ?", (snapshot_id,))
+            conn.executemany(
+                "INSERT OR REPLACE INTO nr_alerts "
+                "(alert_id, snapshot_id, created_at, theme_id, alert_type, severity, title, explanation, payload_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        uuid.uuid4().hex, snapshot_id, ts, a.get("theme_id"),
+                        a.get("alert_type"), a.get("severity"), a.get("title"),
+                        a.get("explanation"), json.dumps(a, default=str),
+                    )
+                    for a in alerts
+                ],
+            )
+            conn.commit()
+            return len(alerts)
+        finally:
+            conn.close()
+
+
+def load_alerts(snapshot_id: str, *, severity: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    with _db_lock:
+        conn = _connect()
+        try:
+            if severity:
+                raw = conn.execute(
+                    "SELECT payload_json FROM nr_alerts WHERE snapshot_id = ? AND severity = ? "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (snapshot_id, severity, int(limit)),
+                ).fetchall()
+            else:
+                raw = conn.execute(
+                    "SELECT payload_json FROM nr_alerts WHERE snapshot_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (snapshot_id, int(limit)),
+                ).fetchall()
+        finally:
+            conn.close()
+    return [json.loads(r["payload_json"]) for r in raw]
 
 
 def fresh_snapshot_meta(ttl_s: Optional[int] = None) -> Optional[Dict[str, Any]]:
