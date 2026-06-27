@@ -80,6 +80,18 @@ function usePicksShovels() {
     return () => clearInterval(pollRef.current);
   }, [busy, fetchResults, filters]);
 
+  // Cold-start self-heal: if there is no snapshot yet (e.g. before the first daily
+  // cron has run), kick a one-time background warm so the page populates itself
+  // instead of staying blank. Normally the cron has already produced a snapshot.
+  const autoWarmedRef = useRef(false);
+  useEffect(() => {
+    if (autoWarmedRef.current || busy) return;
+    if (data && data.snapshot === null) {
+      autoWarmedRef.current = true;
+      startScan(false);
+    }
+  }, [data, busy, startScan]);
+
   return { busy, jobStatus, data, error, filters, setFilters, startScan };
 }
 

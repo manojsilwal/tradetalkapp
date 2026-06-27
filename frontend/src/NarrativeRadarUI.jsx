@@ -97,6 +97,16 @@ function usePolledScan() {
     return () => clearInterval(pollRef.current);
   }, [busy, fetchOverview, sort]);
 
+  // Cold-start self-heal: warm once if no snapshot exists yet (pre-first-cron).
+  const autoWarmedRef = useRef(false);
+  useEffect(() => {
+    if (autoWarmedRef.current || busy) return;
+    if (data && data.snapshot === null) {
+      autoWarmedRef.current = true;
+      startScan(false);
+    }
+  }, [data, busy, startScan]);
+
   return { busy, jobStatus, data, error, sort, setSort, startScan, alerts, backtest };
 }
 
@@ -405,9 +415,14 @@ export default function NarrativeRadarUI() {
         </div>
       )}
 
+      {!snapshot && busy && (
+        <div className="glass-panel" style={{ padding: 24, marginTop: 18, textAlign: 'center', color: '#cbd5e1' }}>
+          Preparing today's theme data… this runs once and is then refreshed daily.
+        </div>
+      )}
       {!snapshot && !busy && (
         <div className="glass-panel" style={{ padding: 24, marginTop: 18, textAlign: 'center', color: '#cbd5e1' }}>
-          No radar snapshot yet. Click <strong>Refresh</strong> to scan the themes.
+          No radar snapshot yet. It refreshes automatically each day — or click <strong>Refresh</strong> to scan now.
         </div>
       )}
 
