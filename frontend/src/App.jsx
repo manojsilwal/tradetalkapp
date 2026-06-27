@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense, useEffect, useRef } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2, Bell, ChevronRight, MoreHorizontal, BarChart2, Trophy, Layers } from 'lucide-react'
+import { Activity, LayoutDashboard, Terminal, Globe, Swords, FlaskConical, Zap, BookOpen, Film, Target, LogOut, LogIn, Network, Coins, Menu, Gauge, Scale, Sparkles, Newspaper, Cpu, Loader2, FileCode2, Home, Maximize2, Minimize2, Bell, ChevronRight, MoreHorizontal, BarChart2, Trophy, Layers, Radar } from 'lucide-react'
 import NotificationBell from './NotificationBell'
 import XPBar from './components/XPBar'
 import BadgePopup from './components/BadgePopup'
@@ -37,6 +37,7 @@ const LlmCallsUI = lazyWithRetry(() => import('./LlmCallsUI'))
 const FundLeaderboardUI = lazyWithRetry(() => import('./intelligence/funds/FundLeaderboardUI'))
 const PipelineOpsUI = lazyWithRetry(() => import('./PipelineOpsUI'))
 const PicksShovelsUI = lazyWithRetry(() => import('./PicksShovelsUI'))
+const NarrativeRadarUI = lazyWithRetry(() => import('./NarrativeRadarUI'))
 
 /**
  * Wraps gamification tabs — shows AuthGate when auth is required and user is not signed in.
@@ -57,6 +58,7 @@ const ROUTE_TO_KEY = {
 
     '/daily-brief': 'daily_brief',
     '/picks-shovels': 'picks_shovels',
+    '/narrative-radar': 'narrative_radar',
     '/intelligence/funds/leaderboard': 'leaderboard',
     '/observer': 'observer',
     '/swarm-score': 'swarm_score',
@@ -311,6 +313,15 @@ function App() {
                     </button>
 
                     <button
+                        className={`nav-btn ${activeTab === 'narrative_radar' ? 'active' : ''}`}
+                        onClick={() => { navigate('/narrative-radar'); setSidebarCollapsed(true); }}
+                        aria-current={location.pathname === '/narrative-radar' ? 'page' : undefined}
+                    >
+                        <Radar size={20} />
+                        <span>Narrative Radar</span>
+                    </button>
+
+                    <button
                         className={`nav-btn ${activeTab === 'leaderboard' ? 'active' : ''}`}
                         onClick={() => { navigate('/intelligence/funds/leaderboard'); setSidebarCollapsed(true); }}
                         aria-current={location.pathname === '/intelligence/funds/leaderboard' ? 'page' : undefined}
@@ -409,6 +420,7 @@ function App() {
 
                             <Route path="/daily-brief" element={<DailyBriefUI />} />
                             <Route path="/picks-shovels" element={<PicksShovelsUI />} />
+                            <Route path="/narrative-radar" element={<NarrativeRadarUI />} />
                             <Route path="/observer" element={
                                 <AdminGate featureName="Developer Trace">
                                     <ObserverUI />
