@@ -674,15 +674,16 @@ export default function UnifiedDashboardUI() {
         </section>
       )}
 
+      {hasDecisionData && q?.fundamental_health && (
+        <FundamentalHealthBanner health={q.fundamental_health} />
+      )}
+
       {/* Main Redesigned Layout Grid */}
       <div className="dt-dashboard-grid">
 
         {/* 1. BUSINESS QUALITY SCORECARD */}
         <section className="dt-panel dt-area-scorecard">
           <h2 className="dt-panel-title">Business Quality Scorecard</h2>
-          {hasDecisionData && q?.fundamental_health && (
-            <FundamentalHealthBanner health={q.fundamental_health} />
-          )}
           {decisionLoading ? (
             <div className="dt-quality-3x2" style={{ marginTop: '16px' }} aria-busy="true">
               {['ROIC', 'Moat', 'FCF', 'Debt', 'Margin', 'Current ratio'].map((label) => (

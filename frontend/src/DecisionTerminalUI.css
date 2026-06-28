@@ -927,36 +927,55 @@ h4.dt-metrics-section-title {
 }
 
 .dt-fundamental-health-banner {
-  margin: 12px 0 14px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(139, 160, 181, 0.22);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--dt-card);
+  border: 1px solid var(--dt-border);
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dt-fundamental-health-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .dt-fundamental-health-headline {
-  font-size: 1rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
 }
 
 .dt-fundamental-health-summary {
-  margin: 8px 0 0;
-  font-size: 0.78rem;
+  margin: 4px 0 0;
+  font-size: 1.35rem;
+  font-weight: 400;
   line-height: 1.45;
-  color: var(--dt-text);
+  color: #f8fafc;
+  letter-spacing: -0.01em;
 }
 
 .dt-fundamental-health-macro {
-  margin: 6px 0 0;
-  font-size: 0.72rem;
-  line-height: 1.4;
-  color: var(--dt-muted);
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.dt-fundamental-health-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 4px 0;
 }
 
 .dt-fundamental-health-framing {
-  margin: 8px 0 0;
-  font-size: 0.68rem;
+  margin: 0;
+  font-size: 0.72rem;
   color: var(--dt-muted);
   font-style: italic;
 }

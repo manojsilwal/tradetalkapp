@@ -319,6 +319,10 @@ export default function DecisionTerminalUI() {
           </div>
         )}
 
+        {hasSnapshot && q?.fundamental_health && (
+          <FundamentalHealthBanner health={q.fundamental_health} />
+        )}
+
         <div className="dt-dash-grid">
           {/* —— Consensus valuation —— */}
           <section className="dt-panel">
@@ -329,9 +333,6 @@ export default function DecisionTerminalUI() {
           {/* —— Quality scorecard —— */}
           <section className="dt-panel">
             <h2 className="dt-panel-title">Business quality scorecard</h2>
-            {hasSnapshot && q?.fundamental_health && (
-              <FundamentalHealthBanner health={q.fundamental_health} />
-            )}
             <div className="dt-quality-3x2">
               {(q?.rows || []).map((row) => {
                 const IconComp = QUALITY_ICONS[row.id] || TrendingUp;
