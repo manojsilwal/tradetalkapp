@@ -21,7 +21,8 @@ def test_high_growth_dcf_basic():
     assert result["scenarios"]["bear"] is not None
     assert result["scenarios"]["bull"] is not None
     assert result["current_fcf_margin"] == -0.25
-    assert result["revenue_growth"] == 0.45
+    assert result["revenue_growth"] == 0.35  # capped from raw 0.45
+    assert result["revenue_growth_raw"] == 0.45
     assert result["target_fcf_margin_base"] > 0
     assert "high_growth_sensitivity" in result["valuation_warning_flags"]
 
@@ -77,8 +78,35 @@ def test_high_growth_hold_then_fade_shape(monkeypatch):
         "revenueGrowth": 0.45, "grossMargins": 0.80, "freeCashflow": 30_000_000,
     }
     compute_high_growth_dcf_scenarios(snapshot)
-    base_anchor, base_path = next(p for p in captured["paths"] if abs(p[0] - 0.45) < 1e-9)
-    # Years 1..3 hold the anchor, later years fade below it.
+    base_anchor, base_path = next(p for p in captured["paths"] if abs(p[0] - 0.35) < 1e-9)
+    # Years 1..2 hold the anchor, year 3+ fades below it.
     assert base_path[0] == pytest.approx(base_anchor)
-    assert base_path[2] == pytest.approx(base_anchor)
-    assert base_path[-1] < base_anchor
+    assert base_path[1] == pytest.approx(base_anchor)
+    assert base_path[2] < base_anchor
+
+
+def test_high_growth_caps_runaway_anchor():
+    """NVDA-like trailing growth should be capped and base DCF stays below old runaway levels."""
+    snapshot = {
+        "ticker": "NVDA",
+        "sharesOutstanding": 24_000_000_000,
+        "marketCap": 4_500_000_000_000,
+        "beta": 1.6,
+        "totalDebt": 10_000_000_000,
+        "totalCash": 40_000_000_000,
+        "totalRevenue": 130_000_000_000,
+        "revenueGrowth": 0.55,
+        "grossMargins": 0.75,
+        "freeCashflow": 66_000_000_000,
+        "operatingCashflow": 70_000_000_000,
+    }
+    result = compute_high_growth_dcf_scenarios(
+        snapshot, price_usd=192.53, business_type="ai_accelerator_platform_leader"
+    )
+    assert result["available"] is True
+    assert result["revenue_growth"] == pytest.approx(0.35)
+    assert result["revenue_growth_raw"] == pytest.approx(0.55)
+    base = result["scenarios"]["base"]
+    assert base is not None
+    # Old uncapped model landed ~$688; capped path should be materially lower.
+    assert base < 450.0

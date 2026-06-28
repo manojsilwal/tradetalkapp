@@ -34,6 +34,13 @@ BASE_TERMINAL_G = 0.025
 BEAR_TERMINAL_G = 0.02
 BULL_TERMINAL_G = 0.03
 
+# High-growth revenue-to-FCF DCF guardrails (shared across paths).
+HG_MAX_BASE_GROWTH = 0.35
+HG_BULL_GROWTH_CAP = 0.45
+HG_EXTREME_GROWTH_CAP = 0.55
+HG_HOLD_YEARS = 2
+HG_FADE_END_YEAR = 6
+
 
 def _num(v: Any, default: Optional[float] = None) -> Optional[float]:
     try:
@@ -468,7 +475,9 @@ def build_base_growth_path(
     g5 = 0.25 * anchor + 0.75 * terminal
     """
     anchor = anchor_pct / 100.0
-    if business_type in ("profitable_growth", "high_growth_unprofitable", "wide_moat_compounder"):
+    if business_type in ("profitable_growth", "high_growth_unprofitable"):
+        max_g = HG_MAX_BASE_GROWTH
+    elif business_type == "wide_moat_compounder":
         max_g = 0.35
     else:
         max_g = 0.15
@@ -1071,7 +1080,10 @@ def compute_high_growth_dcf_scenarios(
 
     beta = _num(snapshot.get("beta"), DEFAULT_BETA)
     rf = risk_free_rate()
-    ke = capm_wacc(beta, risk_free=rf, equity_premium=DEFAULT_EQUITY_PREMIUM)
+    exec_risk = dcf_engine.execution_risk_for(business_type)
+    ke = dcf_engine.cost_of_equity(
+        beta, risk_free=rf, equity_premium=DEFAULT_EQUITY_PREMIUM, execution_risk=exec_risk
+    )
 
     total_debt = _num(snapshot.get("totalDebt")) or _num(snapshot.get("balance_total_debt")) or 0.0
     mc_val = mc if mc is not None else ((shares * price_usd) if shares and price_usd else 0.0)
@@ -1114,12 +1126,8 @@ def compute_high_growth_dcf_scenarios(
     target_fcf_margin_base = base_target_margin
     target_fcf_margin_bull = min(0.35, base_target_margin * 1.5)
 
-    # Hold-then-fade growth shape: a high-growth company holds its initial
-    # growth for ~3 years (competitive advantage period), then fades hard toward
-    # terminal. Replaces the old single linear decay, which left 24.8% running too
-    # long and implied an implausible ~9x revenue by year 10 for names like NVDA.
-    HG_HOLD_YEARS = 3
-
+    # Hold-then-fade growth shape: hold capped anchor growth briefly, then fade
+    # toward terminal before revenue compounds to implausible levels (e.g. NVDA).
     def calculate_hg_dcf(
         rev_g_initial: float,
         wacc: float,
@@ -1130,7 +1138,11 @@ def compute_high_growth_dcf_scenarios(
         if wacc <= term_g:
             return 0.0  # Invalid
         growth_path = dcf_engine.multi_stage_path(
-            rev_g_initial, term_g, years, high_years=HG_HOLD_YEARS, fade_end_year=7
+            rev_g_initial,
+            term_g,
+            years,
+            high_years=HG_HOLD_YEARS,
+            fade_end_year=HG_FADE_END_YEAR,
         )
         revenue = rev_0
         fcfs = []
@@ -1153,11 +1165,11 @@ def compute_high_growth_dcf_scenarios(
     # Five-tier sensitivity ladder (NOT a confidence interval). Growth and margin
     # assumptions widen symmetrically around the base; bear/extreme_bull are the
     # tails, conservative_base/bull are the inner band.
-    rev_g_bear = max(0.0, rev_g_num * 0.5)
-    rev_g_conservative = max(0.0, rev_g_num * 0.75)
-    rev_g_base = rev_g_num
-    rev_g_bull = min(1.0, rev_g_num * 1.25)
-    rev_g_extreme = min(1.0, rev_g_num * 1.5)
+    rev_g_base = min(rev_g_num, HG_MAX_BASE_GROWTH)
+    rev_g_bear = max(0.0, rev_g_base * 0.5)
+    rev_g_conservative = max(0.0, rev_g_base * 0.75)
+    rev_g_bull = min(HG_BULL_GROWTH_CAP, rev_g_base * 1.25)
+    rev_g_extreme = min(HG_EXTREME_GROWTH_CAP, rev_g_base * 1.5)
 
     target_fcf_margin_conservative = max(0.08, base_target_margin * 0.75)
     target_fcf_margin_bull_mod = min(0.30, base_target_margin * 1.25)
@@ -1198,7 +1210,8 @@ def compute_high_growth_dcf_scenarios(
         "available": bool(base_fv and base_fv > 0),
         "current_fcf_margin": round(current_fcf_margin, 4),
         "target_fcf_margin_base": round(target_fcf_margin_base, 4),
-        "revenue_growth": round(rev_g_num, 4),
+        "revenue_growth": round(rev_g_base, 4),
+        "revenue_growth_raw": round(rev_g_num, 4),
         "business_type": business_type,
     }
 
@@ -1294,8 +1307,10 @@ def compute_supercycle_dcf_scenarios(
 
     def _scenario(growth_mult: float, wacc: float, tg: float, margin_delta: float) -> Optional[Dict[str, Any]]:
         s = dict(seed)
-        s["ai_growth"] = (_num(seed.get("ai_growth"), 0.30) or 0.30) * growth_mult
-        s["core_growth"] = (_num(seed.get("core_growth"), 0.07) or 0.07) * growth_mult
+        ai_g = (_num(seed.get("ai_growth"), 0.30) or 0.30) * growth_mult
+        core_g = (_num(seed.get("core_growth"), 0.07) or 0.07) * growth_mult
+        s["ai_growth"] = min(HG_MAX_BASE_GROWTH, ai_g)
+        s["core_growth"] = min(HG_MAX_BASE_GROWTH, core_g)
         return dcf_engine.supercycle_value_per_share(
             revenue0=rev_0,
             seed=s,

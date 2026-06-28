@@ -26,6 +26,11 @@ test.describe('Analysis Surfaces', () => {
     await expect(page.getByText('Verdict & Sentiment Hub')).toBeVisible();
     await expect(page.getByText('Business Quality Scorecard')).toBeVisible();
     await expect(page.getByTestId('consensus-valuation-panel')).toBeVisible({ timeout: 240000 });
+    const analystConsensus = page.getByTestId('analyst-consensus');
+    if (await analystConsensus.count()) {
+      await expect(analystConsensus).toContainText(/Mean target/i);
+      await expect(analystConsensus).toContainText(/\$/);
+    }
     await expect(page.getByTestId('debate-panel-verdict')).toBeVisible({ timeout: 240000 });
     await expect(page.getByTestId('debate-panel-verdict-label')).toBeVisible();
     await expect(page.getByText(/STRONG BUY|BUY|NEUTRAL|SELL|STRONG SELL/)).toBeVisible();

@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -432,6 +433,116 @@ class FinCrawlerClient:
             _cache_set(cache_key, price, ttl=_QUOTE_CACHE_TTL)
         return price
 
+    def _parse_analyst_targets_payload(self, data: Any, *, source: str = "fincrawler") -> Dict[str, Any]:
+        """Extract Wall St price targets from FinCrawler /quote/smart raw yfinance .info."""
+        if not isinstance(data, dict) or not data.get("ok"):
+            return {}
+        raw = data.get("data")
+        if not isinstance(raw, dict):
+            return {}
+
+        def _price(key: str) -> Optional[float]:
+            val = raw.get(key)
+            if val is None:
+                return None
+            try:
+                p = float(val)
+                return p if p > 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        mean_target = _price("targetMeanPrice")
+        if mean_target is None:
+            mean_target = _price("targetMedianPrice")
+        if mean_target is None:
+            return {}
+
+        num_analysts = raw.get("numberOfAnalystOpinions")
+        try:
+            num_analysts = int(num_analysts) if num_analysts is not None else None
+        except (TypeError, ValueError):
+            num_analysts = None
+
+        rec_mean = raw.get("recommendationMean")
+        try:
+            rec_mean = float(rec_mean) if rec_mean is not None else None
+        except (TypeError, ValueError):
+            rec_mean = None
+
+        rec_key = raw.get("recommendationKey")
+        rec_key = str(rec_key).strip() if rec_key else None
+
+        return {
+            "mean_target_usd": mean_target,
+            "high_target_usd": _price("targetHighPrice"),
+            "low_target_usd": _price("targetLowPrice"),
+            "median_target_usd": _price("targetMedianPrice"),
+            "num_analysts": num_analysts,
+            "recommendation_mean": rec_mean,
+            "recommendation_key": rec_key,
+            "source": source,
+        }
+
+    def _parse_analyst_targets_from_yahoo_analysis(self, text: str) -> Dict[str, Any]:
+        """Best-effort parse of Yahoo Finance /analysis markdown when /quote/smart lacks targets."""
+        if not text:
+            return {}
+        mean_target: Optional[float] = None
+        low_target: Optional[float] = None
+        high_target: Optional[float] = None
+        num_analysts: Optional[int] = None
+
+        for line in text.splitlines():
+            low = line.lower()
+            if "1y target est" in low or "1-year target" in low or "price target" in low:
+                label_match = re.search(
+                    r"(?:1y target est|1-year target|price target)[^\d$]*"
+                    r"(\$?\s*[\d,]+\.?\d*)",
+                    line,
+                    re.IGNORECASE,
+                )
+                nums: List[float] = []
+                if label_match:
+                    try:
+                        nums.append(float(label_match.group(1).replace("$", "").replace(",", "").strip()))
+                    except ValueError:
+                        pass
+                if not nums:
+                    for n in re.findall(r"\$?\s*([\d,]+\.?\d*)", line):
+                        try:
+                            v = float(n.replace(",", ""))
+                            if v > 0:
+                                nums.append(v)
+                        except ValueError:
+                            continue
+                if nums:
+                    mean_target = nums[0]
+                    if len(nums) >= 3:
+                        low_target, mean_target, high_target = nums[0], nums[1], nums[2]
+                    elif len(nums) == 2:
+                        low_target, high_target = nums[0], nums[1]
+            if "no. of analyst opinions" in low or "number of analyst" in low:
+                m = re.search(r"(\d+)", line)
+                if m:
+                    try:
+                        num_analysts = int(m.group(1))
+                    except ValueError:
+                        pass
+
+        if mean_target is None:
+            return {}
+
+        return {
+            "mean_target_usd": mean_target,
+            "high_target_usd": high_target,
+            "low_target_usd": low_target,
+            "median_target_usd": None,
+            "num_analysts": num_analysts,
+            "recommendation_mean": None,
+            "recommendation_key": None,
+            "source": "yahoo_analysis_scrape",
+        }
+
     def _parse_fundamentals_payload(self, data: Any, ticker: str) -> Dict[str, Any]:
         if not isinstance(data, dict) or not data.get("ok"):
             return {}
@@ -502,6 +613,72 @@ class FinCrawlerClient:
         except Exception as e:
             logger.warning("[FinCrawler] get_fundamentals_sync failed for %s: %s", ticker, e)
             return {}
+        if parsed:
+            _cache_set(cache_key, parsed, ttl=300.0)
+        return parsed
+
+    async def get_analyst_targets(self, ticker: str, *, force_refresh: bool = False) -> Dict[str, Any]:
+        """Wall St consensus price targets via FinCrawler /quote/smart (yfinance .info)."""
+        if not self.enabled:
+            return {}
+        ticker = ticker.upper().strip()
+        if not ticker:
+            return {}
+        cache_key = f"analyst_targets:{ticker}"
+        if not force_refresh:
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                return cached
+
+        parsed: Dict[str, Any] = {}
+        try:
+            data = await self._get(
+                "/quote/smart",
+                params={"ticker": ticker, "force_refresh": str(force_refresh).lower()},
+            )
+            parsed = self._parse_analyst_targets_payload(data, source="fincrawler")
+        except Exception as e:
+            logger.warning("[FinCrawler] get_analyst_targets /quote/smart failed for %s: %s", ticker, e)
+
+        if not parsed:
+            try:
+                yahoo_url = f"https://finance.yahoo.com/quote/{ticker}/analysis"
+                text = await self.scrape_text(yahoo_url, use_cache=not force_refresh)
+                parsed = self._parse_analyst_targets_from_yahoo_analysis(text)
+            except Exception as e:
+                logger.debug("[FinCrawler] get_analyst_targets Yahoo fallback failed for %s: %s", ticker, e)
+
+        if parsed:
+            _cache_set(cache_key, parsed, ttl=300.0)
+        return parsed
+
+    def get_analyst_targets_sync(self, ticker: str) -> Dict[str, Any]:
+        """Sync Wall St consensus targets via FinCrawler /quote/smart."""
+        if not self.enabled:
+            return {}
+        ticker = ticker.upper().strip()
+        if not ticker:
+            return {}
+        cache_key = f"analyst_targets_sync:{ticker}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        url = f"{self.base_url}/quote/smart"
+        timeout = self._quote_timeout_s()
+        parsed: Dict[str, Any] = {}
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                r = client.get(
+                    url,
+                    headers=self._headers(),
+                    params={"ticker": ticker},
+                )
+                r.raise_for_status()
+                parsed = self._parse_analyst_targets_payload(r.json(), source="fincrawler")
+        except Exception as e:
+            logger.warning("[FinCrawler] get_analyst_targets_sync failed for %s: %s", ticker, e)
+
         if parsed:
             _cache_set(cache_key, parsed, ttl=300.0)
         return parsed

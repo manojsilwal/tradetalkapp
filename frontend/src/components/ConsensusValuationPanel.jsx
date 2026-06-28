@@ -106,6 +106,8 @@ const CLASSIFICATION_LABELS = {
   asic_substitution_risk: 'ASIC Substitution Risk',
   capex_cycle_dependency: 'Capex-Cycle Dependency',
   roic_normalization_risk: 'ROIC Normalization Risk',
+  street_far_below_consensus: 'Our Fair Value Far Above Street',
+  street_far_above_consensus: 'Our Fair Value Far Below Street',
 };
 
 function prettyClassification(raw) {
@@ -115,6 +117,53 @@ function prettyClassification(raw) {
     .split('_')
     .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
     .join(' ');
+}
+
+function fmtSignedPct(pct) {
+  if (pct == null || Number.isNaN(Number(pct))) return '—';
+  const n = Number(pct);
+  const sign = n > 0 ? '+' : '';
+  return `${sign}${n.toFixed(1)}%`;
+}
+
+function fmtRecommendation(consensus) {
+  if (!consensus) return null;
+  if (consensus.recommendation_key) {
+    return String(consensus.recommendation_key).replace(/_/g, ' ');
+  }
+  if (consensus.recommendation_mean != null) {
+    const n = Number(consensus.recommendation_mean);
+    if (n <= 1.5) return 'Strong Buy';
+    if (n <= 2.5) return 'Buy';
+    if (n <= 3.5) return 'Hold';
+    if (n <= 4.5) return 'Underperform';
+    return 'Sell';
+  }
+  return null;
+}
+
+function fmtStreetTargetRange(consensus) {
+  if (!consensus) return null;
+  const low = consensus.low_target_usd;
+  const high = consensus.high_target_usd;
+  const n = consensus.num_analysts;
+  const range =
+    low != null && high != null
+      ? `$${fmtUsdPlainInt(low)}–$${fmtUsdPlainInt(high)}`
+      : null;
+  const suffix = n != null ? ` (${n} analysts)` : '';
+  if (range) return `${range}${suffix}`;
+  if (n != null) return `${n} analysts`;
+  return null;
+}
+
+function fmtOurVsStreetNote(consensus) {
+  if (!consensus?.divergence_flag || consensus.our_vs_street_pct == null) return null;
+  const ratio = (1 + Number(consensus.our_vs_street_pct) / 100).toFixed(1);
+  if (Number(consensus.our_vs_street_pct) > 0) {
+    return `Our base fair value is ${ratio}x the Street mean target`;
+  }
+  return `Our base fair value is ${(100 / (100 + Number(consensus.our_vs_street_pct))).toFixed(1)}x the Street mean target`;
 }
 
 /** Valuation models with USD fair values only (excludes Momentum). */
@@ -153,6 +202,10 @@ export default function ConsensusValuationPanel({
   const riskFlags = (v?.risk_flags && v.risk_flags.length ? v.risk_flags : dcfModel?.risk_flags) || [];
   const dcfTiers = v?.dcf_tiers || dcfModel?.dcf_tiers;
   const compositeSignal = v?.composite_signal;
+  const analystConsensus = v?.analyst_consensus;
+  const streetRec = fmtRecommendation(analystConsensus);
+  const streetRange = fmtStreetTargetRange(analystConsensus);
+  const ourVsStreetNote = fmtOurVsStreetNote(analystConsensus);
   const impliedMove = Number(v?.implied_downside_pct);
   const impliedMoveLabel = Number.isNaN(impliedMove)
     ? 'Implied move'
@@ -257,6 +310,50 @@ export default function ConsensusValuationPanel({
             <div className="dt-valuation-metrics-row">
               <dt>Market is pricing</dt>
               <dd>{marketExpectation}</dd>
+            </div>
+          )}
+          {hasData && analystConsensus?.mean_target_usd != null && (
+            <div
+              className="dt-valuation-metrics-row dt-analyst-consensus"
+              data-testid="analyst-consensus"
+            >
+              <dt>
+                <ProvenanceTip
+                  provenance={analystConsensus.provenance}
+                  label="Wall St consensus"
+                />
+              </dt>
+              <dd>
+                <div className="dt-analyst-consensus-mean">
+                  Mean target ${fmtUsdPlainInt(analystConsensus.mean_target_usd)}
+                  {analystConsensus.street_vs_price_pct != null && (
+                    <span className="dt-analyst-vs-price">
+                      {' '}
+                      ({fmtSignedPct(analystConsensus.street_vs_price_pct)} vs price)
+                    </span>
+                  )}
+                </div>
+                {streetRange && (
+                  <div className="dt-analyst-consensus-range">{streetRange}</div>
+                )}
+                {streetRec && (
+                  <div className="dt-analyst-consensus-rec">Recommendation: {streetRec}</div>
+                )}
+                {analystConsensus.our_vs_street_pct != null && (
+                  <div className="dt-analyst-consensus-gap">
+                    Our vs Street: {fmtSignedPct(analystConsensus.our_vs_street_pct)}
+                  </div>
+                )}
+                {analystConsensus.divergence_flag && ourVsStreetNote && (
+                  <div
+                    className="dt-analyst-divergence-chip"
+                    data-testid="analyst-divergence-flag"
+                    title={ourVsStreetNote}
+                  >
+                    {ourVsStreetNote}
+                  </div>
+                )}
+              </dd>
             </div>
           )}
           {hasData && hasImplied && (

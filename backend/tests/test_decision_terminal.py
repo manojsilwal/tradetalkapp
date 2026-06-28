@@ -1,14 +1,19 @@
 """Unit tests for decision terminal helpers (no network)."""
 import json
 import unittest
+from unittest.mock import patch
 
 from backend.connectors.polymarket_gating import score_polymarket_relevance
 from backend.decision_terminal import (
+    _build_analyst_consensus,
     _dcf_sensitivity_weight_factor,
     _fuse_headline_verdict,
     _strip_non_json_floats,
     _decision_terminal_payload_json_safe,
     _build_provider_audit,
+    _build_valuation_panel,
+    _ResolvedSpot,
+    STREET_DIVERGENCE_FLAG_PCT,
     assemble_terminal_from_slices,
     build_decision_terminal_payload,
     build_snapshot_slice,
@@ -273,6 +278,114 @@ class TestMomentumValuationPanel(unittest.IsolatedAsyncioTestCase):
         self.assertIn("bull", dcf.scenarios)
         self.assertLess(dcf.scenarios["bear"], dcf.fair_value_usd)
         self.assertGreater(dcf.scenarios["bull"], dcf.fair_value_usd)
+
+
+class TestAnalystConsensus(unittest.TestCase):
+    def test_build_analyst_consensus_divergence_when_far_above_street(self):
+        ac = _build_analyst_consensus(
+            analyst_targets={
+                "mean_target_usd": 190.0,
+                "high_target_usd": 250.0,
+                "low_target_usd": 150.0,
+                "num_analysts": 45,
+                "recommendation_key": "buy",
+                "source": "fincrawler",
+            },
+            price_f=192.53,
+            avg_fair=551.0,
+        )
+        self.assertIsNotNone(ac)
+        assert ac is not None
+        self.assertTrue(ac.divergence_flag)
+        self.assertGreater(ac.our_vs_street_pct or 0, STREET_DIVERGENCE_FLAG_PCT)
+        self.assertAlmostEqual(ac.street_vs_price_pct or 0, -1.31, places=1)
+
+    @patch("backend.decision_terminal._multiples_heuristic_fair_price")
+    @patch("backend.valuation_inputs.compute_dcf_scenarios")
+    def test_valuation_panel_attaches_analyst_consensus_and_flag(
+        self, mock_dcf, mock_multiples
+    ):
+        mock_dcf.return_value = {
+            "available": True,
+            "base_fair_value_usd": 688.0,
+            "scenarios": {"bear": 97.0, "base": 688.0, "bull": 1598.0},
+            "business_type": "ai_accelerator_platform_leader",
+            "dcf_confidence_score": 55,
+            "risk_flags": ["high_growth_sensitivity"],
+            "revenue_growth": 0.55,
+        }
+        mock_multiples.return_value = 487.0
+
+        panel = _build_valuation_panel(
+            ticker="NVDA",
+            debate_data={"roe": 100.0, "pe_ratio": 50.0, "gross_margins": 75.0},
+            ext={
+                "trailingEps": 5.0,
+                "analyst_targets": {
+                    "mean_target_usd": 190.0,
+                    "high_target_usd": 250.0,
+                    "low_target_usd": 150.0,
+                    "num_analysts": 45,
+                    "recommendation_key": "buy",
+                    "source": "fincrawler",
+                },
+            },
+            resolved=_ResolvedSpot(
+                price_f=192.53,
+                spot_price_source="test",
+                market_data_degraded=False,
+                filled_spot_from_ext=False,
+                spot_envelope=None,
+                debate_spot_price_source=None,
+            ),
+            hist_cagr=None,
+            hist_quality={},
+            momentum_readout=None,
+        )
+        self.assertIsNotNone(panel.analyst_consensus)
+        self.assertTrue(panel.analyst_consensus.divergence_flag)
+        self.assertIn("street_far_below_consensus", panel.risk_flags)
+
+    @patch("backend.decision_terminal._multiples_heuristic_fair_price")
+    @patch("backend.valuation_inputs.compute_dcf_scenarios")
+    def test_valuation_panel_caps_headline_above_street(
+        self, mock_dcf, mock_multiples
+    ):
+        mock_dcf.return_value = {
+            "available": True,
+            "base_fair_value_usd": 688.0,
+            "scenarios": {"bear": 97.0, "base": 688.0, "bull": 1598.0},
+            "business_type": "ai_accelerator_platform_leader",
+            "dcf_confidence_score": 55,
+            "risk_flags": [],
+        }
+        mock_multiples.return_value = 487.0
+
+        panel = _build_valuation_panel(
+            ticker="NVDA",
+            debate_data={"roe": 100.0, "pe_ratio": 50.0},
+            ext={
+                "trailingEps": 5.0,
+                "analyst_targets": {
+                    "mean_target_usd": 190.0,
+                    "source": "fincrawler",
+                },
+            },
+            resolved=_ResolvedSpot(
+                price_f=192.53,
+                spot_price_source="test",
+                market_data_degraded=False,
+                filled_spot_from_ext=False,
+                spot_envelope=None,
+                debate_spot_price_source=None,
+            ),
+            hist_cagr=None,
+            hist_quality={},
+            momentum_readout=None,
+        )
+        street_cap = 190.0 * (1.0 + STREET_DIVERGENCE_FLAG_PCT / 100.0)
+        self.assertAlmostEqual(panel.average_fair_value_usd, round(street_cap, 2))
+        self.assertIn("capped at", panel.panel_note.lower())
 
 
 class TestDcfSensitivityWeighting(unittest.TestCase):

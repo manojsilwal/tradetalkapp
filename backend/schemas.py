@@ -575,6 +575,29 @@ class MomentumReadout(BaseModel):
     final_agent_narrative: Optional[str] = None
 
 
+class AnalystConsensus(BaseModel):
+    """Wall St / Yahoo analyst price-target consensus (via FinCrawler)."""
+
+    mean_target_usd: Optional[float] = None
+    high_target_usd: Optional[float] = None
+    low_target_usd: Optional[float] = None
+    median_target_usd: Optional[float] = None
+    num_analysts: Optional[int] = None
+    recommendation_mean: Optional[float] = None
+    recommendation_key: Optional[str] = None
+    source: str = ""
+    street_vs_price_pct: Optional[float] = Field(
+        default=None,
+        description="(mean_target − price) / price × 100",
+    )
+    our_vs_street_pct: Optional[float] = Field(
+        default=None,
+        description="(our_base_fair − mean_target) / mean_target × 100",
+    )
+    divergence_flag: bool = False
+    provenance: TerminalFieldProvenance = Field(default_factory=TerminalFieldProvenance)
+
+
 class TerminalValuationPanel(BaseModel):
     current_price_usd: Optional[float] = None
     average_fair_value_usd: Optional[float] = None
@@ -631,6 +654,7 @@ class TerminalValuationPanel(BaseModel):
         default_factory=list,
         description="Aggregated DCF model risk flags",
     )
+    analyst_consensus: Optional[AnalystConsensus] = None
     models: List[TerminalValuationModel] = Field(default_factory=list)
     panel_note: str = ""
 

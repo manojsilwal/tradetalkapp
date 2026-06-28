@@ -46,6 +46,7 @@ REINVESTMENT_RATE_CAP = 1.20    # a firm can out-invest current NOPAT, but not a
 EXECUTION_RISK_BY_TYPE = {
     "platform_reinvestment_supercycle": 0.015,
     "high_growth_unprofitable": 0.020,
+    "ai_accelerator_platform_leader": 0.020,
     "profitable_growth": 0.010,
     "cyclical": 0.010,
     "wide_moat_compounder": 0.0,

@@ -25,6 +25,7 @@ from .connectors.polymarket_gating import (
 )
 from .metric_reconciliation import build_reconciliation
 from .schemas import (
+    AnalystConsensus,
     BrainVerdict,
     DebateResult,
     DecisionRoadmapPayload,
@@ -47,6 +48,8 @@ from .schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+STREET_DIVERGENCE_FLAG_PCT = 40.0
 
 # JSON (and Pydantic JSON mode) cannot encode float NaN/Inf — yfinance/heuristics sometimes yield them.
 def _strip_non_json_floats(obj: Any) -> Any:
@@ -583,6 +586,82 @@ def _dcf_sensitivity_weight_factor(
     return max(0.3, min(1.0, 1.0 - max(0.0, width_pct - 0.6) / 2.0))
 
 
+def _build_analyst_consensus(
+    *,
+    analyst_targets: Optional[Dict[str, Any]],
+    price_f: Optional[float],
+    avg_fair: Optional[float],
+) -> Optional[AnalystConsensus]:
+    if not analyst_targets or not isinstance(analyst_targets, dict):
+        return None
+    mean_target = analyst_targets.get("mean_target_usd")
+    try:
+        mean_target = float(mean_target) if mean_target is not None else None
+    except (TypeError, ValueError):
+        mean_target = None
+    if mean_target is None or mean_target <= 0:
+        return None
+
+    def _opt_float(key: str) -> Optional[float]:
+        val = analyst_targets.get(key)
+        if val is None:
+            return None
+        try:
+            f = float(val)
+            return f if f > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    def _opt_int(key: str) -> Optional[int]:
+        val = analyst_targets.get(key)
+        if val is None:
+            return None
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return None
+
+    street_vs_price: Optional[float] = None
+    if price_f and price_f > 0:
+        street_vs_price = round((mean_target - price_f) / price_f * 100.0, 2)
+
+    our_vs_street: Optional[float] = None
+    divergence_flag = False
+    if avg_fair and avg_fair > 0:
+        our_vs_street = round((avg_fair - mean_target) / mean_target * 100.0, 2)
+        divergence_flag = abs(our_vs_street) > STREET_DIVERGENCE_FLAG_PCT
+
+    source = str(analyst_targets.get("source") or "fincrawler")
+    rec_key = analyst_targets.get("recommendation_key")
+    rec_mean = analyst_targets.get("recommendation_mean")
+    try:
+        rec_mean_f = float(rec_mean) if rec_mean is not None else None
+    except (TypeError, ValueError):
+        rec_mean_f = None
+
+    return AnalystConsensus(
+        mean_target_usd=round(mean_target, 2),
+        high_target_usd=_opt_float("high_target_usd"),
+        low_target_usd=_opt_float("low_target_usd"),
+        median_target_usd=_opt_float("median_target_usd"),
+        num_analysts=_opt_int("num_analysts"),
+        recommendation_mean=rec_mean_f,
+        recommendation_key=str(rec_key).strip() if rec_key else None,
+        source=source,
+        street_vs_price_pct=street_vs_price,
+        our_vs_street_pct=our_vs_street,
+        divergence_flag=divergence_flag,
+        provenance=TerminalFieldProvenance(
+            source=source,
+            confidence=0.75,
+            formula_or_note=(
+                "Analyst mean/high/low price targets and recommendation from Yahoo Finance "
+                "via FinCrawler /quote/smart (yfinance .info)."
+            ),
+        ),
+    )
+
+
 def _build_valuation_panel(
     *,
     ticker: str,
@@ -799,6 +878,32 @@ def _build_valuation_panel(
     else:
         avg_fair = None
 
+    analyst_consensus = _build_analyst_consensus(
+        analyst_targets=ext.get("analyst_targets"),
+        price_f=price_f,
+        avg_fair=avg_fair,
+    )
+
+    street_cap_note = ""
+    if (
+        avg_fair is not None
+        and analyst_consensus is not None
+        and analyst_consensus.mean_target_usd is not None
+        and analyst_consensus.mean_target_usd > 0
+        and (analyst_consensus.our_vs_street_pct or 0) > STREET_DIVERGENCE_FLAG_PCT
+    ):
+        street_cap = round(
+            analyst_consensus.mean_target_usd * (1.0 + STREET_DIVERGENCE_FLAG_PCT / 100.0),
+            2,
+        )
+        if avg_fair > street_cap:
+            avg_fair = street_cap
+            street_cap_note = (
+                f" Headline base fair value capped at ${street_cap:.0f} "
+                f"(Street mean ${analyst_consensus.mean_target_usd:.0f} + "
+                f"{STREET_DIVERGENCE_FLAG_PCT:.0f}%) because intrinsic models diverged sharply."
+            )
+
     pct_vs = gap_pct = downside_pct = None
     signal_label = confidence_label = bull_assessment = bear_assessment = ""
     dcf_low = dcf_scenarios.get("bear")
@@ -824,6 +929,13 @@ def _build_valuation_panel(
     momentum_score_val = getattr(momentum_model, "momentum_score", None) if momentum_model else None
     composite = composite_signal_label(signal_label, momentum_score_val) if signal_label else ""
 
+    panel_risk_flags = list(dcf_result.get("risk_flags") or [])
+    if analyst_consensus and analyst_consensus.divergence_flag:
+        if (analyst_consensus.our_vs_street_pct or 0) > STREET_DIVERGENCE_FLAG_PCT:
+            panel_risk_flags.append("street_far_below_consensus")
+        elif (analyst_consensus.our_vs_street_pct or 0) < -STREET_DIVERGENCE_FLAG_PCT:
+            panel_risk_flags.append("street_far_above_consensus")
+
     return TerminalValuationPanel(
         current_price_usd=price_f,
         average_fair_value_usd=avg_fair,
@@ -843,13 +955,15 @@ def _build_valuation_panel(
         market_expectation=dcf_result.get("market_expectation"),
         implied_growth_3y=dcf_result.get("implied_growth_3y"),
         implied_growth_5y=dcf_result.get("implied_growth_5y"),
-        risk_flags=dcf_result.get("risk_flags") or [],
+        risk_flags=panel_risk_flags,
+        analyst_consensus=analyst_consensus,
         models=models,
         panel_note=(
             "Base fair value is a confidence-weighted average of DCF (base case) and Multiples; "
             "DCF is down-weighted when its sensitivity range is very wide. "
             "Momentum is shown separately (0–100 score, not blended into fair value). "
             "Valuation gap and implied move use distinct denominators."
+            + street_cap_note
         ),
     )
 
@@ -1551,6 +1665,16 @@ async def _safe_momentum_fetch(ticker: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+async def _safe_analyst_targets_fetch(ticker: str) -> Dict[str, Any]:
+    try:
+        from .fincrawler_client import fc
+
+        return await fc.get_analyst_targets(ticker)
+    except Exception as e:
+        logger.debug("[decision_terminal] analyst targets unavailable for %s: %s", ticker, e)
+        return {}
+
+
 def _valuation_ledger_features(verdict_payload: DecisionVerdictPayload) -> list:
     """Extract DCF V2 features (classification, implied metrics) for the ledger."""
     from .decision_ledger import FeatureValue
@@ -1625,13 +1749,18 @@ async def run_decision_snapshot_request(
         if isinstance(cached, DecisionSnapshotPayload):
             return cached
 
-    debate_data, ext, spot_quote, scorecard_summary, momentum_result = await asyncio.gather(
+    debate_data, ext, spot_quote, scorecard_summary, momentum_result, analyst_targets = await asyncio.gather(
         tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0),
         asyncio.to_thread(_sync_extended_snapshot, t),
         asyncio.to_thread(_resolve_spot_for_terminal, t),
         _build_scorecard_for_terminal(t),
         _safe_momentum_fetch(t),
+        _safe_analyst_targets_fetch(t),
     )
+
+    if isinstance(analyst_targets, dict) and analyst_targets:
+        ext = dict(ext or {})
+        ext["analyst_targets"] = analyst_targets
 
     payload = build_snapshot_slice(
         t,
