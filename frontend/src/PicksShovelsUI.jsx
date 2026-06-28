@@ -80,13 +80,12 @@ function usePicksShovels() {
     return () => clearInterval(pollRef.current);
   }, [busy, fetchResults, filters]);
 
-  // Cold-start self-heal: if there is no snapshot yet (e.g. before the first daily
-  // cron has run), kick a one-time background warm so the page populates itself
-  // instead of staying blank. Normally the cron has already produced a snapshot.
+  // Cold-start self-heal: if there is no snapshot yet (e.g. before the first weekly cron)
+  // Auto-scan if no snapshot exists, or if it is stale (older than 1 week)
   const autoWarmedRef = useRef(false);
   useEffect(() => {
-    if (autoWarmedRef.current || busy) return;
-    if (data && data.snapshot === null) {
+    if (autoWarmedRef.current || busy || !data) return;
+    if (data.snapshot === null || (data.is_fresh === false)) {
       autoWarmedRef.current = true;
       startScan(false);
     }
@@ -377,7 +376,7 @@ export default function PicksShovelsUI() {
 
           {data?.snapshot && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#94a3b8', marginTop: 10 }}>
-              <Clock size={13} /> {fmtAge(data.age_seconds)} {data.is_fresh ? '· cached (fresh < 1h)' : '· stale'}
+              <Clock size={13} /> {fmtAge(data.age_seconds)} {data.is_fresh ? '· cached (fresh < 1 week)' : '· stale'}
               <button
                 type="button"
                 onClick={() => startScan(true)}

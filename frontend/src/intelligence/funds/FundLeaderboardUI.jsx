@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy, TrendingUp, TrendingDown, Target, Building2, BarChart2, Briefcase, FileText, ShieldAlert, Award, ChevronRight, X, Loader2, AlertTriangle, PlayCircle, Info } from 'lucide-react';
-import { API_BASE_URL, apiFetch } from '../../api';
+import { API_BASE_URL, apiFetch, apiPost } from '../../api';
+import { useRef } from 'react';
 
 /**
  * @typedef {'reported' | '13f_economic' | '13f_investable'} LeaderboardMode
@@ -85,6 +86,9 @@ export default function FundLeaderboardUI() {
     const [activeTab, setActiveTab] = useState('overview');
     const [tabs, setTabs] = useState({ holdings: null, changes: null, timeline: null, loading: false, error: null });
 
+    const [scanBusy, setScanBusy] = useState(false);
+    const autoWarmedRef = useRef(false);
+
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
@@ -96,6 +100,16 @@ export default function FundLeaderboardUI() {
                 if (cancelled) return;
                 setRows(Array.isArray(data?.rows) ? data.rows : []);
                 setMessage(data?.message || null);
+
+                // Auto-scan logic if no snapshot exists
+                if (!data?.rows || data.rows.length === 0) {
+                    if (!autoWarmedRef.current && !scanBusy) {
+                        autoWarmedRef.current = true;
+                        setScanBusy(true);
+                        apiPost(`${API_BASE_URL}/api/funds/ingest/run`)
+                            .finally(() => setScanBusy(false));
+                    }
+                }
             })
             .catch((e) => {
                 if (cancelled) return;
@@ -107,7 +121,7 @@ export default function FundLeaderboardUI() {
             });
 
         return () => { cancelled = true; };
-    }, [mode]);
+    }, [mode, scanBusy]);
 
     const [detail, setDetail] = useState({ portfolio: null, returns: null, loading: false, error: null });
 
@@ -278,7 +292,7 @@ export default function FundLeaderboardUI() {
                             ) : displayRows.length === 0 ? (
                                 <tr>
                                     <td colSpan="10" className="px-4 py-8 text-center text-slate-500">
-                                        {message || 'No funds match the current filters.'}
+                                        {scanBusy ? 'Preparing leaderboard data... this may take a moment.' : (message || 'No funds match the current filters.')}
                                     </td>
                                 </tr>
                             ) : displayRows.map((row) => (
