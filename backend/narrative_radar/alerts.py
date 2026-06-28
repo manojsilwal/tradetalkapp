@@ -17,6 +17,8 @@ ACCELERATION_SIGNAL = "ACCELERATION_SIGNAL"
 SATURATION_WARNING = "SATURATION_WARNING"
 DISTRIBUTION_WARNING = "DISTRIBUTION_WARNING"
 EXIT_ALERT = "EXIT_ALERT"
+STEALTH_ACCUMULATION = "STEALTH_ACCUMULATION"
+DISTRIBUTION_INTO_HYPE = "DISTRIBUTION_INTO_HYPE"
 
 _SEVERITY = {
     EMERGING_THEME: "info",
@@ -25,6 +27,8 @@ _SEVERITY = {
     SATURATION_WARNING: "medium",
     DISTRIBUTION_WARNING: "high",
     EXIT_ALERT: "high",
+    STEALTH_ACCUMULATION: "info",
+    DISTRIBUTION_INTO_HYPE: "high",
 }
 
 
@@ -48,6 +52,8 @@ def _alerts_for_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     breadth = s.get("breadth_quality_score")
     market = s.get("market_confirmation_score")
     retail = s.get("retail_saturation_score")
+    divergence = s.get("smart_money_divergence_score")
+    retail_dir = s.get("retail_narrative_direction_score")
 
     out: List[Dict[str, Any]] = []
 
@@ -57,6 +63,7 @@ def _alerts_for_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
             "severity": _SEVERITY.get(alert_type, "info"),
             "theme_id": row.get("theme_id"),
             "theme_label": row.get("theme_label"),
+            "group": row.get("group"),
             "title": title,
             "explanation": explanation,
             "score_snapshot": s,
@@ -67,21 +74,46 @@ def _alerts_for_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     if _ge(formation, 65) and _le(retail if retail is not None else 0, 50) and _ge(conf, 45):
         add(EMERGING_THEME, f"Emerging theme: {label}",
             "Formation score is high while retail saturation is still low — an early-watchlist candidate.")
-    if _ge(accumulation, 65) and _ge(institutional, 60) and _ge(breadth, 55) and _ge(conf, 55):
+    if (
+        _ge(accumulation, 65)
+        and _ge(institutional, 60)
+        and _ge(breadth, 55)
+        and _ge(conf, 55)
+        and (divergence is None or _ge(divergence, 65))
+    ):
         add(ACCUMULATION_SIGNAL, f"Accumulation signal: {label}",
-            "Broad institutional conviction and improving breadth suggest early accumulation.")
+            "Institutional conviction and breadth suggest accumulation; smart-money divergence supports the read.")
     if _ge(acceleration, 70) and _ge(market, 65) and _ge(breadth, 60):
         add(ACCELERATION_SIGNAL, f"Acceleration confirmed: {label}",
             "Market confirmation and breadth are strong — the trend is confirmed.")
     if _ge(retail, 75):
         add(SATURATION_WARNING, f"Saturation warning: {label}",
             "Retail/media saturation is very high — reward/risk is deteriorating.")
-    if _ge(distribution, 70) and _ge(retail if retail is not None else 65, 65):
+    if (
+        _ge(distribution, 70)
+        and _ge(retail if retail is not None else 65, 65)
+        and (divergence is None or _le(divergence, 35))
+    ):
         add(DISTRIBUTION_WARNING, f"Distribution risk: {label}",
             "Narrowing leadership and high saturation point to late-cycle distribution risk.")
     if _ge(exit_risk, 75):
         add(EXIT_ALERT, f"Exit / rotation-away risk: {label}",
             "Relative strength and breadth are deteriorating — avoid chasing.")
+
+    if _ge(divergence, 75) and _le(retail_dir if retail_dir is not None else 50, 45):
+        add(
+            STEALTH_ACCUMULATION,
+            f"Stealth accumulation: {label}",
+            "Weeks-fresh smart-money accumulation is elevated while retail narrative "
+            "leans bearish or quiet — potential quiet accumulation before headlines.",
+        )
+    if _le(divergence, 25) and _ge(retail_dir if retail_dir is not None else 55, 60) and _ge(retail if retail is not None else 0, 60):
+        add(
+            DISTRIBUTION_INTO_HYPE,
+            f"Distribution into hype: {label}",
+            "Smart-money proxies are weakening while retail narrative is euphoric — "
+            "late-cycle distribution risk into media hype.",
+        )
 
     return out
 

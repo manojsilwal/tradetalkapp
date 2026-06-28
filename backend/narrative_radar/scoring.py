@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from ..actionable_companies import _clamp, _linscore
 from ..picks_shovels.scoring import confidence_level, percentile_rank
+from . import smart_money as nr_smart_money
+from . import themes as nr_themes
 
 # The eight signal families confidence is measured against (Plan §3).
 FAMILIES = [
@@ -55,9 +57,12 @@ class ThemeContext:
     }
 
     @classmethod
-    def build(cls, feature_rows: Sequence[Dict[str, Any]]) -> "ThemeContext":
+    def build(cls, feature_rows: Sequence[Dict[str, Any]], *, group: Optional[str] = None) -> "ThemeContext":
+        rows = feature_rows
+        if group is not None:
+            rows = [r for r in feature_rows if nr_themes.theme_group(r.get("theme_id", "")) == group]
         pops: Dict[str, List[float]] = {k: [] for k in cls.RANKED}
-        for row in feature_rows:
+        for row in rows:
             for key, field in cls.RANKED.items():
                 v = row.get(field)
                 if v is not None:
@@ -66,6 +71,13 @@ class ThemeContext:
                     except (TypeError, ValueError):
                         pass
         return cls(populations=pops)
+
+    @classmethod
+    def build_by_group(cls, feature_rows: Sequence[Dict[str, Any]]) -> Dict[str, "ThemeContext"]:
+        groups_seen: Dict[str, "ThemeContext"] = {}
+        for g in nr_themes.groups():
+            groups_seen[g] = cls.build(feature_rows, group=g)
+        return groups_seen
 
     def rank(self, metric: str, value: Optional[float]) -> Optional[float]:
         return percentile_rank(value, self.populations.get(metric, []))
@@ -116,22 +128,21 @@ def institutional_conviction_score(
     inst: Optional[Dict[str, Any]],
     fast_proxy: Optional[float],
     etf_flow: Optional[Dict[str, Any]],
+    smart_money: Optional[Dict[str, Any]] = None,
 ) -> Optional[float]:
     """
-    Plan §7.4 — 0.65 fast proxy + 0.35 slow 13F confirmation. The 13F slice is
-    lagged (≈45 days) so it confirms rather than leads. Returns None unless a
-    *real* institutional proxy exists (13F holdings or ETF flow) — pure price-based
-    fast proxy alone is not counted as its own family (it would double-count
-    market/breadth and inflate confidence).
+    Plan §7.4 — weeks-fresh smart-money leg + optional 13F/ETF-flow confirmation.
+    When ``smart_money`` is available it replaces the market+breadth fast proxy.
+    Returns None unless at least one real institutional proxy exists.
     """
     has_13f = bool(inst and inst.get("available"))
     has_flow = bool(etf_flow and etf_flow.get("available"))
-    if not has_13f and not has_flow:
+    has_sm = bool(smart_money and smart_money.get("available"))
+    if not has_13f and not has_flow and not has_sm:
         return None
 
     slow = None
     if has_13f:
-        # concentration is inverse: heavy top-holder crowding lowers conviction quality.
         conc = inst.get("concentration_pct")
         slow = _blend([
             (0.35, inst.get("ownership_breadth_pct")),
@@ -140,13 +151,25 @@ def institutional_conviction_score(
             (0.20, (100.0 - conc) if conc is not None else None),
         ])
 
-    # Fast proxy gets an ETF-flow boost when available.
     flow_score = etf_flow.get("flow_score") if has_flow else None
+    sm_score = smart_money.get("accumulation_score") if has_sm else None
     fast = _blend([
-        (0.70, fast_proxy),
+        (0.70, sm_score if has_sm else fast_proxy),
         (0.30, flow_score),
     ])
+    if has_sm and not has_13f and not has_flow:
+        return fast
     return _blend([(0.65, fast), (0.35, slow)])
+
+
+def retail_narrative_direction_score(retail: Optional[Dict[str, Any]]) -> Optional[float]:
+    """0-100 from retail_direction ∈ [-1 sell-framing, +1 buy-pump]."""
+    if not retail or not retail.get("available"):
+        return None
+    direction = retail.get("retail_direction")
+    if direction is None:
+        return None
+    return round(_clamp(50.0 + float(direction) * 50.0), 2)
 
 
 def productization_score(prod: Optional[Dict[str, Any]], etf_flow: Optional[Dict[str, Any]]) -> Optional[float]:
@@ -216,6 +239,7 @@ def _phase_scores(
     ctx: ThemeContext,
     fam: Dict[str, Optional[float]],
     etf_flow: Optional[Dict[str, Any]],
+    divergence: Optional[float] = None,
 ) -> Dict[str, Optional[float]]:
     market = fam["market_confirmation"]
     breadth = fam["breadth_quality"]
@@ -249,11 +273,12 @@ def _phase_scores(
         (0.10, reality),
     ])
 
-    # Accumulation: breadth + institutional conviction + reality, modest market.
+    # Accumulation: breadth + institutional + divergence + reality.
     accumulation = _blend([
-        (0.35, breadth),
-        (0.30, institutional),
-        (0.20, reality),
+        (0.30, breadth),
+        (0.25, institutional),
+        (0.15, divergence),
+        (0.15, reality),
         (0.15, market),
     ])
 
@@ -270,12 +295,13 @@ def _phase_scores(
     )
     flow_slowdown = (100.0 - flow_accel) if flow_accel is not None else None
     distribution_risk = _blend([
-        (0.25, retail),
-        (0.20, narrowing),
-        (0.20, elevated_but_weak),
-        (0.15, nr_divergence),
+        (0.22, retail),
+        (0.18, narrowing),
+        (0.18, elevated_but_weak),
+        (0.12, nr_divergence),
         (0.10, flow_slowdown),
         (0.10, (100.0 - (institutional or 50.0)) if institutional is not None else None),
+        (0.10, (100.0 - divergence) if divergence is not None else None),
     ])
 
     # Exit risk: weak/negative RS momentum + breadth deterioration + flow reversal + retail.
@@ -314,7 +340,7 @@ def score_theme(
         "market_confirmation": market,
         "breadth_quality": breadth,
         "institutional_conviction": institutional_conviction_score(
-            signals.get("institutional"), fast_proxy, etf_flow
+            signals.get("institutional"), fast_proxy, etf_flow, signals.get("smart_money")
         ),
         "productization": productization_score(signals.get("productization"), etf_flow),
         "narrative": narrative_strength_score(signals.get("narrative")),
@@ -323,7 +349,16 @@ def score_theme(
         "macro_tailwind": macro_tailwind_score(signals.get("macro")),
     }
 
-    phases = _phase_scores(feat, ctx, fam, etf_flow)
+    retail_dir = retail_narrative_direction_score(signals.get("retail"))
+    sm = signals.get("smart_money") or {}
+    accumulation_score = sm.get("accumulation_score") if sm.get("available") else None
+    divergence = nr_smart_money.smart_money_divergence_score(
+        accumulation_score,
+        (signals.get("retail") or {}).get("retail_direction"),
+        fam.get("retail_saturation"),
+    )
+
+    phases = _phase_scores(feat, ctx, fam, etf_flow, divergence=divergence)
 
     scores: Dict[str, Optional[float]] = {
         "market_confirmation_score": fam["market_confirmation"],
@@ -332,6 +367,8 @@ def score_theme(
         "productization_score": fam["productization"],
         "narrative_score": fam["narrative"],
         "retail_saturation_score": fam["retail_saturation"],
+        "retail_narrative_direction_score": retail_dir,
+        "smart_money_divergence_score": divergence,
         "narrative_reality_alignment_score": fam["narrative_reality_alignment"],
         "macro_tailwind_score": fam["macro_tailwind"],
         **phases,

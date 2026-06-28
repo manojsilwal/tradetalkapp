@@ -347,4 +347,22 @@ What theme is emerging · why we detect it · which evidence supports it · whic
 - RAG/evidence: `backend/knowledge_store.py` (`query_with_refs`)
 - Scheduler/cron: `backend/daily_pipeline.py`, `backend/routers/knowledge.py`, `.github/workflows/render-daily-pipeline.yml`
 - Frontend charts: `frontend/src/macro/GlobalCapFlowDashboard.jsx`, `frontend/src/macroFlow/MacroFlowPanel.jsx`, `frontend/src/components/{Sparkline,Freshness}.jsx`, `frontend/src/api.js`
+
+---
+
+## 13. Sector momentum + smart-money divergence (2026-06 extension)
+
+**Scope:** GICS sector themes (ETF-primary baskets from `SECTOR_ETFS`) + precious metals (`pm_gold`, `pm_silver`) alongside AI themes. Group-scoped percentile ranking (`ai_theme` | `sector` | `precious_metals`).
+
+**Weeks-fresh smart money** (`backend/narrative_radar/smart_money.py`): Chaikin Money Flow + relative-volume z-score on ETF OHLCV; optional 8-week Form 4 insider sample; optional per-ETF options skew (`NARRATIVE_RADAR_OPTIONS`). Upgrades `institutional_conviction_score` fast leg (replaces market+breadth proxy when available).
+
+**Retail narrative direction:** `retail_direction` ∈ [-1, +1] from buy-pump vs sell-framing phrase density in `signals.py`. Auto-enables narrative fetch for sector/PM groups when `NARRATIVE_RADAR_SECTORS=1` even if global `NARRATIVE_RADAR_NARRATIVE=0`.
+
+**Derived score:** `smart_money_divergence_score` (not a counted family) — high = stealth accumulation, low = distribution into hype. Alerts: `STEALTH_ACCUMULATION`, `DISTRIBUTION_INTO_HYPE`.
+
+**Flags:** `NARRATIVE_RADAR_SECTORS=1` (default on), `NARRATIVE_RADAR_SMART_MONEY=1` (default on), `NARRATIVE_RADAR_OPTIONS=0` (default off), `NARRATIVE_RADAR_ACTIVIST=1` (default on, SC 13D/G prefetch per scan).
+
+**Phase C:** `activist_filings.py` — weeks-fresh SC 13D/13G issuer hits; batched options skew prefetch per sector ETF in `engine._prefetch_smart_money_caches`.
+
+**API/UI:** `GET /narrative-radar/overview?group=sector`, group tabs + divergence sort in `NarrativeRadarUI.jsx`.
 - New code: `backend/narrative_radar/*`, `backend/routers/narrative_radar.py`, `frontend/src/NarrativeRadarUI.jsx`

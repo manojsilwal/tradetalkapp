@@ -45,6 +45,10 @@ def data_freshness(available_families: Sequence[str]) -> Dict[str, str]:
         "market_data": today,
         "breadth": today,
         "institutional_13f": _state("institutional_conviction", "latest 13F filing period (~45-day reporting lag)"),
+        "smart_money_weeks_fresh": _state(
+            "institutional_conviction",
+            "rolling 6–8 week CMF / volume / Form 4 / SC 13D-G window",
+        ),
         "etf_productization": _state("productization", "latest EDGAR N-1A/S-1 filings"),
         "narrative_media": _state("narrative", "rolling recent-news window"),
         "retail_social": _state("retail_saturation", "rolling recent-social window"),
@@ -75,6 +79,12 @@ def _positive_drivers(feat: Dict[str, Any], scores: Dict[str, Any]) -> List[str]
     r3 = _fmt_pct(feat.get("median_ret_3m_pct"))
     if r3 and (feat.get("median_ret_3m_pct") or 0) > 0:
         out.append(f"Median member 3-month return is {r3}.")
+    div = scores.get("smart_money_divergence_score")
+    if div is not None and div >= 70:
+        out.append("Smart-money divergence is elevated — weeks-fresh accumulation vs bearish retail framing.")
+    inst = scores.get("institutional_conviction_score")
+    if inst is not None and inst >= 65 and (div is None or div < 70):
+        out.append("Weeks-fresh institutional proxies (volume/CMF/insider) show constructive positioning.")
     return out or ["No strong constructive market signals yet."]
 
 
@@ -93,6 +103,9 @@ def _negative_drivers(feat: Dict[str, Any], scores: Dict[str, Any]) -> List[str]
         out.append(f"Only {round(p200)}% of members are above their 200-day average.")
     if (scores.get("theme_exit_risk_score") or 0) >= 70:
         out.append("Exit-risk score is elevated.")
+    div = scores.get("smart_money_divergence_score")
+    if div is not None and div <= 30:
+        out.append("Smart-money divergence is weak — distribution-into-hype risk vs euphoric retail narrative.")
     return out or ["No major risk signals detected in market data."]
 
 

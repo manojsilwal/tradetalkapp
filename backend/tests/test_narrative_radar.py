@@ -14,6 +14,9 @@ import unittest
 
 os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
 os.environ.setdefault("NARRATIVE_RADAR_RAG_ENABLE", "0")  # no RAG in unit tests
+os.environ.setdefault("NARRATIVE_RADAR_SMART_MONEY", "0")  # offline unit tests
+os.environ.setdefault("NARRATIVE_RADAR_OPTIONS", "0")
+os.environ.setdefault("NARRATIVE_RADAR_ACTIVIST", "0")
 
 from backend import decision_ledger as dl  # noqa: E402
 from backend.narrative_radar import (  # noqa: E402
@@ -38,8 +41,16 @@ def _trend(start: float, daily_pct: float, n: int = 260) -> list:
 
 
 def _member(closes, market_cap=5e10):
+    import pandas as pd
     from backend.narrative_radar import data as nr_data
-    return nr_data.build_member_row("X", closes, {"market_cap": market_cap})
+    n = len(closes)
+    df = pd.DataFrame({
+        "Close": closes,
+        "High": [c * 1.01 for c in closes],
+        "Low": [c * 0.99 for c in closes],
+        "Volume": [1_000_000.0 + i * 1000 for i in range(n)],
+    })
+    return nr_data.build_member_row("X", df, {"market_cap": market_cap})
 
 
 # ── Taxonomy ─────────────────────────────────────────────────────────────────
@@ -53,6 +64,9 @@ class TestTaxonomy(unittest.TestCase):
         self.assertGreater(len(nr_themes.theme_universe()), 30)
         self.assertTrue(nr_themes.theme_members("ai_compute"))
         self.assertIn("ai_compute", nr_themes.KEYWORDS)
+        self.assertIn("sector", nr_themes.groups())
+        self.assertTrue(nr_themes.theme_members("sector_technology"))
+        self.assertEqual(nr_themes.theme_group("pm_gold"), "precious_metals")
 
 
 # ── Features ─────────────────────────────────────────────────────────────────
@@ -79,7 +93,8 @@ class TestFeatures(unittest.TestCase):
         self.assertEqual(feat["member_count"], 3)
         self.assertIsNotNone(feat["rs_ratio"])
         self.assertIsNotNone(feat["pct_above_50dma"])
-        self.assertIsNone(feat["volume_zscore"])  # never fabricated
+        # volume_zscore populated when OHLCV is present on members
+        self.assertIsNotNone(feat["volume_zscore"])
 
     def test_empty_members_degrade(self):
         feat = nr_features.build_theme_features("x", [], _trend(100, 0.05))
@@ -277,6 +292,9 @@ class TestSignalFamilies(unittest.TestCase):
         # ETF flow present → available.
         self.assertIsNotNone(nr_scoring.institutional_conviction_score(
             None, 60.0, {"available": True, "flow_score": 70.0}))
+        # Weeks-fresh smart-money proxy → available without 13F.
+        self.assertIsNotNone(nr_scoring.institutional_conviction_score(
+            None, 60.0, None, {"available": True, "accumulation_score": 72.0}))
 
     def test_retail_saturation_monotonic(self):
         hi = nr_scoring.retail_saturation_score({"available": True, "social_velocity_pct": 90,
@@ -494,6 +512,130 @@ class TestColdStartDurability(unittest.TestCase):
             os.remove(self._nr_db)
         loaded = nr_store.load_alerts("snapA")
         self.assertEqual(len(loaded), len(a))
+
+
+class TestSmartMoneyAndDivergence(unittest.TestCase):
+    def test_relative_volume_zscore(self):
+        from backend.narrative_radar import smart_money as sm
+        base = [1_000_000.0] * 80
+        spike = base + [3_000_000.0] * 21
+        z = sm.relative_volume_zscore(spike)
+        self.assertIsNotNone(z)
+        self.assertGreater(z, 0)
+
+    def test_etf_accumulation_signal(self):
+        import pandas as pd
+        from backend.narrative_radar import smart_money as sm
+        n = 90
+        closes = [100 + i * 0.1 for i in range(n)]
+        df = pd.DataFrame({
+            "Close": closes,
+            "High": [c + 0.5 for c in closes],
+            "Low": [c - 0.5 for c in closes],
+            "Volume": [1_000_000.0] * n,
+        })
+        out = sm.etf_accumulation_signal(df)
+        self.assertTrue(out["available"])
+        self.assertIsNotNone(out["accumulation_score"])
+
+    def test_divergence_stealth_vs_hype(self):
+        from backend.narrative_radar import smart_money as sm
+        stealth = sm.smart_money_divergence_score(80.0, -0.6, 30.0)
+        hype = sm.smart_money_divergence_score(25.0, 0.8, 85.0)
+        self.assertIsNotNone(stealth)
+        self.assertIsNotNone(hype)
+        self.assertGreater(stealth, hype)
+
+    def test_retail_direction_from_titles(self):
+        from backend.narrative_radar import signals as nr_signals
+        buy = nr_signals.retail_direction_from_titles(["best stocks to buy now", "must buy gold"])
+        sell = nr_signals.retail_direction_from_titles(["time to sell", "bubble crash incoming"])
+        self.assertGreater(buy, 0)
+        self.assertLess(sell, 0)
+
+    def test_group_scoped_context(self):
+        sector_feat = nr_features.build_theme_features(
+            "sector_technology",
+            [_member(_trend(100, 0.05))],
+            _trend(100, 0.05),
+        )
+        ai_feat = _strong_feat("ai_compute")
+        contexts = nr_scoring.ThemeContext.build_by_group([sector_feat, ai_feat])
+        self.assertIn("sector", contexts)
+        self.assertIn("ai_theme", contexts)
+        # Single-theme group → sole member ranks at 100th percentile.
+        ctx_sector = contexts["sector"]
+        self.assertEqual(ctx_sector.rank("rs_ratio", sector_feat["rs_ratio"]), 100.0)
+
+
+class TestActivistFilings(unittest.TestCase):
+    def test_parse_atom_activist_tickers(self):
+        from datetime import datetime, timezone
+        from backend.narrative_radar import activist_filings as af
+
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>SC 13D - NVIDIA CORP (0001045810) (Filer)</title>
+    <updated>2026-06-01T12:00:00-04:00</updated>
+  </entry>
+</feed>"""
+        cutoff = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        tickers = af.parse_atom_activist_tickers(
+            xml,
+            cik_to_ticker={"0001045810": "NVDA"},
+            cutoff=cutoff,
+        )
+        self.assertIn("NVDA", tickers)
+
+    def test_activist_signal_hits_members(self):
+        from backend.narrative_radar import activist_filings as af
+
+        os.environ["NARRATIVE_RADAR_ACTIVIST"] = "1"
+        out = af.activist_signal_8w(["NVDA", "AMD"], recent_tickers={"NVDA", "INTC"})
+        self.assertTrue(out["available"])
+        self.assertEqual(out["activist_filing_count"], 1)
+        self.assertIn("NVDA", out["activist_hit_tickers"])
+
+    def test_activist_signal_no_hits(self):
+        from backend.narrative_radar import activist_filings as af
+
+        os.environ["NARRATIVE_RADAR_ACTIVIST"] = "1"
+        out = af.activist_signal_8w(["XLK"], recent_tickers={"NVDA"})
+        self.assertFalse(out["available"])
+
+
+class TestDivergenceAlerts(unittest.TestCase):
+    def test_stealth_accumulation_alert(self):
+        from backend.narrative_radar import alerts as nr_alerts
+        row = {
+            "theme_id": "sector_energy",
+            "theme_label": "Energy",
+            "group": "sector",
+            "confidence_score": 60,
+            "scores": {
+                "smart_money_divergence_score": 80.0,
+                "retail_narrative_direction_score": 35.0,
+            },
+        }
+        types = {a["alert_type"] for a in nr_alerts.generate_alerts([row])}
+        self.assertIn(nr_alerts.STEALTH_ACCUMULATION, types)
+
+    def test_distribution_into_hype_alert(self):
+        from backend.narrative_radar import alerts as nr_alerts
+        row = {
+            "theme_id": "pm_gold",
+            "theme_label": "Gold",
+            "group": "precious_metals",
+            "confidence_score": 60,
+            "scores": {
+                "smart_money_divergence_score": 20.0,
+                "retail_narrative_direction_score": 75.0,
+                "retail_saturation_score": 80.0,
+            },
+        }
+        types = {a["alert_type"] for a in nr_alerts.generate_alerts([row])}
+        self.assertIn(nr_alerts.DISTRIBUTION_INTO_HYPE, types)
 
 
 if __name__ == "__main__":

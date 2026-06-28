@@ -31,12 +31,21 @@ const HEATMAP_COLUMNS = [
 
 // Underlying signal families (NR-5..NR-9) shown in the detail drawer.
 const FAMILY_ROWS = [
-  { key: 'institutional_conviction_score', label: 'Institutional conviction (13F)' },
+  { key: 'institutional_conviction_score', label: 'Institutional / smart money' },
+  { key: 'smart_money_divergence_score', label: 'Smart-money divergence' },
+  { key: 'retail_narrative_direction_score', label: 'Retail narrative direction' },
   { key: 'productization_score', label: 'ETF productization' },
   { key: 'narrative_score', label: 'Media narrative' },
   { key: 'retail_saturation_score', label: 'Retail saturation', inverse: true },
   { key: 'narrative_reality_alignment_score', label: 'Fundamentals reality' },
   { key: 'macro_tailwind_score', label: 'Macro tailwind' },
+];
+
+const GROUP_TABS = [
+  { id: '', label: 'All' },
+  { id: 'ai_theme', label: 'AI Themes' },
+  { id: 'sector', label: 'Sectors' },
+  { id: 'precious_metals', label: 'Gold & Silver' },
 ];
 
 function usePolledScan() {
@@ -45,14 +54,16 @@ function usePolledScan() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [sort, setSort] = useState('acceleration');
+  const [group, setGroup] = useState('');
   const pollRef = useRef(null);
 
   const [alerts, setAlerts] = useState([]);
   const [backtest, setBacktest] = useState(null);
 
-  const fetchOverview = useCallback(async (sortKey) => {
+  const fetchOverview = useCallback(async (sortKey, groupKey) => {
+    const groupQ = groupKey ? `&group=${encodeURIComponent(groupKey)}` : '';
     try {
-      const res = await apiFetch(`${API_BASE_URL}/narrative-radar/overview?sort=${sortKey}&limit=50`);
+      const res = await apiFetch(`${API_BASE_URL}/narrative-radar/overview?sort=${sortKey}&limit=50${groupQ}`);
       if (res) setData(res);
     } catch {
       /* no snapshot yet */
@@ -67,7 +78,7 @@ function usePolledScan() {
     } catch { /* none */ }
   }, []);
 
-  useEffect(() => { fetchOverview(sort); }, [fetchOverview, sort]);
+  useEffect(() => { fetchOverview(sort, group); }, [fetchOverview, sort, group]);
 
   const startScan = useCallback(async (force = false) => {
     setError(null);
@@ -75,14 +86,14 @@ function usePolledScan() {
     try {
       const res = await apiPost(`${API_BASE_URL}/narrative-radar/refresh${force ? '?force=true' : ''}`);
       if (res.accepted) setJobStatus(res.job);
-      else if (res.cache_hit) { setBusy(false); setJobStatus(null); await fetchOverview(sort); }
+      else if (res.cache_hit) { setBusy(false); setJobStatus(null); await fetchOverview(sort, group); }
       else if (res.reason === 'already_running') setJobStatus(res.job);
       else setBusy(false);
     } catch (e) {
       setBusy(false);
       setError(e.message || 'Failed to start scan');
     }
-  }, [fetchOverview, sort]);
+  }, [fetchOverview, sort, group]);
 
   useEffect(() => {
     if (!busy) { if (pollRef.current) clearInterval(pollRef.current); return undefined; }
@@ -90,12 +101,12 @@ function usePolledScan() {
       try {
         const st = await apiFetch(`${API_BASE_URL}/narrative-radar/status`);
         setJobStatus(st);
-        if (st.status === 'done') { setBusy(false); await fetchOverview(sort); }
+        if (st.status === 'done') { setBusy(false); await fetchOverview(sort, group); }
         else if (st.status === 'error') { setBusy(false); setError(st.error || 'Scan failed'); }
       } catch { /* transient */ }
     }, POLL_INTERVAL_MS);
     return () => clearInterval(pollRef.current);
-  }, [busy, fetchOverview, sort]);
+  }, [busy, fetchOverview, sort, group]);
 
   // Cold-start self-heal: warm once if no snapshot exists yet (pre-first-cron).
   const autoWarmedRef = useRef(false);
@@ -107,7 +118,7 @@ function usePolledScan() {
     }
   }, [data, busy, startScan]);
 
-  return { busy, jobStatus, data, error, sort, setSort, startScan, alerts, backtest };
+  return { busy, jobStatus, data, error, sort, setSort, group, setGroup, startScan, alerts, backtest };
 }
 
 function fmtScore(v) { return v === null || v === undefined ? '—' : Number(v).toFixed(0); }
@@ -174,6 +185,7 @@ function ThemeCard({ theme, onOpen }) {
       <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.4, minHeight: 34 }}>{theme.summary}</div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <Metric label="Accel" v={s.theme_acceleration_score} />
+        <Metric label="Divergence" v={s.smart_money_divergence_score} />
         <Metric label="Breadth" v={s.breadth_quality_score} />
         <Metric label="Exit" v={s.theme_exit_risk_score} inverse />
       </div>
@@ -331,7 +343,7 @@ function DetailDrawer({ theme, onClose }) {
 const SEV_COLOR = { high: '#f87171', medium: '#fbbf24', info: '#60a5fa' };
 
 export default function NarrativeRadarUI() {
-  const { busy, jobStatus, data, error, sort, setSort, startScan, alerts, backtest } = usePolledScan();
+  const { busy, jobStatus, data, error, sort, setSort, group, setGroup, startScan, alerts, backtest } = usePolledScan();
   const [selected, setSelected] = useState(null);
 
   const themes = data?.themes || [];
@@ -357,11 +369,29 @@ export default function NarrativeRadarUI() {
             acceleration, crowding, and distribution. Research signal only; not investment advice.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {GROUP_TABS.map((tab) => (
+              <button
+                key={tab.id || 'all'}
+                type="button"
+                onClick={() => setGroup(tab.id)}
+                style={{
+                  padding: '7px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  border: group === tab.id ? '1px solid #6366f1' : '1px solid #334155',
+                  background: group === tab.id ? 'rgba(99,102,241,0.2)' : 'rgba(15,23,42,0.6)',
+                  color: group === tab.id ? '#e2e8f0' : '#94a3b8',
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
           <select value={sort} onChange={(e) => setSort(e.target.value)} className="glass-panel"
             style={{ padding: '8px 10px', color: '#e2e8f0', background: 'rgba(15,23,42,0.6)', border: '1px solid #334155', borderRadius: 8 }}>
             <option value="acceleration">Sort: Acceleration</option>
             <option value="formation">Sort: Formation (early)</option>
+            <option value="divergence">Sort: Smart-money divergence</option>
             <option value="exit_risk">Sort: Exit risk</option>
             <option value="confidence">Sort: Confidence</option>
           </select>

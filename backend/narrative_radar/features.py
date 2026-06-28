@@ -133,6 +133,30 @@ def _median(values: Sequence[Optional[float]]) -> Optional[float]:
     return round((vals[mid - 1] + vals[mid]) / 2.0, 2)
 
 
+def _theme_volume_zscore(members: List[Dict[str, Any]]) -> Optional[float]:
+    """Median relative-volume z-score across members with OHLCV (never fabricated)."""
+    try:
+        from . import smart_money as nr_sm
+    except Exception:
+        return None
+    zs: List[float] = []
+    for m in members:
+        ohlcv = m.get("ohlcv")
+        if ohlcv is None:
+            continue
+        try:
+            import pandas as pd
+            if isinstance(ohlcv, pd.DataFrame) and not ohlcv.empty and "Volume" in ohlcv.columns:
+                z = nr_sm.relative_volume_zscore(ohlcv["Volume"].astype(float).tolist())
+                if z is not None:
+                    zs.append(z)
+        except Exception:
+            continue
+    if not zs:
+        return None
+    return round(sum(zs) / len(zs), 3)
+
+
 def build_theme_features(
     theme_id: str,
     members: List[Dict[str, Any]],
@@ -180,6 +204,8 @@ def build_theme_features(
         round(cap_ret - eq_ret, 2) if (eq_ret is not None and cap_ret is not None) else None
     )
 
+    vol_z = _theme_volume_zscore(members)
+
     return {
         "theme_id": theme_id,
         "member_count": len(members),
@@ -197,6 +223,5 @@ def build_theme_features(
         "pct_above_200dma": pct_above_200,
         "breadth_positive_pct": breadth_positive_pct,
         "cap_vs_equal_spread_pct": cap_vs_equal_spread,
-        # Volume z-score needs OHLCV (closes-only path) → deferred (never fabricated).
-        "volume_zscore": None,
+        "volume_zscore": vol_z,
     }

@@ -120,10 +120,12 @@ def assemble_theme_rows(
     tests can feed synthetic features and signals.
     """
     signals_by_theme = signals_by_theme or {}
-    ctx = nr_scoring.ThemeContext.build(feature_rows)
+    contexts = nr_scoring.ThemeContext.build_by_group(feature_rows)
     out: List[Dict[str, Any]] = []
     for feat in feature_rows:
         theme_id = feat["theme_id"]
+        grp = nr_themes.theme_group(theme_id)
+        ctx = contexts.get(grp) or nr_scoring.ThemeContext.build(feature_rows)
         scored = nr_scoring.score_theme(feat, ctx, signals_by_theme.get(theme_id))
         if scored.get("insufficient_data"):
             continue
@@ -134,6 +136,7 @@ def assemble_theme_rows(
         row: Dict[str, Any] = {
             "theme_id": theme_id,
             "theme_label": nr_themes.theme_label(theme_id),
+            "group": nr_themes.theme_group(theme_id),
             "bottleneck": nr_themes.theme_bottleneck(theme_id),
             "lifecycle_phase": phase,
             "phase_label": nr_lifecycle.phase_label(phase),
@@ -158,9 +161,9 @@ def assemble_theme_rows(
 
 
 async def _fetch_universe(universe: List[str]) -> Dict[str, Dict[str, Any]]:
-    """Fetch close series + market cap for every universe ticker. Degrades per-ticker."""
+    """Fetch OHLCV + market cap for every universe ticker. Degrades per-ticker."""
     chunks = [universe[i : i + _chunk_size()] for i in range(0, len(universe), _chunk_size())]
-    closes_by_ticker: Dict[str, List[float]] = {}
+    ohlcv_by_ticker: Dict[str, Any] = {}
     funds_by_ticker: Dict[str, Dict[str, Any]] = {}
     delay = _inter_chunk_delay_s()
     total = len(universe)
@@ -168,13 +171,13 @@ async def _fetch_universe(universe: List[str]) -> Dict[str, Dict[str, Any]]:
 
     for idx, chunk in enumerate(chunks):
         try:
-            chunk_closes = await asyncio.wait_for(
-                _in_executor(nr_data.fetch_closes, chunk),
+            chunk_ohlcv = await asyncio.wait_for(
+                _in_executor(nr_data.fetch_ohlcv, chunk),
                 timeout=_chunk_history_timeout_s(),
             )
-            closes_by_ticker.update(chunk_closes or {})
+            ohlcv_by_ticker.update(chunk_ohlcv or {})
         except Exception as e:
-            logger.warning("[NarrativeRadar] chunk history failed (%s…): %s", chunk[0] if chunk else "", e)
+            logger.warning("[NarrativeRadar] chunk OHLCV failed (%s…): %s", chunk[0] if chunk else "", e)
 
         async def _fund(tk: str) -> None:
             try:
@@ -198,7 +201,9 @@ async def _fetch_universe(universe: List[str]) -> Dict[str, Dict[str, Any]]:
 
     out: Dict[str, Dict[str, Any]] = {}
     for tk in universe:
-        out[tk] = nr_data.build_member_row(tk, closes_by_ticker.get(tk, []), funds_by_ticker.get(tk, {}))
+        out[tk] = nr_data.build_member_row(
+            tk, ohlcv_by_ticker.get(tk), funds_by_ticker.get(tk, {})
+        )
     return out
 
 
@@ -212,15 +217,51 @@ def _build_feature_rows(member_by_ticker: Dict[str, Dict[str, Any]], spy_closes:
     return rows
 
 
-def _build_signals(feature_rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def _prefetch_smart_money_caches(feature_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Batch-fetch shared smart-money inputs once per scan (options + activist tickers)."""
+    cache: Dict[str, Any] = {}
+    if os.environ.get("NARRATIVE_RADAR_OPTIONS", "0").strip() == "1":
+        from . import smart_money as nr_sm
+
+        etfs: set = set()
+        for feat in feature_rows:
+            tid = feat["theme_id"]
+            members = nr_themes.theme_members(tid)
+            etf = nr_themes.sector_etf_for(tid) or (members[0] if members else None)
+            if etf:
+                etfs.add(etf)
+        for etf in sorted(etfs):
+            try:
+                nr_sm.options_skew_signal(etf, cache=cache)
+            except Exception as e:
+                logger.debug("[NarrativeRadar] options prefetch failed for %s: %s", etf, e)
+    if os.environ.get("NARRATIVE_RADAR_ACTIVIST", "1").strip() != "0":
+        from . import activist_filings as nr_activist
+
+        try:
+            cache["_activist_tickers"] = nr_activist.fetch_recent_activist_tickers()
+        except Exception as e:
+            logger.debug("[NarrativeRadar] activist prefetch failed: %s", e)
+    return cache
+
+
+def _build_signals(
+    feature_rows: List[Dict[str, Any]],
+    member_by_ticker: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
     """NR-5..NR-9 signal families per theme. Each family is independently
     flag-gated + resilient; unavailable families just lower confidence."""
     regime = os.environ.get("NARRATIVE_RADAR_REGIME", "").strip() or None
+    options_cache: Dict[str, Any] = _prefetch_smart_money_caches(feature_rows)
     out: Dict[str, Dict[str, Any]] = {}
     for feat in feature_rows:
         tid = feat["theme_id"]
+        members = nr_themes.theme_members(tid)
+        member_rows = [member_by_ticker[tk] for tk in members if tk in member_by_ticker]
         try:
-            out[tid] = nr_signals.build_signals(tid, nr_themes.theme_members(tid), regime=regime)
+            out[tid] = nr_signals.build_signals(
+                tid, members, regime=regime, member_rows=member_rows, options_cache=options_cache
+            )
         except Exception as e:
             logger.debug("[NarrativeRadar] signal build failed for %s: %s", tid, e)
             out[tid] = {}
@@ -246,15 +287,16 @@ async def run_scan(job_id: str, *, force: bool = False) -> Dict[str, Any]:
 
         member_by_ticker = await _fetch_universe(universe)
         _set_job(progress=82, message="Fetching benchmark (SPY)…")
-        spy_closes = await asyncio.wait_for(
-            _in_executor(nr_data.fetch_benchmark_closes), timeout=_chunk_history_timeout_s()
+        spy_df = await asyncio.wait_for(
+            _in_executor(nr_data.fetch_benchmark_ohlcv), timeout=_chunk_history_timeout_s()
         )
+        spy_closes = nr_data._closes_from_df(spy_df)
 
         _set_job(progress=86, message="Building theme features…")
         feature_rows = await asyncio.to_thread(_build_feature_rows, member_by_ticker, spy_closes)
 
         _set_job(progress=90, message="Gathering signal families (13F / ETF / narrative)…")
-        signals_by_theme = await asyncio.to_thread(_build_signals, feature_rows)
+        signals_by_theme = await asyncio.to_thread(_build_signals, feature_rows, member_by_ticker)
 
         _set_job(progress=93, message="Scoring + classifying lifecycle phases…")
         rows = await asyncio.to_thread(assemble_theme_rows, feature_rows, signals_by_theme)

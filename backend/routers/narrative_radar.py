@@ -38,6 +38,7 @@ _rl_expensive = rate_limit("expensive")
 async def get_themes() -> Dict[str, Any]:
     return {
         "themes": nr_themes.THEMES,
+        "groups": nr_themes.groups(),
         "theme_count": len(nr_themes.theme_ids()),
         "universe_size": len(nr_themes.theme_universe()),
         "disclaimer": nr_explain.DISCLAIMER,
@@ -72,6 +73,7 @@ def _overview_item(row: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "theme_id": row.get("theme_id"),
         "theme_label": row.get("theme_label"),
+        "group": row.get("group"),
         "lifecycle_phase": row.get("lifecycle_phase"),
         "phase_label": row.get("phase_label"),
         "recommendation_label": row.get("recommendation_label"),
@@ -85,6 +87,8 @@ def _overview_item(row: Dict[str, Any]) -> Dict[str, Any]:
             "productization_score": s.get("productization_score"),
             "narrative_score": s.get("narrative_score"),
             "retail_saturation_score": s.get("retail_saturation_score"),
+            "retail_narrative_direction_score": s.get("retail_narrative_direction_score"),
+            "smart_money_divergence_score": s.get("smart_money_divergence_score"),
             "narrative_reality_alignment_score": s.get("narrative_reality_alignment_score"),
             "macro_tailwind_score": s.get("macro_tailwind_score"),
             "theme_formation_score": s.get("theme_formation_score"),
@@ -101,8 +105,9 @@ def _overview_item(row: Dict[str, Any]) -> Dict[str, Any]:
 @router.get("/overview", dependencies=[Depends(_rl)])
 async def get_overview(
     phase: Optional[str] = Query(None, description="lifecycle phase filter"),
+    group: Optional[str] = Query(None, description="ai_theme | sector | precious_metals"),
     min_confidence: Optional[float] = Query(None, ge=0, le=100),
-    sort: str = Query("acceleration", description="acceleration | exit_risk | formation | confidence"),
+    sort: str = Query("acceleration", description="acceleration | exit_risk | formation | confidence | divergence"),
     limit: int = Query(50, ge=1, le=100),
 ) -> Dict[str, Any]:
     meta = nr_store.latest_snapshot_meta()
@@ -118,6 +123,8 @@ async def get_overview(
     def _passes(r: Dict[str, Any]) -> bool:
         if phase and (r.get("lifecycle_phase") or "") != phase:
             return False
+        if group and (r.get("group") or "") != group:
+            return False
         if min_confidence is not None and (r.get("confidence_score") or 0) < min_confidence:
             return False
         return True
@@ -127,6 +134,7 @@ async def get_overview(
         "acceleration": ("theme_acceleration_score", True),
         "exit_risk": ("theme_exit_risk_score", True),
         "formation": ("theme_formation_score", True),
+        "divergence": ("smart_money_divergence_score", True),
     }
     if sort == "confidence":
         filtered.sort(key=lambda r: r.get("confidence_score") or 0, reverse=True)
@@ -136,10 +144,13 @@ async def get_overview(
 
     age_s = max(0, int(time.time() - meta["created_at"]))
     phase_counts: Dict[str, int] = {}
+    group_counts: Dict[str, int] = {}
     available_union: set = set()
     for r in rows:
         p = r.get("lifecycle_phase") or "UNKNOWN"
         phase_counts[p] = phase_counts.get(p, 0) + 1
+        g = r.get("group") or "ai_theme"
+        group_counts[g] = group_counts.get(g, 0) + 1
         available_union.update(r.get("available_families") or [])
 
     return {
@@ -147,6 +158,8 @@ async def get_overview(
         "age_seconds": age_s,
         "is_fresh": age_s <= nr_store.cache_ttl_s(),
         "phase_counts": phase_counts,
+        "group_counts": group_counts,
+        "groups": nr_themes.groups(),
         "themes": [_overview_item(r) for r in filtered[:limit]],
         "data_freshness": nr_explain.data_freshness(sorted(available_union)),
         "disclaimer": nr_explain.DISCLAIMER,

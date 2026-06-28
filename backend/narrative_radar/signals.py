@@ -32,6 +32,10 @@ _BUY_NOW_PHRASES = [
     "best stocks to buy", "next nvidia", "next ai", "supercycle", "once-in-a-generation",
     "must buy", "to the moon", "explosive growth", "buy now", "millionaire",
 ]
+_SELL_PHRASES = [
+    "time to sell", "take profits", "take profit", "bubble", "overvalued", "crash incoming",
+    "bear market", "get out", "sell now", "overheated", "too late to buy",
+]
 _POS_WORDS = {"surge", "soar", "beat", "record", "growth", "bullish", "rally", "boom", "upgrade", "demand"}
 _NEG_WORDS = {"plunge", "miss", "warn", "cut", "bearish", "selloff", "crash", "downgrade", "weak", "glut"}
 
@@ -69,6 +73,31 @@ def buy_now_density(titles: Sequence[str]) -> float:
         tl = (t or "").lower()
         hits += sum(1 for p in _BUY_NOW_PHRASES if p in tl)
     return round(10.0 * hits / len(titles), 2)
+
+
+def sell_framing_density(titles: Sequence[str]) -> float:
+    """Hits of sell-framing / shakeout phrases per 10 titles."""
+    if not titles:
+        return 0.0
+    hits = 0
+    for t in titles:
+        tl = (t or "").lower()
+        hits += sum(1 for p in _SELL_PHRASES if p in tl)
+    return round(10.0 * hits / len(titles), 2)
+
+
+def retail_direction_from_titles(titles: Sequence[str]) -> Optional[float]:
+    """
+    Retail narrative direction ∈ [-1, +1]: negative = sell-framing dominates,
+    positive = buy-pump dominates.
+    """
+    if not titles:
+        return None
+    buy = buy_now_density(titles) / 10.0
+    sell = sell_framing_density(titles) / 10.0
+    if buy + sell == 0:
+        return 0.0
+    return round(max(-1.0, min(1.0, (buy - sell) / (buy + sell))), 3)
 
 
 def _sentiment(titles: Sequence[str]) -> Optional[float]:
@@ -126,6 +155,15 @@ def _narrative_enabled() -> bool:
     return os.environ.get("NARRATIVE_RADAR_NARRATIVE", "0").strip() == "1"
 
 
+def _narrative_enabled_for_theme(theme_id: str) -> bool:
+    if _narrative_enabled():
+        return True
+    if os.environ.get("NARRATIVE_RADAR_SECTORS", "1").strip() == "0":
+        return False
+    grp = nr_themes.theme_group(theme_id)
+    return grp in (nr_themes.GROUP_SECTOR, nr_themes.GROUP_PRECIOUS_METALS)
+
+
 def _reality_enabled() -> bool:
     return os.environ.get("NARRATIVE_RADAR_REALITY", "0").strip() == "1"
 
@@ -136,7 +174,7 @@ def _sample_members(members: Sequence[str], k: int = 5) -> List[str]:
 
 def build_narrative_retail(theme_id: str, keywords: Sequence[str], members: Sequence[str]) -> Dict[str, Dict[str, Any]]:
     """News + social keyword aggregation → (narrative, retail) signals. Resilient."""
-    if not _narrative_enabled():
+    if not _narrative_enabled_for_theme(theme_id):
         return {"narrative": {"available": False}, "retail": {"available": False}}
     try:
         from ..connectors import social_sources as ss
@@ -164,12 +202,16 @@ def build_narrative_retail(theme_id: str, keywords: Sequence[str], members: Sequ
             "attention_percentile": round((media_freq + social_vel) / 2.0, 2),
             "sentiment": _sentiment(news_titles + social_titles),
         }
+        all_titles = news_titles + social_titles
+        direction = retail_direction_from_titles(all_titles)
         retail = {
             "available": True,
             "social_velocity_pct": round(social_vel, 2),
             "media_freq_pct": round(media_freq, 2),
             "youtube_score": None,
-            "buy_now_density": buy_now_density(news_titles + social_titles),
+            "buy_now_density": buy_now_density(all_titles),
+            "sell_framing_density": sell_framing_density(all_titles),
+            "retail_direction": direction,
         }
         return {"narrative": narrative, "retail": retail}
     except Exception as e:
@@ -196,17 +238,29 @@ def build_reality(members: Sequence[str]) -> Dict[str, Any]:
         return {"available": False}
 
 
-def build_signals(theme_id: str, members: Sequence[str], *, regime: Optional[str] = None) -> Dict[str, Any]:
+def build_signals(
+    theme_id: str,
+    members: Sequence[str],
+    *,
+    regime: Optional[str] = None,
+    member_rows: Optional[Sequence[Dict[str, Any]]] = None,
+    options_cache: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Assemble the full optional signals dict for a theme. Each family is independent
     and resilient; unavailable families simply lower confidence (never fabricated).
     """
     from ..connectors import etf_filings, etf_flows
+    from . import smart_money as nr_smart_money
 
     keywords = nr_themes.theme_keywords(theme_id)
     nr = build_narrative_retail(theme_id, keywords, members)
+    rows = list(member_rows or [])
     return {
         "institutional": nr_institutional.aggregate_theme(members),
+        "smart_money": nr_smart_money.build_smart_money_signal(
+            theme_id, members, rows, options_cache=options_cache
+        ),
         "productization": etf_filings.build_theme_productization(keywords),
         "etf_flow": etf_flows.build_theme_flow(theme_id),
         "narrative": nr["narrative"],
