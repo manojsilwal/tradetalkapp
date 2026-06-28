@@ -177,6 +177,7 @@ export default function ConsensusValuationPanel({
   loading,
   loadingFallback = null,
   ticker = '',
+  compact = false,
 }) {
   const v = valuation;
   const valFill = valuationArcRatio(v?.pct_vs_average);
@@ -220,17 +221,19 @@ export default function ConsensusValuationPanel({
   }
 
   return (
-    <div className="dt-valuation-split" data-testid="consensus-valuation-panel">
-      <div className="dt-valuation-gauge">
-        <SemiGauge fillRatio={hasData ? valFill : 0.38} size="large" />
-        <div className="dt-gauge-caption">{hasData ? signal : '—'}</div>
-        {hasData && v?.valuation_confidence && (
-          <div className="dt-gauge-sub">Confidence: {v.valuation_confidence}</div>
-        )}
-        {hasData && compositeSignal && (
-          <div className="dt-gauge-composite" data-testid="composite-signal">{compositeSignal}</div>
-        )}
-      </div>
+    <div className={`dt-valuation-split ${compact ? 'dt-valuation-compact' : ''}`} data-testid="consensus-valuation-panel">
+      {!compact && (
+        <div className="dt-valuation-gauge">
+          <SemiGauge fillRatio={hasData ? valFill : 0.38} size="large" />
+          <div className="dt-gauge-caption">{hasData ? signal : '—'}</div>
+          {hasData && v?.valuation_confidence && (
+            <div className="dt-gauge-sub">Confidence: {v.valuation_confidence}</div>
+          )}
+          {hasData && compositeSignal && (
+            <div className="dt-gauge-composite" data-testid="composite-signal">{compositeSignal}</div>
+          )}
+        </div>
+      )}
       <div className="dt-valuation-detail">
         <dl className="dt-valuation-metrics">
           <div className="dt-valuation-metrics-row">

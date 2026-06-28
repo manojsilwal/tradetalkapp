@@ -1308,6 +1308,7 @@ export default function UnifiedDashboardUI() {
                       hasData={hasDecisionData}
                       loading={decisionLoading}
                       ticker={searchUpper}
+                      compact
                       loadingFallback={
                         <div className="dt-metrics-loading" style={{ minHeight: 120 }}>
                           <Loader2 className="spinner" size={22} />

@@ -630,6 +630,14 @@ h4.dt-metrics-section-title {
   }
 }
 
+.dt-valuation-split.dt-valuation-compact {
+  display: block;
+}
+
+.dt-valuation-compact .dt-valuation-detail {
+  width: 100%;
+}
+
 .dt-valuation-gauge {
   display: flex;
   flex-direction: column;
