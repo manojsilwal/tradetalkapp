@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 
 
 def _hf_token() -> Optional[str]:
-    return os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    tok = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if tok and tok.strip():
+        return tok.strip()
+    return None
 
 
 def _dataset_repo() -> Optional[str]:

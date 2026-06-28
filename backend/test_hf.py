@@ -7,7 +7,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ["VECTOR_BACKEND"] = "hf"
 os.environ["HF_DATASET_ID"] = "manojsilwal44/tradetalk-data"
 os.environ["DATA_LAKE_SOURCE"] = "hf"
-os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN", "")
+hf_token = os.getenv("HF_TOKEN", "").strip()
+if hf_token:
+    os.environ["HF_TOKEN"] = hf_token
+else:
+    os.environ.pop("HF_TOKEN", None)
 
 print("--- Testing Knowledge Store (Chroma) Init ---")
 try:

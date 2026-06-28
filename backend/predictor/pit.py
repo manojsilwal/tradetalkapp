@@ -53,6 +53,8 @@ def resolve_fundamentals_parquet_path(ticker: str) -> Optional[str]:
             from huggingface_hub import hf_hub_download
 
             token = os.environ.get("HF_TOKEN")
+            if token and not token.strip():
+                token = None
             return hf_hub_download(
                 repo_id=HF_DATASET_ID,
                 repo_type="dataset",

@@ -73,6 +73,8 @@ def _load_price_series_from_data_lake(ticker: str, max_rows: int = 512) -> Optio
                 from huggingface_hub import hf_hub_download
 
                 token = os.environ.get("HF_TOKEN")
+                if token and not token.strip():
+                    token = None
                 path = hf_hub_download(
                     repo_id=HF_DATASET_ID,
                     repo_type="dataset",

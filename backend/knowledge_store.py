@@ -132,6 +132,8 @@ class KnowledgeStore:
                 
                 logger.info(f"[KnowledgeStore] Downloading all_summaries.json from HF {hf_id}...")
                 token = os.environ.get("HF_TOKEN")
+                if token and not token.strip():
+                    token = None
                 file_path = hf_hub_download(repo_id=hf_id, repo_type="dataset", filename="rag_summaries/all_summaries.json", token=token)
                 with open(file_path, "r") as f:
                     summaries = json.load(f)

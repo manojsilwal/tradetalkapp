@@ -40,5 +40,9 @@ def _load() -> None:
     if "OPENROUTER_KEY" in os.environ and os.environ["OPENROUTER_KEY"].strip():
         os.environ["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_KEY"]
 
+    for k in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+        if k in os.environ and not os.environ[k].strip():
+            os.environ.pop(k)
+
 
 _load()
