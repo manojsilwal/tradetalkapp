@@ -14,6 +14,18 @@ const MAX_CONCURRENT_ANALYSES = 3;
 const FAST_TIMEOUT_MS = 30000;
 const MEDIUM_TIMEOUT_MS = 90000;
 const LLM_TIMEOUT_MS = 240000; // 240s — cold GCP decision-terminal can exceed 150s (swarm + debate + LLM)
+const DT_SLICE_RETRY_DELAY_MS = 1500;
+
+/** Retry a decision-terminal slice once after a short delay (timeouts / cold starts). */
+function fetchDtSlice(url, timeoutMs, abortSignal) {
+    const attempt = () => apiFetchTimed(url, {}, timeoutMs, abortSignal);
+    return attempt().catch((err) => {
+        if (abortSignal?.aborted) throw err;
+        return new Promise((resolve) => {
+            setTimeout(resolve, DT_SLICE_RETRY_DELAY_MS);
+        }).then(attempt);
+    });
+}
 const LIVE_POLL_FAST_MS = 30000;
 const LIVE_POLL_SLOW_MS = 5 * 60 * 1000;
 const LIVE_POLL_ENABLED = (() => {
@@ -677,7 +689,7 @@ export function AnalysisProvider({ children }) {
                     updateTickerState({ predMarketsData: null, predMarketsLoading: false });
                 }),
 
-            apiFetchTimed(`${dtBase}/snapshot${dtQ}`, {}, FAST_TIMEOUT_MS, abortSignal)
+            fetchDtSlice(`${dtBase}/snapshot${dtQ}`, MEDIUM_TIMEOUT_MS, abortSignal)
                 .then((snap) => {
                     onSuccess();
                     emitStep('Valuation snapshot');
@@ -745,7 +757,7 @@ export function AnalysisProvider({ children }) {
                     });
                 }),
 
-            apiFetchTimed(`${dtBase}/roadmap${dtQ}`, {}, MEDIUM_TIMEOUT_MS, abortSignal)
+            fetchDtSlice(`${dtBase}/roadmap${dtQ}`, MEDIUM_TIMEOUT_MS, abortSignal)
                 .then((rd) => {
                     onSuccess();
                     emitStep('Future price roadmap');

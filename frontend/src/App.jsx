@@ -13,6 +13,7 @@ import { API_BASE_URL, getToken, apiFetch } from './api'
 import AppAssistantPanel from './AppAssistantPanel'
 import { useAnalysisHistory, analysisStillRunning } from './AnalysisContext.jsx'
 import SessionsTray from './components/SessionsTray'
+import PageFeedback from './components/PageFeedback'
 import * as sessionStore from './store/sessionStore'
 import DailyBriefUI from './DailyBriefUI'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -72,6 +73,38 @@ const ROUTE_TO_KEY = {
     '/llm-calls': 'llm_calls',
     '/system-diagrams': 'systemdiagrams',
     '/pipeline-ops': 'pipeline_ops',
+}
+
+const PAGE_FEEDBACK_ROUTES = new Set([
+    '/',
+    '/dashboard',
+    '/decision-terminal',
+    '/macro',
+    '/chat',
+    '/backtest',
+    '/portfolio',
+    '/challenge',
+    '/learning',
+    '/daily-brief',
+    '/picks-shovels',
+    '/narrative-radar',
+    '/intelligence/funds/leaderboard',
+])
+
+function isPageFeedbackRoute(pathname) {
+    return PAGE_FEEDBACK_ROUTES.has(pathname)
+}
+
+function resolveFeedbackSymbol(pathname, search, recentAnalyses) {
+    const params = new URLSearchParams(search || '')
+    const fromQuery = params.get('ticker')
+    if (fromQuery) return fromQuery.trim().toUpperCase()
+    const fromCtx = (window.__tt_page_context__?.ticker || '').trim().toUpperCase()
+    if (fromCtx) return fromCtx
+    if (pathname === '/dashboard' || pathname === '/decision-terminal') {
+        return recentAnalyses[0]?.ticker || undefined
+    }
+    return undefined
 }
 
 const DEVELOPER_ROUTES = [
@@ -492,6 +525,13 @@ function App() {
 
             {/* Global sessions tray — shows all active/completed analyses regardless of page */}
             <SessionsTray />
+
+            {isPageFeedbackRoute(location.pathname) && (
+                <PageFeedback
+                    page={location.pathname}
+                    symbol={resolveFeedbackSymbol(location.pathname, location.search, recentAnalyses)}
+                />
+            )}
 
             {/* Mobile Bottom Navigation Bar (Hidden on Desktop) */}
             <nav className="mobile-bottom-nav">

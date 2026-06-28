@@ -1322,3 +1322,159 @@ svg defs marker#arrow-animated path {
   opacity: 0.55;
   cursor: wait;
 }
+
+/* Per-page feedback bar */
+.page-feedback-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1200;
+  padding: 10px 16px 12px;
+  background: rgba(15, 23, 42, 0.96);
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);
+}
+
+.page-feedback-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.page-feedback-label {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.page-feedback-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.page-feedback-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  transition: color 0.15s ease, transform 0.1s ease;
+}
+
+.page-feedback-star:hover,
+.page-feedback-star.is-active {
+  color: #fbbf24;
+}
+
+.page-feedback-star:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.page-feedback-divider {
+  width: 1px;
+  height: 18px;
+  background: rgba(148, 163, 184, 0.25);
+  margin: 0 4px;
+}
+
+.page-feedback-comment-toggle {
+  border: none;
+  background: transparent;
+  color: #60a5fa;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.page-feedback-comment-toggle:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.page-feedback-dismiss {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.page-feedback-dismiss:hover:not(:disabled) {
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.page-feedback-comment-panel {
+  max-width: 1200px;
+  margin: 10px auto 0;
+}
+
+.page-feedback-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(2, 6, 23, 0.6);
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 72px;
+}
+
+.page-feedback-comment-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.page-feedback-submit {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+}
+
+.page-feedback-submit:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.page-feedback-submit:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.page-feedback-error,
+.page-feedback-error-inline {
+  font-size: 0.75rem;
+  color: #f87171;
+}
+
+.page-feedback-thanks {
+  text-align: center;
+  font-size: 0.82rem;
+  color: #86efac;
+  padding: 12px 16px;
+}
+
+@media (max-width: 768px) {
+  .page-feedback-bar {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+}

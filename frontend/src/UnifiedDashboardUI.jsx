@@ -725,6 +725,19 @@ export default function UnifiedDashboardUI() {
                     </div>
                   </div>
                 ))}
+              {analysisStatus === 'success' && !decisionLoading && !q?.rows?.length && (
+                <p className="dt-slice-retry-hint" style={{ gridColumn: '1 / -1', margin: '8px 0 0', fontSize: '0.72rem', color: '#94a3b8' }}>
+                  Quality metrics didn&apos;t load —{' '}
+                  <button
+                    type="button"
+                    className="dt-link-btn"
+                    onClick={() => analyzeTicker(searchUpper, true)}
+                    style={{ background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer', padding: 0, fontSize: 'inherit', textDecoration: 'underline' }}
+                  >
+                    retry analysis
+                  </button>
+                </p>
+              )}
             </div>
           )}
         </section>
@@ -1178,8 +1191,17 @@ export default function UnifiedDashboardUI() {
                           </ReLineChart>
                         </ResponsiveContainer>
                       ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', fontSize: '11px' }}>
-                          Run analysis to load paths
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', fontSize: '11px', gap: 6 }}>
+                          <span>{analysisStatus === 'success' && !roadmapLoading ? 'Roadmap didn\u2019t load' : 'Run analysis to load paths'}</span>
+                          {analysisStatus === 'success' && !roadmapLoading && (
+                            <button
+                              type="button"
+                              onClick={() => analyzeTicker(searchUpper, true)}
+                              style={{ background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer', padding: 0, fontSize: 'inherit', textDecoration: 'underline' }}
+                            >
+                              Retry analysis
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

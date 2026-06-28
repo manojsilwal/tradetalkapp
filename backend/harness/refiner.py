@@ -147,6 +147,49 @@ class RefinerAgent:
                         confidence=0.6,
                     )
                 )
+            elif sig.signature_id == "AGENT_LOOP":
+                for aid in sig.affected_agent_ids or ["planner"]:
+                    current = state.system_prompts.get(aid, "")
+                    loop_guard = (
+                        "If you find yourself repeating the same action or receiving the same "
+                        "observation in a loop, you must change your approach, try a different tool, "
+                        "or request help from another agent."
+                    )
+                    if loop_guard.lower() not in current.lower():
+                        body = (current + "\n\n" + loop_guard).strip()
+                    else:
+                        body = current
+                    edits.append(
+                        HarnessCRUDEdit(
+                            target="prompt",
+                            operation=CRUDOperation.UPDATE,
+                            target_id=aid,
+                            payload={"system_prompt": body},
+                            rationale=sig.description,
+                            confidence=0.7,
+                        )
+                    )
+            elif sig.signature_id == "ROUTING_SCHEMA_MISMATCH":
+                for aid in sig.affected_agent_ids or ["router"]:
+                    current = state.system_prompts.get(aid, "")
+                    schema_guard = (
+                        "You must strictly adhere to the defined routing handoff schema and "
+                        "ensure all required fields and JSON structures are fully validated."
+                    )
+                    if schema_guard.lower() not in current.lower():
+                        body = (current + "\n\n" + schema_guard).strip()
+                    else:
+                        body = current
+                    edits.append(
+                        HarnessCRUDEdit(
+                            target="prompt",
+                            operation=CRUDOperation.UPDATE,
+                            target_id=aid,
+                            payload={"system_prompt": body},
+                            rationale=sig.description,
+                            confidence=0.8,
+                        )
+                    )
         return edits
 
     def _parse_edits(self, rows: List[Any]) -> List[HarnessCRUDEdit]:

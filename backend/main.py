@@ -87,6 +87,9 @@ agent_memory_mod.init_agent_memory_db()
 from . import chat_session_store as chat_session_store_mod
 chat_session_store_mod.init_chat_sessions_db()
 
+from . import page_feedback as page_feedback_mod
+page_feedback_mod.init_page_feedback_db()
+
 from . import coral_hub as coral_hub_mod
 coral_hub_mod.init_coral_hub_db()
 
@@ -168,6 +171,7 @@ from .routers import (
     pipeline_ops as pipeline_ops_router,
     picks_shovels as picks_shovels_router,
     narrative_radar as narrative_radar_router,
+    page_feedback as page_feedback_router,
 )
 
 app.include_router(auth_router.router)
@@ -184,6 +188,7 @@ app.include_router(knowledge.router)
 app.include_router(debug.router)
 app.include_router(chat.router)
 app.include_router(preferences.router)
+app.include_router(page_feedback_router.router)
 app.include_router(resources_router.router)
 app.include_router(sepl_router.router)
 app.include_router(scorecard_router.router)

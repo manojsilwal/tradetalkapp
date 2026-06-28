@@ -1263,6 +1263,74 @@ async def _build_verdict_panel_and_brain(
     return verdict, brain_block
 
 
+def _roadmap_predictor_budget_s() -> float:
+    """Wall-clock budget for roadmap predictor attempts before heuristic fallback."""
+    try:
+        return max(1.0, float(os.environ.get("ROADMAP_PREDICTOR_BUDGET_S", "8")))
+    except (TypeError, ValueError):
+        return 8.0
+
+
+async def _attempt_roadmap_predictor(
+    ticker: str,
+    price_f: float,
+    tool_registry: Any,
+) -> Optional[Dict[str, Any]]:
+    """Run brain + legacy predictor; return panel fields or None when unavailable."""
+    from .brain.flags import brain_surface_enabled
+
+    hs = ["1d", "5d", "21d", "63d"]
+    pred = None
+    if brain_surface_enabled("predictor"):
+        from .brain.predictor_serve import arun_brain_predictor_forecast
+
+        pred = await arun_brain_predictor_forecast(ticker, hs)
+        if pred.status != "ok":
+            pred = None
+    if pred is None:
+        from .predictor.agent import run_predictor_forecast
+
+        pred = await run_predictor_forecast(
+            ticker,
+            horizons=hs,
+            tool_registry=tool_registry,
+            emit_ledger=True,
+        )
+    if pred.status != "ok" or pred.base_price_usd_3y_scenario is None:
+        return None
+
+    conf_r = {"high": 0.72, "medium": 0.55, "low": 0.38}.get(
+        pred.model_confidence, 0.55
+    )
+    cagr_b = None
+    base_p = pred.base_price_usd_3y_scenario
+    if base_p and base_p > 0 and price_f > 0:
+        cagr_b = round((pow(base_p / price_f, 1.0 / 3.0) - 1.0) * 100.0, 2)
+
+    return {
+        "bull_p": pred.bull_price_usd_3y_scenario,
+        "base_p": base_p,
+        "bear_p": pred.bear_price_usd_3y_scenario,
+        "cagr_b": cagr_b,
+        "assumptions": list(pred.assumptions or [])[:6],
+        "conf_r": conf_r,
+        "roadmap_prov_source": pred.model_version or "predictor",
+        "roadmap_prov_confidence": conf_r,
+        "horizon_bands": [
+            HorizonQuantileBand(
+                horizon=b.horizon,
+                q10_usd=b.q10_usd,
+                q50_usd=b.q50_usd,
+                q90_usd=b.q90_usd,
+                point_usd=b.point_usd,
+            )
+            for b in pred.horizon_bands_usd
+        ],
+        "pred_syn_ex": (pred.synthesis_summary or "")[:900] or None,
+        "pred_rev_ex": (pred.reviewer_summary or "")[:600] or None,
+    }
+
+
 async def _build_roadmap_panel(
     ticker: str,
     price_f: Optional[float],
@@ -1282,56 +1350,36 @@ async def _build_roadmap_panel(
     if price_f and price_f > 0:
         predictor_filled = False
         if tool_registry is not None:
+            budget = _roadmap_predictor_budget_s()
             try:
-                from .brain.flags import brain_surface_enabled
-
-                hs = ["1d", "5d", "21d", "63d"]
-                pred = None
-                if brain_surface_enabled("predictor"):
-                    from .brain.predictor_serve import arun_brain_predictor_forecast
-
-                    pred = await arun_brain_predictor_forecast(ticker, hs)
-                    if pred.status != "ok":
-                        pred = None
-                if pred is None:
-                    from .predictor.agent import run_predictor_forecast
-
-                    pred = await run_predictor_forecast(
-                        ticker,
-                        horizons=hs,
-                        tool_registry=tool_registry,
-                        emit_ledger=True,
-                    )
-                if pred.status == "ok" and pred.base_price_usd_3y_scenario is not None:
-                    bull_p = pred.bull_price_usd_3y_scenario
-                    base_p = pred.base_price_usd_3y_scenario
-                    bear_p = pred.bear_price_usd_3y_scenario
-                    if base_p and base_p > 0 and price_f > 0:
-                        cagr_b = round((pow(base_p / price_f, 1.0 / 3.0) - 1.0) * 100.0, 2)
-                    assumptions = list(pred.assumptions or [])[:6]
-                    conf_r = {"high": 0.72, "medium": 0.55, "low": 0.38}.get(
-                        pred.model_confidence, 0.55
-                    )
+                pred_fields = await asyncio.wait_for(
+                    _attempt_roadmap_predictor(ticker, price_f, tool_registry),
+                    timeout=budget,
+                )
+                if pred_fields:
+                    bull_p = pred_fields["bull_p"]
+                    base_p = pred_fields["base_p"]
+                    bear_p = pred_fields["bear_p"]
+                    cagr_b = pred_fields["cagr_b"]
+                    assumptions = pred_fields["assumptions"]
+                    conf_r = pred_fields["conf_r"]
                     heuristic_fb = False
                     predictor_filled = True
-                    roadmap_prov.source = pred.model_version or "predictor"
-                    roadmap_prov.confidence = conf_r
+                    roadmap_prov.source = pred_fields["roadmap_prov_source"]
+                    roadmap_prov.confidence = pred_fields["roadmap_prov_confidence"]
                     roadmap_prov.formula_or_note = (
                         "Probabilistic predictor (baselines + TimesFM path); "
                         "3Y scenarios extrapolated from horizon bands."
                     )
-                    horizon_bands = [
-                        HorizonQuantileBand(
-                            horizon=b.horizon,
-                            q10_usd=b.q10_usd,
-                            q50_usd=b.q50_usd,
-                            q90_usd=b.q90_usd,
-                            point_usd=b.point_usd,
-                        )
-                        for b in pred.horizon_bands_usd
-                    ]
-                    pred_syn_ex = (pred.synthesis_summary or "")[:900] or None
-                    pred_rev_ex = (pred.reviewer_summary or "")[:600] or None
+                    horizon_bands = pred_fields["horizon_bands"]
+                    pred_syn_ex = pred_fields["pred_syn_ex"]
+                    pred_rev_ex = pred_fields["pred_rev_ex"]
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[decision_terminal] predictor roadmap timed out after %.1fs for %s",
+                    budget,
+                    ticker,
+                )
             except Exception as e:
                 logger.warning("[decision_terminal] predictor roadmap failed: %s", e)
 
