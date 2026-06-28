@@ -249,69 +249,7 @@ export default function ConsensusValuationPanel({
             <dt>{impliedMoveLabel}</dt>
             <dd>{hasData ? fmtDownside(v?.implied_downside_pct) : '—'}</dd>
           </div>
-          {hasData && dcfTiers && (
-            <div className="dt-valuation-metrics-row dt-valuation-tiers-row">
-              <dt>
-                <ProvenanceTip
-                  provenance={{
-                    formula_or_note:
-                      'DCF sensitivity range (not a confidence interval): fair value under progressively more optimistic growth/margin assumptions.',
-                  }}
-                  label="DCF sensitivity range"
-                />
-              </dt>
-              <dd>
-                <ul className="dt-dcf-tiers" data-testid="dcf-tiers">
-                  {[
-                    ['Bear', dcfTiers.bear],
-                    ['Conservative', dcfTiers.conservative_base],
-                    ['Base', dcfTiers.base],
-                    ['Bull', dcfTiers.bull],
-                    ['Extreme bull', dcfTiers.extreme_bull],
-                  ]
-                    .filter(([, val]) => val != null)
-                    .map(([label, val]) => (
-                      <li key={label} className="dt-dcf-tier">
-                        <span className="dt-dcf-tier-label">{label}</span>
-                        <span className="dt-dcf-tier-val">${fmtUsdPlainInt(val)}</span>
-                      </li>
-                    ))}
-                </ul>
-              </dd>
-            </div>
-          )}
-          {hasData && !dcfTiers && v?.dcf_range_low_usd != null && v?.dcf_range_high_usd != null && (
-            <div className="dt-valuation-metrics-row">
-              <dt>DCF sensitivity range</dt>
-              <dd>
-                ${fmtUsdPlainInt(v.dcf_range_low_usd)}–${fmtUsdPlainInt(v.dcf_range_high_usd)}
-              </dd>
-            </div>
-          )}
-          {hasData && v?.bull_case_assessment && (
-            <div className="dt-valuation-metrics-row">
-              <dt>Bull case</dt>
-              <dd>{v.bull_case_assessment}</dd>
-            </div>
-          )}
-          {hasData && v?.bear_case_assessment && (
-            <div className="dt-valuation-metrics-row">
-              <dt>Bear case</dt>
-              <dd>{v.bear_case_assessment}</dd>
-            </div>
-          )}
-          {hasData && classificationLabel && (
-            <div className="dt-valuation-metrics-row">
-              <dt>Business type</dt>
-              <dd>{classificationLabel}</dd>
-            </div>
-          )}
-          {hasData && marketExpectation && (
-            <div className="dt-valuation-metrics-row">
-              <dt>Market is pricing</dt>
-              <dd>{marketExpectation}</dd>
-            </div>
-          )}
+          
           {hasData && analystConsensus?.mean_target_usd != null && (
             <div
               className="dt-valuation-metrics-row dt-analyst-consensus"
