@@ -28,7 +28,7 @@ _DURABLE_KIND = "picks_shovels"
 
 
 def cache_ttl_s() -> int:
-    return int(os.environ.get("PICKS_SHOVELS_CACHE_TTL_S", "3600") or "3600")
+    return int(os.environ.get("PICKS_SHOVELS_CACHE_TTL_S", "604800") or "604800")
 
 
 def _db_path() -> str:
