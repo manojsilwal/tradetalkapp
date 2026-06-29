@@ -183,12 +183,35 @@ async def run_sec_filing_job() -> dict:
                 multiple = None
                 tier = None
 
-                financial_traction = out_rev.get("financial_traction_score", 50)
-                customer_adoption = out_rev.get("customer_adoption_score", 50)
-                management_commitment = out_rev.get("management_commitment_score", 50)
-                market_opportunity = out_rev.get("market_opportunity_score", 50)
-                monetization_clarity = out_rev.get("monetization_clarity_score", 50)
-                execution_capacity = out_rev.get("execution_capacity_score", 50)
+                try:
+                    financial_traction = float(out_rev.get("financial_traction_score", 50))
+                except (ValueError, TypeError):
+                    financial_traction = 50.0
+
+                try:
+                    customer_adoption = float(out_rev.get("customer_adoption_score", 50))
+                except (ValueError, TypeError):
+                    customer_adoption = 50.0
+
+                try:
+                    management_commitment = float(out_rev.get("management_commitment_score", 50))
+                except (ValueError, TypeError):
+                    management_commitment = 50.0
+
+                try:
+                    market_opportunity = float(out_rev.get("market_opportunity_score", 50))
+                except (ValueError, TypeError):
+                    market_opportunity = 50.0
+
+                try:
+                    monetization_clarity = float(out_rev.get("monetization_clarity_score", 50))
+                except (ValueError, TypeError):
+                    monetization_clarity = 50.0
+
+                try:
+                    execution_capacity = float(out_rev.get("execution_capacity_score", 50))
+                except (ValueError, TypeError):
+                    execution_capacity = 50.0
 
                 # Weighted total score calculation
                 new_revenue_engine_score = (
