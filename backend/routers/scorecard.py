@@ -633,12 +633,35 @@ async def _fetch_subjective_scores(
             }
             out_rev = await llm_client.generate_new_revenue_engine_score(d.ticker, rev_ctx)
 
-            financial_traction = out_rev.get("financial_traction_score", 50)
-            customer_adoption = out_rev.get("customer_adoption_score", 50)
-            management_commitment = out_rev.get("management_commitment_score", 50)
-            market_opportunity = out_rev.get("market_opportunity_score", 50)
-            monetization_clarity = out_rev.get("monetization_clarity_score", 50)
-            execution_capacity = out_rev.get("execution_capacity_score", 50)
+            try:
+                financial_traction = float(out_rev.get("financial_traction_score", 50))
+            except (ValueError, TypeError):
+                financial_traction = 50.0
+
+            try:
+                customer_adoption = float(out_rev.get("customer_adoption_score", 50))
+            except (ValueError, TypeError):
+                customer_adoption = 50.0
+
+            try:
+                management_commitment = float(out_rev.get("management_commitment_score", 50))
+            except (ValueError, TypeError):
+                management_commitment = 50.0
+
+            try:
+                market_opportunity = float(out_rev.get("market_opportunity_score", 50))
+            except (ValueError, TypeError):
+                market_opportunity = 50.0
+
+            try:
+                monetization_clarity = float(out_rev.get("monetization_clarity_score", 50))
+            except (ValueError, TypeError):
+                monetization_clarity = 50.0
+
+            try:
+                execution_capacity = float(out_rev.get("execution_capacity_score", 50))
+            except (ValueError, TypeError):
+                execution_capacity = 50.0
 
             new_revenue_engine_score = (
                 0.30 * financial_traction +
@@ -653,16 +676,6 @@ async def _fetch_subjective_scores(
             try:
                 upsert_stock_sec_info(
                     ticker=d.ticker,
-                    ceo_name="", # Use empty to trigger exclude ignore
-                    sitg_score=3.0,
-                    ceo_base_salary=None,
-                    sitg_value=None,
-                    sitg_multiple=None,
-                    sitg_percentile_tier=None,
-                    insider_buy_count_12m=0,
-                    insider_sell_count_12m=0,
-                    insider_net_shares_12m=0.0,
-                    held_percent_insiders=0.0,
                     financial_traction_score=financial_traction,
                     customer_adoption_score=customer_adoption,
                     management_commitment_score=management_commitment,
