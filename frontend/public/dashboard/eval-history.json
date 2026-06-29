@@ -1,341 +1,5 @@
 [
   {
-    "run_id": "eval_20260606_141535",
-    "timestamp": "2026-06-06T14:15:35Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-06/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260606_144843",
-    "timestamp": "2026-06-06T14:48:43Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-06/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260607_063201",
-    "timestamp": "2026-06-07T06:32:01Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-07/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_040831",
-    "timestamp": "2026-06-10T04:08:31Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_065103",
-    "timestamp": "2026-06-10T06:51:03Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_131727",
-    "timestamp": "2026-06-10T13:17:27Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_133024",
-    "timestamp": "2026-06-10T13:30:24Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_140831",
-    "timestamp": "2026-06-10T14:08:31Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_141059",
-    "timestamp": "2026-06-10T14:10:59Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_141241",
-    "timestamp": "2026-06-10T14:12:41Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_141343",
-    "timestamp": "2026-06-10T14:13:43Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.2,
-    "winning_score": 89.2,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.25,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_141433",
-    "timestamp": "2026-06-10T14:14:33Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.7,
-    "winning_score": 89.7,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.75,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260610_141716",
-    "timestamp": "2026-06-10T14:17:16Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.7,
-    "winning_score": 89.7,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.75,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-10/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
-    "run_id": "eval_20260611_034945",
-    "timestamp": "2026-06-11T03:49:45Z",
-    "status": "pass",
-    "winner": "Production 5-Agent Swarm",
-    "production_score": 89.7,
-    "winning_score": 89.7,
-    "score_delta": 0.0,
-    "swarm_advantage_score": 5.75,
-    "complexity_tax": "low",
-    "hallucination_rate": 0.01,
-    "critical_failures": 0,
-    "p95_latency_ms": 4800.0,
-    "cost_per_task": 0.1,
-    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
-    "report_path": "/evals/reports/2026-06-11/weekly_swarm_effectiveness_report.md",
-    "dashboard_badge": {
-      "label": "Eval: Pass",
-      "color": "green"
-    },
-    "top_actions": [
-      "Keep production swarm as baseline until a candidate clearly wins."
-    ]
-  },
-  {
     "run_id": "eval_20260611_044159",
     "timestamp": "2026-06-11T04:41:59Z",
     "status": "pass",
@@ -2391,6 +2055,342 @@
     "cost_per_task": 0.08,
     "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
     "report_path": "/evals/reports/2026-06-27/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_051723",
+    "timestamp": "2026-06-28T05:17:23Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.35,
+    "winning_score": 93.35,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.3,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_054145",
+    "timestamp": "2026-06-28T05:41:45Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.35,
+    "winning_score": 93.35,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.3,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_055837",
+    "timestamp": "2026-06-28T05:58:37Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.35,
+    "winning_score": 93.35,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.3,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_062552",
+    "timestamp": "2026-06-28T06:25:52Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.35,
+    "winning_score": 93.35,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.3,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_151544",
+    "timestamp": "2026-06-28T15:15:44Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.35,
+    "winning_score": 93.35,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.3,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_160451",
+    "timestamp": "2026-06-28T16:04:51Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.35,
+    "winning_score": 93.35,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.3,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_161042",
+    "timestamp": "2026-06-28T16:10:42Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.35,
+    "winning_score": 93.35,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.3,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_161048",
+    "timestamp": "2026-06-28T16:10:48Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.55,
+    "winning_score": 93.55,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.5,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_163509",
+    "timestamp": "2026-06-28T16:35:09Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.55,
+    "winning_score": 93.55,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.5,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260628_165203",
+    "timestamp": "2026-06-28T16:52:03Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.55,
+    "winning_score": 93.55,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.5,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-28/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260629_142353",
+    "timestamp": "2026-06-29T14:23:53Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.55,
+    "winning_score": 93.55,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.5,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-29/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260629_144959",
+    "timestamp": "2026-06-29T14:49:59Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.55,
+    "winning_score": 93.55,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.5,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-29/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260629_153325",
+    "timestamp": "2026-06-29T15:33:25Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.55,
+    "winning_score": 93.55,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.5,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-29/weekly_swarm_effectiveness_report.md",
+    "dashboard_badge": {
+      "label": "Eval: Pass",
+      "color": "green"
+    },
+    "top_actions": [
+      "Keep production swarm as baseline until a candidate clearly wins."
+    ]
+  },
+  {
+    "run_id": "eval_20260629_153333",
+    "timestamp": "2026-06-29T15:33:33Z",
+    "status": "pass",
+    "winner": "Production 5-Agent Swarm",
+    "production_score": 93.7,
+    "winning_score": 93.7,
+    "score_delta": 0.0,
+    "swarm_advantage_score": 9.65,
+    "complexity_tax": "low",
+    "hallucination_rate": 0.01,
+    "critical_failures": 0,
+    "p95_latency_ms": 3800.0,
+    "cost_per_task": 0.08,
+    "recommendation": "Keep production swarm as baseline until a candidate clearly wins.",
+    "report_path": "/evals/reports/2026-06-29/weekly_swarm_effectiveness_report.md",
     "dashboard_badge": {
       "label": "Eval: Pass",
       "color": "green"

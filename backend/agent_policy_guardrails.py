@@ -179,6 +179,17 @@ def guard_host(workload: str, url: str) -> None:
         )
 
 
+import re
+
+# Pattern matching for common API key signatures:
+# - sk-or-v1-... (OpenRouter) or sk-... (OpenAI / OpenRouter)
+# - AIzaSy... (Google/Gemini)
+API_KEY_PATTERNS = [
+    re.compile(r'\bsk-(?:or-v1-)?[a-zA-Z0-9_-]{20,}\b'),
+    re.compile(r'\bAIzaSy[a-zA-Z0-9_-]{33}\b'),
+]
+
+
 def redact_secret(value: str, keep: int = 4) -> str:
     if not value:
         return ""
@@ -188,7 +199,7 @@ def redact_secret(value: str, keep: int = 4) -> str:
 
 
 def redact_secrets_in_text(text: str, secret_values: Optional[Iterable[str]] = None) -> str:
-    """Replace known secret values in logs/errors with redacted placeholders."""
+    """Replace known secret values and common API key patterns in logs/errors with redacted placeholders."""
     if not text:
         return text
     redacted = text
@@ -203,8 +214,14 @@ def redact_secrets_in_text(text: str, secret_values: Optional[Iterable[str]] = N
         ]
     )
     for value in values:
-        if value:
+        if value and len(value) > 4:
             redacted = redacted.replace(value, redact_secret(value))
+
+    # Redact common key patterns dynamically
+    for pattern in API_KEY_PATTERNS:
+        for match in pattern.findall(redacted):
+            redacted = redacted.replace(match, redact_secret(match))
+
     return redacted
 
 

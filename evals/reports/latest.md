@@ -1,7 +1,7 @@
 # Weekly Swarm Effectiveness Report
 
-Date: 2026-06-27
-Run ID: eval_20260627_193249
+Date: 2026-06-29
+Run ID: eval_20260629_153333
 Production Version: v1.0.0
 Benchmark Suite: agentic_swarm_eval_v1
 
@@ -17,7 +17,7 @@ Keep production swarm as baseline until a candidate clearly wins.
 
 | Variant | AES | Task Success | RAG Quality | Orchestration | Learning | Efficiency | Safety | Maintainability | p95 Latency | Cost | Decision |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Production 5-Agent Swarm | 93.35 | 93.0 | 97.0 | 91.0 | 90.0 | 93.0 | 99.0 | 90.0 | 3800.0 | 0.08 | ok |
+| Production 5-Agent Swarm | 93.7 | 93.0 | 97.0 | 91.0 | 92.0 | 93.0 | 99.5 | 92.0 | 3800.0 | 0.08 | ok |
 | Single-Agent RAG | 82.2 | 85.0 | 93.0 | 74.0 | 62.0 | 82.0 | 95.0 | 84.0 | 3300.0 | 0.06 | ok |
 | Planner-Executor | 81.05 | 84.0 | 85.0 | 79.0 | 65.0 | 79.0 | 91.5 | 80.0 | 3900.0 | 0.08 | ok |
 | Reduced Swarm + Current LLM | 84.05 | 87.0 | 89.0 | 83.0 | 73.0 | 79.0 | 93.0 | 78.0 | 4100.0 | 0.08 | ok |
@@ -29,9 +29,9 @@ Keep production swarm as baseline until a candidate clearly wins.
 
 ## 3. Swarm Advantage
 
-Production Swarm Score: 93.35
+Production Swarm Score: 93.7
 Best Simpler Baseline Score: 84.05
-Swarm Advantage Score: 9.3
+Swarm Advantage Score: 9.65
 
 Recommendation:
 Keep production swarm as baseline until a candidate clearly wins.
@@ -49,11 +49,11 @@ Overall Complexity Tax: Low
 
 | Component | With Score | Without Score | Delta | Recommendation |
 |---|---:|---:|---:|---|
-| Critic agent | 93.35 | 81.0 | 12.35 | Keep always-on |
-| Reflection loop | 93.35 | 81.75 | 11.6 | Keep always-on |
-| RRF memory retrieval | 93.35 | 81.9 | 11.45 | Keep always-on |
-| Nightly Mutation Engine | 93.35 | 82.05 | 11.3 | Keep always-on |
-| CORAL / Meta-LLM | 93.35 | 80.55 | 12.8 | Keep always-on |
+| Critic agent | 93.7 | 81.0 | 12.7 | Keep always-on |
+| Reflection loop | 93.7 | 81.75 | 11.95 | Keep always-on |
+| RRF memory retrieval | 93.7 | 81.9 | 11.8 | Keep always-on |
+| Nightly Mutation Engine | 93.7 | 82.05 | 11.65 | Keep always-on |
+| CORAL / Meta-LLM | 93.7 | 80.55 | 13.15 | Keep always-on |
 
 ## 6. Safety and Tool-Call Findings
 
