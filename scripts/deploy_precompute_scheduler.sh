@@ -11,7 +11,8 @@
 # Env vars (all auto-fetched from Cloud Run tradetalk-api if not set):
 #   TRADETALK_API_BASE      — Cloud Run service URL (no trailing slash)
 #   PIPELINE_CRON_SECRET    — must match PIPELINE_CRON_SECRET on the API service
-#   FUND_LB_ADMIN_TOKEN     — (optional) for weekly fund leaderboard ingest
+#
+# Weekly full 13F ingest: bash scripts/deploy_fund_leaderboard_job.sh
 #
 # Usage:
 #   bash scripts/deploy_precompute_scheduler.sh            # auto-fetch secrets from Cloud Run
@@ -47,7 +48,6 @@ print(val)
 
 BASE="${TRADETALK_API_BASE:-}"
 SECRET="${PIPELINE_CRON_SECRET:-}"
-ADMIN="${FUND_LB_ADMIN_TOKEN:-}"
 
 if [[ -z "$BASE" ]]; then
   echo "TRADETALK_API_BASE not set — fetching from Cloud Run service URL..."
@@ -56,10 +56,6 @@ fi
 if [[ -z "$SECRET" ]]; then
   echo "PIPELINE_CRON_SECRET not set — fetching from Cloud Run $SERVICE_NAME env..."
   SECRET="$(_fetch_cloud_run_env PIPELINE_CRON_SECRET)"
-fi
-if [[ -z "$ADMIN" ]]; then
-  echo "FUND_LB_ADMIN_TOKEN not set — fetching from Cloud Run $SERVICE_NAME env..."
-  ADMIN="$(_fetch_cloud_run_env FUND_LB_ADMIN_TOKEN)"
 fi
 
 if [[ -z "$BASE" ]]; then
@@ -89,8 +85,9 @@ upsert_scheduler() {
   local deadline="$4"
   local retries="$5"
   local header_str="$6"
+  local tz="${7:-UTC}"
 
-  echo "  → $name  ($cron)  $uri"
+  echo "  → $name  ($cron $tz)  $uri"
 
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "    [dry-run] would create/update scheduler job"
@@ -100,7 +97,7 @@ upsert_scheduler() {
   local common_args=(
     --location="$REGION"
     --schedule="$cron"
-    --time-zone="UTC"
+    --time-zone="$tz"
     --uri="$uri"
     --http-method=POST
     --attempt-deadline="${deadline}"
@@ -116,60 +113,68 @@ upsert_scheduler() {
 }
 
 # ── Schedule definitions ─────────────────────────────────────────────
+# Market-open precompute: 9:30 AM ET weekdays (America/New_York handles DST).
+ET_TZ="America/New_York"
 
-echo "[1/6] Daily knowledge pipeline (00:05 UTC)"
+echo "[1/7] Daily knowledge pipeline (00:05 UTC)"
 upsert_scheduler "precompute-knowledge-pipeline" \
   "5 0 * * *" \
   "${BASE}/knowledge/pipeline-run" \
   "900s" "2" \
-  "Content-Type=application/json,Authorization=Bearer ${SECRET}"
+  "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
+  "UTC"
 
-echo "[2/6] Picks & Shovels (01:10 UTC daily)"
+echo "[2/7] Picks & Shovels (9:30 AM ET weekdays)"
 upsert_scheduler "precompute-picks-shovels" \
-  "10 1 * * *" \
+  "30 9 * * 1-5" \
   "${BASE}/knowledge/picks-shovels-run" \
   "900s" "2" \
-  "Content-Type=application/json,Authorization=Bearer ${SECRET}"
+  "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
+  "$ET_TZ"
 
-echo "[3/6] Narrative Rotation Radar (01:12 UTC daily — 2 min stagger)"
+echo "[3/7] Narrative Rotation Radar (9:32 AM ET weekdays — 2 min stagger)"
 upsert_scheduler "precompute-narrative-radar" \
-  "12 1 * * *" \
+  "32 9 * * 1-5" \
   "${BASE}/knowledge/narrative-radar-run" \
   "900s" "2" \
-  "Content-Type=application/json,Authorization=Bearer ${SECRET}"
+  "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
+  "$ET_TZ"
 
-echo "[4/6] Macro flow daily refresh (01:25 UTC daily)"
+echo "[4/7] Fund Leaderboard metrics refresh (9:35 AM ET weekdays)"
+upsert_scheduler "precompute-fund-leaderboard-metrics" \
+  "35 9 * * 1-5" \
+  "${BASE}/knowledge/fund-leaderboard-metrics-run" \
+  "900s" "2" \
+  "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
+  "$ET_TZ"
+
+echo "[5/7] Macro flow daily refresh (01:25 UTC daily)"
 upsert_scheduler "macro-flow-daily" \
   "25 1 * * *" \
   "${BASE}/macro/flow/cron-refresh?interval=1w" \
   "900s" "2" \
-  "Content-Type=application/json,Authorization=Bearer ${SECRET}"
+  "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
+  "UTC"
 
-echo "[5/6] Verdict cache prewarm — pre-open (13:00 UTC weekdays)"
+echo "[6/7] Verdict cache prewarm — pre-open (13:00 UTC weekdays)"
 upsert_scheduler "verdict-prewarm-preopen" \
   "0 13 * * 1-5" \
   "${BASE}/decision-terminal/prewarm" \
   "1800s" "1" \
-  "Content-Type=application/json,Authorization=Bearer ${SECRET}"
+  "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
+  "UTC"
 
-echo "[6/6] Verdict cache prewarm — mid-session (18:30 UTC weekdays)"
+echo "[7/7] Verdict cache prewarm — mid-session (18:30 UTC weekdays)"
 upsert_scheduler "verdict-prewarm-midsession" \
   "30 18 * * 1-5" \
   "${BASE}/decision-terminal/prewarm" \
   "1800s" "1" \
-  "Content-Type=application/json,Authorization=Bearer ${SECRET}"
+  "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
+  "UTC"
 
-# ── Weekly fund leaderboard (optional) ───────────────────────────────
-if [[ -n "$ADMIN" ]]; then
-  echo "[bonus] Fund Leaderboard 13F ingest (06:00 UTC Mondays)"
-  upsert_scheduler "precompute-fund-leaderboard" \
-    "0 6 * * 1" \
-    "${BASE}/api/funds/ingest/run" \
-    "120s" "1" \
-    "Content-Type=application/json,X-Admin-Token=${ADMIN}"
-else
-  echo "[skip] Fund Leaderboard — FUND_LB_ADMIN_TOKEN not set"
-fi
+echo ""
+echo "Weekly full 13F ingest is deployed separately (Cloud Run Job, not API fire-and-forget):"
+echo "  bash scripts/deploy_fund_leaderboard_job.sh"
 
 echo ""
 echo "Done. Verify with:"

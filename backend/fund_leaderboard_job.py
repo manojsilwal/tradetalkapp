@@ -55,6 +55,14 @@ def get_run_state() -> Dict[str, Any]:
     return dict(_run_state)
 
 
+def _emerging_min_quarters() -> int:
+    return int(os.environ.get("FUND_LB_EMERGING_MIN_QUARTERS", str(EMERGING_MIN_QUARTERS)))
+
+
+def _min_quarters() -> int:
+    return int(os.environ.get("FUND_LB_MIN_QUARTERS", str(MIN_QUARTERS)))
+
+
 def _build_snapshots_and_persist(
     fund_id: str,
     parsed_filings: List[Dict[str, Any]],
@@ -156,6 +164,166 @@ def _top_sector(fund_id: str) -> Dict[str, Any]:
     }
 
 
+def _snapshots_from_db(fund_id: str, max_quarters: int) -> Dict[str, Any]:
+    """Rebuild weighted clone snapshots from persisted filings (no SEC re-fetch)."""
+    filings = store.get_filings_for_fund(fund_id, limit=max_quarters)
+    snapshots: List[Dict[str, Any]] = []
+    all_tickers: set = set()
+    mapped_mv_total = 0.0
+    total_mv_total = 0.0
+    latest_total_mv = 0.0
+    latest_report_period = None
+    latest_filing_date = None
+
+    for filing in sorted(filings, key=lambda f: f.get("filing_date") or ""):
+        holdings = store.get_holdings_for_filing(filing["filing_id"])
+        total_mv = sum((h.get("market_value_usd") or 0.0) for h in holdings)
+        if total_mv <= 0:
+            continue
+
+        weighted_holdings = []
+        mapped_mv = 0.0
+        for h in holdings:
+            mv = h.get("market_value_usd") or 0.0
+            weight = mv / total_mv if total_mv else 0.0
+            ticker = h.get("ticker")
+            if ticker:
+                all_tickers.add(ticker)
+                mapped_mv += mv
+                weighted_holdings.append({"ticker": ticker, "weight": weight})
+
+        mapped_mv_total += mapped_mv
+        total_mv_total += total_mv
+        latest_total_mv = total_mv
+        latest_report_period = filing.get("report_period")
+        latest_filing_date = filing.get("filing_date")
+
+        if weighted_holdings:
+            snapshots.append({
+                "filing_date": filing.get("filing_date"),
+                "report_period": filing.get("report_period"),
+                "holdings": weighted_holdings,
+            })
+
+    return {
+        "snapshots": snapshots,
+        "tickers": sorted(all_tickers),
+        "mapped_mv_total": mapped_mv_total,
+        "total_mv_total": total_mv_total,
+        "latest_total_mv": latest_total_mv,
+        "latest_report_period": latest_report_period,
+        "latest_filing_date": latest_filing_date,
+        "quarter_count": len(filings),
+    }
+
+
+async def _recompute_returns_from_db(
+    fund: Dict[str, Any],
+    max_quarters: int,
+) -> Optional[Dict[str, Any]]:
+    """Refresh clone-return metrics for one fund using DB holdings + fresh prices."""
+    from .coral_skills.return_reconstruction import fetch_historical_prices, calculate_clone_returns
+    from .coral_skills.leaderboard_scoring import calculate_data_confidence
+
+    fund_id = fund["fund_id"]
+    cik = fund.get("cik") or ""
+    name = fund.get("display_name") or fund.get("fundName") or fund_id
+
+    built = _snapshots_from_db(fund_id, max_quarters)
+    snapshots = built["snapshots"]
+    tickers = built["tickers"]
+    quarter_count = int(built.get("quarter_count") or len(snapshots))
+
+    if quarter_count < _emerging_min_quarters():
+        logger.info("[FundLB] %s (%s): only %d quarters in DB, skipping metrics refresh", name, cik, quarter_count)
+        return None
+
+    emerging = quarter_count < _min_quarters()
+
+    if emerging:
+        logger.info(
+            "[FundLB] %s (%s): emerging (%d quarters) — holdings only, returns N/A",
+            name, cik, quarter_count,
+        )
+        return {
+            "fundId": fund_id,
+            "fundName": name,
+            "cik": cik,
+            "managerType": fund.get("manager_type") or "Institutional",
+            "strategyTags": fund.get("strategy_tags") or [],
+            "philosophy": fund.get("philosophy"),
+            "emerging": True,
+            "metrics": {},
+            "confidence": {"score": 0, "label": "Emerging"},
+            "latest13FValueUsd": built["latest_total_mv"],
+            "latestReportPeriod": built["latest_report_period"],
+            "lastFilingDate": built["latest_filing_date"],
+            **_top_sector(fund_id),
+        }
+
+    if not snapshots or not tickers:
+        return None
+
+    mapped_pct = (built["mapped_mv_total"] / built["total_mv_total"]) if built["total_mv_total"] else 0.0
+    if mapped_pct < MIN_MAPPED_PCT:
+        logger.info("[FundLB] %s (%s): mapped %.0f%% < min, skipping", name, cik, mapped_pct * 100)
+        return None
+
+    start_dates = [s["filing_date"] for s in snapshots if s.get("filing_date")]
+    start = min(start_dates) if start_dates else (date.today() - timedelta(days=365 * 5)).isoformat()
+    end = date.today().isoformat()
+
+    try:
+        prices_df = await fetch_historical_prices(tickers, start, end)
+        bench_df = await fetch_historical_prices([BENCHMARK], start, end)
+    except Exception as e:
+        logger.warning("[FundLB] %s price fetch failed: %s", name, e)
+        return None
+
+    if prices_df is None or prices_df.empty:
+        return None
+
+    result = calculate_clone_returns(snapshots, prices_df, bench_df)
+    if result.get("error"):
+        logger.info("[FundLB] %s: reconstruction error %s", name, result["error"])
+        return None
+
+    metrics = result["metrics"]
+    confidence = calculate_data_confidence(
+        valid_quarters=len(snapshots),
+        expected_quarters=EXPECTED_QUARTERS,
+        mapped_market_value=built["mapped_mv_total"],
+        total_market_value=built["total_mv_total"],
+        priced_market_value=built["mapped_mv_total"],
+    )
+
+    store.upsert_return_metrics(
+        fund_id=fund_id,
+        mode=MODE,
+        period=PERIOD_LABEL,
+        as_of_date=end,
+        metrics=metrics,
+        data_confidence_score=confidence.get("score"),
+        series=result.get("series"),
+    )
+
+    return {
+        "fundId": fund_id,
+        "fundName": name,
+        "cik": cik,
+        "managerType": fund.get("manager_type") or "Institutional",
+        "strategyTags": fund.get("strategy_tags") or [],
+        "philosophy": fund.get("philosophy"),
+        "emerging": False,
+        "metrics": metrics,
+        "confidence": confidence,
+        "latest13FValueUsd": built["latest_total_mv"],
+        "latestReportPeriod": built["latest_report_period"],
+        "lastFilingDate": built["latest_filing_date"],
+        **_top_sector(fund_id),
+    }
+
+
 async def _process_manager(
     filer: Dict[str, Any],
     max_quarters: int,
@@ -188,10 +356,10 @@ async def _process_manager(
         cik, fund_id, max_quarters=max_quarters, save_raw=save_raw,
     )
     parsed = history.get("filings", [])
-    if len(parsed) < EMERGING_MIN_QUARTERS:
+    if len(parsed) < _emerging_min_quarters():
         logger.info("[FundLB] %s (%s): only %d quarters, skipping", name, cik, len(parsed))
         return None
-    emerging = len(parsed) < MIN_QUARTERS
+    emerging = len(parsed) < _min_quarters()
 
     # Map CUSIP -> ticker for each filing's holdings (optionally capped to the
     # largest positions to bound mapping/price cost).
@@ -405,9 +573,92 @@ async def run_fund_leaderboard_job(
         return summary
 
 
+async def run_metrics_refresh_job(
+    top_n: int = DEFAULT_TOP_N,
+    max_quarters: int = DEFAULT_MAX_QUARTERS,
+) -> Dict[str, Any]:
+    """Daily lightweight refresh: re-price existing DB holdings and rewrite the snapshot.
+
+    Skips SEC 13F re-ingest; intended for the 9:30 AM ET weekday cron.
+    """
+    from .coral_skills.leaderboard_scoring import rank_leaderboard
+
+    store.init_schema()
+    _run_state.update({
+        "status": "running",
+        "started_at": datetime.utcnow().isoformat(),
+        "summary": None,
+        "job_type": "metrics_refresh",
+    })
+    summary: Dict[str, Any] = {
+        "job_type": "metrics_refresh",
+        "top_n": top_n,
+        "funds_considered": 0,
+        "managers_scored": 0,
+        "leaderboard_rows": 0,
+        "errors": [],
+    }
+
+    try:
+        lb = store.get_leaderboard(mode=MODE, limit=500)
+        fund_ids = [r["fundId"] for r in lb.get("rows", []) if r.get("fundId")]
+        if fund_ids:
+            funds = [store.get_fund(fid) for fid in fund_ids]
+            funds = [f for f in funds if f]
+        else:
+            funds = store.list_funds_with_min_filings(_emerging_min_quarters())
+
+        summary["funds_considered"] = len(funds)
+        if not funds:
+            _run_state.update({"status": "error", "summary": summary})
+            summary["errors"].append("no funds with persisted filings")
+            return summary
+
+        scored: List[Dict[str, Any]] = []
+        for fund in funds:
+            try:
+                result = await _recompute_returns_from_db(fund, max_quarters)
+                if result:
+                    scored.append(result)
+            except Exception as e:
+                summary["errors"].append(f"{fund.get('cik')}: {e}")
+                logger.warning("[FundLB] metrics refresh failed for %s: %s", fund.get("cik"), e)
+
+        summary["managers_scored"] = len(scored)
+        if not scored:
+            _run_state.update({"status": "error", "summary": summary})
+            return summary
+
+        ranked = rank_leaderboard(scored)
+        top = ranked[:top_n]
+        rows = [_to_presentable_row(f) for f in top]
+
+        as_of = date.today().isoformat()
+        latest_period = max(
+            (r.get("latestReportPeriod") for r in rows if r.get("latestReportPeriod")),
+            default=None,
+        )
+        store.write_leaderboard_snapshot(as_of, latest_period, MODE, rows)
+        summary["leaderboard_rows"] = len(rows)
+
+        _run_state.update({"status": "completed", "summary": summary})
+        logger.info("[FundLB] metrics refresh complete: %s", summary)
+        return summary
+    except Exception as e:
+        summary["errors"].append(str(e))
+        _run_state.update({"status": "error", "summary": summary})
+        logger.exception("[FundLB] metrics refresh failed: %s", e)
+        return summary
+
+
 def run_job_blocking(**kwargs) -> Dict[str, Any]:
     """Synchronous entrypoint for schedulers/threads."""
     return asyncio.run(run_fund_leaderboard_job(**kwargs))
+
+
+def run_metrics_refresh_blocking(**kwargs) -> Dict[str, Any]:
+    """Synchronous entrypoint for the daily metrics-only refresh."""
+    return asyncio.run(run_metrics_refresh_job(**kwargs))
 
 
 if __name__ == "__main__":
@@ -415,6 +666,8 @@ if __name__ == "__main__":
     # All knobs come from env (FUND_LB_RANKING_MODE, FUND_LB_UNIVERSE_SIZE,
     # FUND_LB_TOP_N, FUND_LB_MAX_QUARTERS, FUND_LB_MAX_HOLDINGS_PER_FILING,
     # FUND_LB_SAVE_RAW, SEC_USER_AGENT, OPENFIGI_API_KEY, POSTGRES_*).
+    # Pass --metrics-only for the daily price/returns refresh (no SEC ingest).
+    import argparse
     import sys as _sys
 
     logging.basicConfig(
@@ -422,8 +675,18 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     _log = logging.getLogger(__name__)
+    parser = argparse.ArgumentParser(description="Fund Leaderboard batch job")
+    parser.add_argument(
+        "--metrics-only",
+        action="store_true",
+        help="Re-price existing DB holdings only (daily cron); skip SEC 13F ingest",
+    )
+    args = parser.parse_args()
     try:
-        _result = run_job_blocking()
+        if args.metrics_only:
+            _result = run_metrics_refresh_blocking()
+        else:
+            _result = run_job_blocking()
         _log.info("[FundLB] job finished: %s", _result)
         # The pipeline ran end-to-end. Output volume depends on external rate
         # limits (e.g. keyless OpenFIGI), so completing is success; only a true

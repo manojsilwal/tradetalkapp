@@ -139,6 +139,23 @@ async def trigger_picks_shovels(background: bool = Query(False)):
     return {"status": "ok", "message": "Picks & Shovels scan complete", "snapshot": result}
 
 
+@router.post("/fund-leaderboard-metrics-run", dependencies=[Depends(require_cron_secret)])
+async def trigger_fund_leaderboard_metrics():
+    """Daily Fund Leaderboard metrics refresh (re-price DB holdings, no SEC ingest).
+
+    Cron entry point (PIPELINE_CRON_SECRET). Runs synchronously so the Cloud Run
+    instance stays alive until the Postgres snapshot is written.
+    """
+    from .. import fund_leaderboard_job as fl_job
+
+    result = await fl_job.run_metrics_refresh_job()
+    return {
+        "status": "ok" if result.get("leaderboard_rows") else "error",
+        "message": "Fund leaderboard metrics refresh complete",
+        "summary": result,
+    }
+
+
 class ClaimIngestRequest(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=32)
     claim_text: str = Field(..., min_length=1, max_length=8000)

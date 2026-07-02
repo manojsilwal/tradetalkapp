@@ -39,7 +39,17 @@ jobs:
           curl -fsS --max-time 900 -X POST "${BASE}/knowledge/narrative-radar-run" \
             -H "Authorization: Bearer ${SECRET}" -H "Content-Type: application/json"
 
-      - name: Fund Leaderboard 13F ingest (weekly)
+      - name: Fund Leaderboard metrics refresh (daily, synchronous)
+
+        env:
+          BASE: ${{ secrets.TRADETALK_API_BASE }}
+          SECRET: ${{ secrets.PIPELINE_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 900 -X POST "${BASE}/knowledge/fund-leaderboard-metrics-run" \
+            -H "Authorization: Bearer ${SECRET}" -H "Content-Type: application/json"
+
+      - name: Fund Leaderboard 13F ingest (weekly — prefer Cloud Run Job in prod)
 
         env:
           BASE: ${{ secrets.TRADETALK_API_BASE }}
@@ -47,8 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${BASE:-}" || { echo "Set TRADETALK_API_BASE"; exit 1; }
-          # Heavy/long 13F ingest runs in the background on the API; for maximum
-          # reliability point this at the Cloud Run Job instead (see pipeline_ops).
+          echo "For production weekly ingest use: bash scripts/deploy_fund_leaderboard_job.sh"
           curl -fsS --max-time 120 -X POST "${BASE}/api/funds/ingest/run" \
             ${ADMIN:+-H "X-Admin-Token: ${ADMIN}"} -H "Content-Type: application/json" || \
             echo "Leaderboard ingest kick returned non-zero (may already be running)"

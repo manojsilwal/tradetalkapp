@@ -8,7 +8,7 @@ instead of re-hitting Yahoo.
 
 Env knobs:
   PICKS_SHOVELS_DB_PATH      explicit SQLite file (tests use a temp file)
-  PICKS_SHOVELS_CACHE_TTL_S  snapshot freshness window (default 3600)
+  PICKS_SHOVELS_CACHE_TTL_S  snapshot freshness window (default 86400 = 24h)
   TRADETALK_DATA_DIR         shared data dir fallback
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ _DURABLE_KIND = "picks_shovels"
 
 
 def cache_ttl_s() -> int:
-    return int(os.environ.get("PICKS_SHOVELS_CACHE_TTL_S", "604800") or "604800")
+    return int(os.environ.get("PICKS_SHOVELS_CACHE_TTL_S", "86400") or "86400")
 
 
 def _db_path() -> str:

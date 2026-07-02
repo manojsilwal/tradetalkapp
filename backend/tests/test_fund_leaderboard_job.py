@@ -174,5 +174,96 @@ class BuildSnapshotsTest(unittest.TestCase):
         self.assertEqual(row["philosophy"], "Concentrated AI thesis.")
 
 
+class MetricsRefreshTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmpdir = tempfile.TemporaryDirectory()
+        os.environ["FUND_LEADERBOARD_DB_PATH"] = os.path.join(cls._tmpdir.name, "metrics.db")
+        os.environ["FUND_LB_EMERGING_MIN_QUARTERS"] = "2"
+        os.environ["FUND_LB_MIN_QUARTERS"] = "8"
+
+        from backend import fund_leaderboard_store as store
+        if hasattr(store._local, "conn"):
+            del store._local.conn
+        store.init_schema()
+        cls.store = store
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmpdir.cleanup()
+
+    def _seed_fund_with_filings(self):
+        from backend import fund_leaderboard_job as job
+
+        fund_id = self.store.upsert_fund("0000888", "Metrics Refresh Capital")
+        parsed = [
+            {
+                "cik": "0000888", "accession_number": "m-1", "form_type": "13F-HR",
+                "report_period": "2024-09-30", "filing_date": "2024-11-14",
+                "filing_url": "http://x/m1",
+                "holdings": [
+                    {"issuer_name": "Apple", "cusip": "037833100", "ticker": "AAPL",
+                     "sector": "Tech", "market_value_usd": 1000.0, "mapping_status": "mapped"},
+                ],
+            },
+            {
+                "cik": "0000888", "accession_number": "m-2", "form_type": "13F-HR",
+                "report_period": "2024-12-31", "filing_date": "2025-02-14",
+                "filing_url": "http://x/m2",
+                "holdings": [
+                    {"issuer_name": "Apple", "cusip": "037833100", "ticker": "AAPL",
+                     "sector": "Tech", "market_value_usd": 1200.0, "mapping_status": "mapped"},
+                ],
+            },
+        ]
+        job._build_snapshots_and_persist(fund_id, parsed)
+        return fund_id
+
+    def test_snapshots_from_db(self):
+        from backend import fund_leaderboard_job as job
+
+        fund_id = self._seed_fund_with_filings()
+        built = job._snapshots_from_db(fund_id, max_quarters=20)
+        self.assertEqual(built["tickers"], ["AAPL"])
+        self.assertEqual(len(built["snapshots"]), 2)
+        self.assertEqual(built["quarter_count"], 2)
+
+    def test_list_funds_with_min_filings(self):
+        self._seed_fund_with_filings()
+        funds = self.store.list_funds_with_min_filings(2)
+        self.assertEqual(len(funds), 1)
+        self.assertEqual(funds[0]["cik"], "0000888")
+
+    def test_run_metrics_refresh_job_emerging(self):
+        import asyncio
+        from datetime import date
+        from backend import fund_leaderboard_job as job
+
+        fund_id = self._seed_fund_with_filings()
+        # Prod path: refresh funds already on the leaderboard snapshot.
+        self.store.write_leaderboard_snapshot(
+            date.today().isoformat(),
+            "2024-12-31",
+            self.store.DEFAULT_MODE,
+            [{
+                "rank": 1,
+                "fundId": fund_id,
+                "fundName": "Metrics Refresh Capital",
+                "managerType": "Institutional",
+                "strategyTags": [],
+                "emerging": True,
+                "cagr10Y": None,
+                "dataConfidenceScore": 0,
+                "dataConfidenceLabel": "Emerging",
+                "latestReportPeriod": "2024-12-31",
+            }],
+        )
+        summary = asyncio.run(job.run_metrics_refresh_job(top_n=10))
+        self.assertEqual(summary.get("job_type"), "metrics_refresh")
+        self.assertGreaterEqual(summary.get("leaderboard_rows", 0), 1)
+        lb = self.store.get_leaderboard(limit=10)
+        self.assertGreaterEqual(len(lb.get("rows") or []), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

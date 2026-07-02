@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Activity, RefreshCw, Loader2, Database, Cpu, Clock, CheckCircle2, XCircle, AlertTriangle, Server, Zap } from 'lucide-react'
+import { Activity, RefreshCw, Loader2, Database, Cpu, Clock, CheckCircle2, XCircle, AlertTriangle, Server, Zap, Layers } from 'lucide-react'
 import { API_BASE_URL, apiFetch } from './api'
 
 const CARD = {
@@ -201,6 +201,7 @@ export default function PipelineOpsUI() {
     const brain = data?.brain
     const inproc = data?.in_process_pipeline
     const ledger = data?.ledger
+    const pageSnaps = data?.page_snapshots
 
     return (
         <div style={{ padding: '24px 28px', maxWidth: 980, margin: '0 auto' }}>
@@ -256,6 +257,47 @@ export default function PipelineOpsUI() {
                                 <span style={MUTED}><code>{s.schedule}</code> · {s.state} · {s.last_attempt_time || 'never'}</span>
                             </div>
                         ))}
+                    </div>
+                )}
+            </Section>
+
+            <Section title="Global Page Snapshots" icon={Layers}>
+                {!pageSnaps?.available ? <Unavailable reason={pageSnaps?.reason} /> : (
+                    <div>
+                        <p style={{ ...MUTED, marginTop: 0, marginBottom: 10 }}>
+                            {pageSnaps.schedule_note}
+                            {pageSnaps.durable_snapshot_active != null && (
+                                <> · durable store: <strong style={{ color: pageSnaps.durable_snapshot_active ? '#34d399' : '#f59e0b' }}>
+                                    {pageSnaps.durable_snapshot_active ? 'active' : 'inactive'}
+                                </strong></>
+                            )}
+                        </p>
+                        <div style={{ display: 'grid', gap: 8 }}>
+                            {(pageSnaps.pages || []).map((p) => {
+                                const ageH = p.age_seconds != null ? (p.age_seconds / 3600).toFixed(1) : null
+                                return (
+                                    <div key={p.page} style={{
+                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                        fontSize: 13, color: '#e2e8f0', padding: '6px 0',
+                                        borderBottom: '1px solid rgba(255,255,255,0.04)',
+                                    }}>
+                                        <span style={{ fontWeight: 600 }}>{p.page.replace(/_/g, ' ')}</span>
+                                        <span style={MUTED}>
+                                            {p.snapshot_id == null && p.row_count == null && !p.as_of_date
+                                                ? <span style={{ color: '#f59e0b' }}>empty</span>
+                                                : <>
+                                                    {ageH != null ? `${ageH}h ago` : (p.as_of_date || '—')}
+                                                    {' · '}
+                                                    <span style={{ color: p.stale_alert ? '#f59e0b' : (p.is_fresh ? '#34d399' : '#94a3b8') }}>
+                                                        {p.stale_alert ? 'stale alert' : (p.is_fresh ? 'fresh' : 'stale')}
+                                                    </span>
+                                                </>
+                                            }
+                                        </span>
+                                    </div>
+                                )
+                            })}
+                        </div>
                     </div>
                 )}
             </Section>

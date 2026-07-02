@@ -274,7 +274,13 @@ async def run_ingestion(
     saveRaw: bool = Query(False),
     x_admin_token: Optional[str] = Header(None),
 ):
-    """Kick the 13F ingestion + ranking pipeline in the background."""
+    """Kick the 13F ingestion + ranking pipeline in the background.
+
+    For scheduled weekly runs, prefer the Cloud Run Job ``fund-leaderboard-ingest``
+    (``bash scripts/deploy_fund_leaderboard_job.sh``) — it runs synchronously with
+    a 1-hour timeout instead of fire-and-forget on a scale-to-zero API instance.
+    Daily metrics-only refresh uses ``POST /knowledge/fund-leaderboard-metrics-run``.
+    """
     _check_admin(x_admin_token)
     state = job.get_run_state()
     if state.get("status") == "running":

@@ -80,17 +80,6 @@ function usePicksShovels() {
     return () => clearInterval(pollRef.current);
   }, [busy, fetchResults, filters]);
 
-  // Cold-start self-heal: if there is no snapshot yet (e.g. before the first weekly cron)
-  // Auto-scan if no snapshot exists, or if it is stale (older than 1 week)
-  const autoWarmedRef = useRef(false);
-  useEffect(() => {
-    if (autoWarmedRef.current || busy || !data) return;
-    if (data.snapshot === null || (data.is_fresh === false)) {
-      autoWarmedRef.current = true;
-      startScan(false);
-    }
-  }, [data, busy, startScan]);
-
   return { busy, jobStatus, data, error, filters, setFilters, startScan };
 }
 
@@ -360,7 +349,8 @@ export default function PicksShovelsUI() {
 
       {!hasSnapshot && !busy && (
         <div className="glass-panel" style={{ padding: 30, marginTop: 16, textAlign: 'center', color: '#94a3b8' }}>
-          No snapshot yet. Click <strong style={{ color: '#e9d5ff' }}>Run Scan</strong> to rank the picks-and-shovels universe.
+          No snapshot yet. Data refreshes automatically at <strong style={{ color: '#e9d5ff' }}>9:30 AM ET</strong> on
+          weekdays — or click <strong style={{ color: '#e9d5ff' }}>Run Scan</strong> for an on-demand refresh.
         </div>
       )}
 
@@ -376,7 +366,7 @@ export default function PicksShovelsUI() {
 
           {data?.snapshot && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#94a3b8', marginTop: 10 }}>
-              <Clock size={13} /> {fmtAge(data.age_seconds)} {data.is_fresh ? '· cached (fresh < 1 week)' : '· stale'}
+              <Clock size={13} /> {fmtAge(data.age_seconds)} {data.is_fresh ? '· cached (fresh < 24h)' : '· stale — next refresh 9:30 AM ET weekdays'}
               <button
                 type="button"
                 onClick={() => startScan(true)}

@@ -58,15 +58,20 @@ bash scripts/deploy_precompute_scheduler.sh
 
 Add `--dry-run` to preview without creating/updating jobs.
 
-| Scheduler job name | Cron (UTC) | Target | Auth |
-|----|----|----|-----|
-| `precompute-knowledge-pipeline` | `5 0 * * *` daily | `POST /knowledge/pipeline-run` | Bearer secret |
-| `precompute-picks-shovels` | `10 1 * * *` daily | `POST /knowledge/picks-shovels-run` | Bearer secret |
-| `precompute-narrative-radar` | `12 1 * * *` daily | `POST /knowledge/narrative-radar-run` | Bearer secret |
-| `macro-flow-daily` | `25 1 * * *` daily | `POST /macro/flow/cron-refresh?interval=1w` | Bearer secret |
-| `verdict-prewarm-preopen` | `0 13 * * 1-5` weekdays | `POST /decision-terminal/prewarm` | Bearer secret |
-| `verdict-prewarm-midsession` | `30 18 * * 1-5` weekdays | `POST /decision-terminal/prewarm` | Bearer secret |
-| `precompute-fund-leaderboard` | `0 6 * * 1` Mondays | `POST /api/funds/ingest/run` | X-Admin-Token |
+| Scheduler job name | Cron | Timezone | Target | Auth |
+|----|----|----|----|-----|
+| `precompute-knowledge-pipeline` | `5 0 * * *` daily | UTC | `POST /knowledge/pipeline-run` | Bearer secret |
+| `precompute-picks-shovels` | `30 9 * * 1-5` weekdays | America/New_York | `POST /knowledge/picks-shovels-run` | Bearer secret |
+| `precompute-narrative-radar` | `32 9 * * 1-5` weekdays | America/New_York | `POST /knowledge/narrative-radar-run` | Bearer secret |
+| `precompute-fund-leaderboard-metrics` | `35 9 * * 1-5` weekdays | America/New_York | `POST /knowledge/fund-leaderboard-metrics-run` | Bearer secret |
+| `macro-flow-daily` | `25 1 * * *` daily | UTC | `POST /macro/flow/cron-refresh?interval=1w` | Bearer secret |
+| `verdict-prewarm-preopen` | `0 13 * * 1-5` weekdays | UTC | `POST /decision-terminal/prewarm` | Bearer secret |
+| `verdict-prewarm-midsession` | `30 18 * * 1-5` weekdays | UTC | `POST /decision-terminal/prewarm` | Bearer secret |
+| `precompute-fund-leaderboard` | `0 6 * * 1` Mondays | UTC | Cloud Run Job `fund-leaderboard-ingest` (OAuth) | service account |
+
+**Market-open precompute:** Picks & Shovels, Narrative Radar, and Fund Leaderboard metrics refresh at **9:30–9:35 AM ET** on weekdays so pages load instantly from Postgres without user-triggered scans.
+
+**Weekly full 13F ingest:** deploy via `bash scripts/deploy_fund_leaderboard_job.sh` (Cloud Run Job, 1h timeout — not the async `POST /api/funds/ingest/run` API path).
 
 **Force-run a job:**
 

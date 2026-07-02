@@ -11,7 +11,7 @@ instead of failing the whole probe — the page still renders locally.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 
@@ -22,6 +22,13 @@ router = APIRouter(prefix="/pipeline-ops", tags=["pipeline-ops"])
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "tradetalkapp-492904")
 REGION = os.environ.get("GCP_REGION", "us-central1")
 CLOUD_RUN_JOBS = ["sp500-ingest", "sp500-daily-update", "brain-nightly", "fund-leaderboard-ingest"]
+EXPECTED_SCHEDULER_JOBS = {
+    "precompute-picks-shovels": "30 9 * * 1-5",
+    "precompute-narrative-radar": "32 9 * * 1-5",
+    "precompute-fund-leaderboard-metrics": "35 9 * * 1-5",
+    "precompute-fund-leaderboard": "0 6 * * 1",
+}
+PAGE_SNAPSHOT_STALE_S = 26 * 3600  # alert when older than 26h on a trading day
 BQ_FRESHNESS_TABLES = {
     "daily_prices": "trade_date",
     "daily_movement_features": "trade_date",
@@ -170,6 +177,91 @@ def _ledger_health() -> Dict[str, Any]:
         return {"available": False, "reason": str(e)}
 
 
+def _page_snapshots() -> Dict[str, Any]:
+    """Freshness of the three precomputed global intelligence pages."""
+    import time
+    from datetime import datetime, timezone
+
+    try:
+        from .. import durable_snapshot
+        from .. import fund_leaderboard_store as fl_store
+        from ..narrative_radar import store as nr_store
+        from ..picks_shovels import store as ps_store
+
+        now = time.time()
+        pages: List[Dict[str, Any]] = []
+
+        def _age_row(page: str, created_at: Optional[float], **extra: Any) -> Dict[str, Any]:
+            if created_at is None:
+                return {
+                    "page": page,
+                    "snapshot_id": None,
+                    "age_seconds": None,
+                    "is_fresh": False,
+                    "stale_alert": True,
+                    **extra,
+                }
+            age = max(0, int(now - created_at))
+            ttl = extra.pop("ttl_s", 86400)
+            return {
+                "page": page,
+                "age_seconds": age,
+                "is_fresh": age <= ttl,
+                "stale_alert": age > PAGE_SNAPSHOT_STALE_S,
+                **extra,
+            }
+
+        ps_meta = ps_store.latest_snapshot_meta()
+        if ps_meta:
+            pages.append(_age_row(
+                "picks_shovels",
+                ps_meta.get("created_at"),
+                snapshot_id=ps_meta.get("snapshot_id"),
+                scored=ps_meta.get("scored"),
+                ttl_s=ps_store.cache_ttl_s(),
+            ))
+        else:
+            pages.append(_age_row("picks_shovels", None))
+
+        nr_meta = nr_store.latest_snapshot_meta()
+        if nr_meta:
+            pages.append(_age_row(
+                "narrative_radar",
+                nr_meta.get("created_at"),
+                snapshot_id=nr_meta.get("snapshot_id"),
+                scored=nr_meta.get("scored"),
+                ttl_s=nr_store.cache_ttl_s(),
+            ))
+        else:
+            pages.append(_age_row("narrative_radar", None))
+
+        fl_lb = fl_store.get_leaderboard(limit=1)
+        fl_rows = fl_lb.get("rows") or []
+        as_of = fl_lb.get("asOfDate")
+        fl_created = None
+        if as_of:
+            try:
+                fl_created = datetime.fromisoformat(str(as_of)).replace(tzinfo=timezone.utc).timestamp()
+            except Exception:  # noqa: BLE001
+                fl_created = None
+        pages.append(_age_row(
+            "fund_leaderboard",
+            fl_created,
+            row_count=len(fl_rows),
+            as_of_date=as_of,
+            ttl_s=86400,
+        ))
+
+        return {
+            "available": True,
+            "durable_snapshot_active": durable_snapshot.active(),
+            "schedule_note": "Weekday precompute at 9:30 AM ET (America/New_York)",
+            "pages": pages,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"available": False, "reason": str(e)}
+
+
 def _iso(ts) -> Any:
     if ts is None:
         return None
@@ -191,6 +283,8 @@ def pipeline_ops_status() -> Dict[str, Any]:
         "live_spot_activity": _live_spot_activity(),
         "in_process_pipeline": _in_process_pipeline(),
         "ledger": _ledger_health(),
+        "page_snapshots": _page_snapshots(),
+        "expected_scheduler_jobs": EXPECTED_SCHEDULER_JOBS,
     }
 
 

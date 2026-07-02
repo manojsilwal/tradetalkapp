@@ -398,6 +398,27 @@ def count_funds() -> int:
     return int(d.get("n", 0) or 0)
 
 
+def list_funds_with_min_filings(min_filings: int = 1) -> List[Dict[str, Any]]:
+    """Funds that already have at least ``min_filings`` 13F filings in the DB."""
+    with _cursor() as (_c, cur):
+        cur.execute(
+            _ph(
+                """
+                SELECT f.*, COUNT(s.filing_id) AS filing_count
+                FROM fund_master f
+                INNER JOIN sec_filings s ON s.fund_id = f.fund_id
+                    AND s.form_type IN ('13F-HR', '13F-HR/A')
+                GROUP BY f.fund_id
+                HAVING COUNT(s.filing_id) >= ?
+                ORDER BY f.display_name
+                """
+            ),
+            (int(min_filings),),
+        )
+        rows = cur.fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
 # ── Filings + holdings ─────────────────────────────────────────────────────────
 
 def upsert_filing(
