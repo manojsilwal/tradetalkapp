@@ -126,6 +126,15 @@ def _fetch_yahoo_options_sync(symbol: str) -> ProviderResult:
     block = results[0]
     quote = block.get("quote") or {}
     spot = quote.get("regularMarketPrice") or quote.get("postMarketPrice")
+    if spot is None:
+        try:
+            from .spot import resolve_spot
+
+            spot_q = resolve_spot(sym)
+            if spot_q is not None and spot_q.price:
+                spot = spot_q.price
+        except Exception:
+            spot = None
     expirations: List[Dict[str, Any]] = []
     for opt_block in block.get("options") or []:
         exp_ts = opt_block.get("expirationDate")

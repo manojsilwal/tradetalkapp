@@ -12,7 +12,7 @@ import asyncio
 import logging
 import math
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,14 @@ from .base import clean_dividend_yield
 
 _DEBATE_DATA_CACHE: Dict[str, Tuple[float, dict]] = {}
 _DEBATE_DATA_CACHE_TTL_S = max(30.0, float(__import__("os").environ.get("DEBATE_DATA_CACHE_TTL_S", "120")))
+
+
+def clear_debate_data_cache(ticker: Optional[str] = None) -> None:
+    """Invalidate debate-data cache (e.g. on force-refresh analyze)."""
+    if ticker:
+        _DEBATE_DATA_CACHE.pop(ticker.upper().strip(), None)
+    else:
+        _DEBATE_DATA_CACHE.clear()
 
 
 async def fetch_debate_data(ticker: str) -> dict:

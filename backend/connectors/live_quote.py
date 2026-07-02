@@ -371,6 +371,19 @@ async def get_live_quote(symbol: str) -> Tuple[Dict[str, Any], DataFreshness]:
         _cache_put(sym, live, fresh)
         return payload, fresh
 
+    try:
+        from .spot import resolve_spot
+
+        spot_q = resolve_spot(sym)
+        if spot_q is not None and spot_q.price and spot_q.price > 0:
+            live = _row(sym, price=float(spot_q.price), source=spot_q.source)
+            fresh = _stamp_live(spot_q.source or "resolve_spot")
+            payload = {**live, "data_freshness": fresh.model_dump()}
+            _cache_put(sym, live, fresh)
+            return payload, fresh
+    except Exception as exc:
+        logger.debug("[LiveQuote] resolve_spot fallback failed %s: %s", sym, exc)
+
     lake = latest_close_from_lake(sym)
     if lake:
         fresh = _stamp_lake(lake.get("trade_date"))

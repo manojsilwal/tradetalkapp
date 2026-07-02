@@ -37,6 +37,18 @@ class TestAdapters(unittest.TestCase):
         self.assertEqual(adapters.verdict_5(_result(0.40)), "Sell")
         self.assertEqual(adapters.verdict_5(_result(0.20)), "Strong Sell")
 
+    def test_stale_anchor_downgrades_strong_verdicts(self):
+        r = _result(0.20)
+        r["valuation"]["base_price"] = 80.0
+        r["valuation"]["live_price"] = 198.0
+        r["freshness"] = {"move_since_base": 1.475}
+        self.assertEqual(adapters.verdict_5(r), "Sell")
+        r2 = _result(0.80)
+        r2["valuation"]["base_price"] = 80.0
+        r2["valuation"]["live_price"] = 198.0
+        r2["freshness"] = {"move_since_base": 1.475}
+        self.assertEqual(adapters.verdict_5(r2), "Buy")
+
     def test_verdict_4_collapses_strong_sell(self):
         self.assertEqual(adapters.verdict_4(_result(0.20)), "Sell")
 

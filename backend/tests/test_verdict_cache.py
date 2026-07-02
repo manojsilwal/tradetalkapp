@@ -193,6 +193,32 @@ class TestVerdictCache(unittest.TestCase):
         self.assertTrue(out.verdict_from_cache)
         self.assertEqual(out.spot.price_usd, 101.5)
 
+    def test_roadmap_overlay_updates_current_price(self):
+        from backend.connectors.spot import SpotQuote
+
+        now = datetime.now(timezone.utc).isoformat()
+        payload = DecisionRoadmapPayload(
+            ticker="AAPL",
+            generated_at_utc=now,
+            roadmap=TerminalRoadmapPanel(
+                bull_price_usd=200.0,
+                base_price_usd=170.0,
+                bear_price_usd=140.0,
+                used_heuristic_fallback=True,
+            ),
+            current_price_usd=100.0,
+        )
+        with patch("backend.connectors.spot.resolve_spot") as rs:
+            rs.return_value = SpotQuote(
+                price=155.0,
+                source="yahoo_chart",
+                captured_at_utc=now,
+                degraded=False,
+            )
+            out = vc.overlay_fresh_spot_on_roadmap(payload)
+        self.assertTrue(out.slice_from_cache)
+        self.assertEqual(out.current_price_usd, 155.0)
+
     def test_session_key_uses_last_completed_session(self):
         vc.store_slice_cache(vc.SLICE_SNAPSHOT, "AAPL", _minimal_snapshot())
         key = (vc.SLICE_SNAPSHOT, "AAPL", last_completed_session())

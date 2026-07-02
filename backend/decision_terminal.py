@@ -2016,14 +2016,24 @@ async def run_decision_snapshot_request(
         if isinstance(cached, DecisionSnapshotPayload):
             return cached
 
-    debate_data, ext, spot_quote, scorecard_summary, momentum_result, analyst_targets = await asyncio.gather(
-        tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0),
-        asyncio.to_thread(_sync_extended_snapshot, t),
-        asyncio.to_thread(_resolve_spot_for_terminal, t),
+    from .market_bundle import fetch_market_context
+
+    if force:
+        from .connectors.spot import clear_spot_cache
+        from .connectors.debate_data import clear_debate_data_cache
+
+        clear_spot_cache(t)
+        clear_debate_data_cache(t)
+
+    market_ctx, scorecard_summary, momentum_result, analyst_targets = await asyncio.gather(
+        fetch_market_context(t, tool_registry=tool_registry, force=force),
         _build_scorecard_for_terminal(t),
         _safe_momentum_fetch(t),
         _safe_analyst_targets_fetch(t),
     )
+    debate_data = market_ctx.debate_data
+    ext = market_ctx.valuation_ext
+    spot_quote = market_ctx.spot
 
     if isinstance(analyst_targets, dict) and analyst_targets:
         ext = dict(ext or {})
@@ -2091,6 +2101,7 @@ async def run_decision_debate_request(
     poly_connector: Any,
     force: bool = False,
 ) -> DecisionVerdictPayload:
+    from .market_bundle import fetch_market_context
     from .verdict_cache import (
         SLICE_SWARM,
         SLICE_VERDICT,
@@ -2124,26 +2135,27 @@ async def run_decision_debate_request(
         macro_fetched_at = swarm_payload.macro_fetched_at_utc
 
     swarm_context = build_swarm_context(t, swarm)
-    debate_data_task = asyncio.ensure_future(
-        tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0)
+    market_ctx_task = asyncio.ensure_future(
+        fetch_market_context(t, tool_registry=tool_registry, force=force)
     )
     try:
-        debate, poly_raw, debate_data = await asyncio.gather(
+        debate, poly_raw, market_ctx = await asyncio.gather(
             execute_debate(
                 t,
                 auth_user,
                 swarm_context=swarm_context,
-                debate_data_task=debate_data_task,
+                market_context_task=market_ctx_task,
             ),
             _safe_poly_fetch(poly_connector, t),
-            debate_data_task,
+            market_ctx_task,
         )
+        debate_data = market_ctx.debate_data
     except BaseException:
-        if not debate_data_task.done():
-            debate_data_task.cancel()
+        if not market_ctx_task.done():
+            market_ctx_task.cancel()
         else:
             try:
-                debate_data_task.exception()
+                market_ctx_task.exception()
             except BaseException:
                 pass
         raise
@@ -2226,11 +2238,14 @@ async def run_decision_roadmap_request(
         if isinstance(cached, DecisionRoadmapPayload):
             return cached
 
-    debate_data, spot_quote = await asyncio.gather(
-        tool_registry.invoke("fetch_debate_data", {"ticker": t}, timeout_s=90.0),
-        asyncio.to_thread(_resolve_spot_for_terminal, t),
+    from .market_bundle import fetch_market_context
+
+    market_ctx = await fetch_market_context(t, tool_registry=tool_registry, force=force)
+    resolved = _resolve_terminal_spot(
+        spot_quote=market_ctx.spot,
+        debate_data=market_ctx.debate_data,
+        ext=market_ctx.valuation_ext,
     )
-    resolved = _resolve_terminal_spot(spot_quote=spot_quote, debate_data=debate_data, ext={})
     payload = await build_roadmap_slice(
         t,
         resolved.price_f,

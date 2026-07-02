@@ -5,7 +5,6 @@ from typing import Dict, Any, List, Tuple, Optional
 from ..data_errors import InsufficientDataError
 from ..freshness import assess
 from .base import DataConnector, clean_dividend_yield
-from .debate_data import fetch_debate_data
 from ..paper_portfolio import _classify_market_cap
 
 class InvestorMetricsConnector(DataConnector):
@@ -230,10 +229,12 @@ class InvestorMetricsConnector(DataConnector):
             }, raw_market_cap if raw_market_cap and raw_market_cap > 0 else None, as_of_date
 
         try:
-            # Parallel acquisition: primary yfinance metrics + fallback debate_data
+            # Parallel acquisition: primary yfinance metrics + shared market context fallback
+            from ..market_bundle import fetch_market_context
+
             yf_task = asyncio.to_thread(get_all_metrics)
-            fallback_task = fetch_debate_data(ticker_sym)
-            metrics, fallback = await asyncio.gather(yf_task, fallback_task, return_exceptions=True)
+            ctx_task = fetch_market_context(ticker_sym)
+            metrics, ctx = await asyncio.gather(yf_task, ctx_task, return_exceptions=True)
 
             market_cap: Optional[float] = None
             metrics_dict: Dict[str, Any] = {}
@@ -249,8 +250,10 @@ class InvestorMetricsConnector(DataConnector):
             elif isinstance(metrics, dict):
                 metrics_dict = metrics
 
-            if isinstance(fallback, Exception):
+            if isinstance(ctx, Exception):
                 fallback = {}
+            else:
+                fallback = ctx.debate_data
             if not isinstance(fallback, dict):
                 fallback = {}
 
@@ -288,7 +291,10 @@ class InvestorMetricsConnector(DataConnector):
             raise
         except Exception as e:
             try:
-                fallback = await fetch_debate_data(ticker_sym)
+                from ..market_bundle import fetch_market_context
+
+                ctx = await fetch_market_context(ticker_sym)
+                fallback = ctx.debate_data
             except Exception:
                 fallback = {}
             if isinstance(fallback, dict) and fallback:

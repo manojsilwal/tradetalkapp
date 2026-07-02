@@ -147,16 +147,14 @@ def _sync_fetch(ticker: str) -> ScorecardData:
     if spot_q is not None:
         current_price = spot_q.price
     elif current_price <= 0:
-        from .quote_fallbacks import fetch_us_equity_spot
-
-        fb = _timed_call(
-            lambda: fetch_us_equity_spot(sym),
+        spot_q_retry = _timed_call(
+            lambda: resolve_spot(sym),
             timeout=_YF_CALL_TIMEOUT_S,
             default=None,
-            label=f"{sym}.fetch_us_equity_spot",
+            label=f"{sym}.resolve_spot_retry",
         )
-        if fb:
-            current_price = fb[0]
+        if spot_q_retry is not None and spot_q_retry.price:
+            current_price = spot_q_retry.price
         elif "info" in missing:
             from ..data_errors import InsufficientDataError
 

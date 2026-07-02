@@ -17,6 +17,34 @@ _P_BUY = 0.56
 _P_SELL = 0.44
 _P_STRONG_SELL = 0.34
 
+STALE_ANCHOR_MOVE_PCT = 0.15
+
+
+def anchor_move_pct(brain_result: Dict) -> Optional[float]:
+    """Absolute move between nightly base_price and live spot (0–1 scale)."""
+    fresh = brain_result.get("freshness") or {}
+    if fresh.get("move_since_base") is not None:
+        return abs(float(fresh["move_since_base"]))
+    val = brain_result.get("valuation") or {}
+    base = val.get("base_price")
+    live = val.get("live_price")
+    if base and live:
+        try:
+            b = float(base)
+            if b > 0:
+                return abs(float(live) / b - 1.0)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _downgrade_extreme_verdict(verdict: str) -> str:
+    if verdict == "Strong Buy":
+        return "Buy"
+    if verdict == "Strong Sell":
+        return "Sell"
+    return verdict
+
 
 def _block(brain_result: Dict) -> Dict:
     """Prefer the live-adjusted block; fall back to the base contract."""
@@ -36,16 +64,26 @@ def verdict_5(brain_result: Dict) -> str:
     """Canonical title-case 5-level verdict from outperformance probability."""
     p = outperform_probability(brain_result)
     if p is None:
-        return "Hold"
-    if p >= _P_STRONG_BUY:
-        return "Strong Buy"
-    if p >= _P_BUY:
-        return "Buy"
-    if p > _P_SELL:
-        return "Hold"
-    if p > _P_STRONG_SELL:
-        return "Sell"
-    return "Strong Sell"
+        raw = "Hold"
+    elif p >= _P_STRONG_BUY:
+        raw = "Strong Buy"
+    elif p >= _P_BUY:
+        raw = "Buy"
+    elif p > _P_SELL:
+        raw = "Hold"
+    elif p > _P_STRONG_SELL:
+        raw = "Sell"
+    else:
+        raw = "Strong Sell"
+
+    status = (brain_result.get("status") or "").upper()
+    if status in ("INVALID", "INVALID_INPUT", "STALE") and raw in ("Strong Buy", "Strong Sell"):
+        return _downgrade_extreme_verdict(raw)
+
+    move = anchor_move_pct(brain_result)
+    if move is not None and move > STALE_ANCHOR_MOVE_PCT and raw in ("Strong Buy", "Strong Sell"):
+        return _downgrade_extreme_verdict(raw)
+    return raw
 
 
 def verdict_4(brain_result: Dict) -> str:

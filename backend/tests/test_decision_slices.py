@@ -81,17 +81,43 @@ class _SliceTestBase(unittest.TestCase):
 class TestSnapshotRunner(_SliceTestBase):
     def test_returns_snapshot_and_caches(self) -> None:
         from backend.decision_terminal import run_decision_snapshot_request
+        from backend.market_bundle import MarketContext, FundamentalsBundle
+        from backend.connectors.spot import SpotQuote
 
         registry = _ToolRegistry()
+        debate = {"ticker": "AAPL", "company_name": "Apple Inc", "current_price": 150.0}
+        ext = {"trailingEps": 5.0}
+        ctx = MarketContext(
+            ticker="AAPL",
+            spot=SpotQuote(
+                price=150.0,
+                source="test",
+                captured_at_utc="2026-06-25T00:00:00Z",
+                degraded=False,
+            ),
+            debate_data=debate,
+            valuation_ext=ext,
+            fundamentals=FundamentalsBundle(
+                ticker="AAPL", debate_data=debate, valuation_ext=ext
+            ),
+            as_of_utc="2026-06-25T00:00:00Z",
+        )
+
+        async def _mock_ctx(*args, **kwargs):
+            registry.calls += 1
+            return ctx
+
         with patch(
-            "backend.decision_terminal._sync_extended_snapshot", return_value={"trailingEps": 5.0}
-        ), patch(
-            "backend.decision_terminal._resolve_spot_for_terminal", return_value=None
+            "backend.market_bundle.fetch_market_context",
+            side_effect=_mock_ctx,
         ), patch(
             "backend.decision_terminal._build_scorecard_for_terminal",
             new=_async_none,
         ), patch(
             "backend.decision_terminal._safe_momentum_fetch",
+            new=_async_none,
+        ), patch(
+            "backend.decision_terminal._safe_analyst_targets_fetch",
             new=_async_none,
         ):
             payload = asyncio.run(
@@ -120,7 +146,7 @@ class TestVerdictRunner(_SliceTestBase):
             return _swarm(), {"indicators": {"fred_fetched_at": "2026-06-25T00:00:00Z"}}
 
         async def _execute_debate(ticker, auth_user, **kwargs):
-            task = kwargs.get("debate_data_task")
+            task = kwargs.get("market_context_task") or kwargs.get("debate_data_task")
             if task is not None:
                 await task
             return _debate()
@@ -201,7 +227,7 @@ class TestDebateRunner(_SliceTestBase):
 
         async def _execute_debate(ticker, auth_user, **kwargs):
             debate_contexts.append(kwargs.get("swarm_context") or "")
-            task = kwargs.get("debate_data_task")
+            task = kwargs.get("market_context_task") or kwargs.get("debate_data_task")
             if task is not None:
                 await task
             return _debate()
@@ -240,18 +266,30 @@ class TestDebateRunner(_SliceTestBase):
 class TestRoadmapRunner(_SliceTestBase):
     def test_returns_roadmap_heuristic_when_no_predictor(self) -> None:
         from backend.decision_terminal import run_decision_roadmap_request
+        from backend.market_bundle import MarketContext, FundamentalsBundle
+        from backend.connectors.spot import SpotQuote
 
         registry = _ToolRegistry()
-        spot = SimpleNamespace(
-            price=150.0,
-            source="yahoo_chart",
-            captured_at_utc="2026-06-25T00:00:00Z",
-            degraded=False,
-            momentum_anchor_usd=None,
+        debate = {"ticker": "AAPL", "company_name": "Apple Inc", "current_price": 150.0}
+        ctx = MarketContext(
+            ticker="AAPL",
+            spot=SpotQuote(
+                price=150.0,
+                source="yahoo_chart",
+                captured_at_utc="2026-06-25T00:00:00Z",
+                degraded=False,
+            ),
+            debate_data=debate,
+            valuation_ext={},
+            fundamentals=FundamentalsBundle(
+                ticker="AAPL", debate_data=debate, valuation_ext={}
+            ),
+            as_of_utc="2026-06-25T00:00:00Z",
         )
         # No predictor -> heuristic roadmap path (hist CAGR may be None -> unavailable).
         with patch(
-            "backend.decision_terminal._resolve_spot_for_terminal", return_value=spot
+            "backend.market_bundle.fetch_market_context",
+            new=_async_market_ctx_factory(ctx),
         ), patch(
             "backend.brain.flags.brain_surface_enabled", return_value=False
         ), patch(
@@ -271,6 +309,13 @@ class TestRoadmapRunner(_SliceTestBase):
 
 async def _async_none(*args, **kwargs):
     return None
+
+
+def _async_market_ctx_factory(ctx):
+    async def _fn(*args, **kwargs):
+        return ctx
+
+    return _fn
 
 
 async def _async_predictor_fail(*args, **kwargs):

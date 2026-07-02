@@ -53,6 +53,7 @@ class TestLiveQuoteEngine(unittest.TestCase):
 
         with mock.patch.object(live_quote, "_sp500_universe", return_value=frozenset({"AAPL"})), \
                 mock.patch.object(live_quote, "_hedged_live_fetch", side_effect=_fake_hedged), \
+                mock.patch("backend.connectors.spot.resolve_spot", return_value=None), \
                 mock.patch.object(
                     live_quote,
                     "latest_close_from_lake",
@@ -71,6 +72,7 @@ class TestLiveQuoteEngine(unittest.TestCase):
 
         with mock.patch.object(live_quote, "_sp500_universe", return_value=frozenset({"AAPL"})), \
                 mock.patch.object(live_quote, "_hedged_live_fetch", side_effect=_fake_hedged), \
+                mock.patch("backend.connectors.spot.resolve_spot", return_value=None), \
                 mock.patch.object(live_quote, "latest_close_from_lake", return_value=None):
             payload, fresh = _run(live_quote.get_live_quote("AAPL"))
 

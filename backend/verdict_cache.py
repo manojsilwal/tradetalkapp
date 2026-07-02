@@ -188,6 +188,8 @@ def get_cached_slice(slice_name: str, ticker: str) -> Optional[SlicePayload]:
     payload = entry.payload
     if sl == SLICE_SNAPSHOT and isinstance(payload, DecisionSnapshotPayload):
         return overlay_fresh_spot_on_snapshot(payload)
+    if sl == SLICE_ROADMAP and isinstance(payload, DecisionRoadmapPayload):
+        return overlay_fresh_spot_on_roadmap(payload)
     if isinstance(payload, DecisionVerdictPayload):
         return payload.model_copy(update={"slice_from_cache": True})
     if isinstance(payload, DecisionRoadmapPayload):
@@ -247,6 +249,20 @@ def overlay_fresh_spot_on_snapshot(
             updates["valuation"] = payload.valuation.model_copy(
                 update={"current_price_usd": float(spot_quote.price)}
             )
+    return payload.model_copy(update=updates)
+
+
+def overlay_fresh_spot_on_roadmap(
+    payload: DecisionRoadmapPayload,
+) -> DecisionRoadmapPayload:
+    """Return a copy with live spot overlaid on cached roadmap anchor price."""
+    from .connectors.spot import resolve_spot
+
+    t = payload.ticker.upper()
+    spot_quote = resolve_spot(t)
+    updates: Dict[str, Any] = {"slice_from_cache": True}
+    if spot_quote is not None and spot_quote.price:
+        updates["current_price_usd"] = float(spot_quote.price)
     return payload.model_copy(update=updates)
 
 

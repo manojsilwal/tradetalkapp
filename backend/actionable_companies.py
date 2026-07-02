@@ -537,6 +537,14 @@ def fetch_fundamentals(ticker: str) -> Dict[str, Any]:
     trail_pe = _num(info.get("trailingPE"))
     target = _num(info.get("targetMeanPrice"))
     price = _num(info.get("currentPrice")) or _num(info.get("regularMarketPrice"))
+    try:
+        from .connectors.spot import resolve_spot
+
+        spot_q = resolve_spot(ticker)
+        if spot_q is not None and spot_q.price:
+            price = float(spot_q.price)
+    except Exception:
+        pass
     de_raw = _num(info.get("debtToEquity"))
 
     out: Dict[str, Any] = {

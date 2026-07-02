@@ -441,18 +441,25 @@ async def _execute_debate(
     award_debate_xp: bool = True,
     debate_data: Optional[dict] = None,
     debate_data_task: Optional["asyncio.Future"] = None,
+    market_context_task: Optional["asyncio.Task"] = None,
     macro_data: Optional[dict] = None,
 ) -> DebateResult:
     from ..debate_agents import run_full_debate
 
     if debate_data is None:
         try:
-            # Caller may hand us an in-flight fetch (started concurrently with
-            # other work) instead of a materialized dict — await it here.
-            if debate_data_task is not None:
+            if market_context_task is not None:
+                market_ctx = await market_context_task
+                debate_data = market_ctx.debate_data
+            elif debate_data_task is not None:
                 debate_data = await debate_data_task
             else:
-                debate_data = await tool_registry.invoke("fetch_debate_data", {"ticker": ticker}, timeout_s=90.0)
+                from ..market_bundle import fetch_market_context
+
+                market_ctx = await fetch_market_context(
+                    ticker, tool_registry=tool_registry
+                )
+                debate_data = market_ctx.debate_data
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail={"error": "timeout", "tool": "fetch_debate_data", "message": "Debate market data fetch timed out"}) from None
 
@@ -531,6 +538,7 @@ async def _execute_debate_for_terminal(
     *,
     swarm_context: str = "",
     debate_data_task: Optional["asyncio.Future"] = None,
+    market_context_task: Optional["asyncio.Task"] = None,
     macro_data: Optional[dict] = None,
 ) -> DebateResult:
     """Debate slice for decision-terminal (no duplicate XP; swarm context required)."""
@@ -540,6 +548,7 @@ async def _execute_debate_for_terminal(
         swarm_context=swarm_context,
         award_debate_xp=False,
         debate_data_task=debate_data_task,
+        market_context_task=market_context_task,
         macro_data=macro_data,
     )
 
@@ -561,8 +570,15 @@ async def _execute_analyze(
     award_deep_analysis_xp: bool = True,
     debate_data: Optional[dict] = None,
     debate_data_task: Optional["asyncio.Future"] = None,
+    market_context_task: Optional["asyncio.Task"] = None,
 ) -> AnalyzeResponse:
     from ..decision_terminal import build_swarm_context
+    from ..market_bundle import fetch_market_context
+
+    if market_context_task is None and debate_data is None and debate_data_task is None:
+        market_context_task = asyncio.create_task(
+            fetch_market_context(ticker, tool_registry=tool_registry)
+        )
 
     swarm_result, macro_data = await _execute_swarm_trace(ticker, credit_stress, _auth_user)
     swarm_context = build_swarm_context(ticker, swarm_result)
@@ -573,6 +589,7 @@ async def _execute_analyze(
         award_debate_xp=False,
         debate_data=debate_data,
         debate_data_task=debate_data_task,
+        market_context_task=market_context_task,
         macro_data=macro_data,
     )
     if _auth_user and award_deep_analysis_xp:

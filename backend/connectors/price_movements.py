@@ -92,6 +92,14 @@ def _build_context(ticker: str, change_pct: float, info: dict) -> str:
     high_52 = info.get("fiftyTwoWeekHigh")
     low_52  = info.get("fiftyTwoWeekLow")
     price   = info.get("currentPrice") or info.get("regularMarketPrice")
+    try:
+        from .spot import resolve_spot
+
+        spot_q = resolve_spot(ticker)
+        if spot_q is not None and spot_q.price:
+            price = spot_q.price
+    except Exception:
+        pass
 
     if high_52 and price:
         pct_from_high = ((price - high_52) / high_52) * 100

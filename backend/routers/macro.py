@@ -133,8 +133,6 @@ async def validate_ticker_fast(ticker: str):
     """
     import asyncio
 
-    from ..connectors.quote_fallbacks import fetch_us_equity_spot
-
     sym = (ticker or "").strip().upper()
     if not sym or len(sym) > 12:
         return {"ticker": sym, "exists": False, "reason": "invalid_format"}
@@ -179,14 +177,17 @@ async def validate_ticker_fast(ticker: str):
 
     if not ok:
         try:
-            fb = await asyncio.wait_for(asyncio.to_thread(fetch_us_equity_spot, sym), timeout=8.0)
+            from ..connectors.spot import resolve_spot
+
+            spot_q = await asyncio.wait_for(asyncio.to_thread(resolve_spot, sym), timeout=8.0)
         except (asyncio.TimeoutError, TimeoutError):
-            fb = None
+            spot_q = None
         except Exception:
-            fb = None
-        if fb:
-            price, source = fb[0], fb[1]
-            ok = price > 0
+            spot_q = None
+        if spot_q is not None and spot_q.price and spot_q.price > 0:
+            price = float(spot_q.price)
+            source = spot_q.source or "resolve_spot"
+            ok = True
             reason = None
 
     if not ok:
