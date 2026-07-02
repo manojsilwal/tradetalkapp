@@ -12,6 +12,11 @@ function fmtPct(v) {
   return `${(Number(v) * 100).toFixed(1)}%`;
 }
 
+function fmtPctNum(v) {
+  if (v == null || Number.isNaN(Number(v))) return '—';
+  return `${Number(v).toFixed(1)}%`;
+}
+
 function fmtInt(v) {
   if (v == null || Number.isNaN(Number(v))) return '—';
   return Number(v).toLocaleString();
@@ -60,6 +65,9 @@ export default function OptionsFlowPanel({
   }
 
   const unusual = options.unusual_contracts || [];
+  const spot = options.spot_price_usd;
+  const moveUsd = options.expected_move_usd;
+  const movePct = options.expected_move_pct;
 
   return (
     <div className="dt-valuation-split" data-testid="options-flow-panel">
@@ -74,23 +82,127 @@ export default function OptionsFlowPanel({
           )}
         </div>
 
+        {options.narrative_summary && (
+          <p
+            style={{
+              fontSize: '0.82rem',
+              lineHeight: 1.45,
+              margin: '0 0 12px',
+              padding: '10px 12px',
+              borderRadius: 8,
+              background: 'rgba(99,102,241,0.1)',
+              border: '1px solid rgba(99,102,241,0.25)',
+              color: '#c7d2fe',
+            }}
+          >
+            {options.narrative_summary}
+          </p>
+        )}
+
+        {(options.call_oi_pct != null || options.call_volume_pct != null) && (
+          <section style={{ marginBottom: 14 }}>
+            <h3 className="dt-subblock-title">Bull vs bear contracts</h3>
+            <table className="dt-valuation-metrics" style={{ width: '100%', marginTop: 6, fontSize: '0.78rem' }}>
+              <thead>
+                <tr>
+                  <th scope="col" />
+                  <th scope="col">Calls (bull)</th>
+                  <th scope="col">Puts (bear)</th>
+                  <th scope="col">P/C ratio</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Open interest</th>
+                  <td>
+                    {fmtInt(options.total_call_oi)} ({fmtPctNum(options.call_oi_pct)})
+                  </td>
+                  <td>
+                    {fmtInt(options.total_put_oi)} ({fmtPctNum(options.put_oi_pct)})
+                  </td>
+                  <td>
+                    {fmtRatio(options.put_call_oi_ratio)}
+                    {options.oi_sentiment && (
+                      <span className={`dt-expert-pill ${biasClass(options.oi_sentiment)}`} style={{ marginLeft: 6 }}>
+                        {options.oi_sentiment}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Volume</th>
+                  <td>
+                    {fmtInt(options.total_call_volume)} ({fmtPctNum(options.call_volume_pct)})
+                  </td>
+                  <td>
+                    {fmtInt(options.total_put_volume)} ({fmtPctNum(options.put_volume_pct)})
+                  </td>
+                  <td>
+                    {fmtRatio(options.put_call_volume_ratio)}
+                    {options.volume_sentiment && options.volume_sentiment !== options.oi_sentiment && (
+                      <span className={`dt-expert-pill ${biasClass(options.volume_sentiment)}`} style={{ marginLeft: 6 }}>
+                        {options.volume_sentiment}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        )}
+
+        {(movePct != null || options.iv_rank_proxy != null) && (
+          <dl className="dt-valuation-metrics" style={{ marginBottom: 12 }}>
+            {movePct != null && (
+              <div className="dt-valuation-metrics-row">
+                <dt>Expected move ({options.nearest_expiry || 'nearest'})</dt>
+                <dd>
+                  ±{fmtPctNum(movePct)}
+                  {moveUsd != null && spot != null && (
+                    <span style={{ opacity: 0.85 }}>
+                      {' '}
+                      (±{fmtUsd(moveUsd)} → ~{fmtUsd(spot - moveUsd)}–{fmtUsd(spot + moveUsd)})
+                    </span>
+                  )}
+                </dd>
+              </div>
+            )}
+            {options.iv_rank_proxy != null && (
+              <div className="dt-valuation-metrics-row">
+                <dt>IV percentile (chain proxy)</dt>
+                <dd>{fmtPctNum(options.iv_rank_proxy)}</dd>
+              </div>
+            )}
+            {options.near_expiry_flag && options.near_expiry_oi_pct != null && (
+              <div className="dt-valuation-metrics-row">
+                <dt>Near expiry (7d OI)</dt>
+                <dd>{fmtPctNum(options.near_expiry_oi_pct)} of total OI</dd>
+              </div>
+            )}
+          </dl>
+        )}
+
+        {(options.top_call_strikes?.length > 0 || options.top_put_strikes?.length > 0) && (
+          <section style={{ marginBottom: 12 }}>
+            <h3 className="dt-subblock-title">Strike walls</h3>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 24px', fontSize: '0.78rem' }}>
+              {options.top_call_strikes?.length > 0 && (
+                <div>
+                  <strong>Call resistance:</strong>{' '}
+                  {options.top_call_strikes.map((r) => `$${r.strike} (${fmtInt(r.open_interest)} OI)`).join(', ')}
+                </div>
+              )}
+              {options.top_put_strikes?.length > 0 && (
+                <div>
+                  <strong>Put support:</strong>{' '}
+                  {options.top_put_strikes.map((r) => `$${r.strike} (${fmtInt(r.open_interest)} OI)`).join(', ')}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         <dl className="dt-valuation-metrics">
-          <div className="dt-valuation-metrics-row">
-            <dt>Put/call volume ratio</dt>
-            <dd>{fmtRatio(options.put_call_volume_ratio)}</dd>
-          </div>
-          <div className="dt-valuation-metrics-row">
-            <dt>Put/call OI ratio</dt>
-            <dd>{fmtRatio(options.put_call_oi_ratio)}</dd>
-          </div>
-          <div className="dt-valuation-metrics-row">
-            <dt>Total call OI</dt>
-            <dd>{fmtInt(options.total_call_oi)}</dd>
-          </div>
-          <div className="dt-valuation-metrics-row">
-            <dt>Total put OI</dt>
-            <dd>{fmtInt(options.total_put_oi)}</dd>
-          </div>
           <div className="dt-valuation-metrics-row">
             <dt>ATM IV (call / put)</dt>
             <dd>

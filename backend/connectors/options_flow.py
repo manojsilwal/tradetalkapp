@@ -16,7 +16,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..connector_cache import get_cached, set_cached
@@ -448,6 +448,265 @@ def compute_options_aggregates(chain: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _contract_mid(contract: Dict[str, Any]) -> Optional[float]:
+    last = contract.get("last")
+    if last is not None:
+        return float(last)
+    bid, ask = contract.get("bid"), contract.get("ask")
+    if bid is not None and ask is not None:
+        return (float(bid) + float(ask)) / 2.0
+    return None
+
+
+def _days_to_expiry(expiry: Optional[str], *, ref: Optional[date] = None) -> Optional[int]:
+    if not expiry:
+        return None
+    try:
+        exp_date = date.fromisoformat(str(expiry)[:10])
+    except ValueError:
+        return None
+    today = ref or datetime.now(timezone.utc).date()
+    return (exp_date - today).days
+
+
+def _pcr_label(ratio: Optional[float]) -> str:
+    if ratio is None:
+        return "unknown"
+    if ratio >= 1.05:
+        return "bearish"
+    if ratio <= 0.95:
+        return "bullish"
+    return "neutral"
+
+
+def compute_options_intelligence(
+    chain: Dict[str, Any],
+    aggregates: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Strike walls, expected move, bull/bear split, near-expiry OI, narrative."""
+    spot = chain.get("spot")
+    call_oi_by_strike: Dict[float, int] = {}
+    put_oi_by_strike: Dict[float, int] = {}
+    near_expiry_oi = 0
+    total_oi_tracked = 0
+    nearest_exp_block: Optional[Dict[str, Any]] = None
+    nearest_days = 10_000
+
+    for exp in chain.get("expirations") or []:
+        expiry = exp.get("expiry")
+        days = _days_to_expiry(expiry)
+        if days is not None and 0 <= days < nearest_days:
+            nearest_days = days
+            nearest_exp_block = exp
+        for side, contracts in (("call", exp.get("calls") or []), ("put", exp.get("puts") or [])):
+            bucket = call_oi_by_strike if side == "call" else put_oi_by_strike
+            for c in contracts:
+                strike = float(c.get("strike") or 0)
+                oi = int(c.get("open_interest") or 0)
+                bucket[strike] = bucket.get(strike, 0) + oi
+                total_oi_tracked += oi
+                if days is not None and 0 <= days <= 7:
+                    near_expiry_oi += oi
+
+    total_call_oi = int(aggregates.get("total_call_oi") or 0)
+    total_put_oi = int(aggregates.get("total_put_oi") or 0)
+    total_call_vol = int(aggregates.get("total_call_volume") or 0)
+    total_put_vol = int(aggregates.get("total_put_volume") or 0)
+    oi_total = total_call_oi + total_put_oi
+    vol_total = total_call_vol + total_put_vol
+
+    top_calls = [
+        {"strike": k, "open_interest": v}
+        for k, v in sorted(call_oi_by_strike.items(), key=lambda x: -x[1])[:3]
+        if v > 0
+    ]
+    top_puts = [
+        {"strike": k, "open_interest": v}
+        for k, v in sorted(put_oi_by_strike.items(), key=lambda x: -x[1])[:3]
+        if v > 0
+    ]
+
+    expected_move_usd = None
+    expected_move_pct = None
+    nearest_expiry = None
+    if nearest_exp_block and spot and float(spot) > 0:
+        nearest_expiry = nearest_exp_block.get("expiry")
+        calls = nearest_exp_block.get("calls") or []
+        puts = nearest_exp_block.get("puts") or []
+        if calls and puts:
+            atm_call = min(calls, key=lambda c: abs(float(c.get("strike") or 0) - float(spot)))
+            atm_put = min(puts, key=lambda c: abs(float(c.get("strike") or 0) - float(spot)))
+            call_mid = _contract_mid(atm_call)
+            put_mid = _contract_mid(atm_put)
+            if call_mid is not None and put_mid is not None:
+                straddle = call_mid + put_mid
+                expected_move_usd = round(straddle, 2)
+                expected_move_pct = round((straddle / float(spot)) * 100.0, 2)
+
+    iv_vals = [
+        float(c.get("iv"))
+        for exp in chain.get("expirations") or []
+        for c in (exp.get("calls") or []) + (exp.get("puts") or [])
+        if c.get("iv") is not None and float(c.get("iv") or 0) > 0
+    ]
+    iv_rank_proxy = None
+    atm_iv = aggregates.get("iv_atm_put") or aggregates.get("iv_atm_call")
+    if iv_vals and atm_iv is not None:
+        iv_rank_proxy = round(
+            100.0 * sum(1 for v in iv_vals if v <= float(atm_iv)) / len(iv_vals),
+            1,
+        )
+
+    pcr_oi = aggregates.get("put_call_oi_ratio")
+    pcr_vol = aggregates.get("put_call_volume_ratio")
+    oi_bias = _pcr_label(pcr_oi)
+    vol_bias = _pcr_label(pcr_vol)
+
+    narrative = build_options_narrative(
+        aggregates,
+        oi_bias=oi_bias,
+        vol_bias=vol_bias,
+        top_calls=top_calls,
+        top_puts=top_puts,
+        expected_move_pct=expected_move_pct,
+        near_expiry_oi_pct=(
+            round(100.0 * near_expiry_oi / total_oi_tracked, 1) if total_oi_tracked else None
+        ),
+    )
+
+    return {
+        "call_oi_pct": round(100.0 * total_call_oi / oi_total, 1) if oi_total else None,
+        "put_oi_pct": round(100.0 * total_put_oi / oi_total, 1) if oi_total else None,
+        "call_volume_pct": round(100.0 * total_call_vol / vol_total, 1) if vol_total else None,
+        "put_volume_pct": round(100.0 * total_put_vol / vol_total, 1) if vol_total else None,
+        "expected_move_usd": expected_move_usd,
+        "expected_move_pct": expected_move_pct,
+        "nearest_expiry": nearest_expiry,
+        "top_call_strikes": top_calls,
+        "top_put_strikes": top_puts,
+        "near_expiry_oi_pct": (
+            round(100.0 * near_expiry_oi / total_oi_tracked, 1) if total_oi_tracked else None
+        ),
+        "near_expiry_flag": bool(near_expiry_oi > 0 and total_oi_tracked > 0),
+        "iv_rank_proxy": iv_rank_proxy,
+        "oi_sentiment": oi_bias,
+        "volume_sentiment": vol_bias,
+        "narrative_summary": narrative,
+        "spot_price_usd": float(spot) if spot is not None else None,
+    }
+
+
+def build_options_narrative(
+    aggregates: Dict[str, Any],
+    *,
+    oi_bias: str,
+    vol_bias: str,
+    top_calls: List[Dict[str, Any]],
+    top_puts: List[Dict[str, Any]],
+    expected_move_pct: Optional[float],
+    near_expiry_oi_pct: Optional[float],
+) -> str:
+    """One-line + short paragraph for DT header and chat tool."""
+    pcr_oi = aggregates.get("put_call_oi_ratio")
+    pcr_vol = aggregates.get("put_call_volume_ratio")
+    parts: List[str] = []
+    if pcr_oi is not None:
+        parts.append(f"Open interest leans {oi_bias} (P/C OI {pcr_oi:.2f})")
+    if pcr_vol is not None and vol_bias != oi_bias:
+        parts.append(f"today's volume leans {vol_bias} (P/C vol {pcr_vol:.2f})")
+    elif pcr_vol is not None and vol_bias == oi_bias:
+        parts.append(f"volume confirms {vol_bias} bias (P/C vol {pcr_vol:.2f})")
+    headline = "; ".join(parts) if parts else "Options flow captured."
+
+    extras: List[str] = []
+    if expected_move_pct is not None:
+        extras.append(f"market-implied move ±{expected_move_pct:.1f}% to nearest expiry")
+    if top_calls:
+        strikes = ", ".join(f"${int(s['strike'])}" for s in top_calls[:2])
+        extras.append(f"call OI walls at {strikes}")
+    if top_puts:
+        strikes = ", ".join(f"${int(s['strike'])}" for s in top_puts[:2])
+        extras.append(f"put OI support at {strikes}")
+    if near_expiry_oi_pct is not None and near_expiry_oi_pct >= 15:
+        extras.append(f"{near_expiry_oi_pct:.0f}% of OI expires within 7 days (gamma/vol risk)")
+    if extras:
+        return f"{headline}. {'; '.join(extras)}."
+    return f"{headline}."
+
+
+def format_options_flow_for_chat(payload: Dict[str, Any]) -> str:
+    """Readable options intelligence for chat tool responses."""
+    if not payload.get("available"):
+        sym = payload.get("symbol") or payload.get("ticker") or "?"
+        return f"Options flow unavailable for {sym} ({payload.get('reason', 'no chain data')})."
+
+    sym = payload.get("symbol") or "?"
+    lines = [f"Options intelligence for {sym}:"]
+    if payload.get("narrative_summary"):
+        lines.append(payload["narrative_summary"])
+
+    lines.append("")
+    lines.append("Bull vs bear (contracts):")
+    if payload.get("total_call_oi") is not None:
+        lines.append(
+            f"  Open interest — calls: {payload.get('total_call_oi', 0):,} "
+            f"({payload.get('call_oi_pct', '—')}%) | puts: {payload.get('total_put_oi', 0):,} "
+            f"({payload.get('put_oi_pct', '—')}%) | P/C OI {payload.get('put_call_oi_ratio', '—')}"
+        )
+    if payload.get("total_call_volume") is not None:
+        lines.append(
+            f"  Volume today — calls: {payload.get('total_call_volume', 0):,} "
+            f"({payload.get('call_volume_pct', '—')}%) | puts: {payload.get('total_put_volume', 0):,} "
+            f"({payload.get('put_volume_pct', '—')}%) | P/C vol {payload.get('put_call_volume_ratio', '—')}"
+        )
+
+    if payload.get("expected_move_pct") is not None:
+        spot = payload.get("spot_price_usd") or payload.get("spot")
+        move = payload.get("expected_move_usd")
+        exp = payload.get("nearest_expiry") or "nearest expiry"
+        if spot and move:
+            lo = float(spot) - float(move)
+            hi = float(spot) + float(move)
+            lines.append(
+                f"Expected move ({exp}): ±{payload['expected_move_pct']:.1f}% "
+                f"(±${move:.2f}) → roughly ${lo:.0f}–${hi:.0f}"
+            )
+
+    atm_c = payload.get("iv_atm_call")
+    atm_p = payload.get("iv_atm_put")
+    if atm_c is not None or atm_p is not None:
+        iv_line = f"ATM IV: call {atm_c:.0%}" if atm_c else ""
+        if atm_p is not None:
+            iv_line += f" / put {atm_p:.0%}" if iv_line else f"ATM IV put {atm_p:.0%}"
+        if payload.get("iv_rank_proxy") is not None:
+            iv_line += f" (IV percentile proxy {payload['iv_rank_proxy']:.0f}%)"
+        lines.append(iv_line)
+
+    for label, key in (("Resistance (top call OI)", "top_call_strikes"), ("Support (top put OI)", "top_put_strikes")):
+        rows = payload.get(key) or []
+        if rows:
+            detail = ", ".join(f"${int(r['strike'])} ({r['open_interest']:,} OI)" for r in rows[:3])
+            lines.append(f"{label}: {detail}")
+
+    unusual = payload.get("unusual_contracts") or []
+    if unusual:
+        lines.append("Unusual activity (vol/OI ≥ 3×):")
+        for row in unusual[:5]:
+            prem = row.get("premium")
+            prem_s = f" ~${prem:.2f}" if prem is not None else ""
+            lines.append(
+                f"  {row.get('type', '?').upper()} ${row.get('strike')} "
+                f"exp {row.get('expiry')} vol/OI {row.get('vol_oi_ratio')}{prem_s}"
+            )
+
+    if payload.get("near_expiry_flag"):
+        lines.append(
+            f"Near-term expiry: {payload.get('near_expiry_oi_pct', 0):.0f}% of OI within 7 days."
+        )
+    lines.append(f"Source: {payload.get('source', 'unknown')} (research only, not advice).")
+    return "\n".join(lines)
+
+
 def options_summary_line(aggregates: Dict[str, Any], source: Optional[str]) -> str:
     pcr = aggregates.get("put_call_volume_ratio")
     src = source or "unknown"
@@ -575,8 +834,10 @@ class OptionsFlowConnector(DataConnector):
             )
 
         aggregates = compute_options_aggregates(chain)
+        intelligence = compute_options_intelligence(chain, aggregates)
         payload = {
             **aggregates,
+            **intelligence,
             "symbol": ticker,
             "spot": chain.get("spot"),
             "source": chain.get("source"),

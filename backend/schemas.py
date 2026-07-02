@@ -134,6 +134,32 @@ class OptionsFlow(BaseModel):
     source: Optional[str] = None
     as_of: Optional[str] = None
     partial: bool = False
+    # Options intelligence (Google-parity layer)
+    call_oi_pct: Optional[float] = None
+    put_oi_pct: Optional[float] = None
+    call_volume_pct: Optional[float] = None
+    put_volume_pct: Optional[float] = None
+    expected_move_usd: Optional[float] = None
+    expected_move_pct: Optional[float] = None
+    nearest_expiry: Optional[str] = None
+    top_call_strikes: List[Dict[str, Any]] = Field(default_factory=list)
+    top_put_strikes: List[Dict[str, Any]] = Field(default_factory=list)
+    near_expiry_oi_pct: Optional[float] = None
+    near_expiry_flag: bool = False
+    iv_rank_proxy: Optional[float] = None
+    oi_sentiment: Optional[str] = None
+    volume_sentiment: Optional[str] = None
+    narrative_summary: Optional[str] = None
+    spot_price_usd: Optional[float] = None
+
+
+class ShortInterestPanel(BaseModel):
+    """Short positioning snapshot for Decision Terminal."""
+
+    short_percent_float: Optional[float] = None
+    days_to_cover: Optional[float] = None
+    interpretation: Optional[str] = None
+    source: str = "yfinance"
 
 
 class SwarmConsensus(BaseModel):
@@ -950,6 +976,7 @@ class DecisionSnapshotPayload(BaseModel):
     filing_intelligence: Optional[FilingIntelligencePanel] = None
     risk_matrix: Optional[RiskMatrixPanel] = None
     narrative_scenarios: Optional[NarrativeScenariosPanel] = None
+    short_interest: Optional[ShortInterestPanel] = None
 
 
 class DecisionSwarmPayload(BaseModel):

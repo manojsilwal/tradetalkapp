@@ -45,6 +45,24 @@ class TestOptionsAggregates(unittest.TestCase):
         self.assertTrue(any(u.get("vol_oi_ratio", 0) >= 3 for u in agg["unusual_contracts"]))
         self.assertIn(agg["net_premium_bias"], ("bullish", "bearish", "neutral"))
 
+    def test_compute_options_intelligence(self):
+        chain = _sample_chain()
+        agg = of.compute_options_aggregates(chain)
+        intel = of.compute_options_intelligence(chain, agg)
+        self.assertIsNotNone(intel.get("call_oi_pct"))
+        self.assertIsNotNone(intel.get("put_oi_pct"))
+        self.assertTrue(intel.get("top_call_strikes"))
+        self.assertTrue(intel.get("narrative_summary"))
+        self.assertIsNotNone(intel.get("expected_move_pct"))
+
+    def test_format_options_flow_for_chat(self):
+        chain = _sample_chain()
+        agg = of.compute_options_aggregates(chain)
+        intel = of.compute_options_intelligence(chain, agg)
+        text = of.format_options_flow_for_chat({**agg, **intel, "available": True, "symbol": "AAPL"})
+        self.assertIn("Options intelligence for AAPL", text)
+        self.assertIn("Bull vs bear", text)
+
     def test_options_to_brain_overlay(self):
         agg = of.compute_options_aggregates(_sample_chain())
         overlay = of.options_to_brain_overlay(agg)

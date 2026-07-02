@@ -89,6 +89,22 @@ def _map_options_flow(raw: Optional[dict]) -> Optional[OptionsFlow]:
             source=raw.get("source"),
             as_of=raw.get("as_of"),
             partial=bool(raw.get("partial")),
+            call_oi_pct=raw.get("call_oi_pct"),
+            put_oi_pct=raw.get("put_oi_pct"),
+            call_volume_pct=raw.get("call_volume_pct"),
+            put_volume_pct=raw.get("put_volume_pct"),
+            expected_move_usd=raw.get("expected_move_usd"),
+            expected_move_pct=raw.get("expected_move_pct"),
+            nearest_expiry=raw.get("nearest_expiry"),
+            top_call_strikes=raw.get("top_call_strikes") or [],
+            top_put_strikes=raw.get("top_put_strikes") or [],
+            near_expiry_oi_pct=raw.get("near_expiry_oi_pct"),
+            near_expiry_flag=bool(raw.get("near_expiry_flag")),
+            iv_rank_proxy=raw.get("iv_rank_proxy"),
+            oi_sentiment=raw.get("oi_sentiment"),
+            volume_sentiment=raw.get("volume_sentiment"),
+            narrative_summary=raw.get("narrative_summary"),
+            spot_price_usd=raw.get("spot_price_usd") or raw.get("spot"),
         )
     except Exception:
         return None

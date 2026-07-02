@@ -224,6 +224,7 @@ export default function DecisionTerminalUI() {
   const riskMatrix = snapshot?.risk_matrix;
   const narrScenarios = snapshot?.narrative_scenarios;
   const invSurface = verdictSlice?.investment_surface;
+  const shortInterest = snapshot?.short_interest;
   const hasOptions = !!options;
   const hasSnapshot = !!snapshot;
   const hasVerdict = !!verdictSlice;
@@ -629,6 +630,30 @@ export default function DecisionTerminalUI() {
               </div>
             )}
           </section>
+
+          {/* —— Short interest —— */}
+          {hasSnapshot && shortInterest && (
+            <section className="dt-panel">
+              <h2 className="dt-panel-title">Short interest</h2>
+              <div style={{ fontSize: '0.82rem', display: 'flex', flexWrap: 'wrap', gap: '8px 20px' }}>
+                {shortInterest.short_percent_float != null && (
+                  <span>
+                    Short % float: <strong>{shortInterest.short_percent_float.toFixed(2)}%</strong>
+                  </span>
+                )}
+                {shortInterest.days_to_cover != null && (
+                  <span>
+                    Days to cover: <strong>{shortInterest.days_to_cover.toFixed(1)}</strong>
+                  </span>
+                )}
+              </div>
+              {shortInterest.interpretation && (
+                <p style={{ margin: '8px 0 0', fontSize: '0.78rem', opacity: 0.9 }}>
+                  {shortInterest.interpretation}
+                </p>
+              )}
+            </section>
+          )}
 
           {/* —— Options flow —— */}
           <section className="dt-panel">

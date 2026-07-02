@@ -45,6 +45,7 @@ CHAT_TOOL_NAMES: frozenset[str] = frozenset({
     "get_deep_news",
     "get_sec_filing",
     "get_filing_intelligence",
+    "get_options_flow",
     "scrape_url",
     "recall_financial_profile",
     "save_financial_preference",
@@ -667,6 +668,27 @@ async def chat_send_message(
         except Exception as e:
             return f"Error fetching filing intelligence for {sym}: {e}"
 
+    async def get_options_flow(ticker: str) -> str:
+        """
+        Options market intelligence: put/call ratios, bull vs bear OI/volume split,
+        expected move, top strike walls, unusual activity, near-expiry gamma risk.
+        Use for: options sentiment, short-term price range, call/put comparison,
+        implied volatility, whale/unusual flow, 'analyze options for TICKER'.
+        """
+        sym = ticker.upper().strip()
+        if not sym:
+            return "Please provide a ticker symbol."
+        try:
+            from ..connectors.options_flow import (
+                OptionsFlowConnector,
+                format_options_flow_for_chat,
+            )
+
+            payload = await OptionsFlowConnector().fetch_data(ticker=sym)
+            return format_options_flow_for_chat(payload)
+        except Exception as e:
+            return f"Error fetching options flow for {sym}: {e}"
+
     async def scrape_url(url: str) -> str:
         """
         Scrape any public URL and return clean, LLM-ready text.
@@ -1114,6 +1136,26 @@ async def chat_send_message(
         {
             "type": "function",
             "function": {
+                "name": "get_options_flow",
+                "description": (
+                    "Options chain intelligence: put/call volume and OI ratios, bull vs bear contract "
+                    "counts, expected price move, IV, top call/put strike walls, unusual activity, "
+                    "near-expiry open interest. Use when user asks about options sentiment, implied "
+                    "move, short-term price prediction from options, put/call comparison, or short "
+                    "positioning via the options market."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker": {"type": "string", "description": "Exact uppercase ticker e.g. MRVL AAPL TSLA"},
+                    },
+                    "required": ["ticker"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "scrape_url",
                 "description": (
                     "Scrape any public URL and return clean text — hedge fund letters, earnings transcripts, "
@@ -1510,6 +1552,7 @@ async def chat_send_message(
         "get_deep_news": get_deep_news,
         "get_sec_filing": get_sec_filing,
         "get_filing_intelligence": get_filing_intelligence,
+        "get_options_flow": get_options_flow,
         "scrape_url": scrape_url,
         "recall_financial_profile": recall_financial_profile,
         "save_financial_preference": save_financial_preference,

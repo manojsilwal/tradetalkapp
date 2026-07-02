@@ -49,6 +49,7 @@ from .schemas import (
     NarrativeScenarioCase,
     NarrativeScenariosPanel,
     RiskMatrixPanel,
+    ShortInterestPanel,
     VerificationStatus,
 )
 
@@ -98,6 +99,46 @@ def _build_filing_intelligence_panel(record: Optional[Dict[str, Any]]) -> Filing
         thematic_tags=list(record.get("thematic_tags") or []),
         source=record.get("source"),
         stale=stale,
+    )
+
+
+def _short_interest_interpretation(short_pct: Optional[float], days_to_cover: Optional[float]) -> str:
+    if short_pct is None and days_to_cover is None:
+        return "Short interest data unavailable."
+    parts: List[str] = []
+    if short_pct is not None:
+        if short_pct >= 20:
+            parts.append("Elevated short % of float — meaningful bearish positioning.")
+        elif short_pct >= 10:
+            parts.append("Moderate short interest — some dedicated bearish bets.")
+        elif short_pct >= 5:
+            parts.append("Light short interest — limited bearish positioning.")
+        else:
+            parts.append("Low short interest — minimal dedicated short positioning.")
+    if days_to_cover is not None and days_to_cover >= 5:
+        parts.append(f"Days to cover {days_to_cover:.1f} — shorts may need time to exit.")
+    elif days_to_cover is not None and days_to_cover >= 2:
+        parts.append(f"Days to cover {days_to_cover:.1f} — moderate cover time.")
+    return " ".join(parts) if parts else "Short interest within normal range."
+
+
+def _build_short_interest_panel(debate_data: dict) -> Optional[ShortInterestPanel]:
+    short_pct = debate_data.get("short_percent_float")
+    dtc = debate_data.get("short_interest_ratio")  # yfinance shortRatio = days to cover
+    if short_pct is None and (dtc is None or float(dtc or 0) == 0):
+        return None
+    try:
+        short_pct_f = float(short_pct) if short_pct is not None else None
+        dtc_f = float(dtc) if dtc is not None else None
+    except (TypeError, ValueError):
+        return None
+    if short_pct_f == 0 and (dtc_f is None or dtc_f == 0):
+        return None
+    return ShortInterestPanel(
+        short_percent_float=short_pct_f,
+        days_to_cover=dtc_f,
+        interpretation=_short_interest_interpretation(short_pct_f, dtc_f),
+        source="yfinance",
     )
 
 
@@ -1609,6 +1650,7 @@ def build_snapshot_slice(
     filing_record = _load_filing_record(t)
     fi_panel = _build_filing_intelligence_panel(filing_record)
     risk_panel, narr_panel = _build_risk_and_scenario_panels(filing_record, ext or {})
+    si_panel = _build_short_interest_panel(debate_data)
     return DecisionSnapshotPayload(
         ticker=t,
         disclaimer=DISCLAIMER,
@@ -1628,6 +1670,7 @@ def build_snapshot_slice(
         filing_intelligence=fi_panel,
         risk_matrix=risk_panel,
         narrative_scenarios=narr_panel,
+        short_interest=si_panel,
     )
 
 
