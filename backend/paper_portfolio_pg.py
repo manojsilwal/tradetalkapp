@@ -6,7 +6,7 @@ import sqlite3
 import time
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from . import paper_portfolio as pp
 from .portfolio_holdings_reconcile import normalize_ticker
@@ -50,6 +50,8 @@ def init_schema() -> None:
             "003_snapshot_spy_return.sql",
             "006_stocks_sec_info.sql",
             "007_stocks_revenue_engine.sql",
+            "008_page_feedback.sql",
+            "009_filing_intelligence.sql",
         ):
             cur.execute((mig_dir / name).read_text(encoding="utf-8"))
     conn.commit()
@@ -461,3 +463,103 @@ def get_stock_sec_info(ticker: str) -> Optional[Dict[str, Any]]:
         if row:
             return dict(row)
     return None
+
+
+def upsert_filing_intelligence_record(record: Dict[str, Any]) -> None:
+    import json as _json
+
+    ticker = (record.get("ticker") or "").upper().strip()
+    if not ticker:
+        return
+    conn = _get_conn()
+    end_market = record.get("end_market_exposure") or {}
+    tags = record.get("thematic_tags") or []
+    citations = record.get("citations") or []
+    raw = record.get("raw_extract_json") or record
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO filing_intelligence (
+                ticker, as_of_date, filing_form, filing_risk_score, management_tone_score,
+                new_product_expansion_score, customer_concentration_score, demand_visibility_score,
+                order_backlog_usd, backlog_growth_yoy_pct, book_to_bill_ratio, recurring_revenue_pct,
+                top_customer_concentration_pct, end_market_exposure_json, primary_moat_driver,
+                thematic_tags_json, demand_visibility_summary, citations_json, raw_extract_json,
+                extracted_at_utc, source
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (ticker) DO UPDATE SET
+                as_of_date = EXCLUDED.as_of_date,
+                filing_form = EXCLUDED.filing_form,
+                filing_risk_score = EXCLUDED.filing_risk_score,
+                management_tone_score = EXCLUDED.management_tone_score,
+                new_product_expansion_score = EXCLUDED.new_product_expansion_score,
+                customer_concentration_score = EXCLUDED.customer_concentration_score,
+                demand_visibility_score = EXCLUDED.demand_visibility_score,
+                order_backlog_usd = EXCLUDED.order_backlog_usd,
+                backlog_growth_yoy_pct = EXCLUDED.backlog_growth_yoy_pct,
+                book_to_bill_ratio = EXCLUDED.book_to_bill_ratio,
+                recurring_revenue_pct = EXCLUDED.recurring_revenue_pct,
+                top_customer_concentration_pct = EXCLUDED.top_customer_concentration_pct,
+                end_market_exposure_json = EXCLUDED.end_market_exposure_json,
+                primary_moat_driver = EXCLUDED.primary_moat_driver,
+                thematic_tags_json = EXCLUDED.thematic_tags_json,
+                demand_visibility_summary = EXCLUDED.demand_visibility_summary,
+                citations_json = EXCLUDED.citations_json,
+                raw_extract_json = EXCLUDED.raw_extract_json,
+                extracted_at_utc = EXCLUDED.extracted_at_utc,
+                source = EXCLUDED.source
+            """,
+            (
+                ticker,
+                record.get("as_of_date"),
+                record.get("filing_form"),
+                record.get("filing_risk_score"),
+                record.get("management_tone_score"),
+                record.get("new_product_expansion_score"),
+                record.get("customer_concentration_score"),
+                record.get("demand_visibility_score"),
+                record.get("order_backlog_usd"),
+                record.get("backlog_growth_yoy_pct"),
+                record.get("book_to_bill_ratio"),
+                record.get("recurring_revenue_pct"),
+                record.get("top_customer_concentration_pct"),
+                _json.dumps(end_market),
+                record.get("primary_moat_driver"),
+                _json.dumps(tags),
+                record.get("demand_visibility_summary"),
+                _json.dumps(citations),
+                _json.dumps(raw, default=str),
+                record.get("extracted_at_utc"),
+                record.get("source") or "fincrawler",
+            ),
+        )
+    conn.commit()
+
+
+def get_filing_intelligence_record(ticker: str) -> Optional[Dict[str, Any]]:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM filing_intelligence WHERE ticker = %s", (ticker.upper(),))
+        row = cur.fetchone()
+        if row:
+            return dict(row)
+    return None
+
+
+def get_filing_intelligence_bulk(tickers: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+    syms = [(t or "").upper().strip() for t in tickers if (t or "").strip()]
+    if not syms:
+        return {}
+    conn = _get_conn()
+    out: Dict[str, Dict[str, Any]] = {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM filing_intelligence WHERE ticker = ANY(%s)",
+            (syms,),
+        )
+        for row in cur.fetchall():
+            d = dict(row)
+            out[d["ticker"]] = d
+    return out

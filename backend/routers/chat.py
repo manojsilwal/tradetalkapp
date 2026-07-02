@@ -44,6 +44,7 @@ CHAT_TOOL_NAMES: frozenset[str] = frozenset({
     "get_market_news",
     "get_deep_news",
     "get_sec_filing",
+    "get_filing_intelligence",
     "scrape_url",
     "recall_financial_profile",
     "save_financial_preference",
@@ -636,6 +637,36 @@ async def chat_send_message(
         except Exception as e:
             return f"Error fetching {form_clean} for {sym}: {e}"
 
+    async def get_filing_intelligence(ticker: str, force_refresh: bool = False) -> str:
+        """
+        Structured filing intelligence: demand visibility, backlog, moat drivers,
+        thematic tags, and a 6-category risk matrix from cached SEC extraction.
+        Prefer over get_sec_filing when the user asks about backlog, book-to-bill,
+        recurring revenue, customer concentration, or thematic AI-infrastructure exposure.
+        """
+        sym = ticker.upper().strip()
+        if not sym:
+            return "Please provide a ticker symbol."
+        try:
+            from ..connectors.filing_intelligence import (
+                enabled,
+                fetch_for_agent,
+                format_filing_intelligence_for_chat,
+            )
+
+            agent_tool = os.environ.get("FILING_INTELLIGENCE_AGENT_TOOL", "0").strip().lower() in (
+                "1", "true", "yes", "on",
+            )
+            if not agent_tool and not enabled():
+                return (
+                    f"Filing intelligence is disabled (set FILING_INTELLIGENCE_ENABLE=1 or "
+                    f"FILING_INTELLIGENCE_AGENT_TOOL=1). Try get_sec_filing for raw {sym} 10-K text."
+                )
+            payload = await fetch_for_agent(sym, force_refresh=bool(force_refresh))
+            return format_filing_intelligence_for_chat(payload)
+        except Exception as e:
+            return f"Error fetching filing intelligence for {sym}: {e}"
+
     async def scrape_url(url: str) -> str:
         """
         Scrape any public URL and return clean, LLM-ready text.
@@ -1059,6 +1090,30 @@ async def chat_send_message(
         {
             "type": "function",
             "function": {
+                "name": "get_filing_intelligence",
+                "description": (
+                    "Structured SEC filing intelligence: demand visibility, order backlog, book-to-bill, "
+                    "recurring revenue, moat drivers, customer concentration, thematic tags, and risk matrix. "
+                    "Use for: backlog analysis, AI infrastructure exposure, revenue quality, moat assessment. "
+                    "Faster than get_sec_filing when structured fields are enough."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker": {"type": "string", "description": "Exact uppercase ticker e.g. ETN BE AAPL"},
+                        "force_refresh": {
+                            "type": "boolean",
+                            "description": "Bypass cache and re-extract from latest 10-K",
+                            "default": False,
+                        },
+                    },
+                    "required": ["ticker"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "scrape_url",
                 "description": (
                     "Scrape any public URL and return clean text — hedge fund letters, earnings transcripts, "
@@ -1454,6 +1509,7 @@ async def chat_send_message(
         "get_market_news": get_market_news,
         "get_deep_news": get_deep_news,
         "get_sec_filing": get_sec_filing,
+        "get_filing_intelligence": get_filing_intelligence,
         "scrape_url": scrape_url,
         "recall_financial_profile": recall_financial_profile,
         "save_financial_preference": save_financial_preference,

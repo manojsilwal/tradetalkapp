@@ -56,7 +56,7 @@ gcloud run jobs deploy "$JOB_NAME" \
   --max-retries 1 \
   --command bash \
   --args scripts/run_brain_job.sh \
-  --set-env-vars "MCP_DATA_BACKEND=bigquery,GCP_PROJECT_ID=${PROJECT_ID},BQ_DATASET_ID=tradetalk_swarm,GCS_BUCKET=tradetalk-data-lake,STORAGE_BACKEND=gcp,BRAIN_GCS_BUCKET=tradetalk-data-lake,BRAIN_GCS_PREFIX=brain" \
+  --set-env-vars "MCP_DATA_BACKEND=bigquery,GCP_PROJECT_ID=${PROJECT_ID},BQ_DATASET_ID=tradetalk_swarm,GCS_BUCKET=tradetalk-data-lake,STORAGE_BACKEND=gcp,BRAIN_GCS_BUCKET=tradetalk-data-lake,BRAIN_GCS_PREFIX=brain,BRAIN_MODEL_VERSION=v2" \
   --quiet
 
 echo "[3/4] Cloud Scheduler (OAuth as $SA_EMAIL)..."

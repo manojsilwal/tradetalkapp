@@ -214,3 +214,26 @@ def smoke_google_embedding(request: Request, body: SmokeEmbedBody = SmokeEmbedBo
         }
     except Exception as e:
         return {"ok": False, "provider": "google", "model": model_name, "error": str(e)[:500]}
+
+
+@router.get("/options/{ticker}")
+async def smoke_options_flow(request: Request, ticker: str) -> Dict[str, Any]:
+    """Reachability probe for free options chain providers."""
+    _verify_smoke_request(request)
+    if os.environ.get("OPTIONS_FLOW_ENABLE", "1").strip().lower() not in ("1", "true", "yes", "on"):
+        return {"ok": False, "skipped": True, "reason": "options_flow_disabled"}
+    from ..connectors.options_flow import OptionsFlowConnector
+
+    try:
+        t0 = time.perf_counter()
+        data = await OptionsFlowConnector().fetch_data(ticker=ticker.upper())
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        return {
+            "ok": True,
+            "ticker": ticker.upper(),
+            "source": data.get("source"),
+            "put_call_volume_ratio": data.get("put_call_volume_ratio"),
+            "latency_ms": latency_ms,
+        }
+    except Exception as e:
+        return {"ok": False, "ticker": ticker.upper(), "error": str(e)[:500]}

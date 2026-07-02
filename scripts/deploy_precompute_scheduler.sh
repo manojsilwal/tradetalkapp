@@ -116,7 +116,15 @@ upsert_scheduler() {
 # Market-open precompute: 9:30 AM ET weekdays (America/New_York handles DST).
 ET_TZ="America/New_York"
 
-echo "[1/7] Daily knowledge pipeline (00:05 UTC)"
+echo "[1/8] Filing intelligence batch (01:00 UTC — before brain-nightly)"
+upsert_scheduler "filing-intelligence-run" \
+  "0 1 * * *" \
+  "${BASE}/knowledge/filing-intelligence-run" \
+  "1800s" "2" \
+  "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
+  "UTC"
+
+echo "[2/8] Daily knowledge pipeline (00:05 UTC)"
 upsert_scheduler "precompute-knowledge-pipeline" \
   "5 0 * * *" \
   "${BASE}/knowledge/pipeline-run" \
@@ -124,7 +132,7 @@ upsert_scheduler "precompute-knowledge-pipeline" \
   "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
   "UTC"
 
-echo "[2/7] Picks & Shovels (9:30 AM ET weekdays)"
+echo "[3/8] Picks & Shovels (9:30 AM ET weekdays)"
 upsert_scheduler "precompute-picks-shovels" \
   "30 9 * * 1-5" \
   "${BASE}/knowledge/picks-shovels-run" \
@@ -132,7 +140,7 @@ upsert_scheduler "precompute-picks-shovels" \
   "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
   "$ET_TZ"
 
-echo "[3/7] Narrative Rotation Radar (9:32 AM ET weekdays — 2 min stagger)"
+echo "[4/8] Narrative Rotation Radar (9:32 AM ET weekdays — 2 min stagger)"
 upsert_scheduler "precompute-narrative-radar" \
   "32 9 * * 1-5" \
   "${BASE}/knowledge/narrative-radar-run" \
@@ -140,7 +148,7 @@ upsert_scheduler "precompute-narrative-radar" \
   "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
   "$ET_TZ"
 
-echo "[4/7] Fund Leaderboard metrics refresh (9:35 AM ET weekdays)"
+echo "[5/8] Fund Leaderboard metrics refresh (9:35 AM ET weekdays)"
 upsert_scheduler "precompute-fund-leaderboard-metrics" \
   "35 9 * * 1-5" \
   "${BASE}/knowledge/fund-leaderboard-metrics-run" \
@@ -148,7 +156,7 @@ upsert_scheduler "precompute-fund-leaderboard-metrics" \
   "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
   "$ET_TZ"
 
-echo "[5/7] Macro flow daily refresh (01:25 UTC daily)"
+echo "[6/8] Macro flow daily refresh (01:25 UTC daily)"
 upsert_scheduler "macro-flow-daily" \
   "25 1 * * *" \
   "${BASE}/macro/flow/cron-refresh?interval=1w" \
@@ -156,7 +164,7 @@ upsert_scheduler "macro-flow-daily" \
   "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
   "UTC"
 
-echo "[6/7] Verdict cache prewarm — pre-open (13:00 UTC weekdays)"
+echo "[7/8] Verdict cache prewarm — pre-open (13:00 UTC weekdays)"
 upsert_scheduler "verdict-prewarm-preopen" \
   "0 13 * * 1-5" \
   "${BASE}/decision-terminal/prewarm" \
@@ -164,7 +172,7 @@ upsert_scheduler "verdict-prewarm-preopen" \
   "Content-Type=application/json,Authorization=Bearer ${SECRET}" \
   "UTC"
 
-echo "[7/7] Verdict cache prewarm — mid-session (18:30 UTC weekdays)"
+echo "[8/8] Verdict cache prewarm — mid-session (18:30 UTC weekdays)"
 upsert_scheduler "verdict-prewarm-midsession" \
   "30 18 * * 1-5" \
   "${BASE}/decision-terminal/prewarm" \

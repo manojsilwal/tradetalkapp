@@ -24,11 +24,13 @@ class TestAgentPolicyGuardrails(unittest.TestCase):
         with patch.dict(os.environ, {
             "OPENROUTER_API_KEY": "sk-or-v1-my-fake-openrouter-key-12345",
             "GOOGLE_API_KEY": "AIzaSyFakeGoogleKeyForTesting1234567",
+            "HF_TOKEN": "hf_FakeHuggingFaceTokenForTesting1234",
         }):
-            text = "Error occurred. Details: OpenRouter key is sk-or-v1-my-fake-openrouter-key-12345, Google key is AIzaSyFakeGoogleKeyForTesting1234567."
+            text = "Error occurred. Details: OpenRouter key is sk-or-v1-my-fake-openrouter-key-12345, Google key is AIzaSyFakeGoogleKeyForTesting1234567, HF token is hf_FakeHuggingFaceTokenForTesting1234."
             redacted = redact_secrets_in_text(text, secret_values=["another_secret_value"])
             self.assertNotIn("sk-or-v1-my-fake-openrouter-key-12345", redacted)
             self.assertNotIn("AIzaSyFakeGoogleKeyForTesting1234567", redacted)
+            self.assertNotIn("hf_FakeHuggingFaceTokenForTesting1234", redacted)
             
             # Check explicit secret redaction
             redacted_with_explicit = redact_secrets_in_text("Secret value: explicit_val_here", secret_values=["explicit_val_here"])
@@ -44,6 +46,10 @@ class TestAgentPolicyGuardrails(unittest.TestCase):
         google_text = "Google API Key is AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q"
         redacted_google = redact_secrets_in_text(google_text)
         self.assertNotIn("AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q", redacted_google)
+
+        hf_text = "HuggingFace Token is hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ01234567"
+        redacted_hf = redact_secrets_in_text(hf_text)
+        self.assertNotIn("hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ01234567", redacted_hf)
 
     def test_ensure_capability(self):
         # 'debate' workload has capabilities 'knowledge_read', 'knowledge_write', 'llm_inference'

@@ -72,4 +72,18 @@ test.describe('Provider smoke API', () => {
     expect(body.dimensions).toBeGreaterThan(8);
     expect(body.model).toBeTruthy();
   });
+
+  test('options flow reachability (AAPL)', async ({ request }) => {
+    const res = await request.get(`${API_BASE}/health/smoke/options/AAPL`, {
+      headers: smokeHeaders(),
+    });
+    if (res.status() === 404) {
+      test.skip(true, 'ALLOW_PROVIDER_SMOKE=1 not enabled on API');
+    }
+    expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    test.skip(!!body.skipped, body.reason || 'Options probe skipped');
+    expect(body.ok).toBe(true);
+    expect(body.source).toBeTruthy();
+  });
 });

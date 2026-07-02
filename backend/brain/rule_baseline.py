@@ -15,14 +15,15 @@ from . import SIGNAL_GROUPS
 
 # Composite weights (sum to 1.0).
 COMPOSITE_WEIGHTS = {
-    "momentum": 0.18,
-    "quality": 0.18,
-    "valuation": 0.14,
-    "capital_flow": 0.12,
+    "momentum": 0.16,
+    "quality": 0.17,
+    "valuation": 0.13,
+    "capital_flow": 0.11,
     "filing_intelligence": 0.10,
-    "sentiment": 0.08,
-    "risk": 0.10,
-    "timeseries": 0.10,
+    "sentiment": 0.07,
+    "risk": 0.09,
+    "timeseries": 0.09,
+    "options_flow": 0.08,
 }
 
 # Long-horizon (investment-surface) weight profile. For a 1-5 year horizon,
@@ -31,8 +32,8 @@ COMPOSITE_WEIGHTS = {
 # business quality dominate. This profile re-weights the SAME transparency group
 # scores (no model retrain) and is applied only on the investment surface so the
 # existing quarterly surfaces are unchanged. Sums to 1.0 over SIGNAL_GROUPS.
-#   valuation 0.30  -> business value vs price (margin of safety)
-#   quality   0.25  -> ROIC / margins / growth / leverage (moat + durability)
+#   valuation 0.28  -> business value vs price (margin of safety)
+#   quality   0.24  -> ROIC / margins / growth / leverage (moat + durability)
 #   risk      0.10  -> balance-sheet / drawdown resilience
 #   capital_flow 0.10 -> institutional accumulation (long-horizon smart money)
 #   filing_intelligence 0.10 -> filing-risk / going-concern language
@@ -40,14 +41,15 @@ COMPOSITE_WEIGHTS = {
 #   momentum  0.05  -> pricing context only (NOT a trading signal)
 #   sentiment 0.05  -> short-term sentiment context only
 LONG_HORIZON_COMPOSITE_WEIGHTS = {
-    "valuation": 0.30,
-    "quality": 0.25,
+    "valuation": 0.28,
+    "quality": 0.24,
     "risk": 0.10,
     "capital_flow": 0.10,
     "filing_intelligence": 0.10,
     "timeseries": 0.05,
-    "momentum": 0.05,
-    "sentiment": 0.05,
+    "momentum": 0.04,
+    "sentiment": 0.04,
+    "options_flow": 0.05,
 }
 
 
@@ -104,9 +106,10 @@ _GROUP_DEFS = {
         ("institutional_accumulation_score", 0.4, False),
     ],
     "filing_intelligence": [
-        ("new_product_expansion_score", 0.4, False),
-        ("management_tone_score", 0.3, False),
-        ("filing_risk_score", 0.3, True),
+        ("new_product_expansion_score", 0.30, False),
+        ("management_tone_score", 0.25, False),
+        ("filing_risk_score", 0.25, True),
+        ("demand_visibility_score", 0.20, False),
     ],
     "sentiment": [
         ("sentiment_score", 1.0, False),
@@ -118,12 +121,18 @@ _GROUP_DEFS = {
         ("tsfm_band_width", 0.3, True),
     ],
     "risk": [
-        ("volatility_3m", 0.35, True),
+        ("volatility_3m", 0.40, True),
         # max_drawdown_6m is negative; a value closer to 0 (shallower) is safer,
         # so higher raw value is better -> do NOT invert.
-        ("max_drawdown_6m", 0.25, False),
-        ("filing_risk_score", 0.20, True),
-        ("customer_concentration_score", 0.20, True),
+        ("max_drawdown_6m", 0.30, False),
+        ("customer_concentration_score", 0.30, True),
+    ],
+    "options_flow": [
+        ("options_net_premium_bias_num", 0.30, False),
+        ("put_call_volume_ratio", 0.25, True),
+        ("put_call_oi_ratio", 0.20, True),
+        ("unusual_activity_score", 0.15, False),
+        ("iv_skew", 0.10, True),
     ],
 }
 

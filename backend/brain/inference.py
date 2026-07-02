@@ -42,6 +42,11 @@ FEATURE_PHRASES = {
     "sentiment_score": ("positive sentiment", "negative sentiment"),
     "tsfm_expected_return": ("positive TimesFM forward forecast", "negative TimesFM forward forecast"),
     "tsfm_band_width": ("tight TimesFM forecast band", "wide TimesFM forecast uncertainty"),
+    "put_call_volume_ratio": ("balanced call volume", "elevated put/call volume ratio"),
+    "put_call_oi_ratio": ("balanced open interest", "elevated put/call OI ratio"),
+    "iv_skew": ("neutral IV skew", "elevated put-side IV skew"),
+    "unusual_activity_score": ("quiet options flow", "unusual options activity"),
+    "options_net_premium_bias_num": ("bullish options premium bias", "bearish options premium bias"),
 }
 
 # +1: higher raw value supports the thesis; -1: lower raw value supports it.
@@ -49,6 +54,7 @@ FEATURE_DIRECTION = {
     "pe_ratio": -1, "ev_ebitda": -1, "valuation_percentile_5y": -1,
     "volatility_3m": -1, "debt_to_equity": -1, "filing_risk_score": -1,
     "tsfm_band_width": -1,  # wider (more uncertain) forecast is worse
+    "put_call_volume_ratio": -1, "put_call_oi_ratio": -1, "iv_skew": -1,
     # max_drawdown_6m is negative; higher (closer to 0) is better -> +1.
 }
 

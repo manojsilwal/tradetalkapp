@@ -64,6 +64,7 @@ function mergeDecisionData(prev, patch) {
         swarm: patch.swarm ?? prev?.swarm,
         debate: patch.debate ?? prev?.debate,
         brain: patch.brain ?? prev?.brain,
+        options: patch.options ?? prev?.options ?? patch.swarm?.options ?? prev?.swarm?.options,
         scorecard_summary: patch.scorecard_summary ?? prev?.scorecard_summary,
         spot: patch.spot ?? prev?.spot,
         disclaimer: patch.disclaimer ?? prev?.disclaimer,

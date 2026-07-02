@@ -42,7 +42,13 @@ _PASSTHROUGH = [
     "customer_concentration_score",
     "new_product_expansion_score",
     "management_tone_score",
+    "demand_visibility_score",
     "sentiment_score",
+    "put_call_oi_ratio",
+    "put_call_volume_ratio",
+    "iv_skew",
+    "unusual_activity_score",
+    "options_net_premium_bias_num",
 ]
 
 

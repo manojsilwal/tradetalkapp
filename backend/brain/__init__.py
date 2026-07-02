@@ -75,6 +75,11 @@ FEATURE_LIST = [
     # features derived from probabilistic price-path quantiles.
     "tsfm_expected_return",
     "tsfm_band_width",
+    "put_call_oi_ratio",
+    "put_call_volume_ratio",
+    "iv_skew",
+    "unusual_activity_score",
+    "options_net_premium_bias_num",
 ]
 
 # Signal groups surfaced to the UI (0-100 scores). Maps feature groups -> label.
@@ -87,6 +92,7 @@ SIGNAL_GROUPS = (
     "sentiment",
     "risk",
     "timeseries",
+    "options_flow",
 )
 
 __all__ = [

@@ -66,7 +66,8 @@ def _latest_as_of(store: SnapshotStore, ticker: str) -> Optional[str]:
 
 def serve_ticker(ticker: str, *, as_of_date: Optional[str] = None,
                  knowledge_store: Any = None, user_id: str = "",
-                 emit: bool = True) -> Dict:
+                 emit: bool = True,
+                 options_overlay: Optional[Dict[str, float]] = None) -> Dict:
     """Return the live brain verdict for a ticker, or a status dict if missing."""
     ticker = (ticker or "").upper().strip()
     if not ticker:
@@ -88,11 +89,34 @@ def serve_ticker(ticker: str, *, as_of_date: Optional[str] = None,
         price = snapshot.base_price  # degrade to the snapshot price
         source = "snapshot_base"
 
+    overlay = options_overlay or {}
+    live_inputs = LiveInputs(
+        price=float(price),
+        put_call_oi_ratio=overlay.get("put_call_oi_ratio"),
+        put_call_volume_ratio=overlay.get("put_call_volume_ratio"),
+        iv_skew=overlay.get("iv_skew"),
+        unusual_activity_score=overlay.get("unusual_activity_score"),
+        options_net_premium_bias_num=overlay.get("options_net_premium_bias_num"),
+    )
+
     emit_fn = build_emit_fn(user_id=user_id, source_route="/brain/ticker",
                             knowledge_store=knowledge_store) if emit else None
     reflex_engine = ReflexEngine(engine, emit_fn=emit_fn)
-    result = reflex_engine.reflex(snapshot, LiveInputs(price=float(price)))
+    result = reflex_engine.reflex(snapshot, live_inputs)
     result["price_source"] = source
+    try:
+        from ..connectors.filing_intelligence import get_filing_intelligence
+        from .filing_overlay import apply_filing_overlay
+
+        fi_record = get_filing_intelligence(ticker)
+        if fi_record:
+            result = apply_filing_overlay(
+                result,
+                fi_record,
+                fundamentals=snapshot.base_feature_row,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[brain.serving] filing overlay skipped for %s: %s", ticker, exc)
     return result
 
 

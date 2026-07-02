@@ -24,11 +24,12 @@ from backend.schemas import (  # noqa: E402
     DecisionVerdictPayload,
     MarketRegime,
     MarketState,
+    OptionsFlow,
     SwarmConsensus,
 )
 
 
-def _swarm() -> SwarmConsensus:
+def _swarm(options: OptionsFlow | None = None) -> SwarmConsensus:
     return SwarmConsensus(
         ticker="AAPL",
         macro_state=MarketState(market_regime=MarketRegime.BULL_NORMAL),
@@ -36,6 +37,7 @@ def _swarm() -> SwarmConsensus:
         global_verdict="BUY",
         confidence=0.7,
         factors={},
+        options=options,
     )
 
 

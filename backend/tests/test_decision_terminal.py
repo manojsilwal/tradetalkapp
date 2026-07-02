@@ -26,6 +26,7 @@ from backend.schemas import (
     DecisionTerminalPayload,
     DecisionVerdictPayload,
     FactorResult,
+    OptionsFlow,
     SwarmConsensus,
     MarketState,
     MarketRegime,
@@ -505,6 +506,62 @@ class TestSliceAssembly(unittest.TestCase):
         self.assertEqual(merged.verdict.headline_verdict, "BUY")
         self.assertIsNotNone(merged.swarm)
         self.assertIsNotNone(merged.debate)
+
+    def test_assemble_terminal_carries_options_from_swarm(self):
+        opts = OptionsFlow(
+            put_call_volume_ratio=1.24,
+            source="cboe",
+            as_of="2026-07-01T12:00:00+00:00",
+            net_premium_bias="bearish",
+        )
+        swarm = SwarmConsensus(
+            ticker="AAPL",
+            macro_state=MarketState(market_regime=MarketRegime.BULL_NORMAL),
+            global_signal=0,
+            global_verdict="NEUTRAL",
+            confidence=0.5,
+            factors={},
+            options=opts,
+        )
+        debate = DebateResult(
+            ticker="AAPL",
+            arguments=[],
+            verdict="NEUTRAL",
+            consensus_confidence=0.5,
+            moderator_summary="",
+            bull_score=1,
+            bear_score=1,
+            neutral_score=3,
+        )
+        snapshot = build_snapshot_slice(
+            "AAPL",
+            {"current_price": 100.0, "roe": 20.0, "pe_ratio": 25.0},
+            {"trailingEps": 5.0},
+        )
+        verdict = DecisionVerdictPayload(
+            ticker="AAPL",
+            generated_at_utc="t",
+            verdict=TerminalVerdictPanel(
+                headline_verdict="NEUTRAL",
+                debate_verdict="NEUTRAL",
+                swarm_verdict="NEUTRAL",
+            ),
+            swarm=swarm,
+            debate=debate,
+            options=opts,
+        )
+        roadmap = DecisionRoadmapPayload(
+            ticker="AAPL",
+            generated_at_utc="t",
+            roadmap=TerminalRoadmapPanel(
+                confidence_0_1=0.5,
+                provenance=TerminalFieldProvenance(),
+            ),
+        )
+        merged = assemble_terminal_from_slices(snapshot, verdict, roadmap)
+        self.assertIsNotNone(merged.options)
+        self.assertEqual(merged.options.source, "cboe")
+        self.assertAlmostEqual(merged.options.put_call_volume_ratio, 1.24)
 
 
 class TestVerdictFusion(unittest.TestCase):

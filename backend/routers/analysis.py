@@ -18,6 +18,7 @@ from ..schemas import (
     DecisionTerminalPayload,
     DecisionVerdictPayload,
     DecisionRoadmapPayload,
+    OptionsFlow,
 )
 from ..predictor.schemas import PredictorForecastResponse, PredictorForecastToolInput
 from ..agents import (
@@ -43,6 +44,8 @@ from .. import user_preferences as uprefs
 
 router = APIRouter(tags=["analysis"])
 
+logger = logging.getLogger(__name__)
+
 # Live macro snapshot (VIX + sector ETFs + capital flows) can take 40–50s on cold GCP;
 # the previous 45s cap caused intermittent HTTP 504 and an empty decision-terminal UI.
 _MACRO_FETCH_TIMEOUT_S = max(45.0, float(os.environ.get("MACRO_FETCH_TIMEOUT_S", "90")))
@@ -60,6 +63,35 @@ def _peer_summaries_from_factor_results(results: list) -> dict[str, str]:
 
 def _format_peer_highlights(peer: dict[str, str]) -> str:
     return "\n".join(f"- **{k}**: {(v or '')[:220]}" for k, v in peer.items())
+
+
+def _options_flow_enabled() -> bool:
+    return os.environ.get("OPTIONS_FLOW_ENABLE", "1").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _map_options_flow(raw: Optional[dict]) -> Optional[OptionsFlow]:
+    if not raw or raw.get("available") is False:
+        return None
+    try:
+        return OptionsFlow(
+            total_call_volume=raw.get("total_call_volume"),
+            total_put_volume=raw.get("total_put_volume"),
+            total_call_oi=raw.get("total_call_oi"),
+            total_put_oi=raw.get("total_put_oi"),
+            put_call_volume_ratio=raw.get("put_call_volume_ratio"),
+            put_call_oi_ratio=raw.get("put_call_oi_ratio"),
+            iv_atm_call=raw.get("iv_atm_call"),
+            iv_atm_put=raw.get("iv_atm_put"),
+            iv_skew=raw.get("iv_skew"),
+            unusual_contracts=raw.get("unusual_contracts") or [],
+            unusual_activity_score=raw.get("unusual_activity_score"),
+            net_premium_bias=raw.get("net_premium_bias"),
+            source=raw.get("source"),
+            as_of=raw.get("as_of"),
+            partial=bool(raw.get("partial")),
+        )
+    except Exception:
+        return None
 
 
 def _store_factor_snapshot(ks, ticker: str, factor_name: str, result, market_state):
@@ -161,6 +193,12 @@ async def _execute_swarm_trace(
         poly_pair = PolymarketAgentPair(connector=poly_connector, knowledge_store=knowledge_store, llm_client=llm_client)
         fund_pair = FundamentalHealthAgentPair(connector=fund_connector, knowledge_store=knowledge_store, llm_client=llm_client)
 
+        options_task = None
+        if _options_flow_enabled():
+            options_task = asyncio.create_task(
+                tool_registry.invoke("fetch_options_flow", {"ticker": ticker}, timeout_s=30.0)
+            )
+
         results = await asyncio.gather(
             short_pair.run(market_state=market_state, ticker=ticker),
             social_pair.run(market_state=market_state, ticker=ticker),
@@ -234,6 +272,22 @@ async def _execute_swarm_trace(
             except Exception:
                 pass
 
+        options_raw: Optional[dict] = None
+        if options_task is not None:
+            try:
+                options_raw = await options_task
+            except Exception as _oe:
+                logger.debug("[swarm.trace] options flow skipped: %s", _oe)
+
+        options_flow = _map_options_flow(options_raw)
+        options_overlay = None
+        if options_raw and options_raw.get("available") is not False:
+            try:
+                from ..connectors.options_flow import options_to_brain_overlay
+                options_overlay = options_to_brain_overlay(options_raw)
+            except Exception:
+                options_overlay = None
+
         # Brain cutover: the brain owns the consensus verdict + a grounded memo;
         # per-factor cards are preserved for display. Flag-gated, fully fallback.
         _brain_verdict_block = None
@@ -242,14 +296,26 @@ async def _execute_swarm_trace(
             from ..brain import adapters as _ba
             from ..brain.memo import build_memo
             from ..schemas import BrainVerdict
-            _br = await aserve_for_surface(ticker.upper(), "swarm",
-                                           knowledge_store=knowledge_store)
+            from ..connectors.options_flow import options_summary_line
+            _br = await aserve_for_surface(
+                ticker.upper(), "swarm",
+                knowledge_store=knowledge_store,
+                options_overlay=options_overlay,
+            )
+            if _br and options_raw:
+                _br = _ba.inject_options_signal(_br, options_raw)
             if _br:
                 global_verdict = _ba.swarm_verdict(_br)
                 global_signal = {"STRONG BUY": 2, "BUY": 1, "NEUTRAL": 0,
                                  "SELL": -1, "STRONG SELL": -2}.get(global_verdict, 0)
                 _memo = build_memo(_br)
                 consensus_rationale = _memo["summary"]
+                if options_flow is not None:
+                    opts_line = options_summary_line(
+                        options_raw or {},
+                        options_flow.source,
+                    )
+                    consensus_rationale = f"{consensus_rationale}\n\n{opts_line}".strip()
                 # Surface the live-blended brain block so the frontend can render
                 # outperform_probability, signal_scores, and the waterfall chart.
                 _live = _br.get("live") or _br.get("base") or {}
@@ -275,6 +341,7 @@ async def _execute_swarm_trace(
             confidence=avg_confidence,
             consensus_rationale=consensus_rationale,
             brain=_brain_verdict_block,
+            options=options_flow,
             factors={
                 "short_interest": short_res,
                 "social_sentiment": social_res,

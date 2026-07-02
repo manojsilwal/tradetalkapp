@@ -27,6 +27,7 @@ import { API_BASE_URL, apiFetch } from './api';
 import { SP500_TICKERS } from './sp500';
 import { DataTrustBanner } from './components/Freshness';
 import ConsensusValuationPanel from './components/ConsensusValuationPanel';
+import OptionsFlowPanel from './components/OptionsFlowPanel';
 import FundamentalHealthBanner from './components/FundamentalHealthBanner';
 import { cleanSource } from './freshness';
 import './DecisionTerminalUI.css';
@@ -218,6 +219,12 @@ export default function DecisionTerminalUI() {
   const z = verdictSlice?.verdict;
   const r = roadmapSlice?.roadmap;
   const brain = verdictSlice?.brain;
+  const options = verdictSlice?.options ?? verdictSlice?.swarm?.options;
+  const fi = snapshot?.filing_intelligence;
+  const riskMatrix = snapshot?.risk_matrix;
+  const narrScenarios = snapshot?.narrative_scenarios;
+  const invSurface = verdictSlice?.investment_surface;
+  const hasOptions = !!options;
   const hasSnapshot = !!snapshot;
   const hasVerdict = !!verdictSlice;
   const hasRoadmap = !!roadmapSlice;
@@ -490,6 +497,148 @@ export default function DecisionTerminalUI() {
                 )}
               </div>
             </div>
+            {(hasVerdict && invSurface?.investment_score != null) && (
+              <div className="dt-investment-surface" style={{
+                marginTop: 14,
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: 'rgba(16,185,129,0.08)',
+                border: '1px solid rgba(16,185,129,0.25)',
+              }}>
+                <div className="dt-subblock-title">Long-horizon investment surface</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 20px', fontSize: '0.82rem', marginTop: 6 }}>
+                  <span>
+                    Score: <strong>{invSurface.investment_score?.toFixed?.(1) ?? invSurface.investment_score}</strong>
+                  </span>
+                  {invSurface.stance && (
+                    <span>Stance: <strong>{invSurface.stance}</strong></span>
+                  )}
+                  {invSurface.evidence_coverage_pct != null && (
+                    <span>Evidence: <strong>{invSurface.evidence_coverage_pct}%</strong></span>
+                  )}
+                  {invSurface.max_allowed_stance && (
+                    <span>Cap: <strong>{invSurface.max_allowed_stance}</strong></span>
+                  )}
+                </div>
+                {invSurface.stance_reason && (
+                  <p style={{ margin: '6px 0 0', fontSize: '0.75rem', opacity: 0.85 }}>{invSurface.stance_reason}</p>
+                )}
+              </div>
+            )}
+            {(hasSnapshot && fi?.available) && (
+              <div className="dt-filing-intel" style={{ marginTop: 14 }}>
+                <div className="dt-subblock-title">
+                  Filing intelligence
+                  {fi.stale && (
+                    <span style={{ marginLeft: 8, fontSize: '0.7rem', opacity: 0.7 }}>(stale cache)</span>
+                  )}
+                </div>
+                {fi.demand_visibility_summary && (
+                  <p style={{ fontSize: '0.78rem', margin: '6px 0', opacity: 0.9 }}>{fi.demand_visibility_summary}</p>
+                )}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', fontSize: '0.75rem', marginTop: 4 }}>
+                  {fi.order_backlog_usd != null && (
+                    <span>Backlog: <strong>${Number(fi.order_backlog_usd).toLocaleString()}</strong></span>
+                  )}
+                  {fi.book_to_bill_ratio != null && (
+                    <span>B/B: <strong>{Number(fi.book_to_bill_ratio).toFixed(2)}</strong></span>
+                  )}
+                  {fi.recurring_revenue_pct != null && (
+                    <span>Recurring: <strong>{fi.recurring_revenue_pct}%</strong></span>
+                  )}
+                  {fi.primary_moat_driver && (
+                    <span>Moat: <strong>{fi.primary_moat_driver}</strong></span>
+                  )}
+                </div>
+                {fi.thematic_tags?.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                    {fi.thematic_tags.map((tag) => (
+                      <span
+                        key={tag}
+                        style={{
+                          padding: '2px 8px',
+                          borderRadius: 999,
+                          fontSize: '0.68rem',
+                          fontWeight: 600,
+                          background: 'rgba(99,102,241,0.2)',
+                          color: '#c7d2fe',
+                        }}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {(hasSnapshot && riskMatrix) && (
+              <div className="dt-risk-matrix" style={{ marginTop: 14 }}>
+                <div className="dt-subblock-title">Risk matrix</div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                  gap: 8,
+                  marginTop: 8,
+                  fontSize: '0.72rem',
+                }}>
+                  {Object.entries(riskMatrix).map(([key, level]) => (
+                    <div
+                      key={key}
+                      style={{
+                        padding: '6px 8px',
+                        borderRadius: 6,
+                        background: 'rgba(148,163,184,0.1)',
+                        textTransform: 'capitalize',
+                      }}
+                    >
+                      <div style={{ opacity: 0.7 }}>{key.replace(/_/g, ' ')}</div>
+                      <strong>{level}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(hasSnapshot && narrScenarios?.bull) && (
+              <div className="dt-narr-scenarios" style={{ marginTop: 14 }}>
+                <div className="dt-subblock-title">Narrative scenarios</div>
+                <div style={{ display: 'grid', gap: 8, marginTop: 8, fontSize: '0.75rem' }}>
+                  {['bull', 'base', 'bear'].map((side) => {
+                    const sc = narrScenarios[side];
+                    if (!sc) return null;
+                    return (
+                      <div
+                        key={side}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: 6,
+                          borderLeft: `3px solid ${
+                            side === 'bull' ? '#34d399' : side === 'bear' ? '#f87171' : '#94a3b8'
+                          }`,
+                          background: 'rgba(148,163,184,0.08)',
+                        }}
+                      >
+                        <strong style={{ textTransform: 'capitalize' }}>{side}</strong>
+                        {sc.thesis && <p style={{ margin: '4px 0 0' }}>{sc.thesis}</p>}
+                        {sc.key_assumption && (
+                          <p style={{ margin: '4px 0 0', opacity: 0.75 }}>Assumption: {sc.key_assumption}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* —— Options flow —— */}
+          <section className="dt-panel">
+            <h2 className="dt-panel-title">Options flow</h2>
+            <OptionsFlowPanel
+              options={options}
+              hasData={hasOptions}
+              loading={loadingVerdict}
+              ticker={ticker}
+            />
           </section>
 
           {/* —— Roadmap —— */}

@@ -59,16 +59,67 @@ def swarm_verdict(brain_result: Dict) -> str:
     return verdict_5(brain_result).upper()
 
 
+def _options_flow_score(aggregates: Dict[str, Any]) -> float:
+    """Map options aggregates to a 0-100 signal score (higher = more bullish)."""
+    score = 50.0
+    pcr = aggregates.get("put_call_volume_ratio")
+    if pcr is not None:
+        if pcr >= 1.3:
+            score -= min(25.0, (pcr - 1.0) * 30.0)
+        elif pcr <= 0.7:
+            score += min(25.0, (1.0 - pcr) * 30.0)
+    bias = aggregates.get("net_premium_bias")
+    if bias == "bullish":
+        score += 10.0
+    elif bias == "bearish":
+        score -= 10.0
+    unusual = aggregates.get("unusual_activity_score")
+    if unusual is not None and pcr is not None and pcr >= 1.1:
+        score -= min(10.0, float(unusual) * 0.1)
+    return round(max(0.0, min(100.0, score)), 2)
+
+
+def inject_options_signal(brain_result: Dict, aggregates: Optional[Dict[str, Any]]) -> Dict:
+    """Merge options_flow bar into live/base signal_scores when aggregates present."""
+    if not brain_result or not aggregates or aggregates.get("available") is False:
+        return brain_result
+    score = _options_flow_score(aggregates)
+    out = dict(brain_result)
+    for key in ("live", "base"):
+        block = out.get(key)
+        if isinstance(block, dict):
+            ss = dict(block.get("signal_scores") or {})
+            ss["options_flow"] = score
+            block = dict(block)
+            block["signal_scores"] = ss
+            out[key] = block
+    return out
+
+
 def one_line_reason(brain_result: Dict) -> str:
     drivers = _block(brain_result).get("drivers") or {}
     support = drivers.get("supporting") or []
     detract = drivers.get("detracting") or []
     verdict = verdict_5(brain_result)
+    ss = _block(brain_result).get("signal_scores") or {}
+    opts = ss.get("options_flow")
+    opts_note = None
+    if opts is not None and abs(float(opts) - 50.0) >= 15.0:
+        if opts >= 65:
+            opts_note = "bullish options flow"
+        elif opts <= 35:
+            opts_note = "bearish put/call skew"
     if support and verdict in ("Strong Buy", "Buy"):
-        return f"{verdict}: " + ", ".join(support[:2])
+        bits = support[:2]
+        if opts_note:
+            bits = [opts_note] + bits
+        return f"{verdict}: " + ", ".join(bits[:2])
     if detract and verdict in ("Strong Sell", "Sell"):
-        return f"{verdict}: " + ", ".join(detract[:2])
-    bits = (support[:1] + detract[:1])
+        bits = detract[:2]
+        if opts_note:
+            bits = [opts_note] + bits
+        return f"{verdict}: " + ", ".join(bits[:2])
+    bits = ([opts_note] if opts_note else []) + support[:1] + detract[:1]
     return f"{verdict}: " + (", ".join(bits) if bits else "balanced signals")
 
 

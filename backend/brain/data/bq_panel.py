@@ -176,6 +176,20 @@ def _benchmark_for(symbol_dates: Sequence[str], series: Dict[str, Dict[str, list
     return [index_by_date.get(d, 100.0) for d in symbol_dates]
 
 
+def load_filing_intelligence_bulk(tickers: Optional[Sequence[str]] = None) -> Dict[str, Dict]:
+    """Read cached filing intelligence → brain passthrough feature keys."""
+    if not tickers:
+        return {}
+    try:
+        from ...connectors.filing_intelligence import get_filing_intelligence_bulk, to_brain_fundamentals
+
+        records = get_filing_intelligence_bulk(list(tickers))
+        return {sym: to_brain_fundamentals(rec) for sym, rec in records.items()}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[bq_panel] filing intelligence bulk load failed: %s", exc)
+        return {}
+
+
 def build_inference_rows(lookback_days: int = 420,
                          symbols: Optional[Sequence[str]] = None,
                          min_history: int = 130,
@@ -194,6 +208,7 @@ def build_inference_rows(lookback_days: int = 420,
     if fundamentals_by_symbol is None and load_fundamentals:
         fundamentals_by_symbol = load_fundamentals_bulk(list(series.keys()))
     fundamentals_by_symbol = fundamentals_by_symbol or {}
+    filing_by_symbol = load_filing_intelligence_bulk(list(series.keys()))
 
     out: List[Dict] = []
     for sym, bucket in series.items():
@@ -202,7 +217,10 @@ def build_inference_rows(lookback_days: int = 420,
         if len(closes) < min_history:
             continue
         bench = _benchmark_for(dates, series, index_by_date)
-        fundamentals = fundamentals_by_symbol.get(sym, {})
+        fundamentals = {
+            **fundamentals_by_symbol.get(sym, {}),
+            **filing_by_symbol.get(sym, {}),
+        }
         feature_row = feat.build_feature_row(closes, bench, fundamentals)
         out.append({
             "ticker": sym,

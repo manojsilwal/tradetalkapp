@@ -44,12 +44,125 @@ from .schemas import (
     TerminalValuationModel,
     TerminalValuationPanel,
     TerminalVerdictPanel,
+    FilingIntelligencePanel,
+    InvestmentSurfacePanel,
+    NarrativeScenarioCase,
+    NarrativeScenariosPanel,
+    RiskMatrixPanel,
     VerificationStatus,
 )
 
 logger = logging.getLogger(__name__)
 
 STREET_DIVERGENCE_FLAG_PCT = 40.0
+
+
+def _load_filing_record(ticker: str) -> Optional[Dict[str, Any]]:
+    try:
+        from .connectors.filing_intelligence import get_filing_intelligence, is_stale
+
+        rec = get_filing_intelligence(ticker)
+        if rec:
+            rec = dict(rec)
+            rec["stale"] = is_stale(rec)
+        return rec
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _build_filing_intelligence_panel(record: Optional[Dict[str, Any]]) -> FilingIntelligencePanel:
+    if not record:
+        return FilingIntelligencePanel(available=False)
+    conc = record.get("top_customer_concentration_pct") or record.get("customer_concentration_score")
+    conc_note = None
+    if conc is not None:
+        if isinstance(conc, float) and conc <= 1.0:
+            conc_note = f"Concentration score {conc:.2f} (higher = more concentrated)"
+        else:
+            conc_note = f"Top customers ~{conc}% of revenue"
+    try:
+        from .connectors.filing_intelligence import is_stale
+
+        stale = is_stale(record)
+    except Exception:  # noqa: BLE001
+        stale = bool(record.get("stale"))
+    return FilingIntelligencePanel(
+        available=True,
+        demand_visibility_summary=record.get("demand_visibility_summary"),
+        order_backlog_usd=record.get("order_backlog_usd"),
+        backlog_growth_yoy_pct=record.get("backlog_growth_yoy_pct"),
+        book_to_bill_ratio=record.get("book_to_bill_ratio"),
+        recurring_revenue_pct=record.get("recurring_revenue_pct"),
+        primary_moat_driver=record.get("primary_moat_driver"),
+        customer_concentration_note=conc_note,
+        thematic_tags=list(record.get("thematic_tags") or []),
+        source=record.get("source"),
+        stale=stale,
+    )
+
+
+def _build_investment_surface_panel(
+    ticker: str,
+    brain: Optional[BrainVerdict],
+) -> Optional[InvestmentSurfacePanel]:
+    try:
+        from .brain.serving import investment_surface_enabled, serve_investment_analysis
+
+        if investment_surface_enabled():
+            analysis = serve_investment_analysis(ticker, emit=False)
+            final = analysis.get("final") or {}
+            rc = analysis.get("risk_committee") or {}
+            return InvestmentSurfacePanel(
+                investment_score=final.get("investment_score"),
+                stance=final.get("stance"),
+                evidence_coverage_pct=analysis.get("evidence_coverage_pct"),
+                max_allowed_stance=rc.get("max_allowed_stance"),
+                stance_reason=rc.get("stance_reason"),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[decision_terminal] investment surface skipped: %s", exc)
+
+    if not brain or not brain.signal_scores:
+        return None
+    from .brain import SIGNAL_GROUPS, rule_baseline
+    from .brain.investment_stance import _band_stance
+
+    scores = brain.signal_scores
+    inv = rule_baseline.composite_from_group_scores(
+        scores, rule_baseline.LONG_HORIZON_COMPOSITE_WEIGHTS
+    )
+    populated = sum(1 for g in SIGNAL_GROUPS if scores.get(g) is not None)
+    coverage = round(100.0 * populated / max(len(SIGNAL_GROUPS), 1), 1)
+    return InvestmentSurfacePanel(
+        investment_score=inv,
+        stance=_band_stance(inv),
+        evidence_coverage_pct=coverage,
+    )
+
+
+def _build_risk_and_scenario_panels(
+    record: Optional[Dict[str, Any]],
+    ext: dict,
+) -> Tuple[Optional[RiskMatrixPanel], Optional[NarrativeScenariosPanel]]:
+    if not record:
+        return None, None
+    try:
+        from .connectors.filing_intelligence import build_narrative_scenarios, build_risk_matrix
+
+        pe = ext.get("trailingPE") or ext.get("pe_ratio")
+        de = ext.get("debtToEquity")
+        rm = build_risk_matrix(record, pe_ratio=float(pe) if pe else None, debt_to_equity=float(de) if de else None)
+        ns = build_narrative_scenarios(record)
+        risk_panel = RiskMatrixPanel(**rm)
+        narr = NarrativeScenariosPanel(
+            bull=NarrativeScenarioCase(**ns["bull"]),
+            base=NarrativeScenarioCase(**ns["base"]),
+            bear=NarrativeScenarioCase(**ns["bear"]),
+        )
+        return risk_panel, narr
+    except Exception:  # noqa: BLE001
+        return None, None
+
 
 # JSON (and Pydantic JSON mode) cannot encode float NaN/Inf — yfinance/heuristics sometimes yield them.
 def _strip_non_json_floats(obj: Any) -> Any:
@@ -1014,7 +1127,10 @@ def _build_quality_panel(
         de_prov.missing_reason = "Debt and/or EBITDA not available from provider."
 
     gm_ratio = gm.ratio if gm else 0.0
+    filing_record = _load_filing_record(ticker)
     moat_lab, moat_st = _moat_heuristic(roe_pct, gm_ratio)
+    if filing_record and filing_record.get("primary_moat_driver"):
+        moat_lab = f"{moat_lab} — {str(filing_record['primary_moat_driver'])[:80]}"
     roic_proxy_val = roic_proxy(roe_pct)
 
     if not isinstance(ext, dict):
@@ -1155,6 +1271,24 @@ def _build_quality_panel(
                     formula_or_note="Total Cash / Absolute Negative FCF (annualized)",
                 ),
             ),
+            TerminalQualityRow(
+                id="demand_visibility",
+                label="Demand visibility",
+                value_label=(
+                    f"Backlog ${_format_usd_compact(float(filing_record['order_backlog_usd']))}"
+                    if filing_record and filing_record.get("order_backlog_usd")
+                    else (
+                        f"Book-to-bill {filing_record['book_to_bill_ratio']:.2f}"
+                        if filing_record and filing_record.get("book_to_bill_ratio") is not None
+                        else "Pending"
+                    )
+                ),
+                status_label="From filing" if filing_record else "N/A",
+                provenance=TerminalFieldProvenance(
+                    source="filing_intelligence" if filing_record else "pending",
+                    missing_reason=None if filing_record else "Awaiting SEC filing extraction.",
+                ),
+            ),
         ]
     )
 
@@ -1192,6 +1326,10 @@ def _build_quality_panel(
         debt_to_ebitda=debt_ratio_val,
         gross_margin_pct=gross_m if gross_m else None,
         current_ratio=cr_float,
+        filing_record=filing_record,
+        revenue_growth_pct=rev_g_pct,
+        debt_to_equity=float(ext.get("debtToEquity")) if ext.get("debtToEquity") is not None else None,
+        moat_driver=(filing_record or {}).get("primary_moat_driver"),
     )
 
 
@@ -1223,8 +1361,20 @@ async def _build_verdict_panel_and_brain(
     try:
         from .brain.cutover import aserve_for_surface
         from .brain import adapters as _ba
+        from .connectors.options_flow import options_to_brain_overlay
 
-        _br = await aserve_for_surface(ticker.upper(), "decision_terminal")
+        options_overlay = None
+        options_raw = None
+        if swarm.options is not None:
+            options_raw = swarm.options.model_dump()
+            options_overlay = options_to_brain_overlay(options_raw)
+
+        _br = await aserve_for_surface(
+            ticker.upper(), "decision_terminal",
+            options_overlay=options_overlay,
+        )
+        if _br and options_raw:
+            _br = _ba.inject_options_signal(_br, {**options_raw, "available": True})
         if _br:
             _head = _ba.to_decision_terminal_headline(_br)
             headline = _head["headline_verdict"]
@@ -1456,6 +1606,9 @@ def build_snapshot_slice(
         hist_quality=hist_quality,
         market_regime=market_regime,
     )
+    filing_record = _load_filing_record(t)
+    fi_panel = _build_filing_intelligence_panel(filing_record)
+    risk_panel, narr_panel = _build_risk_and_scenario_panels(filing_record, ext or {})
     return DecisionSnapshotPayload(
         ticker=t,
         disclaimer=DISCLAIMER,
@@ -1472,6 +1625,9 @@ def build_snapshot_slice(
         ),
         spot=resolved.spot_envelope,
         scorecard_summary=scorecard_summary,
+        filing_intelligence=fi_panel,
+        risk_matrix=risk_panel,
+        narrative_scenarios=narr_panel,
     )
 
 
@@ -1489,6 +1645,7 @@ async def build_verdict_slice(
     t = ticker.upper()
     now = generated_at_utc or datetime.now(timezone.utc).isoformat()
     verdict, brain = await _build_verdict_panel_and_brain(t, swarm, debate, poly_raw, debate_data)
+    inv_panel = _build_investment_surface_panel(t, brain)
     return DecisionVerdictPayload(
         ticker=t,
         generated_at_utc=now,
@@ -1499,6 +1656,8 @@ async def build_verdict_slice(
         swarm=swarm,
         debate=debate,
         brain=brain,
+        options=swarm.options,
+        investment_surface=inv_panel,
     )
 
 
@@ -1578,6 +1737,14 @@ def assemble_terminal_from_slices(
             roadmap=roadmap.roadmap,
         )
 
+    filing_record = _load_filing_record(t)
+    fi_panel = _build_filing_intelligence_panel(filing_record)
+    risk_panel, narr_panel = _build_risk_and_scenario_panels(
+        filing_record,
+        debate_data or {},
+    )
+    inv_panel = _build_investment_surface_panel(t, verdict.brain)
+
     return _decision_terminal_payload_json_safe(
         DecisionTerminalPayload(
             ticker=t,
@@ -1600,6 +1767,11 @@ def assemble_terminal_from_slices(
             scorecard_summary=snapshot.scorecard_summary,
             reconciliation=reconciliation,
             brain=verdict.brain,
+            options=verdict.options or verdict.swarm.options,
+            filing_intelligence=fi_panel,
+            risk_matrix=risk_panel,
+            narrative_scenarios=narr_panel,
+            investment_surface=inv_panel,
         )
     )
 

@@ -18,6 +18,7 @@ export GCS_BUCKET="${GCS_BUCKET:-tradetalk-data-lake}"
 export STORAGE_BACKEND="${STORAGE_BACKEND:-gcp}"
 export BRAIN_GCS_BUCKET="${BRAIN_GCS_BUCKET:-tradetalk-data-lake}"
 export BRAIN_GCS_PREFIX="${BRAIN_GCS_PREFIX:-brain}"
+export BRAIN_MODEL_VERSION="${BRAIN_MODEL_VERSION:-v2}"
 
 PYTHON="${PYTHON:-}"
 if [[ -z "$PYTHON" ]]; then

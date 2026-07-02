@@ -184,9 +184,11 @@ import re
 # Pattern matching for common API key signatures:
 # - sk-or-v1-... (OpenRouter) or sk-... (OpenAI / OpenRouter)
 # - AIzaSy... (Google/Gemini)
+# - hf_... (HuggingFace token)
 API_KEY_PATTERNS = [
     re.compile(r'\bsk-(?:or-v1-)?[a-zA-Z0-9_-]{20,}\b'),
     re.compile(r'\bAIzaSy[a-zA-Z0-9_-]{33}\b'),
+    re.compile(r'\bhf_[a-zA-Z0-9]{34}\b'),
 ]
 
 
@@ -211,6 +213,7 @@ def redact_secrets_in_text(text: str, secret_values: Optional[Iterable[str]] = N
             os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
             os.environ.get("GOOGLE_API_KEY", ""),
             os.environ.get("GEMINI_API_KEY", ""),
+            os.environ.get("HF_TOKEN", ""),
         ]
     )
     for value in values:

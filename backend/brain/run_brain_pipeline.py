@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 
 STATUS_KEY = "status.json"
 DEFAULT_MODEL_NAME = os.environ.get("BRAIN_MODEL_NAME", "finrank-net")
-DEFAULT_MODEL_VERSION = os.environ.get("BRAIN_MODEL_VERSION", "v1")
+DEFAULT_MODEL_VERSION = os.environ.get("BRAIN_MODEL_VERSION", "v2")
+# v2 adds options_flow features (put_call_* ratios, iv_skew, unusual_activity_score).
+# Run the brain pipeline with BRAIN_MODEL_VERSION=v2 after deploying options_flow contract changes.
 
 
 def _now_iso() -> str:

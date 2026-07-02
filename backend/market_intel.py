@@ -1200,36 +1200,7 @@ def _fetch_earnings_pulse(tickers: List[str]) -> Dict[str, Any]:
 
 
 def _fetch_options_flow(ticker: str = "SPY") -> Dict[str, Any]:
-    try:
-        import yfinance as yf
-        t = yf.Ticker(ticker)
-        expiries = t.options
-        if not expiries:
-            return {"error": "no options data"}
-        chain = t.option_chain(expiries[0])
-        calls_vol = float(chain.calls["volume"].sum())
-        puts_vol = float(chain.puts["volume"].sum())
-        if calls_vol <= 0:
-            return {"error": "zero call volume"}
-        pcr = round(puts_vol / calls_vol, 3)
-        if pcr >= 1.5:
-            signal, desc = "EXTREME_FEAR", f"{pcr:.2f} puts/call — extreme bearish hedging."
-        elif pcr >= 1.2:
-            signal, desc = "BEARISH_FLOW", f"{pcr:.2f} puts/call — elevated fear."
-        elif pcr >= 0.9:
-            signal, desc = "NEUTRAL", f"{pcr:.2f} puts/call — balanced sentiment."
-        elif pcr >= 0.7:
-            signal, desc = "BULLISH_FLOW", f"{pcr:.2f} puts/call — options traders leaning bullish."
-        else:
-            signal, desc = "EXTREME_GREED", f"{pcr:.2f} puts/call — very low fear / high risk appetite."
-        return {
-            "spy_put_call_ratio": pcr,
-            "calls_volume": int(calls_vol),
-            "puts_volume": int(puts_vol),
-            "signal": signal,
-            "description": desc,
-            "expiry_used": expiries[0],
-        }
-    except Exception as e:
-        logger.debug("[MarketIntel] options flow failed: %s", e)
-        return {"error": str(e)}
+    """SPY/ETF put-call ratio for daily brief and narrative radar (multi-provider)."""
+    from .connectors.options_flow import fetch_options_flow_sync
+
+    return fetch_options_flow_sync(ticker)

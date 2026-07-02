@@ -104,6 +104,29 @@ def init_portfolio_db():
             new_revenue_engine_score REAL,
             updated_at     REAL
         );
+        CREATE TABLE IF NOT EXISTS filing_intelligence (
+            ticker TEXT PRIMARY KEY,
+            as_of_date TEXT NOT NULL,
+            filing_form TEXT,
+            filing_risk_score REAL,
+            management_tone_score REAL,
+            new_product_expansion_score REAL,
+            customer_concentration_score REAL,
+            demand_visibility_score REAL,
+            order_backlog_usd REAL,
+            backlog_growth_yoy_pct REAL,
+            book_to_bill_ratio REAL,
+            recurring_revenue_pct REAL,
+            top_customer_concentration_pct REAL,
+            end_market_exposure_json TEXT,
+            primary_moat_driver TEXT,
+            thematic_tags_json TEXT,
+            demand_visibility_summary TEXT,
+            citations_json TEXT,
+            raw_extract_json TEXT,
+            extracted_at_utc TEXT NOT NULL,
+            source TEXT DEFAULT 'fincrawler'
+        );
     """)
     _ensure_position_metadata_columns(conn)
     _ensure_stocks_metadata_columns(conn)
@@ -760,6 +783,95 @@ def get_stock_sec_info(ticker: str) -> Optional[Dict[str, Any]]:
             pass
     conn = _get_conn()
     row = conn.execute("SELECT * FROM stocks WHERE ticker = ?", (ticker.upper(),)).fetchone()
+    if row:
+        return dict(row)
+    return None
+
+
+def upsert_filing_intelligence_record(record: Dict[str, Any]) -> None:
+    import json as _json
+
+    ticker = (record.get("ticker") or "").upper().strip()
+    if not ticker:
+        return
+    if _use_postgres():
+        try:
+            from . import paper_portfolio_pg as pg
+            pg.upsert_filing_intelligence_record(record)
+            return
+        except Exception:
+            pass
+    conn = _get_conn()
+    conn.execute(
+        """
+        INSERT INTO filing_intelligence (
+            ticker, as_of_date, filing_form, filing_risk_score, management_tone_score,
+            new_product_expansion_score, customer_concentration_score, demand_visibility_score,
+            order_backlog_usd, backlog_growth_yoy_pct, book_to_bill_ratio, recurring_revenue_pct,
+            top_customer_concentration_pct, end_market_exposure_json, primary_moat_driver,
+            thematic_tags_json, demand_visibility_summary, citations_json, raw_extract_json,
+            extracted_at_utc, source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ticker) DO UPDATE SET
+            as_of_date=excluded.as_of_date,
+            filing_form=excluded.filing_form,
+            filing_risk_score=excluded.filing_risk_score,
+            management_tone_score=excluded.management_tone_score,
+            new_product_expansion_score=excluded.new_product_expansion_score,
+            customer_concentration_score=excluded.customer_concentration_score,
+            demand_visibility_score=excluded.demand_visibility_score,
+            order_backlog_usd=excluded.order_backlog_usd,
+            backlog_growth_yoy_pct=excluded.backlog_growth_yoy_pct,
+            book_to_bill_ratio=excluded.book_to_bill_ratio,
+            recurring_revenue_pct=excluded.recurring_revenue_pct,
+            top_customer_concentration_pct=excluded.top_customer_concentration_pct,
+            end_market_exposure_json=excluded.end_market_exposure_json,
+            primary_moat_driver=excluded.primary_moat_driver,
+            thematic_tags_json=excluded.thematic_tags_json,
+            demand_visibility_summary=excluded.demand_visibility_summary,
+            citations_json=excluded.citations_json,
+            raw_extract_json=excluded.raw_extract_json,
+            extracted_at_utc=excluded.extracted_at_utc,
+            source=excluded.source
+        """,
+        (
+            ticker,
+            record.get("as_of_date"),
+            record.get("filing_form"),
+            record.get("filing_risk_score"),
+            record.get("management_tone_score"),
+            record.get("new_product_expansion_score"),
+            record.get("customer_concentration_score"),
+            record.get("demand_visibility_score"),
+            record.get("order_backlog_usd"),
+            record.get("backlog_growth_yoy_pct"),
+            record.get("book_to_bill_ratio"),
+            record.get("recurring_revenue_pct"),
+            record.get("top_customer_concentration_pct"),
+            _json.dumps(record.get("end_market_exposure") or {}),
+            record.get("primary_moat_driver"),
+            _json.dumps(record.get("thematic_tags") or []),
+            record.get("demand_visibility_summary"),
+            _json.dumps(record.get("citations") or []),
+            _json.dumps(record.get("raw_extract_json") or record, default=str),
+            record.get("extracted_at_utc"),
+            record.get("source") or "fincrawler",
+        ),
+    )
+    conn.commit()
+
+
+def get_filing_intelligence_record(ticker: str) -> Optional[Dict[str, Any]]:
+    if _use_postgres():
+        try:
+            from . import paper_portfolio_pg as pg
+            return pg.get_filing_intelligence_record(ticker)
+        except Exception:
+            pass
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM filing_intelligence WHERE ticker = ?", (ticker.upper(),)
+    ).fetchone()
     if row:
         return dict(row)
     return None

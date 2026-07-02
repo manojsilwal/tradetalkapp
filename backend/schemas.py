@@ -116,6 +116,26 @@ class BrainVerdict(BaseModel):
     )
 
 
+class OptionsFlow(BaseModel):
+    """EOD-style options flow aggregates from free multi-provider chain data."""
+
+    total_call_volume: Optional[int] = None
+    total_put_volume: Optional[int] = None
+    total_call_oi: Optional[int] = None
+    total_put_oi: Optional[int] = None
+    put_call_volume_ratio: Optional[float] = None
+    put_call_oi_ratio: Optional[float] = None
+    iv_atm_call: Optional[float] = None
+    iv_atm_put: Optional[float] = None
+    iv_skew: Optional[float] = None
+    unusual_contracts: List[Dict[str, Any]] = Field(default_factory=list)
+    unusual_activity_score: Optional[float] = None
+    net_premium_bias: Optional[str] = None
+    source: Optional[str] = None
+    as_of: Optional[str] = None
+    partial: bool = False
+
+
 class SwarmConsensus(BaseModel):
     """
     The aggregated result from the Swarm Backend containing individual Factor traces
@@ -131,6 +151,10 @@ class SwarmConsensus(BaseModel):
     brain: Optional["BrainVerdict"] = Field(
         default=None,
         description="Brain live-blend block; None when brain serving is disabled.",
+    )
+    options: Optional["OptionsFlow"] = Field(
+        default=None,
+        description="Free multi-provider options flow aggregates; None when unavailable.",
     )
 
 class SectorData(BaseModel):
@@ -766,6 +790,49 @@ class HorizonQuantileBand(BaseModel):
     point_usd: Optional[float] = None
 
 
+class NarrativeScenarioCase(BaseModel):
+    thesis: str = ""
+    key_assumption: str = ""
+    price_implied_usd: Optional[float] = None
+
+
+class NarrativeScenariosPanel(BaseModel):
+    bull: Optional[NarrativeScenarioCase] = None
+    base: Optional[NarrativeScenarioCase] = None
+    bear: Optional[NarrativeScenarioCase] = None
+
+
+class RiskMatrixPanel(BaseModel):
+    valuation: str = "Moderate"
+    execution: str = "Moderate"
+    cyclical: str = "Moderate"
+    competitive: str = "Moderate"
+    balance_sheet: str = "Moderate"
+    regulatory: str = "Moderate"
+
+
+class FilingIntelligencePanel(BaseModel):
+    available: bool = False
+    demand_visibility_summary: Optional[str] = None
+    order_backlog_usd: Optional[float] = None
+    backlog_growth_yoy_pct: Optional[float] = None
+    book_to_bill_ratio: Optional[float] = None
+    recurring_revenue_pct: Optional[float] = None
+    primary_moat_driver: Optional[str] = None
+    customer_concentration_note: Optional[str] = None
+    thematic_tags: List[str] = Field(default_factory=list)
+    source: Optional[str] = None
+    stale: bool = False
+
+
+class InvestmentSurfacePanel(BaseModel):
+    investment_score: Optional[float] = None
+    stance: Optional[str] = None
+    evidence_coverage_pct: Optional[float] = None
+    max_allowed_stance: Optional[str] = None
+    stance_reason: Optional[str] = None
+
+
 class TerminalRoadmapPanel(BaseModel):
     bull_price_usd: Optional[float] = None
     base_price_usd: Optional[float] = None
@@ -855,6 +922,14 @@ class DecisionTerminalPayload(BaseModel):
             "is disabled (BRAIN_SERVE_ENABLE=0) or no snapshot exists for this ticker."
         ),
     )
+    options: Optional["OptionsFlow"] = Field(
+        default=None,
+        description="Options flow aggregates; None when all providers failed or disabled.",
+    )
+    filing_intelligence: Optional[FilingIntelligencePanel] = None
+    risk_matrix: Optional[RiskMatrixPanel] = None
+    narrative_scenarios: Optional[NarrativeScenariosPanel] = None
+    investment_surface: Optional[InvestmentSurfacePanel] = None
 
 
 class DecisionSnapshotPayload(BaseModel):
@@ -872,6 +947,9 @@ class DecisionSnapshotPayload(BaseModel):
     data_freshness: Optional["DataFreshness"] = None
     spot: Optional[SpotEnvelope] = None
     scorecard_summary: Optional[TerminalScorecardSummary] = None
+    filing_intelligence: Optional[FilingIntelligencePanel] = None
+    risk_matrix: Optional[RiskMatrixPanel] = None
+    narrative_scenarios: Optional[NarrativeScenariosPanel] = None
 
 
 class DecisionSwarmPayload(BaseModel):
@@ -901,6 +979,8 @@ class DecisionVerdictPayload(BaseModel):
     swarm: SwarmConsensus
     debate: DebateResult
     brain: Optional["BrainVerdict"] = None
+    options: Optional["OptionsFlow"] = None
+    investment_surface: Optional[InvestmentSurfacePanel] = None
 
 
 class DecisionRoadmapPayload(BaseModel):

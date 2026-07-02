@@ -59,15 +59,75 @@ def assess_roic_proxy(roic_pct: Optional[float]) -> _Assessment:
     return _Assessment("negative", "Weak", "Negative ROIC proxy — capital may be misallocated.")
 
 
-def assess_moat_status(moat_status: str) -> _Assessment:
+def assess_moat_status(moat_status: str, *, moat_driver: Optional[str] = None) -> _Assessment:
     st = (moat_status or "").lower()
+    detail = moat_driver or ""
     if "strong" in st:
-        return _Assessment("positive", "Strong", "Wide moat heuristic from ROE and gross margin.")
+        base = _Assessment("positive", "Strong", detail or "Wide moat heuristic from ROE and gross margin.")
+        if moat_driver:
+            base = _Assessment("positive", "Strong", f"{moat_driver}")
+        return base
     if "moderate" in st:
-        return _Assessment("neutral", "Adequate", "Narrow moat — some pricing power signals.")
+        return _Assessment(
+            "neutral", "Adequate",
+            moat_driver or "Narrow moat — some pricing power signals.",
+        )
     if st in ("weak", "limited"):
-        return _Assessment("caution", "Watch", "Limited moat — margins and ROE do not support a wide advantage.")
+        return _Assessment(
+            "caution", "Watch",
+            moat_driver or "Limited moat — margins and ROE do not support a wide advantage.",
+        )
     return _Assessment("neutral", "N/A", "Moat assessment unavailable.")
+
+
+def assess_demand_visibility(
+    record: Optional[Dict[str, Any]],
+) -> _Assessment:
+    if not record:
+        return _Assessment("neutral", "Pending", "Filing intelligence not yet available.")
+    summary = record.get("demand_visibility_summary") or ""
+    btb = record.get("book_to_bill_ratio")
+    backlog = record.get("order_backlog_usd")
+    if backlog and float(backlog) > 0:
+        bl = f"${float(backlog) / 1e9:.1f}B backlog" if float(backlog) >= 1e9 else f"${float(backlog) / 1e6:.0f}M backlog"
+        detail = summary or bl
+        if btb is not None:
+            detail += f"; book-to-bill {btb:.2f}"
+        return _Assessment("positive", "Strong visibility", detail)
+    if btb is not None and float(btb) >= 1.0:
+        return _Assessment("positive", "Healthy", f"Book-to-bill {float(btb):.2f} — forward demand signal.")
+    if summary:
+        return _Assessment("neutral", "Moderate", summary)
+    return _Assessment("neutral", "N/A", "No backlog or book-to-bill disclosed in filings.")
+
+
+def assess_revenue_quality(
+    revenue_growth_pct: Optional[float],
+    *,
+    gross_margin_pct: Optional[float],
+    debt_to_equity: Optional[float],
+    bearish: bool,
+) -> _Assessment:
+    if revenue_growth_pct is None:
+        return _Assessment("neutral", "N/A", "Revenue growth unavailable.")
+    base = assess_growth_rate(revenue_growth_pct / 100.0 if abs(revenue_growth_pct) > 1.5 else revenue_growth_pct,
+                              bearish=bearish, label="Revenue growth")
+    if revenue_growth_pct >= 30 and gross_margin_pct is not None and gross_margin_pct < 18:
+        return _Assessment(
+            "caution", "Speculative",
+            f"+{revenue_growth_pct:.1f}% growth with thin margins — volume without quality.",
+        )
+    if debt_to_equity is not None and debt_to_equity > 150 and revenue_growth_pct >= 20:
+        return _Assessment(
+            "caution", "Leveraged growth",
+            f"+{revenue_growth_pct:.1f}% growth with elevated leverage (D/E {debt_to_equity:.0f}%).",
+        )
+    if gross_margin_pct is not None and gross_margin_pct >= 25 and 5 <= revenue_growth_pct <= 20:
+        return _Assessment(
+            "positive", "Quality growth",
+            f"+{revenue_growth_pct:.1f}% with healthy {gross_margin_pct:.1f}% gross margin.",
+        )
+    return base
 
 
 def assess_fcf_level(
@@ -294,15 +354,26 @@ def enrich_quality_panel(
     debt_to_ebitda: Optional[float],
     gross_margin_pct: Optional[float],
     current_ratio: Optional[float],
+    filing_record: Optional[Dict[str, Any]] = None,
+    revenue_growth_pct: Optional[float] = None,
+    debt_to_equity: Optional[float] = None,
+    moat_driver: Optional[str] = None,
 ) -> TerminalQualityPanel:
     bearish = _is_bearish_regime(market_regime)
     row_assessments: Dict[str, _Assessment] = {
         "roic": assess_roic_proxy(roic_pct),
-        "moat": assess_moat_status(moat_status),
+        "moat": assess_moat_status(moat_status, moat_driver=moat_driver or (filing_record or {}).get("primary_moat_driver")),
         "fcf": assess_fcf_level(fcf_usd, market_cap, bearish=bearish),
         "debt": assess_leverage(debt_to_ebitda, bearish=bearish),
         "margin": assess_gross_margin(gross_margin_pct),
         "current_ratio": assess_current_ratio(current_ratio),
+        "revenue_growth": assess_revenue_quality(
+            revenue_growth_pct,
+            gross_margin_pct=gross_margin_pct,
+            debt_to_equity=debt_to_equity,
+            bearish=bearish,
+        ),
+        "demand_visibility": assess_demand_visibility(filing_record),
     }
 
     enriched_rows: List[TerminalQualityRow] = []

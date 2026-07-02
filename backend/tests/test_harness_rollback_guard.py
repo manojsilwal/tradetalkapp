@@ -24,6 +24,7 @@ class TestRollbackGuard(unittest.TestCase):
         st = mgr.get_current_state()
         st = st.model_copy(update={"version": 1})
         mgr.persist_state(st)
+        mgr.changelog.flush()
 
         cycle = RefinementCycle(
             session_id="s",

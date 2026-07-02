@@ -60,12 +60,18 @@ class HarnessChangelog:
         while True:
             item = self._queue.get()
             if item is None:
+                self._queue.task_done()
                 break
             try:
                 fn, args = item
                 fn(*args)
             except Exception as e:
                 logger.warning("[HarnessChangelog] async write failed: %s", e)
+            finally:
+                self._queue.task_done()
+
+    def flush(self) -> None:
+        self._queue.join()
 
     def save_snapshot(self, snapshot: HarnessState) -> None:
         self._queue.put((self._save_snapshot_sync, (snapshot,)))

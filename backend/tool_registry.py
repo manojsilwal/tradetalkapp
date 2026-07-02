@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
 
@@ -83,19 +84,46 @@ class MacroFetchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class FetchOptionsFlowInput(BaseModel):
+    ticker: str
+
+
+class FetchFilingIntelligenceInput(BaseModel):
+    ticker: str
+    force_refresh: bool = False
+
+
 def _build_registry() -> ToolRegistry:
     from .connectors.debate_data import fetch_debate_data
     from .connectors.macro import MacroHealthConnector
+    from .connectors.options_flow import OptionsFlowConnector
     from .predictor.schemas import PredictorForecastToolInput
 
     reg = ToolRegistry()
     macro = MacroHealthConnector()
+    options_flow = OptionsFlowConnector()
 
     async def _fetch_debate_data(ticker: str):
         return await fetch_debate_data(ticker)
 
     async def _macro_fetch():
         return await macro.fetch_data()
+
+    async def _fetch_options_flow(ticker: str):
+        if os.environ.get("OPTIONS_FLOW_ENABLE", "1").strip().lower() not in (
+            "1", "true", "yes", "on",
+        ):
+            return {"available": False, "reason": "disabled", "ticker": ticker.upper()}
+        return await options_flow.fetch_data(ticker=ticker)
+
+    async def _fetch_filing_intelligence(ticker: str, force_refresh: bool = False):
+        if os.environ.get("FILING_INTELLIGENCE_AGENT_TOOL", "0").strip().lower() not in (
+            "1", "true", "yes", "on",
+        ):
+            return {"available": False, "reason": "disabled", "ticker": ticker.upper()}
+        from .connectors.filing_intelligence import fetch_for_agent
+
+        return await fetch_for_agent(ticker, force_refresh=force_refresh)
 
     async def _predictor_forecast_tool(
         ticker: str,
@@ -132,6 +160,26 @@ def _build_registry() -> ToolRegistry:
             side_effect=ToolSideEffect.READ,
             default_timeout_s=90.0,
             description="Global macro snapshot (VIX, credit stress, etc.).",
+        )
+    )
+    reg.register(
+        ToolSpec(
+            name="fetch_options_flow",
+            handler=_fetch_options_flow,
+            input_model=FetchOptionsFlowInput,
+            side_effect=ToolSideEffect.READ,
+            default_timeout_s=30.0,
+            description="Free multi-provider options chain + EOD put/call & OI aggregates.",
+        )
+    )
+    reg.register(
+        ToolSpec(
+            name="fetch_filing_intelligence",
+            handler=_fetch_filing_intelligence,
+            input_model=FetchFilingIntelligenceInput,
+            side_effect=ToolSideEffect.READ,
+            default_timeout_s=45.0,
+            description="Structured filing-derived demand visibility, moat, and concentration.",
         )
     )
     reg.register(

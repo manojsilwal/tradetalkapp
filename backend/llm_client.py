@@ -1839,6 +1839,26 @@ class LLMClient:
         )
         return await self.generate("new_revenue_engine_scorer", prompt)
 
+    async def extract_filing_intelligence(
+        self, ticker: str, filing_text: str, *, filing_form: str = "10-K"
+    ) -> dict:
+        """Extract structured filing intelligence for brain + Decision Terminal."""
+        text = (filing_text or "")[:12000]
+        prompt = (
+            f"Ticker: {ticker.upper()}\nFiling form: {filing_form}\n\n"
+            f"MD&A / business excerpt:\n{text}\n\n"
+            "Return JSON only with keys: ticker, filing_form, filing_risk_score (0-1), "
+            "management_tone_score (0-1), new_product_expansion_score (0-1), "
+            "customer_concentration_score (0-1 higher=more concentrated), "
+            "order_backlog_usd (number or null), backlog_growth_yoy_pct (number or null), "
+            "book_to_bill_ratio (number or null), recurring_revenue_pct (number or null), "
+            "top_customer_concentration_pct (number or null), end_market_exposure (object), "
+            "primary_moat_driver (string or null), thematic_tags (array of strings), "
+            "demand_visibility_summary (string), citations (array of short strings). "
+            "Use null when not disclosed — never fabricate backlog dollars."
+        )
+        return await self.generate("execution_risk_scorer", prompt)
+
     async def generate_scorecard_verdict(self, ticker: str, verdict_context: dict) -> dict:
         """Risk-Return-Ratio Step 8 — one-sentence verdict per ticker."""
         ctx = json.dumps(verdict_context, indent=2, default=str)

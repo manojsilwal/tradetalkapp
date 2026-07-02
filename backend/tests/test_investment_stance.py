@@ -81,7 +81,8 @@ class TestHorizonAndWeights(unittest.TestCase):
         w = rule_baseline.LONG_HORIZON_COMPOSITE_WEIGHTS
         self.assertLessEqual(w["momentum"], 0.05)
         self.assertLessEqual(w["sentiment"], 0.05)
-        self.assertGreaterEqual(w["valuation"], 0.30)
+        self.assertAlmostEqual(w["valuation"], 0.28, places=2)
+        self.assertGreater(w["valuation"], w["quality"])
 
     def test_momentum_swing_barely_moves_score(self):
         hi = rule_baseline.composite_from_group_scores(

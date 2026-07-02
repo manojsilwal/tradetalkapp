@@ -98,6 +98,22 @@ async def trigger_sec_filing_job(background_tasks: BackgroundTasks):
     return {"status": "accepted", "message": "SEC filing job triggered in background"}
 
 
+@router.post("/filing-intelligence-run", dependencies=[Depends(require_cron_secret)])
+async def trigger_filing_intelligence_job(background_tasks: BackgroundTasks):
+    """Trigger batch filing intelligence extraction (brain + agent cache)."""
+    from ..filing_intelligence_job import run_filing_intelligence_job
+    import logging
+
+    async def _bg_job():
+        try:
+            await run_filing_intelligence_job()
+        except Exception as e:
+            logging.error(f"[KnowledgeRouter] Background filing intelligence job failed: {e}")
+
+    background_tasks.add_task(_bg_job)
+    return {"status": "accepted", "message": "Filing intelligence job triggered in background"}
+
+
 @router.post("/narrative-radar-run", dependencies=[Depends(require_cron_secret)])
 async def trigger_narrative_radar(background: bool = Query(False)):
     """Run a Narrative Rotation Radar scan (theme-lifecycle snapshot + alerts + ledger

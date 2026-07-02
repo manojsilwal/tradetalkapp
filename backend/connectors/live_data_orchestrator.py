@@ -17,7 +17,7 @@ from .yfinance_capability import record_failure, record_success, should_attempt
 
 logger = logging.getLogger(__name__)
 
-WantCategory = str  # price | fundamentals | news | sec
+WantCategory = str  # price | fundamentals | news | sec | filing_intelligence
 
 
 def _deadline_s() -> float:
@@ -40,6 +40,7 @@ class LiveDataBundle:
     fundamentals: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     news: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
     sec: Dict[str, Any] = field(default_factory=dict)
+    filing_intelligence: Dict[str, Any] = field(default_factory=dict)
     sources: Dict[str, str] = field(default_factory=dict)
     partial: bool = False
     elapsed_s: float = 0.0
@@ -136,6 +137,23 @@ async def _fetch_sec(focus_ticker: Optional[str]) -> Dict[str, Any]:
     return {"ticker": sym, "form": "10-K", "excerpt": text[:500], "text": text}
 
 
+async def _fetch_filing_intelligence(focus_ticker: Optional[str]) -> Dict[str, Any]:
+    sym = (focus_ticker or "").upper().strip()
+    if not sym:
+        return {}
+    if os.environ.get("FILING_INTELLIGENCE_LIVE_INJECT", "0").strip().lower() not in (
+        "1", "true", "yes", "on",
+    ):
+        return {}
+    try:
+        from .filing_intelligence import fetch_for_agent
+
+        return await fetch_for_agent(sym, force_refresh=False)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[LiveDataOrchestrator] filing_intelligence failed: %s", exc)
+        return {}
+
+
 async def fetch_live_bundle(
     symbols: Sequence[str],
     *,
@@ -177,6 +195,8 @@ async def fetch_live_bundle(
         tasks["news"] = asyncio.create_task(_fetch_news_many(syms, limit=news_per_symbol))
     if "sec" in want_set and focus_ticker:
         tasks["sec"] = asyncio.create_task(_fetch_sec(focus_ticker))
+    if "filing_intelligence" in want_set and focus_ticker:
+        tasks["filing_intelligence"] = asyncio.create_task(_fetch_filing_intelligence(focus_ticker))
 
     async def _run_all() -> bool:
         nonlocal partial
@@ -203,6 +223,10 @@ async def fetch_live_bundle(
                 bundle.sec = result or {}
                 if bundle.sec:
                     bundle.sources["sec"] = "fincrawler"
+            elif key == "filing_intelligence":
+                bundle.filing_intelligence = result or {}
+                if bundle.filing_intelligence.get("available"):
+                    bundle.sources["filing_intelligence"] = "cache"
 
     try:
         await asyncio.wait_for(_run_all(), timeout=deadline)

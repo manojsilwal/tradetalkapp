@@ -48,6 +48,11 @@ class LiveInputs:
     split_ratio: float = 1.0               # new shares per old share (2-for-1 -> 2.0)
     rate_move_bps: float = 0.0             # change in discount-rate proxy since base
     as_of: Optional[str] = None            # ISO timestamp of the live price
+    put_call_oi_ratio: Optional[float] = None
+    put_call_volume_ratio: Optional[float] = None
+    iv_skew: Optional[float] = None
+    unusual_activity_score: Optional[float] = None
+    options_net_premium_bias_num: Optional[float] = None
 
 
 @dataclass
@@ -176,6 +181,18 @@ class ReflexEngine:
         # Live sentiment is a cheap cached signal (never an LLM call here).
         if live.sentiment is not None:
             row["sentiment_score"] = float(live.sentiment)
+
+        # Options flow passthrough (fetched at request time, not in nightly snapshot).
+        for key in (
+            "put_call_oi_ratio",
+            "put_call_volume_ratio",
+            "iv_skew",
+            "unusual_activity_score",
+            "options_net_premium_bias_num",
+        ):
+            val = getattr(live, key, None)
+            if val is not None:
+                row[key] = float(val)
 
         # TimesFM forward view: bands are fixed USD anchors, so a live price move
         # changes the implied forward return WITHOUT re-running TimesFM. Band

@@ -31,6 +31,7 @@ from . import (
     DISCLAIMER,
     INVESTMENT_HORIZON_DAYS,
     MIN_INVESTMENT_HORIZON_MONTHS,
+    SIGNAL_GROUPS,
 )
 from . import adapters
 from . import rule_baseline
@@ -200,6 +201,26 @@ def _pricing_context(valuation: Dict, move: Optional[float]) -> Dict[str, Any]:
     }
 
 
+def _extract_pe(brain_result: Dict) -> Optional[float]:
+    live = brain_result.get("live") or brain_result.get("base") or {}
+    row = live.get("feature_row") or brain_result.get("feature_row") or {}
+    pe = row.get("pe_ratio")
+    try:
+        return float(pe) if pe is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_de(brain_result: Dict) -> Optional[float]:
+    live = brain_result.get("live") or brain_result.get("base") or {}
+    row = live.get("feature_row") or brain_result.get("feature_row") or {}
+    de = row.get("debt_to_equity")
+    try:
+        return float(de) if de is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _resolve_move(brain_result: Dict, valuation: Dict) -> Optional[float]:
     """Best-effort price move since the base valuation (as a fraction)."""
     fresh = brain_result.get("freshness") or {}
@@ -296,6 +317,33 @@ def build_investment_analysis(brain_result: Dict) -> Dict[str, Any]:
         group_scores, rule_baseline.LONG_HORIZON_COMPOSITE_WEIGHTS
     )
 
+    filing_record = brain_result.get("filing_intelligence")
+    risk_matrix = None
+    narrative_scenarios = None
+    thematic_tags: List[str] = []
+    evidence_coverage_pct = None
+    if filing_record:
+        try:
+            from ..connectors.filing_intelligence import (
+                build_narrative_scenarios,
+                build_risk_matrix,
+            )
+
+            thematic_tags = list(filing_record.get("thematic_tags") or [])
+            risk_matrix = build_risk_matrix(
+                filing_record,
+                pe_ratio=_extract_pe(brain_result),
+                debt_to_equity=_extract_de(brain_result),
+            )
+            narrative_scenarios = build_narrative_scenarios(filing_record)
+            populated = sum(
+                1 for g in SIGNAL_GROUPS
+                if group_scores.get(g) is not None
+            )
+            evidence_coverage_pct = round(100.0 * populated / len(SIGNAL_GROUPS), 1)
+        except Exception:
+            pass
+
     move = _resolve_move(brain_result, valuation)
     valuation_freshness = _valuation_freshness(brain_result, move)
     pricing_context = _pricing_context(valuation, move)
@@ -336,7 +384,12 @@ def build_investment_analysis(brain_result: Dict) -> Dict[str, Any]:
             "max_allowed_stance": decision["max_allowed_stance"],
             "stance_reason": decision["stance_reason"],
             "confidence": confidence,
+            "risk_matrix": risk_matrix,
         },
+        "narrative_scenarios": narrative_scenarios,
+        "thematic_tags": thematic_tags,
+        "filing_intelligence": filing_record,
+        "evidence_coverage_pct": evidence_coverage_pct,
         "final": {
             "investment_score": investment_score,
             "stance": stance,
